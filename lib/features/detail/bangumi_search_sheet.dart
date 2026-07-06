@@ -57,11 +57,14 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.7,
+        // 用「最大高度」而非固定高度:键盘弹起挤压可用空间时内容可收缩,不再撑破溢出。
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -97,7 +100,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Expanded(child: _body(p)),
+                Flexible(child: _body(p)),
               ],
             ),
           ),

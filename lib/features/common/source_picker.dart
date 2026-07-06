@@ -110,7 +110,8 @@ Future<String?> showSourcePicker(
               Flexible(
                 child: ListView(
                   shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  // 左 8 + 卡片内 12 = 20,与标题行左缘对齐;底部留够、不贴弹层边。
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
                   children: [
                     if (includeMixed)
                       _SourceRow(
@@ -158,7 +159,7 @@ class _SourceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.palette;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Material(
         color: selected ? p.accent.withValues(alpha: 0.12) : p.surface,
         borderRadius: BorderRadius.circular(14),

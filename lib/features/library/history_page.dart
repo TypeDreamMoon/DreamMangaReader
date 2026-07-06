@@ -71,9 +71,11 @@ class HistoryPage extends StatelessWidget {
             border: Border.all(color: p.line),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
                 width: 46,
+                height: 61, // 显式高度(46×4/3),否则 AspectRatio 撑高整行
                 child: MangaCover(
                   manga: manga,
                   headers: meta != null ? imageHeadersOf(meta) : const {},

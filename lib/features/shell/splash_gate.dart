@@ -59,7 +59,9 @@ class _SplashGateState extends State<SplashGate>
                 ignoring: out > 0.5,
                 child: Opacity(
                   opacity: (1 - out).clamp(0.0, 1.0),
-                  child: Container(
+                  // 用 Material(而非裸 Container)兜底:否则遮罩层文字继承 WidgetsApp 的
+                // 兜底 DefaultTextStyle,出现黄色双下划线。
+                child: Material(
                     color: p.background,
                     child: Center(
                       child: Column(

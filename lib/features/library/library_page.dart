@@ -197,13 +197,16 @@ class _LibraryPageState extends State<LibraryPage> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            MangaCover(
-              manga: m,
-              sourceLabel: meta?.name,
-              headers: meta != null ? imageHeadersOf(meta) : const {},
-              heroTag: tag,
-              onTap:
-                  meta != null ? () => _openManga(m, meta, heroTag: tag) : null,
+            Flexible(
+              child: MangaCover(
+                manga: m,
+                sourceLabel: meta?.name,
+                headers: meta != null ? imageHeadersOf(meta) : const {},
+                heroTag: tag,
+                onTap: meta != null
+                    ? () => _openManga(m, meta, heroTag: tag)
+                    : null,
+              ),
             ),
             const SizedBox(height: 6),
             Text(f.title,
@@ -374,14 +377,16 @@ class _LibraryPageState extends State<LibraryPage> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                MangaCover(
-                  manga: m,
-                  sourceLabel: meta?.name,
-                  headers: meta != null ? imageHeadersOf(meta) : const {},
-                  heroTag: tag,
-                  onTap: meta != null
-                      ? () => _openManga(m, meta, heroTag: tag)
-                      : null,
+                Flexible(
+                  child: MangaCover(
+                    manga: m,
+                    sourceLabel: meta?.name,
+                    headers: meta != null ? imageHeadersOf(meta) : const {},
+                    heroTag: tag,
+                    onTap: meta != null
+                        ? () => _openManga(m, meta, heroTag: tag)
+                        : null,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Text(f.title,
@@ -446,14 +451,16 @@ class _LibraryPageState extends State<LibraryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      MangaCover(
-                        manga: m,
-                        sourceLabel: meta.name,
-                        headers: imageHeadersOf(meta),
-                        updated: m.status == MangaStatus.ongoing,
-                        aspect: aspectForId(m.id),
-                        heroTag: tag,
-                        onTap: () => _openManga(m, meta, heroTag: tag),
+                      Flexible(
+                        child: MangaCover(
+                          manga: m,
+                          sourceLabel: meta.name,
+                          headers: imageHeadersOf(meta),
+                          updated: m.status == MangaStatus.ongoing,
+                          aspect: aspectForId(m.id),
+                          heroTag: tag,
+                          onTap: () => _openManga(m, meta, heroTag: tag),
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Text(m.title,

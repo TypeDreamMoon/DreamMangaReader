@@ -256,6 +256,7 @@ class SettingsPage extends StatelessWidget {
               _sliderRow(p, Icons.blur_on_rounded, '背景模糊', lib.bgBlur, 0, 40, 40,
                   (v) => lib.bgBlur = v),
               const SizedBox(height: 10),
+              // 色板单独一行并可折行:窄屏/放大时不再水平溢出(裸 Row 装不下 7 个)。
               Row(
                 children: [
                   Icon(Icons.palette_rounded, size: 18, color: p.accent),
@@ -265,7 +266,13 @@ class SettingsPage extends StatelessWidget {
                           color: p.textPrimary,
                           fontSize: 13,
                           fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 14),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 0, // 水平间距由 _swatch 自带的 right:8 提供
+                runSpacing: 8,
+                children: [
                   for (final c in const [
                     0xFF000000,
                     0xFF0C1A2B,
@@ -587,17 +594,24 @@ class SettingsPage extends StatelessWidget {
                   side: BorderSide(color: p.line),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(14),
+                  // 左侧多留呼吸(图标/文字不贴卡片内缘);右侧给开关/箭头留位。
+                  padding: const EdgeInsets.fromLTRB(18, 12, 14, 12),
                   // 卡内 ListTile/SwitchListTile 默认前导宽 + 间隙很大,导致图标/文字
-                  // 和滑块行(自定义 Row)左缘对不齐、看着乱。统一成紧凑前导:图标紧贴
-                  // 卡片内缘、和滑块行图标同一列。
+                  // 和滑块行(自定义 Row)左缘对不齐、看着乱。统一成紧凑前导:图标与
+                  // 滑块行图标同一列(卡片内缘留白由外层 Padding 统一给)。
                   child: ListTileTheme.merge(
                     contentPadding: EdgeInsets.zero,
                     minLeadingWidth: 0,
-                    horizontalTitleGap: 8,
+                    horizontalTitleGap: 10,
+                    // 相邻条目之间补竖向间距,别挤成一坨。
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: children,
+                      children: [
+                        for (var i = 0; i < children.length; i++) ...[
+                          if (i > 0) const SizedBox(height: 6),
+                          children[i],
+                        ],
+                      ],
                     ),
                   ),
                 ),

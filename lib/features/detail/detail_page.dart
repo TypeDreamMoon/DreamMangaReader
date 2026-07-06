@@ -862,6 +862,8 @@ class _DetailPageState extends State<DetailPage> {
                   SizedBox(
                     width: 56,
                     child: Text(row.$1,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.textMuted, fontSize: 11)),
                   ),
                   Expanded(

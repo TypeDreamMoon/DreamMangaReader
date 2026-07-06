@@ -104,7 +104,7 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
     return InkWell(
       onTap: () => Navigator.of(context).pop(family),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
         child: Row(
           children: [
             Expanded(

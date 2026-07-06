@@ -290,9 +290,15 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                         color: p.textPrimary,
                         fontWeight: FontWeight.w800,
                         fontSize: 15)),
-                const Spacer(),
-                Text('${registeredSources.length} 个源 · ${_repo.status}',
-                    style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+                const SizedBox(width: 12),
+                // 状态文本可能很长(URL/错误/路径)→ Expanded + 省略号,别撑溢出。
+                Expanded(
+                  child: Text('${registeredSources.length} 个源 · ${_repo.status}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+                ),
               ],
             ),
             const SizedBox(height: 10),

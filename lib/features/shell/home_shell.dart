@@ -109,21 +109,26 @@ class _HomeShellState extends State<HomeShell>
             body: Row(
               children: [
                 // Row 布局下导轨身后无内容 → 只做半透明面板(enabled:false),不白费模糊。
-                GlassSurface(
-                  enabled: false,
-                  child: NavigationRail(
-                    selectedIndex: _index,
-                    onDestinationSelected: _select,
-                    labelType: NavigationRailLabelType.all,
-                    groupAlignment: -0.85,
-                    destinations: [
-                      for (final d in _dests)
-                        NavigationRailDestination(
-                          icon: Icon(d.$1),
-                          selectedIcon: Icon(d.$2),
-                          label: Text(d.$3),
-                        ),
-                    ],
+                // SafeArea:横屏时状态栏/刘海/挖孔常在顶部或左侧,否则首项(书架)会被遮。
+                SafeArea(
+                  right: false,
+                  bottom: false,
+                  child: GlassSurface(
+                    enabled: false,
+                    child: NavigationRail(
+                      selectedIndex: _index,
+                      onDestinationSelected: _select,
+                      labelType: NavigationRailLabelType.all,
+                      groupAlignment: -0.85,
+                      destinations: [
+                        for (final d in _dests)
+                          NavigationRailDestination(
+                            icon: Icon(d.$1),
+                            selectedIcon: Icon(d.$2),
+                            label: Text(d.$3),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 const VerticalDivider(width: 1, thickness: 1),

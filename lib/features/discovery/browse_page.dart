@@ -183,7 +183,8 @@ class _BrowsePageState extends State<BrowsePage> {
             maxCrossAxisExtent: 168,
             crossAxisSpacing: 12,
             mainAxisSpacing: 14,
-            childAspectRatio: 0.58,
+            // 贴合 3/4 封面 + 标题行,减少封面下方大片留白。
+            childAspectRatio: 0.64,
           ),
           itemCount: _items.length,
           itemBuilder: (_, i) => _card(p, _items[i], i),

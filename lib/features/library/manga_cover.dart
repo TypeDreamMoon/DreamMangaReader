@@ -141,12 +141,15 @@ class MangaCover extends StatelessWidget {
                   top: 6,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    constraints: const BoxConstraints(maxWidth: 96),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.62),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       sourceLabel!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 9.5,

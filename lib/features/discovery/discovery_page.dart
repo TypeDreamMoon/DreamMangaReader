@@ -448,8 +448,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
-              width: 34,
+              width: 44,
               child: Text(f.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                       color: p.textMuted,
                       fontSize: 11,
@@ -592,8 +594,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         child: Row(
           children: [
             SizedBox(
-              width: 34,
+              width: 44,
               child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                       color: p.textMuted,
                       fontSize: 11,

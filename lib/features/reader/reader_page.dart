@@ -937,7 +937,8 @@ class _ReaderPageState extends State<ReaderPage> {
             return SafeArea(
               child: SingleChildScrollView(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
+                  // 左侧留够呼吸,别让开关标题贴着弹层边缘。
+                  padding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -978,7 +979,7 @@ class _ReaderPageState extends State<ReaderPage> {
                           Icon(Icons.aspect_ratio_rounded,
                               size: 18, color: p.textMuted),
                           const SizedBox(width: 8),
-                          Text('横屏内容宽度', style: t(p.textPrimary)),
+                          Flexible(child: Text('横屏内容宽度', style: t(p.textPrimary))),
                           Expanded(
                             child: Slider(
                               value:
@@ -1008,7 +1009,7 @@ class _ReaderPageState extends State<ReaderPage> {
                           style: TextStyle(color: p.textMuted, fontSize: 11)),
                     ],
                     SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
                       dense: true,
                       title: Text('双页同看', style: t(p.textPrimary)),
                       subtitle: Text('翻页模式下并排显示两页',
@@ -1018,7 +1019,7 @@ class _ReaderPageState extends State<ReaderPage> {
                           _isPaged ? (v) => apply(() => _setDual(v)) : null,
                     ),
                     SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
                       dense: true,
                       title: Text('允许双击缩放', style: t(p.textPrimary)),
                       value: _dtZoom,
@@ -1028,7 +1029,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       }),
                     ),
                     SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
                       dense: true,
                       title: Text('展示页码', style: t(p.textPrimary)),
                       value: _showPageNum,
@@ -1038,7 +1039,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       }),
                     ),
                     SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
                       dense: true,
                       title: Text('点击分区翻页', style: t(p.textPrimary)),
                       subtitle: Text('屏幕左/右侧点击翻页,中间切控制条',
