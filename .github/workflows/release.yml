@@ -1,0 +1,163 @@
+# 自动构建 + 发布 Release(Windows x64 + Android APK)。
+#
+# 触发:推一个 `v` 开头的 tag —— 稳定版 `v1.2.0`、Beta 版 `v1.2.0-beta.1`
+# (tag 含 -beta/-rc/-alpha → 自动标记为 prerelease)。也可在 Actions 页手动
+# 运行(workflow_dispatch):填 tag 才发布,留空则只构建产物、不发 Release。
+#
+# 产物:Windows 便携版 zip + Android APK(通用包 + 各架构分包)。
+# 说明:APK 用调试签名(android/app/build.gradle 里 release 走 signingConfigs.debug),
+# 可直接安装;若日后要正式签名,加 keystore secrets 再改签名配置即可。
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+' # 稳定版 v1.2.0
+      - 'v[0-9]+.[0-9]+.[0-9]+-*' # 预发布 v1.2.0-beta.1 / -rc.1 …
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布 tag(如 v1.2.0 或 v1.2.0-beta.1);留空=只构建不发布'
+        required: false
+        default: ''
+
+# 发布 Release 需要写仓库内容的权限。
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --no-analytics
+
+      # 接受所有 Android SDK 许可,否则 Gradle 自动补装 platform/build-tools/NDK 时
+      # 会因「许可未接受」失败(GitHub runner 不保证每个包都预接受)。
+      - name: Accept Android SDK licenses
+        run: yes | flutter doctor --android-licenses > /dev/null 2>&1 || true
+
+      - run: flutter pub get
+
+      - name: Build APKs (universal + per-abi)
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          apk=build/app/outputs/flutter-apk
+          cp "$apk/app-release.apk" dist/DreamMangaReader-android-universal.apk
+          # 各架构分包用通配复制(未来 Flutter 增删 ABI 也不会因写死文件名而失败)。
+          for f in "$apk"/app-*-release.apk; do
+            [ "$(basename "$f")" = "app-release.apk" ] && continue
+            abi=$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')
+            cp "$f" "dist/DreamMangaReader-android-$abi.apk"
+          done
+          ls -lh dist
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: dist/*.apk
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --no-analytics
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Package Windows portable zip
+        shell: pwsh
+        run: |
+          $rel = "build/windows/x64/runner/Release"
+          if (-not (Test-Path "$rel/dream_manga_reader.exe")) {
+            Write-Error "Windows build output not found at $rel"; exit 1
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          # 打进一个带名字的文件夹,解压后是 DreamMangaReader\ 而不是一堆散文件。
+          New-Item -ItemType Directory -Force "staging/DreamMangaReader" | Out-Null
+          Copy-Item "$rel/*" "staging/DreamMangaReader/" -Recurse -Force
+          Compress-Archive -Path "staging/DreamMangaReader" `
+            -DestinationPath "dist/DreamMangaReader-windows-x64.zip" -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    # 仅在「推 tag」或「手动运行且填了 tag」时发布;手动留空 tag = 只构建不发布。
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Resolve tag & prerelease flag
+        id: meta
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if printf '%s' "$tag" | grep -qiE '(-beta|-rc|-alpha)'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Releasing $tag (prerelease=$( printf '%s' "$tag" | grep -qiE '(-beta|-rc|-alpha)' && echo true || echo false ))"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: DreamMangaReader ${{ steps.meta.outputs.tag }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/android-apks/*.apk
+            artifacts/windows-zip/*.zip

@@ -1,0 +1,467 @@
+<style>
+  :root{
+    /* 默认 = Dark 主题(页面外壳也用它) */
+    --ink:#15181B; --sumi:#1E2225; --sumi2:#282E31; --line:#333A3D;
+    --paper:#F1ECE1;
+    --cinnabar:#22D3BD; --cinnabar-2:#5CE9D8; --on-accent:#04211d;
+    --jade:#E7B15A;
+    --text:#EAF0EE; --mute:#93A0A0; --mute-d:#657170;
+    --ui:"Source Han Sans SC","Noto Sans CJK SC","Noto Sans SC","MiSans","PingFang SC","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="oled"]{
+    --ink:#000000; --sumi:#0C100F; --sumi2:#151C1A; --line:#1E2724;
+    --cinnabar:#17D0BA; --cinnabar-2:#4EE7D5; --on-accent:#03201d;
+    --jade:#E7B15A; --text:#ECF3F1; --mute:#8A9793; --mute-d:#5C6864;
+  }
+  [data-theme="dark"]{
+    --ink:#15181B; --sumi:#1E2225; --sumi2:#282E31; --line:#333A3D;
+    --cinnabar:#22D3BD; --cinnabar-2:#5CE9D8; --on-accent:#04211d;
+    --jade:#E7B15A; --text:#EAF0EE; --mute:#93A0A0; --mute-d:#657170;
+  }
+  [data-theme="light"]{
+    --ink:#F5F7F5; --sumi:#FFFFFF; --sumi2:#FFFFFF; --line:#E4E8E6;
+    --cinnabar:#0E9E8E; --cinnabar-2:#0B8577; --on-accent:#FFFFFF;
+    --jade:#C88A2E; --text:#161B1A; --mute:#68736F; --mute-d:#9AA5A0;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1200px 700px at 82% -8%, rgba(34,211,189,.08), transparent 60%),
+      radial-gradient(900px 600px at 8% 108%, rgba(231,177,90,.04), transparent 55%),
+      var(--ink);
+    color:var(--text);font-family:var(--ui);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:56px 28px 80px}
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--cinnabar);}
+  h1,h2,h3,h4{text-wrap:balance;margin:0}
+  .lead{color:var(--mute);max-width:62ch}
+
+  /* header */
+  .top{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  .brand h1{font-size:27px;font-weight:900;letter-spacing:-.015em}
+  .brand h1 .acc{color:var(--cinnabar)}
+  .brand .sub{color:var(--mute);font-size:13.5px;margin-top:3px}
+  .platforms{display:flex;gap:8px;align-items:center;color:var(--mute);font-size:12px;font-weight:600}
+  .chip{border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--sumi);display:inline-flex;gap:7px;align-items:center}
+  .chip b{color:var(--text);font-weight:700}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--cinnabar)}
+
+  /* identity */
+  .identity{display:grid;grid-template-columns:1.25fr .75fr;gap:20px;margin-top:34px}
+  @media(max-width:760px){.identity{grid-template-columns:1fr}}
+  .card{background:var(--sumi);border:1px solid var(--line);border-radius:18px;padding:20px}
+  .themes{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+  .themerow{display:flex;align-items:center;gap:14px}
+  .themerow .tn{width:78px;flex:0 0 auto;font-size:12.5px;font-weight:700}
+  .themerow .tn small{display:block;color:var(--mute);font-weight:500;font-size:10.5px;letter-spacing:.02em}
+  .toks{display:flex;gap:7px;flex:1}
+  .tok{flex:1;height:34px;border-radius:8px;border:1px solid rgba(128,128,128,.18);position:relative}
+  .tok .lab{position:absolute;left:6px;bottom:4px;font-size:8.5px;font-weight:700;opacity:.8}
+  .fontcard .fbig{font-size:34px;font-weight:900;letter-spacing:-.02em;line-height:1.05}
+  .fontcard .frow{font-size:13px;color:var(--mute);margin-top:8px}
+  .fontcard .frow b{color:var(--text)}
+  .fontcard .weights{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;align-items:baseline}
+  .fontcard .weights span{font-size:18px}
+  .w4{font-weight:400}.w5{font-weight:500}.w7{font-weight:700}.w9{font-weight:900}
+
+  /* showcase */
+  .show-h{margin-top:52px;display:flex;flex-direction:column;gap:10px}
+  .show-h h2{font-size:23px;font-weight:850;letter-spacing:-.01em}
+  .stage{margin-top:28px;display:flex;gap:26px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+
+  /* phone */
+  .phone{width:284px;flex:0 0 auto}
+  .phone .frame{border-radius:42px;padding:9px;background:linear-gradient(160deg,#20252a,#0a0c0e);
+    box-shadow:0 40px 80px -34px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.05), inset 0 0 0 1px rgba(255,255,255,.03);}
+  .screen{position:relative;border-radius:34px;overflow:hidden;height:590px;background:var(--ink);color:var(--text);
+    display:flex;flex-direction:column;font-family:var(--ui)}
+  .cap{text-align:center;margin-top:13px;color:var(--mute);font-size:12.5px;font-weight:600}
+  .cap b{color:var(--text)}
+  .cap .tg{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;color:var(--cinnabar);
+    border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  .statusbar{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;font-size:11px;font-weight:700;color:var(--text);flex:0 0 auto}
+  .statusbar .r{display:flex;gap:5px;align-items:center;opacity:.9}
+  .notch{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:76px;height:20px;border-radius:0 0 14px 14px;background:#000;z-index:6}
+
+  svg.ic{width:19px;height:19px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round;display:block}
+  svg.ic.sm{width:15px;height:15px}
+  svg.ic.fill{fill:currentColor;stroke:none}
+
+  .appbar{display:flex;align-items:center;justify-content:space-between;padding:10px 18px 10px;flex:0 0 auto}
+  .appbar h3{font-size:19px;font-weight:850;letter-spacing:-.01em}
+  .appbar .acts{display:flex;gap:15px;color:var(--mute)}
+  .tabs{display:flex;gap:18px;padding:0 18px 12px;flex:0 0 auto;font-size:13px;color:var(--mute-d);font-weight:600}
+  .tabs .on{color:var(--text);position:relative}
+  .tabs .on::after{content:"";position:absolute;left:0;right:0;bottom:-8px;height:2.5px;border-radius:2px;background:var(--cinnabar)}
+
+  .body{flex:1 1 auto;overflow:hidden;position:relative}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 10px;padding:4px 16px 16px}
+  .book{display:flex;flex-direction:column;gap:6px}
+  .cover{position:relative;aspect-ratio:3/4;border-radius:9px;overflow:hidden;color:#000;
+    box-shadow:0 6px 16px -8px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.05)}
+  .cover .ct{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;padding:7px;background:linear-gradient(to top,rgba(0,0,0,.55),transparent 55%)}
+  .cover .ct .name{font-size:10.5px;font-weight:800;color:#fff;line-height:1.15}
+  .badge{position:absolute;top:6px;right:6px;z-index:3;background:var(--cinnabar);color:var(--on-accent);font-size:10px;font-weight:900;min-width:17px;height:17px;border-radius:9px;display:grid;place-items:center;padding:0 5px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .badge.upd{background:transparent;padding:0;min-width:0}
+  .badge.upd i{display:block;width:9px;height:9px;border-radius:50%;background:var(--cinnabar);box-shadow:0 0 0 2px var(--ink),0 0 8px var(--cinnabar)}
+  .book .meta{font-size:9.5px;color:var(--mute);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .nav{flex:0 0 auto;display:flex;justify-content:space-around;padding:9px 8px 14px;border-top:1px solid var(--line);background:var(--sumi)}
+  .nav a{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--mute-d);font-size:9.5px;font-weight:600}
+  .nav a.on{color:var(--cinnabar)}
+
+  /* detail */
+  .hero{position:relative;height:208px;flex:0 0 auto;overflow:hidden}
+  .hero .bg{position:absolute;inset:0}
+  .hero .veil{position:absolute;inset:0;background:linear-gradient(to top,var(--ink) 5%,color-mix(in srgb,var(--ink) 40%,transparent) 55%,color-mix(in srgb,var(--ink) 55%,transparent))}
+  .hero .row{position:absolute;left:16px;right:16px;bottom:14px;z-index:3;display:flex;gap:13px;align-items:flex-end}
+  .hero .mini{width:78px;aspect-ratio:3/4;border-radius:9px;overflow:hidden;flex:0 0 auto;box-shadow:0 10px 22px -8px rgba(0,0,0,.7);border:1px solid rgba(255,255,255,.12)}
+  .hero .info h2{font-size:19px;font-weight:850;letter-spacing:-.01em;line-height:1.15;color:var(--text)}
+  .hero .info .au{color:var(--mute);font-size:12px;margin-top:3px}
+  .pills{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .pill{font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mute);background:var(--sumi)}
+  .pill.live{color:var(--cinnabar-2);border-color:color-mix(in srgb,var(--cinnabar) 40%,transparent);background:color-mix(in srgb,var(--cinnabar) 12%,transparent)}
+  .cta{display:flex;gap:10px;padding:14px 16px 8px;flex:0 0 auto}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border-radius:12px;font-weight:800;font-size:14px;background:var(--cinnabar);color:var(--on-accent);letter-spacing:.02em;box-shadow:0 10px 22px -12px var(--cinnabar)}
+  .iconbtn{width:44px;height:44px;flex:0 0 auto;border-radius:12px;display:grid;place-items:center;background:var(--sumi2);color:var(--text);border:1px solid var(--line)}
+  .seclabel{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 6px;color:var(--mute);font-size:12px;font-weight:700}
+  .seclabel .n{color:var(--text)}
+  .chlist{padding:2px 16px 8px;display:flex;flex-direction:column;gap:7px;overflow:hidden}
+  .chrow{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-radius:11px;background:var(--sumi);border:1px solid var(--line);font-size:12.5px;color:var(--text)}
+  .chrow .l{display:flex;flex-direction:column;gap:2px}
+  .chrow .cn{font-weight:700}
+  .chrow .cd{color:var(--mute-d);font-size:10.5px;font-variant-numeric:tabular-nums}
+  .chrow.read{opacity:.5}
+  .chrow.cur{border-color:color-mix(in srgb,var(--cinnabar) 45%,transparent);background:color-mix(in srgb,var(--cinnabar) 9%,transparent)}
+  .tagj{color:var(--jade);display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700}
+  .contbtn{color:var(--cinnabar-2);font-weight:800}
+
+  /* reader (immersive, theme-independent chrome) */
+  .reader{flex:1 1 auto;position:relative;background:#050807;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .page{width:100%;height:100%;background:var(--paper);display:flex;flex-direction:column;gap:6px;padding:8px}
+  .panel{flex:1;border-radius:3px;position:relative;overflow:hidden;border:2px solid #14110e;color:#14110e}
+  .panel .ht{position:absolute;inset:0;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:6px 6px;opacity:.2}
+  .bubble{position:absolute;background:#fff;border:2px solid #14110e;border-radius:50%/44%;padding:8px 12px;z-index:2;font-size:10px;font-weight:800;color:#14110e;line-height:1.25}
+  .speed{position:absolute;inset:0;background:repeating-linear-gradient(115deg,rgba(0,0,0,.14) 0 1px,transparent 1px 7px);opacity:.5}
+  .r-top{position:absolute;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:14px 15px 18px;background:linear-gradient(to bottom,rgba(0,0,0,.85),transparent);color:#fff}
+  .r-top .mid{text-align:center;line-height:1.2}
+  .r-top .mid .tt{font-size:13px;font-weight:800}
+  .r-top .mid .cc{font-size:10.5px;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums}
+  .r-bot{position:absolute;bottom:0;left:0;right:0;z-index:5;padding:20px 16px 16px;background:linear-gradient(to top,rgba(0,0,0,.92),transparent);color:#fff}
+  .slider{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.8)}
+  .track{flex:1;height:4px;border-radius:3px;background:rgba(255,255,255,.2);position:relative}
+  .track i{position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:3px;background:var(--cinnabar);box-shadow:0 0 10px var(--cinnabar)}
+  .track i::after{content:"";position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:13px;height:13px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  .r-tools{display:flex;justify-content:space-between;margin-top:16px;color:rgba(255,255,255,.85)}
+  .r-tools .tool{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:9.5px;font-weight:600;color:rgba(255,255,255,.7)}
+  .r-tools .tool.on{color:var(--cinnabar-2)}
+
+  /* desktop */
+  .desk-h{margin-top:56px}
+  .desktop{margin-top:22px;border-radius:16px;overflow:hidden;border:1px solid var(--line);background:var(--ink);box-shadow:0 50px 90px -42px rgba(0,0,0,.85)}
+  .titlebar{height:40px;background:var(--sumi);display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line)}
+  .titlebar .t{font-size:12.5px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+  .titlebar .t .acc{color:var(--cinnabar)}
+  .wc{display:flex;gap:16px;color:var(--mute-d)}
+  .wc svg{width:13px;height:13px;stroke:currentColor;stroke-width:1.5;fill:none}
+  .deskbody{display:grid;grid-template-columns:216px 1fr;min-height:520px}
+  .rail{border-right:1px solid var(--line);background:var(--sumi);padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+  .rail .brandrow{padding:2px 10px 16px;font-size:15px;font-weight:900;letter-spacing:-.01em;color:var(--text)}
+  .rail .brandrow .acc{color:var(--cinnabar)}
+  .railitem{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;color:var(--mute);font-size:13px;font-weight:600}
+  .railitem.on{background:color-mix(in srgb,var(--cinnabar) 12%,transparent);color:var(--text)}
+  .railitem.on svg{color:var(--cinnabar)}
+  .railitem svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .rail .spacer{flex:1}
+  .railmini{margin-top:8px;padding:12px;border-radius:12px;background:var(--sumi2);border:1px solid var(--line);font-size:11px;color:var(--mute)}
+  .railmini b{color:var(--text);font-size:12px}
+  .railmini .bar{height:5px;border-radius:3px;background:var(--ink);margin-top:8px;position:relative;overflow:hidden}
+  .railmini .bar i{position:absolute;inset:0 42% 0 0;background:var(--jade)}
+  .main{padding:22px 26px 28px;overflow:hidden}
+  .main .kicker{display:flex;align-items:center;justify-content:space-between}
+  .searchbox{display:flex;align-items:center;gap:9px;background:var(--sumi);border:1px solid var(--line);border-radius:11px;padding:9px 13px;color:var(--mute-d);font-size:13px;width:300px}
+  .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(150deg,#146b62,#062c28);border:1px solid var(--line)}
+  .feature{margin-top:18px;position:relative;height:200px;border-radius:16px;overflow:hidden;display:flex;align-items:flex-end;border:1px solid rgba(255,255,255,.06)}
+  .feature .fbg{position:absolute;inset:0}
+  .feature .fveil{position:absolute;inset:0;background:linear-gradient(105deg,rgba(6,10,9,.94) 22%,rgba(6,10,9,.15) 72%)}
+  .feature .fin{position:relative;z-index:2;padding:24px 26px;max-width:60%}
+  .feature .fk{font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#5CE9D8}
+  .feature .fin h3{font-size:26px;font-weight:900;letter-spacing:-.02em;margin-top:8px;line-height:1.08;color:#fff}
+  .feature .fin p{color:rgba(255,255,255,.7);font-size:12.5px;margin:8px 0 0;max-width:42ch}
+  .feature .fbtn{display:inline-flex;align-items:center;gap:8px;margin-top:14px;background:var(--cinnabar);color:var(--on-accent);font-weight:800;font-size:12.5px;padding:9px 16px;border-radius:10px}
+  .rowhead{display:flex;align-items:center;justify-content:space-between;margin:24px 0 12px}
+  .rowhead h4{font-size:15px;font-weight:800}
+  .rowhead .more{color:var(--mute);font-size:12px;font-weight:600}
+  .dgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
+  .dbook{display:flex;flex-direction:column;gap:8px}
+  .dbook .cover{border-radius:11px}
+  .dbook .dn{font-size:12px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .dbook .dm{font-size:10.5px;color:var(--mute);font-variant-numeric:tabular-nums}
+
+  .foot{margin-top:46px;color:var(--mute);font-size:13px;display:flex;flex-direction:column;gap:12px}
+  .foot .note{background:var(--sumi);border:1px solid var(--line);border-left:3px solid var(--cinnabar);border-radius:12px;padding:16px 18px}
+  .foot .note b{color:var(--text)}
+  .foot .k{color:var(--cinnabar-2);font-weight:700}
+
+  @media(prefers-reduced-motion:no-preference){
+    .book,.dbook{transition:transform .18s ease}
+    .book:hover,.dbook:hover{transform:translateY(-3px)}
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <h1>Dream<span class="acc">Manga</span>Reader</h1>
+      <div class="sub">三主题 · 青碧 · 思源黑体 —— 沉浸式漫画阅读器视觉方向</div>
+    </div>
+    <div class="platforms">
+      <span class="chip"><span class="dot"></span>Android <b>同等</b></span>
+      <span class="chip"><span class="dot"></span>Windows <b>同等</b></span>
+    </div>
+  </div>
+
+  <!-- IDENTITY: themes + font -->
+  <div class="identity">
+    <div class="card">
+      <div class="eyebrow">三主题 · Design Tokens</div>
+      <div class="themes">
+        <div class="themerow" data-theme="oled">
+          <div class="tn">OLED<small>纯黑</small></div>
+          <div class="toks">
+            <div class="tok" style="background:#000"><span class="lab" style="color:#5a6a66">#000</span></div>
+            <div class="tok" style="background:#0C100F"><span class="lab" style="color:#5a6a66">面</span></div>
+            <div class="tok" style="background:#151C1A"><span class="lab" style="color:#6a7a76">抬升</span></div>
+            <div class="tok" style="background:#17D0BA"><span class="lab" style="color:#053f39">青碧</span></div>
+            <div class="tok" style="background:#ECF3F1"><span class="lab" style="color:#556">字</span></div>
+          </div>
+        </div>
+        <div class="themerow" data-theme="dark">
+          <div class="tn">Dark<small>深灰(略亮)</small></div>
+          <div class="toks">
+            <div class="tok" style="background:#15181B"><span class="lab" style="color:#7a8683">#15</span></div>
+            <div class="tok" style="background:#1E2225"><span class="lab" style="color:#8a9693">面</span></div>
+            <div class="tok" style="background:#282E31"><span class="lab" style="color:#9aa6a3">抬升</span></div>
+            <div class="tok" style="background:#22D3BD"><span class="lab" style="color:#04211d">青碧</span></div>
+            <div class="tok" style="background:#EAF0EE"><span class="lab" style="color:#556">字</span></div>
+          </div>
+        </div>
+        <div class="themerow" data-theme="light">
+          <div class="tn">Light<small>浅色</small></div>
+          <div class="toks">
+            <div class="tok" style="background:#F5F7F5"><span class="lab" style="color:#8a958f">#F5</span></div>
+            <div class="tok" style="background:#FFFFFF"><span class="lab" style="color:#98a29c">面</span></div>
+            <div class="tok" style="background:#E4E8E6"><span class="lab" style="color:#8a958f">分隔</span></div>
+            <div class="tok" style="background:#0E9E8E"><span class="lab" style="color:#eafffb">青碧</span></div>
+            <div class="tok" style="background:#161B1A"><span class="lab" style="color:#c9d2cd">字</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card fontcard">
+      <div class="eyebrow">字体 · 思源黑体</div>
+      <div class="fbig">墨染之约</div>
+      <div class="frow"><b>思源黑体 Source Han Sans</b>(= Noto Sans CJK,SIL OFL)</div>
+      <div class="weights">
+        <span class="w4">常规</span><span class="w5">中等</span><span class="w7">粗体</span><span class="w9">标题 Heavy</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 1: LIBRARY × 3 THEMES -->
+  <div class="show-h">
+    <div class="eyebrow">同一界面 · 三主题</div>
+    <h2>书架:OLED 纯黑 / Dark 深灰 / Light 浅色</h2>
+    <p class="lead">同一套 token,换一组变量即切主题。封面本身是彩色的,主题只改外壳(底色 / 抬升面 / 文字 / 青碧强调)。已去除所有 logo,标识只留文字。</p>
+  </div>
+  <div class="stage">
+
+    <!-- OLED -->
+    <div class="phone"><div class="frame"><div class="screen" data-theme="oled">
+      <div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">5G ▪ 84%</span></div>
+      <div class="appbar"><h3>书架</h3><div class="acts">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg></div></div>
+      <div class="tabs"><span class="on">收藏</span><span>最近</span><span>更新</span><span>已下载</span></div>
+      <div class="body"><div class="grid">
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#0E4C5A,#06222B)"><span class="badge">3</span><div class="ct"><div class="name">墨染之约</div></div></div><div class="meta">第 128 话 · 连载</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#B33A5B,#3A1030)"><span class="badge upd"><i></i></span><div class="ct"><div class="name">银河剑客</div></div></div><div class="meta">第 64 话 · 更新</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#C9772B,#5A2410)"><div class="ct"><div class="name">雾之国</div></div></div><div class="meta">第 12 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#3B3A8F,#171633)"><div class="ct"><div class="name">霓虹默示录</div></div></div><div class="meta">完结 · 200</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#146b62,#062c28)"><span class="badge">1</span><div class="ct"><div class="name">青碧之海</div></div></div><div class="meta">第 45 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#2E7D5B,#0E2A20)"><div class="ct"><div class="name">山海绘卷</div></div></div><div class="meta">第 88 话</div></div>
+      </div></div>
+      <div class="nav">
+        <a class="on"><svg class="ic sm" viewBox="0 0 24 24"><path d="M4 7h16v13H4zM4 7l3-3h10l3 3M9 11h6"/></svg>书架</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/></svg>发现</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg>下载</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/></svg>设置</a>
+      </div>
+    </div></div><div class="cap"><b>书架</b><span class="tg">OLED</span></div></div>
+
+    <!-- DARK -->
+    <div class="phone"><div class="frame"><div class="screen" data-theme="dark">
+      <div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">5G ▪ 84%</span></div>
+      <div class="appbar"><h3>书架</h3><div class="acts">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg></div></div>
+      <div class="tabs"><span class="on">收藏</span><span>最近</span><span>更新</span><span>已下载</span></div>
+      <div class="body"><div class="grid">
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#0E4C5A,#06222B)"><span class="badge">3</span><div class="ct"><div class="name">墨染之约</div></div></div><div class="meta">第 128 话 · 连载</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#B33A5B,#3A1030)"><span class="badge upd"><i></i></span><div class="ct"><div class="name">银河剑客</div></div></div><div class="meta">第 64 话 · 更新</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#C9772B,#5A2410)"><div class="ct"><div class="name">雾之国</div></div></div><div class="meta">第 12 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#3B3A8F,#171633)"><div class="ct"><div class="name">霓虹默示录</div></div></div><div class="meta">完结 · 200</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#146b62,#062c28)"><span class="badge">1</span><div class="ct"><div class="name">青碧之海</div></div></div><div class="meta">第 45 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#2E7D5B,#0E2A20)"><div class="ct"><div class="name">山海绘卷</div></div></div><div class="meta">第 88 话</div></div>
+      </div></div>
+      <div class="nav">
+        <a class="on"><svg class="ic sm" viewBox="0 0 24 24"><path d="M4 7h16v13H4zM4 7l3-3h10l3 3M9 11h6"/></svg>书架</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/></svg>发现</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg>下载</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/></svg>设置</a>
+      </div>
+    </div></div><div class="cap"><b>书架</b><span class="tg">Dark</span></div></div>
+
+    <!-- LIGHT -->
+    <div class="phone"><div class="frame"><div class="screen" data-theme="light">
+      <div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">5G ▪ 84%</span></div>
+      <div class="appbar"><h3>书架</h3><div class="acts">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg></div></div>
+      <div class="tabs"><span class="on">收藏</span><span>最近</span><span>更新</span><span>已下载</span></div>
+      <div class="body"><div class="grid">
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#0E4C5A,#06222B)"><span class="badge">3</span><div class="ct"><div class="name">墨染之约</div></div></div><div class="meta">第 128 话 · 连载</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#B33A5B,#3A1030)"><span class="badge upd"><i></i></span><div class="ct"><div class="name">银河剑客</div></div></div><div class="meta">第 64 话 · 更新</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#C9772B,#5A2410)"><div class="ct"><div class="name">雾之国</div></div></div><div class="meta">第 12 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#3B3A8F,#171633)"><div class="ct"><div class="name">霓虹默示录</div></div></div><div class="meta">完结 · 200</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#146b62,#062c28)"><span class="badge">1</span><div class="ct"><div class="name">青碧之海</div></div></div><div class="meta">第 45 话</div></div>
+        <div class="book"><div class="cover" style="background:linear-gradient(150deg,#2E7D5B,#0E2A20)"><div class="ct"><div class="name">山海绘卷</div></div></div><div class="meta">第 88 话</div></div>
+      </div></div>
+      <div class="nav">
+        <a class="on"><svg class="ic sm" viewBox="0 0 24 24"><path d="M4 7h16v13H4zM4 7l3-3h10l3 3M9 11h6"/></svg>书架</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/></svg>发现</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg>下载</a>
+        <a><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/></svg>设置</a>
+      </div>
+    </div></div><div class="cap"><b>书架</b><span class="tg">Light</span></div></div>
+
+  </div>
+
+  <!-- SECTION 2: DETAIL + READER (Dark) -->
+  <div class="show-h">
+    <div class="eyebrow">其余界面(以 Dark 演示,三主题同理)</div>
+    <h2>详情 · 沉浸阅读器</h2>
+  </div>
+  <div class="stage">
+
+    <!-- DETAIL -->
+    <div class="phone"><div class="frame"><div class="screen" data-theme="dark">
+      <div class="notch"></div>
+      <div class="statusbar"><span>9:41</span><span class="r">5G ▪ 84%</span></div>
+      <div class="hero">
+        <div class="bg" style="background:linear-gradient(150deg,#0E4C5A,#06222B)"></div>
+        <div class="veil"></div>
+        <div class="row">
+          <div class="mini" style="background:linear-gradient(150deg,#12707F,#06222B)"></div>
+          <div class="info"><h2>墨染之约</h2><div class="au">作者 · 青行灯</div>
+            <div class="pills"><span class="pill live">● 连载中</span><span class="pill">每周三更新</span><span class="pill">奇幻</span></div></div>
+        </div>
+      </div>
+      <div class="cta">
+        <div class="btn"><svg class="ic sm fill" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>继续阅读 · 第 96 话</div>
+        <div class="iconbtn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 20s-7-4.3-7-9a4 4 0 017-2.6A4 4 0 0119 11c0 4.7-7 9-7 9z"/></svg></div>
+        <div class="iconbtn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg></div>
+      </div>
+      <div class="seclabel"><span>章节 · 共 <span class="n">128</span> 话</span><span>倒序 ⇅</span></div>
+      <div class="chlist">
+        <div class="chrow cur"><div class="l"><span class="cn">第 128 话 · 未名之雾</span><span class="cd">2026-07-03</span></div><span class="contbtn">继续</span></div>
+        <div class="chrow"><div class="l"><span class="cn">第 127 话 · 归墟</span><span class="cd">2026-06-26</span></div><span class="tagj"><svg class="ic sm fill" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>已下载</span></div>
+        <div class="chrow read"><div class="l"><span class="cn">第 126 话 · 灯下客</span><span class="cd">2026-06-19</span></div></div>
+        <div class="chrow read"><div class="l"><span class="cn">第 125 话 · 断章</span><span class="cd">2026-06-12</span></div></div>
+      </div>
+    </div></div><div class="cap"><b>详情</b><span class="tg">Detail</span></div></div>
+
+    <!-- READER -->
+    <div class="phone"><div class="frame"><div class="screen">
+      <div class="notch"></div>
+      <div class="reader">
+        <div class="page">
+          <div class="panel" style="background:linear-gradient(150deg,#d9cfba,#efe9dd)"><div class="ht"></div><div class="speed"></div><div class="bubble" style="top:12px;left:12px">凪,前面就是<br>归墟了……</div></div>
+          <div class="panel" style="background:linear-gradient(30deg,#cfc7b6,#e7e0d1)"><div class="ht"></div><div class="bubble" style="right:10px;bottom:12px">别回头。</div></div>
+          <div class="panel" style="background:linear-gradient(150deg,#c4bba8,#e2dacb)"><div class="ht"></div><div class="speed"></div></div>
+        </div>
+        <div class="r-top">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+          <div class="mid"><div class="tt">墨染之约</div><div class="cc">第 128 话 · 未名之雾</div></div>
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18" r="1.3"/></svg>
+        </div>
+        <div class="r-bot">
+          <div class="slider"><span>12</span><div class="track"><i></i></div><span>34</span></div>
+          <div class="r-tools">
+            <div class="tool on"><svg class="ic sm" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 4v16"/></svg>翻页</div>
+            <div class="tool"><svg class="ic sm" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>条漫</div>
+            <div class="tool"><svg class="ic sm" viewBox="0 0 24 24"><path d="M20 12H8m0 0l4-4m-4 4l4 4"/></svg>方向</div>
+            <div class="tool"><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>亮度</div>
+          </div>
+        </div>
+      </div>
+    </div></div><div class="cap"><b>阅读器</b><span class="tg">沉浸</span></div></div>
+
+  </div>
+
+  <!-- DESKTOP -->
+  <div class="show-h desk-h">
+    <div class="eyebrow">Windows · 桌面(与 Android 同等打磨)</div>
+    <h2>同一识别,桌面上更大气</h2>
+  </div>
+  <div class="desktop" data-theme="dark">
+    <div class="titlebar">
+      <div class="t">Dream<span class="acc">Manga</span>Reader</div>
+      <div class="wc"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></div>
+    </div>
+    <div class="deskbody">
+      <div class="rail">
+        <div class="brandrow">书<span class="acc">库</span></div>
+        <div class="railitem on"><svg viewBox="0 0 24 24"><path d="M4 7h16v13H4zM4 7l3-3h10l3 3M9 11h6"/></svg>书架</div>
+        <div class="railitem"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/></svg>发现</div>
+        <div class="railitem"><svg viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg>下载</div>
+        <div class="railitem"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>源管理</div>
+        <div class="railitem"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 11-4 0v-.1A1.6 1.6 0 006 19.4l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00-1.1-2.7H2a2 2 0 110-4h.1A1.6 1.6 0 003.6 6l-.1-.1A2 2 0 116.3 3.1l.1.1A1.6 1.6 0 009 2.3V2a2 2 0 114 0v.1A1.6 1.6 0 0018 3.6l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 001.1 2.7H22a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>设置</div>
+        <div class="spacer"></div>
+        <div class="railmini"><b>正在下载</b><div style="margin-top:3px">银河剑客 · 第 64 话</div><div class="bar"><i></i></div></div>
+      </div>
+      <div class="main">
+        <div class="kicker">
+          <div class="searchbox"><svg class="ic sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>搜索漫画、作者、标签…</div>
+          <div style="display:flex;align-items:center;gap:14px"><svg class="ic" style="color:var(--mute)" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg><div class="avatar"></div></div>
+        </div>
+        <div class="feature">
+          <div class="fbg" style="background:linear-gradient(105deg,#0E4C5A,#12707F 60%,#1c8fa0)"></div>
+          <div class="fveil"></div>
+          <div class="fin"><div class="fk">继续阅读</div><h3>墨染之约</h3><p>第 96 话 · 已读 62% —— 从上次离开的那一页接着看。</p>
+            <div class="fbtn"><svg class="ic sm fill" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>继续 · 第 96 话</div></div>
+        </div>
+        <div class="rowhead"><h4>我的收藏</h4><span class="more">全部 128 部 ›</span></div>
+        <div class="dgrid">
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#B33A5B,#3A1030)"><span class="badge upd"><i></i></span><div class="ct"><div class="name">银河剑客</div></div></div><div class="dn">银河剑客</div><div class="dm">第 64 话 · 更新</div></div>
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#C9772B,#5A2410)"><div class="ct"><div class="name">雾之国</div></div></div><div class="dn">雾之国</div><div class="dm">第 12 话</div></div>
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#3B3A8F,#171633)"><div class="ct"><div class="name">霓虹默示录</div></div></div><div class="dn">霓虹默示录</div><div class="dm">完结 · 200 话</div></div>
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#146b62,#062c28)"><span class="badge">1</span><div class="ct"><div class="name">青碧之海</div></div></div><div class="dn">青碧之海</div><div class="dm">第 45 话 · 更新</div></div>
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#2E7D5B,#0E2A20)"><div class="ct"><div class="name">山海绘卷</div></div></div><div class="dn">山海绘卷</div><div class="dm">第 88 话</div></div>
+          <div class="dbook"><div class="cover" style="background:linear-gradient(150deg,#6E5A7A,#241E2B)"><div class="ct"><div class="name">千羽之城</div></div></div><div class="dn">千羽之城</div><div class="dm">第 30 话</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="note">
+      <b>三主题</b>由一组 CSS/Flutter token 驱动:OLED(纯黑 #000)/ Dark(深灰 #15181B,略亮护眼)/ Light(浅色 #F5F7F5)。青碧强调在浅色下自动加深(#0E9E8E)以保证对比度。<b>Logo 已全部去除</b>,标识只用文字与青碧强调。<b>字体</b>用 <span class="k">思源黑体 / Noto Sans CJK(SIL OFL,可商用)</span>——本网页受安全策略限制无法加载,中文会回退到系统字体;真机 Flutter 里 bundle 思源黑体后即为它渲染。
+    </div>
+    <div>封面与书名为虚构示意。阅读器为沉浸态,控制层保持深色浮层(压在纸色漫画页上),不随主题变浅。</div>
+  </div>
+
+</div>
