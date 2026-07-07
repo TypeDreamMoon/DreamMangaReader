@@ -50,6 +50,22 @@ class ScriptSource implements MangaSource {
     _sections = _parseSections();
   }
 
+  /// 只解析脚本的 `__source.meta`(不建传输、不联网),用于「添加本地单文件源」时读取
+  /// id/name 等元信息,并顺便验证脚本能被 eval。语法错 / 无 `__source` 会抛异常。
+  static Map<String, dynamic> readMeta(String scriptCode) {
+    final js = JsEngine();
+    HtmlHost(js);
+    LzHost(js);
+    CryptoHost(js);
+    try {
+      js.evalSync(scriptCode);
+      return jsonDecode(js.evalSync('JSON.stringify(__source.meta)'))
+          as Map<String, dynamic>;
+    } finally {
+      js.dispose();
+    }
+  }
+
   /// 从脚本读取 `__source.sections`(可选),供浏览页渲染板块 tab。
   List<SourceSection> _parseSections() {
     final raw = _js.evalSync(

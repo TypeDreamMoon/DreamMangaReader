@@ -8,6 +8,7 @@ import '../net/image_cache.dart' show dirSizeBytes;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../script/script_source.dart' show ScriptSource;
 import 'source_registry.dart';
 
 /// 运行时漫画源仓库。
@@ -47,6 +48,9 @@ class SourceRepository {
   /// 最近一次加载的人类可读状态(设置页展示)。
   String status = '未加载';
 
+  /// 当前 registeredSources 里哪些是「本地单文件源」(用户手动加的),供 UI 标注/移除。
+  Set<String> localIds = {};
+
   Future<Directory> _cacheDir() async {
     final base = await getApplicationSupportDirectory();
     final d = Directory('${base.path}/sources');
@@ -85,38 +89,54 @@ class SourceRepository {
     repoUrl = prefs.getString(_kUrl);
     localDir = prefs.getString(_kLocal);
     token = prefs.getString(_kToken);
+
+    // 1) 仓库源(URL / 本地目录 / 缓存 / 开发目录)。
+    var repo = <SourceMeta>[];
+    var repoStatus = '未配置源仓库';
     try {
       if (repoUrl != null && repoUrl!.trim().isNotEmpty) {
-        await _loadFromUrl(repoUrl!.trim());
-        return;
-      }
-      if (localDir != null && localDir!.trim().isNotEmpty) {
-        await _loadFromDir(Directory(localDir!.trim()), origin: '本地目录');
-        return;
-      }
-      if (await _loadFromCache()) return;
-      // 桌面开发便利:仓库根下 sources_local/(已 gitignore)。
-      if (!Platform.isAndroid && !Platform.isIOS) {
-        final dev = Directory('sources_local');
-        if (await File('${dev.path}/index.json').exists()) {
-          await _loadFromDir(dev, origin: '开发目录');
-          return;
+        repo = await _loadFromUrl(repoUrl!.trim());
+        repoStatus = '已从仓库加载 ${repo.length} 个源';
+      } else if (localDir != null && localDir!.trim().isNotEmpty) {
+        repo = await _loadFromDir(Directory(localDir!.trim()));
+        repoStatus = '已从本地目录加载 ${repo.length} 个源';
+      } else {
+        final cached = await _loadFromCache();
+        if (cached != null) {
+          repo = cached;
+          repoStatus = '已从缓存加载 ${repo.length} 个源';
+        } else if (!Platform.isAndroid && !Platform.isIOS) {
+          // 桌面开发便利:仓库根下 sources_local/(已 gitignore)。
+          final dev = Directory('sources_local');
+          if (await File('${dev.path}/index.json').exists()) {
+            repo = await _loadFromDir(dev);
+            repoStatus = '已从开发目录加载 ${repo.length} 个源';
+          }
         }
       }
-      registeredSources = [];
-      status = '未配置源仓库';
     } catch (e) {
       // 拉取失败:尽量退回缓存,保证离线仍可用。
-      if (await _loadFromCache()) {
-        status = '加载失败,已用缓存(${registeredSources.length} 个源)';
+      final cached = await _loadFromCache();
+      if (cached != null) {
+        repo = cached;
+        repoStatus = '加载失败,已用缓存(${repo.length} 个源)';
       } else {
-        registeredSources = [];
-        status = '加载失败:$e';
+        repoStatus = '加载失败:$e';
       }
     }
+
+    // 2) 本地单文件源(用户手动加的),合并进来;id 与仓库源冲突则以仓库源为准。
+    final local = await _loadLocalSources();
+    final repoIds = repo.map((e) => e.id).toSet();
+    final localKept = local.where((e) => !repoIds.contains(e.id)).toList();
+
+    registeredSources = [...repo, ...localKept];
+    localIds = localKept.map((e) => e.id).toSet();
+    status =
+        localKept.isEmpty ? repoStatus : '$repoStatus · +${localKept.length} 本地源';
   }
 
-  Future<void> _loadFromUrl(String base) async {
+  Future<List<SourceMeta>> _loadFromUrl(String base) async {
     final dio = Dio();
     final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
     final idxText = await _fetch(dio, '$root/index.json');
@@ -129,11 +149,10 @@ class SourceRepository {
       await File('${cache.path}/$scriptFile').writeAsString(scriptText);
       metas.add(SourceMeta.fromJson(e, script: scriptText));
     }
-    registeredSources = metas;
-    status = '已从仓库加载 ${metas.length} 个源';
+    return metas;
   }
 
-  Future<void> _loadFromDir(Directory dir, {required String origin}) async {
+  Future<List<SourceMeta>> _loadFromDir(Directory dir) async {
     final idxText = await File('${dir.path}/index.json').readAsString();
     final metas = <SourceMeta>[];
     for (final e in _entries(idxText)) {
@@ -141,15 +160,14 @@ class SourceRepository {
       final script = await File('${dir.path}/$scriptFile').readAsString();
       metas.add(SourceMeta.fromJson(e, script: script));
     }
-    registeredSources = metas;
-    status = '已从$origin加载 ${metas.length} 个源';
+    return metas;
   }
 
-  Future<bool> _loadFromCache() async {
+  Future<List<SourceMeta>?> _loadFromCache() async {
     final cache = await _cacheDir();
-    if (!await File('${cache.path}/index.json').exists()) return false;
-    await _loadFromDir(cache, origin: '缓存');
-    return registeredSources.isNotEmpty;
+    if (!await File('${cache.path}/index.json').exists()) return null;
+    final list = await _loadFromDir(cache);
+    return list.isEmpty ? null : list;
   }
 
   /// 拉一个文件的文本。
@@ -186,6 +204,80 @@ class SourceRepository {
   List<Map<String, dynamic>> _entries(String jsonText) {
     final m = jsonDecode(jsonText) as Map<String, dynamic>;
     return (m['sources'] as List).cast<Map<String, dynamic>>();
+  }
+
+  // ---- 本地单文件源(用户手动加的单个 .js,不需要整套仓库/清单) ----
+
+  Future<Directory> _localSourcesDir() async {
+    final base = await getApplicationSupportDirectory();
+    final d = Directory('${base.path}/local_sources');
+    if (!await d.exists()) await d.create(recursive: true);
+    return d;
+  }
+
+  Future<List<SourceMeta>> _loadLocalSources() async {
+    try {
+      final dir = await _localSourcesDir();
+      final idx = File('${dir.path}/index.json');
+      if (!await idx.exists()) return [];
+      final metas = <SourceMeta>[];
+      for (final e in _entries(await idx.readAsString())) {
+        final f = File('${dir.path}/${e['script']}');
+        if (!await f.exists()) continue;
+        metas.add(SourceMeta.fromJson(e, script: await f.readAsString()));
+      }
+      return metas;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 加一个本地单文件源(.js)。从脚本 `__source.meta` 读 id/name(脚本还可在 meta 里
+  /// 声明 useWebView / imageReferer / needsLogin);拷进本地源目录并登记,随后重载。
+  /// 返回源展示名;脚本语法错误或缺 id 会抛异常。
+  Future<String> addLocalSource(String jsPath) async {
+    final text = await File(jsPath).readAsString();
+    final meta = ScriptSource.readMeta(text); // eval 脚本,顺便验证语法/结构
+    final id = (meta['id'] as String?)?.trim();
+    if (id == null || id.isEmpty) {
+      throw Exception('脚本的 __source.meta 缺少 id');
+    }
+    final entry = <String, dynamic>{
+      'id': id,
+      'name': (meta['name'] as String?) ?? id,
+      'experimental': (meta['experimental'] as bool?) ?? true,
+      'useWebView': (meta['useWebView'] as bool?) ?? false,
+      'imageReferer': meta['imageReferer'],
+      'needsLogin': (meta['needsLogin'] as bool?) ?? false,
+      'script': '$id.js',
+    };
+    final dir = await _localSourcesDir();
+    await File('${dir.path}/$id.js').writeAsString(text);
+    final idxFile = File('${dir.path}/index.json');
+    final list = await idxFile.exists()
+        ? _entries(await idxFile.readAsString())
+        : <Map<String, dynamic>>[];
+    list.removeWhere((e) => e['id'] == id); // 同 id 覆盖
+    list.add(entry);
+    await idxFile.writeAsString(jsonEncode({'schema': 1, 'sources': list}));
+    await load();
+    return entry['name'] as String;
+  }
+
+  /// 移除一个本地单文件源。
+  Future<void> removeLocalSource(String id) async {
+    try {
+      final dir = await _localSourcesDir();
+      final idxFile = File('${dir.path}/index.json');
+      if (await idxFile.exists()) {
+        final list = _entries(await idxFile.readAsString())
+          ..removeWhere((e) => e['id'] == id);
+        await idxFile.writeAsString(jsonEncode({'schema': 1, 'sources': list}));
+      }
+      final js = File('${dir.path}/$id.js');
+      if (await js.exists()) await js.delete();
+    } catch (_) {}
+    await load();
   }
 
   /// 设置里改仓库 URL 后调用:持久化并重新加载。

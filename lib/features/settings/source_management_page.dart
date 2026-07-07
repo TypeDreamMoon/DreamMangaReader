@@ -73,6 +73,43 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     await _applyRepo(() => _repo.setLocalDir(dir), sc);
   }
 
+  /// 选一个 .js 源脚本,作为「本地单文件源」加进来(与仓库源合并共存)。
+  Future<void> _addLocalSource(SourceController sc) async {
+    final res = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['js'],
+        dialogTitle: '选择一个源脚本(.js)');
+    final path = res?.files.single.path;
+    if (path == null) return;
+    setState(() => _reloading = true);
+    try {
+      final name = await _repo.addLocalSource(path);
+      _revalidate(sc);
+      if (!mounted) return;
+      setState(() => _reloading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已添加本地源:$name'),
+          duration: const Duration(seconds: 2)));
+      _checkAll();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _reloading = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('添加失败:$e')));
+    }
+  }
+
+  Future<void> _removeLocalSource(SourceMeta s, SourceController sc) async {
+    setState(() => _reloading = true);
+    await _repo.removeLocalSource(s.id);
+    _revalidate(sc);
+    if (!mounted) return;
+    setState(() => _reloading = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已移除本地源:${s.name}'),
+        duration: const Duration(seconds: 1)));
+  }
+
   Future<void> _checkAll() async {
     if (_checkingAll) return;
     setState(() {
@@ -379,6 +416,16 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            // 加单个本地源脚本(不需要整套仓库/清单),与仓库源合并共存。
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _reloading ? null : () => _addLocalSource(sc),
+                icon: const Icon(Icons.note_add_rounded, size: 18),
+                label: const Text('添加本地单个源(.js)'),
+              ),
+            ),
           ],
         ),
       );
@@ -416,7 +463,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                         fontSize: 14)),
                 const SizedBox(height: 2),
                 Text(
-                  '${s.experimental ? '实验性 · ' : ''}${_labelOf(r)}',
+                  '${_repo.localIds.contains(s.id) ? '本地 · ' : ''}${s.experimental ? '实验性 · ' : ''}${_labelOf(r)}',
                   style: TextStyle(
                     color: r.status == SourceHealthStatus.fail
                         ? _red
@@ -427,6 +474,15 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               ],
             ),
           ),
+          // 本地单文件源:给个移除入口。
+          if (_repo.localIds.contains(s.id))
+            IconButton(
+              tooltip: '移除本地源',
+              visualDensity: VisualDensity.compact,
+              onPressed: _reloading ? null : () => _removeLocalSource(s, sc),
+              icon: Icon(Icons.delete_outline_rounded,
+                  color: p.textMuted, size: 20),
+            ),
           // 需要账号的源:行内直接放登录入口(已登录=实心账号图标+主题色)。
           if (s.needsLogin)
             IconButton(
