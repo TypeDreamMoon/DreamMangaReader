@@ -4,6 +4,7 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/sync/sync_controller.dart';
+import '../../core/sync/sync_data.dart';
 import '../../ui/ui.dart';
 
 /// 云同步设置页。两种后端可切换:
@@ -187,6 +188,8 @@ class _SyncPageState extends State<SyncPage> {
           const SizedBox(height: 12),
           if (isHertz) _hertzCard(p) else _webdavCard(p),
           const SizedBox(height: 12),
+          _scopeCard(p),
+          const SizedBox(height: 12),
           _autoCard(p),
           const SizedBox(height: 12),
           Row(
@@ -350,6 +353,50 @@ class _SyncPageState extends State<SyncPage> {
       ),
     );
   }
+
+  static const _catLabels = {
+    SyncCategory.favorites: '收藏',
+    SyncCategory.history: '阅读进度',
+    SyncCategory.settings: '阅读设置',
+    SyncCategory.sources: '源开关',
+    SyncCategory.sourceRepo: '源仓库',
+  };
+
+  Widget _scopeCard(AppPalette p) => AppCard(
+        radius: 14,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('同步内容',
+                style: TextStyle(
+                    color: p.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text('只同步勾选的类别;没勾的本地数据既不上传、也不会被远端覆盖。',
+                style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.4)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 2,
+              children: [
+                for (final c in SyncCategory.values)
+                  FilterChip(
+                    label: Text(_catLabels[c]!),
+                    selected: _sync.syncCategories.contains(c),
+                    onSelected: _busy
+                        ? null
+                        : (v) {
+                            _sync.setSyncCategory(c, v);
+                            setState(() {});
+                          },
+                  ),
+              ],
+            ),
+          ],
+        ),
+      );
 
   Widget _autoCard(AppPalette p) => AppCard(
         radius: 14,

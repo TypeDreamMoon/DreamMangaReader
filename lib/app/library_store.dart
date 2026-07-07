@@ -631,17 +631,29 @@ class LibraryStore extends ChangeNotifier {
         'disabledSources': _disabledSources.toList(),
       };
 
-  Future<void> importData(Map<String, dynamic> j) async {
-    _favorites.clear();
-    _history.clear();
-    for (final f in (j['favorites'] as List? ?? const [])) {
-      final e = FavoriteEntry.fromJson((f as Map).cast<String, dynamic>());
-      _favorites[e.key] = e;
+  /// 应用一份(可能是部分的)备份/同步数据。
+  ///
+  /// [replaceFavorites]/[replaceHistory] 为 false 时**跳过**收藏/历史(既不清空也不覆盖),
+  /// 供选择性同步只应用部分类别用。其余设置类键「缺省即保留」(j 里没有就保持当前值)。
+  Future<void> importData(
+    Map<String, dynamic> j, {
+    bool replaceFavorites = true,
+    bool replaceHistory = true,
+  }) async {
+    if (replaceFavorites) {
+      _favorites.clear();
+      for (final f in (j['favorites'] as List? ?? const [])) {
+        final e = FavoriteEntry.fromJson((f as Map).cast<String, dynamic>());
+        _favorites[e.key] = e;
+      }
     }
-    ((j['history'] as Map?) ?? const {}).forEach((k, v) {
-      _history[k as String] =
-          ReadState.fromJson((v as Map).cast<String, dynamic>());
-    });
+    if (replaceHistory) {
+      _history.clear();
+      ((j['history'] as Map?) ?? const {}).forEach((k, v) {
+        _history[k as String] =
+            ReadState.fromJson((v as Map).cast<String, dynamic>());
+      });
+    }
     _readerMode = ReaderMode.values.firstWhere(
         (m) => m.name == j['readerMode'], orElse: () => ReaderMode.paged);
     _gridColumns = (j['gridColumns'] as num?)?.toInt() ?? _gridColumns;
@@ -686,8 +698,8 @@ class LibraryStore extends ChangeNotifier {
         if (id != null) _bangumiBindings[k as String] = id;
       });
     }
-    _persistFavorites();
-    _persistHistoryNow();
+    if (replaceFavorites) _persistFavorites();
+    if (replaceHistory) _persistHistoryNow();
     _prefs?.setString(_kReaderMode, switch (_readerMode) {
       ReaderMode.webtoon => 'webtoon',
       ReaderMode.pagedRtl => 'rtl',

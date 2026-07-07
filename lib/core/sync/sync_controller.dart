@@ -33,6 +33,7 @@ class SyncController extends ChangeNotifier {
   static const _kHIssuer = 'sync.hertz.issuer';
   static const _kHClientId = 'sync.hertz.clientId';
   static const _kHPreset = 'sync.hertz.preset';
+  static const _kCategories = 'sync.categories';
 
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
@@ -57,6 +58,9 @@ class SyncController extends ChangeNotifier {
 
   bool auto = false;
   int lastSyncedAt = 0;
+
+  /// 要同步的内容类别(默认全选)。两个后端共用。
+  Set<SyncCategory> syncCategories = SyncCategory.values.toSet();
 
   bool _syncing = false;
   bool get syncing => _syncing;
@@ -94,6 +98,13 @@ class SyncController extends ChangeNotifier {
     }
     auto = p.getBool(_kAuto) ?? false;
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
+    final cats = p.getStringList(_kCategories);
+    syncCategories = cats == null
+        ? SyncCategory.values.toSet()
+        : {
+            for (final c in SyncCategory.values)
+              if (cats.contains(c.name)) c
+          };
     await IamAuth.instance.load(issuer: hertzIssuer, clientId: hertzClientId);
     notifyListeners();
   }
@@ -108,6 +119,18 @@ class SyncController extends ChangeNotifier {
   Future<void> setAuto(bool v) async {
     auto = v;
     await (await _p).setBool(_kAuto, v);
+    notifyListeners();
+  }
+
+  /// 勾选/取消一个同步内容类别。
+  Future<void> setSyncCategory(SyncCategory c, bool on) async {
+    if (on) {
+      syncCategories.add(c);
+    } else {
+      syncCategories.remove(c);
+    }
+    await (await _p)
+        .setStringList(_kCategories, syncCategories.map((e) => e.name).toList());
     notifyListeners();
   }
 
@@ -174,16 +197,18 @@ class SyncController extends ChangeNotifier {
     if (!configured) {
       throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
     }
+    if (syncCategories.isEmpty) throw Exception('至少选择一项要同步的内容');
     if (_syncing) throw Exception('正在同步中…');
     _syncing = true;
     status = '同步中…';
     notifyListeners();
     try {
+      final sel = syncCategories;
       final backend = _backend();
-      final local = SyncData.build(lib, repo);
+      final local = SyncData.build(lib, repo, categories: sel);
       final remote = await backend.pull();
       var merged = remote == null ? local : SyncData.merge(local, remote);
-      await SyncData.apply(merged, lib, repo);
+      await SyncData.apply(merged, lib, repo, categories: sel);
 
       // 推回;账号后端可能因并发写入抛 SyncConflict → 与服务端最新态重合并后重试。
       var attempt = 0;
@@ -197,7 +222,7 @@ class SyncController extends ChangeNotifier {
           }
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
-            await SyncData.apply(merged, lib, repo);
+            await SyncData.apply(merged, lib, repo, categories: sel);
           }
         }
       }
