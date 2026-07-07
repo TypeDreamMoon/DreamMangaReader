@@ -4,7 +4,7 @@
 # (tag 含 -beta/-rc/-alpha → 自动标记为 prerelease)。也可在 Actions 页手动
 # 运行(workflow_dispatch):填 tag 才发布,留空则只构建产物、不发 Release。
 #
-# 产物:Windows 便携版 zip + Android APK(通用包 + 各架构分包)。
+# 产物:Windows 安装器 setup.exe + 便携版 zip + Android APK(通用包 + 各架构分包)。
 # 说明:APK 用调试签名(android/app/build.gradle 里 release 走 signingConfigs.debug),
 # 可直接安装;若日后要正式签名,加 keystore secrets 再改签名配置即可。
 
@@ -102,25 +102,46 @@ jobs:
       - run: flutter pub get
       - run: flutter build windows --release
 
-      - name: Package Windows portable zip
+      - name: Bundle VC++ runtime + portable zip
         shell: pwsh
         run: |
           $rel = "build/windows/x64/runner/Release"
           if (-not (Test-Path "$rel/dream_manga_reader.exe")) {
             Write-Error "Windows build output not found at $rel"; exit 1
           }
+          # 打进 VC++ 运行时,免得干净机器缺 msvcp140/vcruntime140 起不来。
+          foreach ($d in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
+            $src = Join-Path $env:SystemRoot "System32\$d"
+            if (Test-Path $src) { Copy-Item $src "$rel\" -Force }
+          }
           New-Item -ItemType Directory -Force dist | Out-Null
-          # 打进一个带名字的文件夹,解压后是 DreamMangaReader\ 而不是一堆散文件。
+          # 便携版:解压后是 DreamMangaReader\ 而不是一堆散文件。
           New-Item -ItemType Directory -Force "staging/DreamMangaReader" | Out-Null
           Copy-Item "$rel/*" "staging/DreamMangaReader/" -Recurse -Force
           Compress-Archive -Path "staging/DreamMangaReader" `
             -DestinationPath "dist/DreamMangaReader-windows-x64.zip" -Force
 
-      - name: Upload Windows artifact
+      # 安装器:Inno Setup 编译 setup.exe(带开始菜单/桌面快捷方式 + 卸载器)。
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrEmpty($ver)) { $ver = "${{ github.ref_name }}" }
+          $ver = $ver -replace '^v',''
+          if ([string]::IsNullOrEmpty($ver)) { $ver = "1.0.0-beta.1" }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & "$iscc" "/DMyAppVersion=$ver" "windows\installer\DreamMangaReader.iss"
+          if ($LASTEXITCODE -ne 0) { Write-Error "ISCC failed ($LASTEXITCODE)"; exit 1 }
+          Get-ChildItem dist
+
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-zip
-          path: dist/*.zip
+          name: windows-build
+          path: |
+            dist/*.zip
+            dist/*.exe
           if-no-files-found: error
 
   release:
@@ -160,4 +181,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             artifacts/android-apks/*.apk
-            artifacts/windows-zip/*.zip
+            artifacts/windows-build/*.zip
+            artifacts/windows-build/*.exe

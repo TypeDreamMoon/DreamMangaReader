@@ -49,3 +49,6 @@ test/fixtures/
 
 # 本地漫画源(引擎不内置源;运行时从这里/远端加载 index.json + 脚本)。不进公开仓库。
 sources_local/
+
+# Windows 打包产物(zip / setup.exe)
+/dist/
