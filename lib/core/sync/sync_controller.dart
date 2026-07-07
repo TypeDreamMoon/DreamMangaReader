@@ -32,6 +32,7 @@ class SyncController extends ChangeNotifier {
   static const _kHSyncUrl = 'sync.hertz.syncUrl';
   static const _kHIssuer = 'sync.hertz.issuer';
   static const _kHClientId = 'sync.hertz.clientId';
+  static const _kHPreset = 'sync.hertz.preset';
 
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
@@ -45,6 +46,14 @@ class SyncController extends ChangeNotifier {
   String hertzSyncUrl = '';
   String hertzIssuer = '';
   String hertzClientId = 'dreamreader';
+
+  /// 账号服务预设:'custom'(手填) | 'hertz'(官方 64hz 服务,地址锁定)。
+  String hertzPreset = 'custom';
+
+  /// 官方 Hertz Service 预设值(选中后三项锁定为此)。
+  static const hzPresetSyncUrl = 'https://api.mr.64hz.cn';
+  static const hzPresetIssuer = 'https://account.64hz.cn';
+  static const hzPresetClientId = 'dream_manga_reader';
 
   bool auto = false;
   int lastSyncedAt = 0;
@@ -76,6 +85,13 @@ class SyncController extends ChangeNotifier {
     hertzSyncUrl = p.getString(_kHSyncUrl) ?? '';
     hertzIssuer = p.getString(_kHIssuer) ?? '';
     hertzClientId = p.getString(_kHClientId) ?? 'dreamreader';
+    hertzPreset = p.getString(_kHPreset) ?? 'custom';
+    // 预设为官方服务时地址以常量为准(即便旧值不同或常量随版本更新)。
+    if (hertzPreset == 'hertz') {
+      hertzSyncUrl = hzPresetSyncUrl;
+      hertzIssuer = hzPresetIssuer;
+      hertzClientId = hzPresetClientId;
+    }
     auto = p.getBool(_kAuto) ?? false;
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
     await IamAuth.instance.load(issuer: hertzIssuer, clientId: hertzClientId);
@@ -129,6 +145,22 @@ class SyncController extends ChangeNotifier {
     await p.setString(_kHClientId, hertzClientId);
     IamAuth.instance.configure(issuer: hertzIssuer, clientId: hertzClientId);
     notifyListeners();
+  }
+
+  /// 切换账号服务预设。选官方服务(hertz)时锁定为常量地址并落盘。
+  Future<void> setHertzPreset(String preset) async {
+    if (preset != 'custom' && preset != 'hertz') return;
+    hertzPreset = preset;
+    await (await _p).setString(_kHPreset, preset);
+    if (preset == 'hertz') {
+      await saveHertzConfig(
+        syncUrl: hzPresetSyncUrl,
+        issuer: hzPresetIssuer,
+        clientId: hzPresetClientId,
+      );
+    } else {
+      notifyListeners();
+    }
   }
 
   SyncBackend _backend() => isHertz

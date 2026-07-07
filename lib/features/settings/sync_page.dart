@@ -32,6 +32,7 @@ class _SyncPageState extends State<SyncPage> {
   final _loginPassCtrl = TextEditingController();
 
   late String _kind = _sync.backendKind;
+  late String _preset = _sync.hertzPreset; // 'custom' | 'hertz'
   late bool _auto = _sync.auto;
   bool _busy = false;
   bool _loginBusy = false;
@@ -260,19 +261,56 @@ class _SyncPageState extends State<SyncPage> {
         ),
       );
 
+  void _onPreset(String v) {
+    setState(() {
+      _preset = v;
+      if (v == 'hertz') {
+        _hSyncCtrl.text = SyncController.hzPresetSyncUrl;
+        _hIssuerCtrl.text = SyncController.hzPresetIssuer;
+        _hClientCtrl.text = SyncController.hzPresetClientId;
+      }
+    });
+    _sync.setHertzPreset(v);
+  }
+
   Widget _hertzCard(AppPalette p) {
     final loggedIn = _sync.auth.isLoggedIn;
+    final locked = _preset == 'hertz';
     return AppCard(
       radius: 14,
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _field(p, _hSyncCtrl, '同步服务地址', '如 https://sync.yourhost.com'),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                  value: 'custom',
+                  label: Text('Custom'),
+                  icon: Icon(Icons.tune_rounded, size: 16)),
+              ButtonSegment(
+                  value: 'hertz',
+                  label: Text('Hertz Service'),
+                  icon: Icon(Icons.verified_rounded, size: 16)),
+            ],
+            selected: {_preset},
+            onSelectionChanged:
+                (_busy || _loginBusy) ? null : (s) => _onPreset(s.first),
+          ),
+          const SizedBox(height: 12),
+          _field(p, _hSyncCtrl, '同步服务地址', '如 https://sync.yourhost.com',
+              enabled: !locked),
           const SizedBox(height: 10),
-          _field(p, _hIssuerCtrl, 'IAM 地址', '如 https://iam.yourhost.com'),
+          _field(p, _hIssuerCtrl, 'IAM 地址', '如 https://iam.yourhost.com',
+              enabled: !locked),
           const SizedBox(height: 10),
-          _field(p, _hClientCtrl, 'client_id', '默认 dreamreader'),
+          _field(p, _hClientCtrl, 'client_id', '默认 dreamreader',
+              enabled: !locked),
+          if (locked) ...[
+            const SizedBox(height: 8),
+            Text('已选官方 Hertz Service,地址已锁定。',
+                style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+          ],
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Divider(height: 1, color: p.line),
@@ -344,7 +382,7 @@ class _SyncPageState extends State<SyncPage> {
       );
 
   Widget _field(AppPalette p, TextEditingController c, String label, String hint,
-      {bool obscure = false}) {
+      {bool obscure = false, bool enabled = true}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -356,7 +394,7 @@ class _SyncPageState extends State<SyncPage> {
         const SizedBox(height: 6),
         TextField(
           controller: c,
-          enabled: !_busy,
+          enabled: enabled && !_busy,
           obscureText: obscure,
           style: TextStyle(color: p.textPrimary, fontSize: 13),
           decoration: InputDecoration(
