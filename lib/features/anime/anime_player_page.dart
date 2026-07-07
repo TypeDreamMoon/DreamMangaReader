@@ -10,9 +10,9 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../app/theme/app_colors.dart';
 
-/// 临时播放诊断开关。开着时,播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错),
-/// debug + release 都打(方便真机抓日志)。定位好卡顿问题后置 false / 删掉。
-const bool kAvDiag = true;
+/// 播放诊断开关。开着时播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错)。
+/// 平时关闭(避免刷屏);排查番剧播放问题时置 true 复现即可。
+const bool kAvDiag = false;
 void _av(String m) {
   if (kAvDiag) debugPrint('[AV] $m');
 }
