@@ -47,7 +47,8 @@ dependencies:
   # IAM 账号登录后 access/refresh token 的安全存储(Android Keystore / Windows DPAPI)。
   flutter_secure_storage: ^9.2.4
   # 浏览器 OAuth 登录(授权码 + PKCE):Android Custom Tabs + Windows localhost 回环。
-  flutter_web_auth_2: ^3.1.2
+  # 需 5.x —— 3.x 用了 Flutter 已移除的 v1 embedding(Registrar),在 3.44 上编不过。
+  flutter_web_auth_2: ^5.0.0
   cached_network_image: ^3.4.1
   scrollable_positioned_list: ^0.3.8
   flutter_cache_manager: ^3.4.1
