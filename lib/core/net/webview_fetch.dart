@@ -6,6 +6,45 @@ import 'package:path_provider/path_provider.dart';
 
 import '../source/source.dart';
 
+/// 判断当前 HTML 是否仍是「拦截门页」而非真内容 —— 用于**越门轮询**。
+///
+/// 很多站点(樱花 yhdmp、风车 dm530、CF 挑战…)首帧返回一个短小的门页:
+/// `setTimeout` + `document.cookie` + `window.location` 跳转 / DOM 原地替换,
+/// 真实浏览器几百 ms 后就换成真内容。裸抓 `onLoadStop` 抢在跳转前,只拿到门页。
+/// 门页特征:**短**且含跳转/挑战标记。真内容页通常远大于门页,快速判否、零额外开销。
+bool _looksLikeGate(String html) {
+  if (html.isEmpty) return true;
+  if (html.length > 12000) return false; // 真内容页几乎都远大于门页
+  final low = html.toLowerCase();
+  const markers = [
+    'redirecting', // yhdmp 门页 <title>Redirecting...</title>
+    'just a moment', // CF 挑战
+    'checking your browser', // CF / DDoS 盾
+    'challenge-platform', 'cf-chl', 'jschl', '_cf_chl', // CF 挑战脚本
+    'ddos-guard', 'please wait', 'enable javascript',
+    '正在跳转', '请稍候', '稍等',
+  ];
+  for (final m in markers) {
+    if (low.contains(m)) return true;
+  }
+  return false;
+}
+
+/// 越门:反复取 HTML 直到不再像门页(跳转/替换完成)或到上限。
+/// 非门页首取即返回(与旧行为一致,不拖慢 mhgm/copy 等正常源)。
+Future<String> _grabPastGate(
+  Future<String> Function() grab,
+  Duration settle,
+) async {
+  String html = '';
+  for (var tries = 0; tries < 16; tries++) {
+    await Future<void>.delayed(settle);
+    html = await grab();
+    if (!_looksLikeGate(html)) break; // 真内容,收工
+  }
+  return html; // 到上限仍像门页也返回(交给上层兜底)
+}
+
 /// 通过**隐藏 WebView** 抓取页面 HTML —— 绕过 nginx / anti-bot / Cloudflare 对裸 HTTP 的拦截。
 ///
 /// 背景:部分站点对裸 dio 请求返回 403,但浏览器/WebView 能正常加载。
@@ -40,6 +79,7 @@ class WebViewFetcher {
     final env = await _environment();
     final completer = Completer<String>();
     HeadlessInAppWebView? headless;
+    var started = false; // 门页跳转会二次触发 onLoadStop,只让首帧启动越门轮询
 
     headless = HeadlessInAppWebView(
       webViewEnvironment: env,
@@ -49,30 +89,38 @@ class WebViewFetcher {
         javaScriptEnabled: true,
       ),
       onLoadStop: (controller, u) async {
+        if (started) return;
+        started = true;
         try {
-          await Future<void>.delayed(settle);
-          String html = '';
-          if (raw) {
-            // raw:用页面自身 origin 的 fetch 取“原始 HTML”(含 packer 脚本,不 403)。
-            // 章节页用它(packer 只在原始 HTML 里,JS 跑完就没了)。
-            try {
-              final res = await controller.callAsyncJavaScript(
-                functionBody:
-                    "var r = await fetch(window.location.href, {credentials:'include', headers: h || {}}); return await r.text();",
-                arguments: {'h': headers ?? const <String, String>{}},
-              );
-              html = (res?.value ?? '').toString();
-            } catch (_) {}
-          }
-          // 默认:取 JS 渲染后的 DOM —— 详情页的章节列表、发现页都靠 JS 渲染。
-          if (html.isEmpty) html = await controller.getHtml() ?? '';
+          // 每轮取一次 HTML:raw 走同源 fetch(含 packer 脚本),否则取 JS 渲染后的 DOM。
+          // 轮询直到越过门页(见 [_grabPastGate]):门页跳转/替换后 getHtml 才是真内容。
+          final html = await _grabPastGate(() async {
+            if (raw) {
+              // raw:用页面自身 origin 的 fetch 取“原始 HTML”(含 packer 脚本,不 403)。
+              // 章节页用它(packer 只在原始 HTML 里,JS 跑完就没了)。
+              try {
+                final res = await controller.callAsyncJavaScript(
+                  functionBody:
+                      "var r = await fetch(window.location.href, {credentials:'include', headers: h || {}}); return await r.text();",
+                  arguments: {'h': headers ?? const <String, String>{}},
+                );
+                final s = (res?.value ?? '').toString();
+                if (s.isNotEmpty) return s;
+              } catch (_) {}
+            }
+            // 默认:取 JS 渲染后的 DOM —— 详情页的章节列表、发现页都靠 JS 渲染。
+            return await controller.getHtml() ?? '';
+          }, settle);
           if (!completer.isCompleted) completer.complete(html);
         } catch (e) {
           if (!completer.isCompleted) completer.completeError(e);
         }
       },
+      // 门页跳转(window.location.replace)会中止当前加载 → 触发本回调「connection stopped」。
+      // 只要越门轮询已启动(started),这类中止是**预期**的,忽略即可,让轮询抓跳转后的真页;
+      // 仅在轮询启动前(首帧就失败)才当真报错。
       onReceivedError: (controller, request, error) {
-        if (!completer.isCompleted) {
+        if (!started && !completer.isCompleted) {
           completer.completeError('WebView error: ${error.description}');
         }
       },
@@ -99,6 +147,7 @@ class WebViewFetcher {
     final env = await _environment();
     final completer = Completer<Object?>();
     HeadlessInAppWebView? headless;
+    var started = false; // 门页跳转会二次触发 onLoadStop,只让首帧启动越门轮询
 
     headless = HeadlessInAppWebView(
       webViewEnvironment: env,
@@ -108,8 +157,11 @@ class WebViewFetcher {
         javaScriptEnabled: true,
       ),
       onLoadStop: (controller, u) async {
+        if (started) return;
+        started = true;
         try {
-          await Future<void>.delayed(settle);
+          // 先越门:门页里 pageJs 跑的是门页上下文(拿不到真数据),等换成真内容再执行。
+          await _grabPastGate(() async => await controller.getHtml() ?? '', settle);
           // callAsyncJavaScript 支持 await/Promise(jsSource 是 async 函数体,用 return 返回)。
           final res = await controller.callAsyncJavaScript(functionBody: jsSource);
           final out = res?.value ?? res?.error ?? '(null)';
@@ -118,8 +170,9 @@ class WebViewFetcher {
           if (!completer.isCompleted) completer.completeError(e);
         }
       },
+      // 见 fetchHtml:越门轮询启动后,跳转导致的加载中止是预期的,忽略。
       onReceivedError: (controller, request, error) {
-        if (!completer.isCompleted) {
+        if (!started && !completer.isCompleted) {
           completer.completeError('WebView error: ${error.description}');
         }
       },
