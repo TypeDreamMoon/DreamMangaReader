@@ -284,15 +284,32 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5),
               ),
             ),
-            for (final s in registeredSources)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _row(s, p, store, sc, auth),
-              ),
+            // 漫画源、番剧源分开成两组,别缠在一起。
+            ..._group('漫画源', registeredSources.where((s) => !s.isAnime).toList(),
+                p, store, sc, auth),
+            ..._group('番剧源', registeredSources.where((s) => s.isAnime).toList(),
+                p, store, sc, auth),
           ],
         ],
       ),
     );
+  }
+
+  /// 一组同类源(漫画 / 番剧):标题 + 若干行;组为空则整组不渲染。
+  List<Widget> _group(String title, List<SourceMeta> list, AppPalette p,
+      LibraryStore store, SourceController sc, AuthStore auth) {
+    if (list.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(2, 6, 2, 12),
+        child: AppSectionHeading(title, fontSize: 18),
+      ),
+      for (final s in list)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _row(s, p, store, sc, auth),
+        ),
+    ];
   }
 
   // 源仓库配置:引擎不内置源,从这里填 URL / 选本地目录加载源脚本。
