@@ -25,6 +25,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   final _repo = SourceRepository.instance;
   late final TextEditingController _urlCtrl =
       TextEditingController(text: _repo.repoUrl ?? '');
+  late final TextEditingController _tokenCtrl =
+      TextEditingController(text: _repo.token ?? '');
   bool _reloading = false;
 
   @override
@@ -36,6 +38,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   @override
   void dispose() {
     _urlCtrl.dispose();
+    _tokenCtrl.dispose();
     super.dispose();
   }
 
@@ -322,6 +325,29 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                     borderSide: BorderSide(color: p.accent)),
               ),
             ),
+            const SizedBox(height: 8),
+            // 访问令牌:填了才能拉**私有**源仓库(留空 = 公开地址直接拉)。
+            TextField(
+              controller: _tokenCtrl,
+              enabled: !_reloading,
+              obscureText: true,
+              style: TextStyle(color: p.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '访问令牌(拉私有仓库用,可留空)',
+                hintStyle: TextStyle(color: p.textMuted, fontSize: 12.5),
+                filled: true,
+                fillColor: p.background,
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: p.line)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: p.accent)),
+              ),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -329,8 +355,10 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                   child: FilledButton.icon(
                     onPressed: _reloading
                         ? null
-                        : () => _applyRepo(
-                            () => _repo.setRepoUrl(_urlCtrl.text), sc),
+                        : () => _applyRepo(() async {
+                              await _repo.setToken(_tokenCtrl.text); // 先落盘 token
+                              await _repo.setRepoUrl(_urlCtrl.text); // 再存 URL 并重载
+                            }, sc),
                     icon: _reloading
                         ? const SizedBox(
                             width: 15,

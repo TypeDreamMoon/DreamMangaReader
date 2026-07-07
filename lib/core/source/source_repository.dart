@@ -32,10 +32,15 @@ class SourceRepository {
 
   static const _kUrl = 'sources.repoUrl';
   static const _kLocal = 'sources.localDir';
+  static const _kToken = 'sources.token';
 
   /// 当前配置(设置页读写)。
   String? repoUrl;
   String? localDir;
+
+  /// 可选的访问令牌:填了就能拉**私有**源仓库(GitHub raw 主机不认 PAT,
+  /// 会自动改走 Contents API;其它自建托管则作 Bearer 头)。
+  String? token;
 
   /// 最近一次加载的人类可读状态(设置页展示)。
   String status = '未加载';
@@ -60,6 +65,7 @@ class SourceRepository {
     final prefs = await SharedPreferences.getInstance();
     repoUrl = prefs.getString(_kUrl);
     localDir = prefs.getString(_kLocal);
+    token = prefs.getString(_kToken);
     try {
       if (repoUrl != null && repoUrl!.trim().isNotEmpty) {
         await _loadFromUrl(repoUrl!.trim());
@@ -94,17 +100,15 @@ class SourceRepository {
   Future<void> _loadFromUrl(String base) async {
     final dio = Dio();
     final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
-    final idx = await dio.get<String>('$root/index.json',
-        options: Options(responseType: ResponseType.plain));
+    final idxText = await _fetch(dio, '$root/index.json');
     final cache = await _cacheDir();
-    await File('${cache.path}/index.json').writeAsString(idx.data!);
+    await File('${cache.path}/index.json').writeAsString(idxText);
     final metas = <SourceMeta>[];
-    for (final e in _entries(idx.data!)) {
+    for (final e in _entries(idxText)) {
       final scriptFile = e['script'] as String;
-      final resp = await dio.get<String>('$root/$scriptFile',
-          options: Options(responseType: ResponseType.plain));
-      await File('${cache.path}/$scriptFile').writeAsString(resp.data!);
-      metas.add(SourceMeta.fromJson(e, script: resp.data!));
+      final scriptText = await _fetch(dio, '$root/$scriptFile');
+      await File('${cache.path}/$scriptFile').writeAsString(scriptText);
+      metas.add(SourceMeta.fromJson(e, script: scriptText));
     }
     registeredSources = metas;
     status = '已从仓库加载 ${metas.length} 个源';
@@ -129,6 +133,37 @@ class SourceRepository {
     return registeredSources.isNotEmpty;
   }
 
+  /// 拉一个文件的文本。
+  /// - 没配 token:普通 GET(公开 URL / 自建托管)。
+  /// - 配了 token 且是 GitHub raw 地址:raw.githubusercontent 不认 PAT,自动改走
+  ///   Contents API(`api.github.com/repos/{o}/{r}/contents/{path}?ref={branch}`)+
+  ///   `Accept: application/vnd.github.raw` 拿私有仓库原始内容。
+  /// - 配了 token 但非 GitHub:作 `Authorization: Bearer <token>`(自建带鉴权托管)。
+  Future<String> _fetch(Dio dio, String url) async {
+    final t = token?.trim();
+    final hasToken = t != null && t.isNotEmpty;
+    if (hasToken && url.contains('raw.githubusercontent.com')) {
+      final m = RegExp(r'raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)')
+          .firstMatch(url);
+      if (m != null) {
+        final api =
+            'https://api.github.com/repos/${m[1]}/${m[2]}/contents/${m[4]}?ref=${m[3]}';
+        final r = await dio.get<String>(api,
+            options: Options(responseType: ResponseType.plain, headers: {
+              'Authorization': 'Bearer $t',
+              'Accept': 'application/vnd.github.raw',
+              'X-GitHub-Api-Version': '2022-11-28',
+            }));
+        return r.data!;
+      }
+    }
+    final r = await dio.get<String>(url,
+        options: Options(
+            responseType: ResponseType.plain,
+            headers: hasToken ? {'Authorization': 'Bearer $t'} : null));
+    return r.data!;
+  }
+
   List<Map<String, dynamic>> _entries(String jsonText) {
     final m = jsonDecode(jsonText) as Map<String, dynamic>;
     return (m['sources'] as List).cast<Map<String, dynamic>>();
@@ -145,6 +180,19 @@ class SourceRepository {
       await prefs.remove(_kLocal); // URL 优先,清掉本地目录避免歧义
     }
     await load();
+  }
+
+  /// 持久化访问令牌(拉私有源仓库用)。只落盘不重载——重载由随后的 setRepoUrl 触发,
+  /// 避免用新 token + 旧 URL 多拉一次。
+  Future<void> setToken(String? value) async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = value?.trim();
+    token = (v == null || v.isEmpty) ? null : v;
+    if (token == null) {
+      await prefs.remove(_kToken);
+    } else {
+      await prefs.setString(_kToken, token!);
+    }
   }
 
   /// 设置里选本地目录后调用:持久化并重新加载。
