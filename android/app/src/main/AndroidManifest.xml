@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release 版必须显式声明:Flutter 只给 debug/profile 自动加 INTERNET,
+         release 不加。缺了它 release 版所有网络请求都会 "Failed host lookup … errno 7"。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="Dream Manga Reader"
         android:name="${applicationName}"
