@@ -46,29 +46,36 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void initState() {
     super.initState();
-    _boot();
+    // 关键:_tuneBuffering 不能 gate 住 _load —— setProperty 内部会
+    // `await videoControllerCompleter`,而该 completer 要等 open() 后 VO 就绪才完成;
+    // 若先 await 调优再 open,就成了「调优等 VO、VO 等 open、open 等调优」的死锁 → 永远不播。
+    // 故两者并发:_load 立刻开播,调优在 VO 就绪后自然生效(mpv 支持运行时改预读)。
+    _tuneBuffering();
+    _load();
   }
 
-  Future<void> _boot() async {
-    await _tuneBuffering();
-    await _load();
-  }
-
-  /// 番剧源的 m3u8 分片常仅 2 秒/片;libmpv 默认 `demuxer-readahead-secs` 只有 ~1s,
-  /// 于是「播一片 → 等下一片」= 每 2 秒卡一下。这里放大预读 + 缓存,让它一次预抓多片、
-  /// 平滑网络抖动;换来稍长的首帧缓冲,但播放连贯。Win/Android 同为 libmpv 后端,通用。
+  /// 番剧源的 m3u8 分片常仅 2~6 秒/片;libmpv 默认 `demuxer-readahead-secs` 只有 ~1s,
+  /// 于是「播一片 → 等下一片」= 每几秒卡一下。这里放大预读 + 缓存,让它一次预抓多片、
+  /// 平滑网络抖动。Win/Android 同为 libmpv 后端,通用。**绝不抛/绝不阻塞播放**。
   Future<void> _tuneBuffering() async {
-    final p = _player.platform;
-    if (p is NativePlayer) {
-      await p.setProperty('cache', 'yes');
-      await p.setProperty('cache-secs', '60'); // 缓存已解复用的 60s
-      await p.setProperty('demuxer-readahead-secs', '30'); // 向前预读 30s(≈15 片)
-      await p.setProperty('demuxer-max-bytes', '${64 * 1024 * 1024}');
-      await p.setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
+    try {
+      final p = _player.platform;
+      if (p is! NativePlayer) return;
+      Future<void> set(String k, String v) async {
+        try {
+          await p.setProperty(k, v);
+        } catch (_) {}
+      }
+
+      await set('cache', 'yes');
+      await set('cache-secs', '60'); // 缓存已解复用的 60s
+      await set('demuxer-readahead-secs', '30'); // 向前预读 30s(≈5~15 片)
+      await set('demuxer-max-bytes', '${64 * 1024 * 1024}');
+      await set('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
       // 网络抖动/分片瞬断时自动重连,别直接判死。
-      await p.setProperty('stream-lavf-o',
+      await set('stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=5');
-    }
+    } catch (_) {}
   }
 
   @override
