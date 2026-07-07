@@ -73,26 +73,32 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     await _applyRepo(() => _repo.setLocalDir(dir), sc);
   }
 
-  /// 选一个 .js 源脚本,作为「本地单文件源」加进来(与仓库源合并共存)。
+  /// 导入本地源:单个 `.js` 脚本,或一整套打包的 `.zip`(index.json + 多脚本)。
   Future<void> _addLocalSource(SourceController sc) async {
     final res = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['js'],
-        dialogTitle: '选择一个源脚本(.js)');
+        allowedExtensions: ['js', 'zip'],
+        dialogTitle: '选择源脚本(.js)或源包(.zip)');
     final path = res?.files.single.path;
     if (path == null) return;
     setState(() => _reloading = true);
     try {
-      final name = await _repo.addLocalSource(path);
+      final String msg;
+      if (path.toLowerCase().endsWith('.zip')) {
+        final n = await _repo.addLocalSourceZip(path);
+        msg = '已从 zip 导入 $n 个源';
+      } else {
+        msg = '已添加本地源:${await _repo.addLocalSource(path)}';
+      }
       _revalidate(sc);
       if (!mounted) return;
       setState(() => _reloading = false);
-      showAppNotify(context, '已添加本地源:$name', kind: AppNotifyKind.success);
+      showAppNotify(context, msg, kind: AppNotifyKind.success);
       _checkAll();
     } catch (e) {
       if (!mounted) return;
       setState(() => _reloading = false);
-      showAppNotify(context, '添加失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, '导入失败:$e', kind: AppNotifyKind.error);
     }
   }
 
@@ -418,7 +424,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               child: OutlinedButton.icon(
                 onPressed: _reloading ? null : () => _addLocalSource(sc),
                 icon: const Icon(Icons.note_add_rounded, size: 18),
-                label: const Text('添加本地单个源(.js)'),
+                label: const Text('导入本地源(.js / .zip)'),
               ),
             ),
           ],

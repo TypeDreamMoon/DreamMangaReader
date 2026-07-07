@@ -42,6 +42,7 @@ dependencies:
   lzstring: ^2.0.0+2
   crypto: ^3.0.7
   encrypt: ^5.0.3
+  archive: ^3.6.1 # zip 导入源:解压 index.json + 多脚本
   shared_preferences: ^2.5.5
   cached_network_image: ^3.4.1
   scrollable_positioned_list: ^0.3.8

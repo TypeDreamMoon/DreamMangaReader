@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 
@@ -262,6 +263,62 @@ class SourceRepository {
     await idxFile.writeAsString(jsonEncode({'schema': 1, 'sources': list}));
     await load();
     return entry['name'] as String;
+  }
+
+  /// 从一个 **zip** 导入源(zip 里含 `index.json` + 若干 `.js` 脚本,即一整套源仓库打包)。
+  /// 解压 → 逐条把脚本落进本地源目录(统一命名 `{id}.js` 避免与仓库源重名)、合并进本地清单 → 重载。
+  /// 同 id 覆盖;脚本 eval 失败 / index 里缺脚本的源自动跳过。返回成功导入的源数量。
+  Future<int> addLocalSourceZip(String zipPath) async {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    Map<String, dynamic>? index;
+    final scripts = <String, List<int>>{}; // basename → 内容
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      final base = f.name.split(RegExp(r'[/\\]')).last;
+      if (base.isEmpty) continue;
+      final data = f.content as List<int>;
+      if (base == 'index.json') {
+        index = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+      } else if (base.toLowerCase().endsWith('.js')) {
+        scripts[base] = data;
+      }
+    }
+    if (index == null) throw Exception('zip 里没有 index.json');
+    final entries =
+        (index['sources'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+
+    final dir = await _localSourcesDir();
+    final idxFile = File('${dir.path}/index.json');
+    final list = await idxFile.exists()
+        ? _entries(await idxFile.readAsString())
+        : <Map<String, dynamic>>[];
+
+    var added = 0;
+    for (final e in entries) {
+      final id = (e['id'] as String?)?.trim();
+      final scriptName = (e['script'] as String?)?.split(RegExp(r'[/\\]')).last;
+      if (id == null || id.isEmpty || scriptName == null) continue;
+      final data = scripts[scriptName];
+      if (data == null) continue; // 该源的脚本不在 zip 里
+      final text = utf8.decode(data);
+      try {
+        ScriptSource.readMeta(text); // 验证脚本能 eval,坏的跳过
+      } catch (_) {
+        continue;
+      }
+      await File('${dir.path}/$id.js').writeAsString(text);
+      final entry = Map<String, dynamic>.from(e)..['script'] = '$id.js';
+      list.removeWhere((x) => x['id'] == id); // 同 id 覆盖
+      list.add(entry);
+      added++;
+    }
+    if (added == 0) {
+      throw Exception('zip 里没有可用的源(index.json 与脚本对不上?)');
+    }
+    await idxFile.writeAsString(jsonEncode({'schema': 1, 'sources': list}));
+    await load();
+    return added;
   }
 
   /// 移除一个本地单文件源。
