@@ -628,6 +628,7 @@ class LibraryStore extends ChangeNotifier {
         'detailTintStrength': _detailTintStrength,
         'readerGestures': _readerGestures,
         'bangumiBindings': _bangumiBindings,
+        'disabledSources': _disabledSources.toList(),
       };
 
   Future<void> importData(Map<String, dynamic> j) async {
@@ -670,6 +671,13 @@ class LibraryStore extends ChangeNotifier {
     _detailTintStrength =
         (j['detailTintStrength'] as num?)?.toDouble() ?? _detailTintStrength;
     _readerGestures = j['readerGestures'] as bool? ?? _readerGestures;
+    final disabled = j['disabledSources'] as List?;
+    if (disabled != null) {
+      _disabledSources
+        ..clear()
+        ..addAll(disabled.map((e) => e.toString()));
+      _prefs?.setStringList(_kDisabledSources, _disabledSources.toList());
+    }
     final bgmBind = j['bangumiBindings'] as Map?;
     if (bgmBind != null) {
       _bangumiBindings.clear();

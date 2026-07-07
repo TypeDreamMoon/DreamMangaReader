@@ -21,6 +21,7 @@ import 'about_page.dart';
 import 'font_picker_sheet.dart';
 import 'proxy_settings_page.dart';
 import 'source_management_page.dart';
+import 'sync_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -310,6 +311,10 @@ class SettingsPage extends StatelessWidget {
                     builder: (_) => const SourceManagementPage()))),
             _tile(p, Icons.backup_rounded, '备份与恢复', '导出/导入书架与进度',
                 () => _backup(context, lib)),
+            _tile(p, Icons.cloud_sync_rounded, '云同步 (WebDAV)',
+                '收藏 / 进度 / 设置 / 源 跨设备同步',
+                () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SyncPage()))),
             _tile(p, Icons.cleaning_services_rounded, '清理缓存', '查看占用 · 分类清理',
                 () => _showCacheSheet(context)),
           ]),

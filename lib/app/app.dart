@@ -6,6 +6,8 @@ import 'auth_store.dart';
 import 'download_store.dart';
 import 'library_store.dart';
 import 'source_controller.dart';
+import '../core/source/source_repository.dart';
+import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import '../features/common/app_background.dart';
@@ -34,7 +36,9 @@ class _AppState extends State<App> {
     super.initState();
     _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
     _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
-    _library.load(); // 异步读存档,完成后 notify,依赖它的页面自动刷新
+    // 书架读档完成后,若开了自动同步则后台合并一次(此时源仓已在 main 里 load 好)。
+    _library.load().then((_) => SyncController.instance
+        .autoSyncOnStart(_library, SourceRepository.instance));
     _downloads.load();
     _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
   }

@@ -7,6 +7,7 @@ import 'app/app.dart';
 import 'core/net/app_proxy.dart';
 import 'core/platform/system_fonts.dart';
 import 'core/source/source_repository.dart';
+import 'core/sync/sync_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +24,8 @@ void main() async {
   await AppProxy.init();
   // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;未配置则为空)。
   await SourceRepository.instance.load();
+  // 云同步配置(WebDAV 地址/账密/自动开关)读回;自动同步在书架读档后触发(见 App.initState)。
+  await SyncController.instance.load();
   // 桌面:预热系统字体列表(GDI 枚举,~几十毫秒;非 Windows 立即返回)。
   await SystemFonts.ensureLoaded();
   runApp(const App());
