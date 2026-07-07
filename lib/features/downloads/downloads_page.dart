@@ -4,6 +4,7 @@ import '../../app/download_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
 import '../library/manga_cover.dart';
@@ -71,56 +72,50 @@ class DownloadsPage extends StatelessWidget {
     final tag = meta == null ? null : 'dl:${meta.id}:${manga.id}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
+      child: AppCard(
+        radius: 12,
+        padding: const EdgeInsets.all(10),
         onTap: meta == null
             ? null
             : () => Navigator.of(context).push(appRoute(
                 DetailPage(manga: manga, meta: meta, heroTag: tag))),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: p.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: p.line),
-          ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 52,
-                child: MangaCover(
-                  manga: manga,
-                  headers: meta != null ? imageHeadersOf(meta) : const {},
-                  radius: 8,
-                  heroTag: tag,
-                ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 52,
+              child: MangaCover(
+                manga: manga,
+                headers: meta != null ? imageHeadersOf(meta) : const {},
+                radius: 8,
+                heroTag: tag,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(first.mangaTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13.5)),
-                    const SizedBox(height: 3),
-                    Text(
-                        '${meta?.name ?? first.sourceId} · ${chapters.length} 话已下载',
-                        style: TextStyle(color: p.textMuted, fontSize: 11.5)),
-                  ],
-                ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(first.mangaTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5)),
+                  const SizedBox(height: 3),
+                  Text(
+                      '${meta?.name ?? first.sourceId} · ${chapters.length} 话已下载',
+                      style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+                ],
               ),
-              IconButton(
-                tooltip: '删除',
-                onPressed: () =>
-                    _confirmDelete(context, dl, first, chapters.length),
-                icon: Icon(Icons.delete_outline_rounded, color: p.textMuted, size: 20),
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              tooltip: '删除',
+              onPressed: () =>
+                  _confirmDelete(context, dl, first, chapters.length),
+              icon: Icon(Icons.delete_outline_rounded, color: p.textMuted, size: 20),
+            ),
+          ],
         ),
       ),
     );
@@ -146,24 +141,14 @@ class DownloadsPage extends StatelessWidget {
     if (ok == true) await dl.deleteManga(m.sourceId, m.mangaId);
   }
 
-  Widget _empty(AppPalette p, DownloadStore dl) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.download_rounded, size: 48, color: p.textMuted),
-            const SizedBox(height: 12),
-            Text('还没有下载',
-                style: TextStyle(
-                    color: p.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text(
-                dl.activeCount > 0
-                    ? '正在下载 ${dl.activeCount} 话…'
-                    : '在漫画详情页点章节右侧的下载图标',
-                style: TextStyle(color: p.textMuted, fontSize: 12)),
-          ],
-        ),
+  Widget _empty(AppPalette p, DownloadStore dl) => EmptyState(
+        icon: Icons.download_rounded,
+        iconSize: 48,
+        title: '还没有下载',
+        titleSize: 16,
+        dense: true,
+        message: dl.activeCount > 0
+            ? '正在下载 ${dl.activeCount} 话…'
+            : '在漫画详情页点章节右侧的下载图标',
       );
 }

@@ -9,6 +9,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/source_health.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_repository.dart';
+import '../../ui/ui.dart';
 import 'source_login_page.dart';
 
 /// 源管理:启用/禁用漫画源(至少保留一个)+ 每个源的**可用性状态点**。
@@ -172,19 +173,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
         child: CircularProgressIndicator(strokeWidth: 2, color: p.accent),
       );
     } else {
-      final c = _colorOf(r.status, p);
-      inner = Container(
-        width: 13,
-        height: 13,
-        decoration: BoxDecoration(
-          color: c,
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-                color: c.withValues(alpha: 0.55), blurRadius: 6, spreadRadius: 1),
-          ],
-        ),
-      );
+      inner = AppStatusDot(color: _colorOf(r.status, p), size: 13, glow: true);
     }
     if (!LibraryStore.animationsEnabled) return inner;
     // 结果点从转圈里带 easeOutBack 回弹弹入,读起来「有定论」。
@@ -314,13 +303,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   }
 
   // 源仓库配置:引擎不内置源,从这里填 URL / 选本地目录加载源脚本。
-  Widget _repoCard(AppPalette p, SourceController sc) => Container(
+  Widget _repoCard(AppPalette p, SourceController sc) => AppCard(
+        radius: 14,
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: p.line),
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -434,13 +419,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       SourceController sc, AuthStore auth) {
     final r = _health[s.id] ?? SourceHealthResult.unknown;
     final enabled = store.isSourceEnabled(s.id);
-    return Container(
+    return AppCard(
+      radius: 14,
       padding: const EdgeInsets.fromLTRB(6, 6, 12, 6),
-      decoration: BoxDecoration(
-        color: p.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.line),
-      ),
       child: Row(
         children: [
           // 状态点(可点 → 日志),留足点击热区

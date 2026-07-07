@@ -4,6 +4,7 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../detail/detail_page.dart';
 import 'manga_cover.dart';
 
@@ -39,9 +40,7 @@ class HistoryPage extends StatelessWidget {
         ],
       ),
       body: history.isEmpty
-          ? Center(
-              child: Text('还没有阅读记录',
-                  style: TextStyle(color: p.textMuted, fontSize: 13)))
+          ? const EmptyState(title: '还没有阅读记录')
           : ListView.builder(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
               itemCount: history.length,
@@ -58,21 +57,16 @@ class HistoryPage extends StatelessWidget {
         h.lastTotal > 0 ? '${h.lastPage + 1}/${h.lastTotal} 页' : '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
+      child: AppCard(
+        radius: 12,
+        padding: const EdgeInsets.all(10),
         onTap: meta == null
             ? null
             : () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => DetailPage(manga: manga, meta: meta))),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: p.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: p.line),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
               SizedBox(
                 width: 46,
                 height: 61, // 显式高度(46×4/3),否则 AspectRatio 撑高整行
@@ -103,13 +97,12 @@ class HistoryPage extends StatelessWidget {
                   ],
                 ),
               ),
-              IconButton(
-                tooltip: '移除',
-                onPressed: () => store.removeHistory(h.sourceId, h.mangaId),
-                icon: Icon(Icons.close_rounded, size: 18, color: p.textMuted),
-              ),
-            ],
-          ),
+            IconButton(
+              tooltip: '移除',
+              onPressed: () => store.removeHistory(h.sourceId, h.mangaId),
+              icon: Icon(Icons.close_rounded, size: 18, color: p.textMuted),
+            ),
+          ],
         ),
       ),
     );
