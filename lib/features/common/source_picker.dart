@@ -61,11 +61,13 @@ Future<String?> showSourcePicker(
   required String currentId,
   bool includeMixed = false,
   String mixedId = '__all__',
+  String kind = 'manga', // 只列该内容类型的源(漫画/番剧分开选)
 }) {
   final store = LibraryScope.read(context);
   final sources = [
     for (final s in registeredSources)
-      if (store.isSourceEnabled(s.id) || s.id == currentId) s,
+      if (s.kind == kind && (store.isSourceEnabled(s.id) || s.id == currentId))
+        s,
   ];
   // 外壳(毛玻璃/圆角/拖拽条/SafeArea/标题「选择漫画源」)统一走 showAppSheet(glass);
   // 源数量少(≤ 全部启用源),随内容自适应即可,无需固定限高。

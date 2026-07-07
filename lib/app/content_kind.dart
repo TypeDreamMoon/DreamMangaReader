@@ -4,7 +4,7 @@ import 'package:flutter/material.dart' show IconData, Icons;
 /// 发现页顶部据此切换;不可用的类型点开显示「即将推出」。
 enum ContentKind {
   manga('漫画', Icons.menu_book_rounded, true),
-  anime('番剧', Icons.movie_rounded, false),
+  anime('番剧', Icons.movie_rounded, true),
   novel('小说', Icons.auto_stories_rounded, false);
 
   const ContentKind(this.label, this.icon, this.available);

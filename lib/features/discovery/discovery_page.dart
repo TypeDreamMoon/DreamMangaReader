@@ -8,6 +8,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
+import '../anime/anime_browser.dart';
 import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
@@ -291,7 +292,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       : const SizedBox(width: double.infinity),
             ),
             Expanded(child: _grid(p, columns)),
-          ] else
+          ] else if (_kind == ContentKind.anime)
+            const Expanded(child: AnimeBrowser())
+          else
             Expanded(child: _comingSoon(p, _kind)),
         ],
           ),
