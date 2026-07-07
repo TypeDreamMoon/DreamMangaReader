@@ -502,7 +502,7 @@ class SettingsPage extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
-              child: _label(p, label),
+              child: AppSectionHeading(label),
             ),
             // 分组卡片(共享 AppCard)。条目左右留白由各行自带的 contentPadding 给;
             // 相邻条目补 6px 竖向间距。
@@ -521,48 +521,6 @@ class SettingsPage extends StatelessWidget {
             ),
           ],
         ),
-      );
-
-  Widget _label(AppPalette p, String text) => Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // 朱印意象:accent 渐变小竖条,当分组标记。
-          Container(
-            width: 3.5,
-            height: 15,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [p.accent, p.accent.withValues(alpha: 0.45)],
-              ),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 9),
-          Text(
-            text,
-            style: TextStyle(
-              color: p.textPrimary,
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.5,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(width: 12),
-          // 尾部渐隐细线,给分组收个尾。
-          Expanded(
-            child: Container(
-              height: 1,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [p.line, p.line.withValues(alpha: 0)],
-                ),
-              ),
-            ),
-          ),
-        ],
       );
 
   // 可点条目行(复用 AppListRow;onTap 非空自动补右箭头)。

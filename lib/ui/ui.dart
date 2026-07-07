@@ -11,6 +11,7 @@ export 'app_list_row.dart';
 export 'app_notify.dart';
 export 'app_pill.dart';
 export 'app_scroll_view.dart';
+export 'app_section_heading.dart';
 export 'app_section_label.dart';
 export 'app_slider_row.dart';
 export 'app_status_dot.dart';
