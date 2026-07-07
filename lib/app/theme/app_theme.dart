@@ -103,6 +103,11 @@ ThemeData buildTheme(AppThemeVariant variant,
         TextButtonThemeData(style: TextButton.styleFrom(shape: shape)),
     // 统一控件圆角:M3 组件跟随主题 shape 即可,不用逐个改。
     cardTheme: CardThemeData(shape: shape),
+    // 拖动时的数值气泡画在根 Overlay 里,不吃桌面 UiScale 的 FittedBox 缩放 → 会错位飘走。
+    // 各滑块本就在右侧显示数值,气泡多余,全局关掉。
+    sliderTheme: const SliderThemeData(
+      showValueIndicator: ShowValueIndicator.never,
+    ),
     listTileTheme: ListTileThemeData(
       // 带描边的统一圆角:设置里的卡片式 ListTile 直接继承,不用各自写 shape。
       shape: RoundedRectangleBorder(
