@@ -15,6 +15,7 @@ import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
 import '../../core/update/update_service.dart';
+import '../../ui/ui.dart';
 import '../common/smooth_scroll.dart';
 import 'about_page.dart';
 import 'font_picker_sheet.dart';
@@ -497,56 +498,31 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  // 复用 lib/ui 的 AppSliderRow(设置页/阅读设置共用同一形状)。
   Widget _sliderRow(AppPalette p, IconData icon, String label, double value,
-      double min, double max, int div, ValueChanged<double> onChanged,
-      {bool pct = false}) {
-    String fmt(double v) => pct ? '${(v * 100).round()}%' : v.round().toString();
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: p.accent),
-        const SizedBox(width: 8),
-        Text(label,
-            style: TextStyle(
-                color: p.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600)),
-        Expanded(
-          child: Slider(
-            value: value.clamp(min, max),
-            min: min,
-            max: max,
-            divisions: div,
-            label: fmt(value),
-            onChanged: onChanged,
-          ),
-        ),
-        SizedBox(
-          width: 40,
-          child: Text(fmt(value),
-              textAlign: TextAlign.end,
-              style: TextStyle(color: p.textMuted, fontSize: 13)),
-        ),
-      ],
-    );
-  }
+          double min, double max, int div, ValueChanged<double> onChanged,
+          {bool pct = false}) =>
+      AppSliderRow(
+        icon: icon,
+        label: label,
+        value: value,
+        min: min,
+        max: max,
+        divisions: div,
+        onChanged: onChanged,
+        pct: pct,
+      );
 
-  // 分组卡里用的扁平开关(卡片本身已提供 surface,行不再自带底色)。
+  // 分组卡里用的扁平开关(复用 AppSwitchRow;卡片已提供 surface)。
   Widget _switch(AppPalette p, IconData icon, String title, String? sub,
           bool value, ValueChanged<bool> onChanged) =>
-      SwitchListTile(
-        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
-        tileColor: Colors.transparent,
-        secondary: Icon(icon, color: p.accent, size: 18),
-        title: Text(title,
-            style: TextStyle(
-                color: p.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 14)),
-        subtitle: sub == null
-            ? null
-            : Text(sub, style: TextStyle(color: p.textMuted, fontSize: 12)),
+      AppSwitchRow(
+        icon: icon,
+        title: title,
+        subtitle: sub,
         value: value,
         onChanged: onChanged,
+        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
       );
 
   /// 一个设置分类:小标题 + 圆角卡片容器(把该类所有控件裹在一起)。
@@ -561,40 +537,19 @@ class SettingsPage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
               child: _label(p, label),
             ),
-            // 用 Material(而非纯 DecoratedBox)当卡片:里面的 ListTile 才有地方画
-            // 底色/水波纹(否则 Flutter 警告 ink 被 DecoratedBox 盖住)。
-            SizedBox(
+            // 分组卡片(共享 AppCard)。条目左右留白由各行自带的 contentPadding 给;
+            // 相邻条目补 6px 竖向间距。
+            AppCard(
               width: double.infinity,
-              child: Material(
-                color: p.surface,
-                clipBehavior: Clip.antiAlias,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(context.radius + 2),
-                  side: BorderSide(color: p.line),
-                ),
-                child: Padding(
-                  // 左右都留呼吸,图标/文字与开关/箭头都不贴卡片内缘。所有行(开关/条目/
-                  // 滑块)统一由这一处内边距控制,图标列始终对齐。
-                  padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
-                  // 卡内 ListTile/SwitchListTile 默认前导宽 + 间隙很大,导致图标/文字
-                  // 和滑块行(自定义 Row)左缘对不齐、看着乱。统一成紧凑前导:图标与
-                  // 滑块行图标同一列(卡片内缘留白由外层 Padding 统一给)。
-                  child: ListTileTheme.merge(
-                    contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
-                    minLeadingWidth: 0,
-                    horizontalTitleGap: 10,
-                    // 相邻条目之间补竖向间距,别挤成一坨。
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        for (var i = 0; i < children.length; i++) ...[
-                          if (i > 0) const SizedBox(height: 6),
-                          children[i],
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < children.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 6),
+                    children[i],
+                  ],
+                ],
               ),
             ),
           ],
@@ -643,23 +598,16 @@ class SettingsPage extends StatelessWidget {
         ],
       );
 
+  // 可点条目行(复用 AppListRow;onTap 非空自动补右箭头)。
   Widget _tile(AppPalette p, IconData icon, String title, String? subtitle,
           VoidCallback onTap) =>
-      ListTile(
-        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
-        tileColor: Colors.transparent,
-        leading: Icon(icon, color: p.accent, size: 18),
-        title: Text(title,
-            style: TextStyle(
-                color: p.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 14)),
-        subtitle: subtitle == null
-            ? null
-            : Text(subtitle,
-                style: TextStyle(color: p.textMuted, fontSize: 12)),
-        trailing: Icon(Icons.chevron_right_rounded, color: p.textMuted),
+      AppListRow(
+        icon: icon,
+        title: title,
+        subtitle: subtitle,
+        subtitleMaxLines: 1,
         onTap: onTap,
+        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
       );
 
   Future<void> _showCacheSheet(BuildContext context) => showModalBottomSheet<void>(
