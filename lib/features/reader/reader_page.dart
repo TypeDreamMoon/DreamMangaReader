@@ -932,6 +932,7 @@ class _ReaderPageState extends State<ReaderPage> {
         TextStyle label(Color c) =>
             TextStyle(color: c, fontSize: 12);
         return Column(
+          spacing: 5,
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -982,7 +983,6 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitle: '翻页模式下并排显示两页',
               value: _dual,
               onChanged: _isPaged ? (v) => apply(() => _setDual(v)) : null,
-              contentPadding: const EdgeInsets.symmetric(vertical: 2),
               dense: true,
               titleSize: 13.5,
               titleWeight: FontWeight.w600,
@@ -995,7 +995,6 @@ class _ReaderPageState extends State<ReaderPage> {
                 setState(() => _dtZoom = v);
                 _store?.doubleTapZoom = v;
               }),
-              contentPadding: const EdgeInsets.symmetric(vertical: 2),
               dense: true,
               titleSize: 13.5,
               titleWeight: FontWeight.w600,
@@ -1007,7 +1006,6 @@ class _ReaderPageState extends State<ReaderPage> {
                 setState(() => _showPageNum = v);
                 _store?.showPageNumber = v;
               }),
-              contentPadding: const EdgeInsets.symmetric(vertical: 2),
               dense: true,
               titleSize: 13.5,
               titleWeight: FontWeight.w600,
@@ -1017,7 +1015,6 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitle: '屏幕左/右侧点击翻页,中间切控制条',
               value: _store?.readerGestures ?? true,
               onChanged: (v) => apply(() => _store?.readerGestures = v),
-              contentPadding: const EdgeInsets.symmetric(vertical: 2),
               dense: true,
               titleSize: 13.5,
               titleWeight: FontWeight.w600,

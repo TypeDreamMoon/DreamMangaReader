@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import '../../app/library_store.dart';
+import '../app/library_store.dart';
 
 /// 桌面鼠标滚轮**平滑滚动**:把一格一跳的滚轮改成动画滚到目标位。
 ///

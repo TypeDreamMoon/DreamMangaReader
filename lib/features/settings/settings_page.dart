@@ -16,7 +16,6 @@ import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
-import '../common/smooth_scroll.dart';
 import 'about_page.dart';
 import 'font_picker_sheet.dart';
 import 'proxy_settings_page.dart';

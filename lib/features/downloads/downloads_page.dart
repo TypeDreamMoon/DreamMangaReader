@@ -37,7 +37,7 @@ class DownloadsPage extends StatelessWidget {
       ),
       body: keys.isEmpty
           ? _empty(p, dl)
-          : ListView(
+          : AppScrollView(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
               children: [
                 if (dl.activeCount > 0)

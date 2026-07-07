@@ -105,7 +105,7 @@ class AppSwitchRow extends StatelessWidget {
     this.subtitle,
     required this.value,
     required this.onChanged,
-    this.contentPadding = EdgeInsets.zero,
+    this.contentPadding = const EdgeInsets.fromLTRB(25, 5, 25, 5),
     this.dense = false,
     this.titleSize = 14,
     this.titleWeight = FontWeight.w700,
