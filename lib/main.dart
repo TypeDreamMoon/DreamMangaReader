@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'app/app.dart';
 import 'core/net/app_proxy.dart';
@@ -9,6 +10,8 @@ import 'core/source/source_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 番剧播放器后端(libmpv)初始化;必须在 runApp 前。
+  MediaKit.ensureInitialized();
   // 漫画整页解码后很大(单页常 6~14MB);默认 100MB 图片缓存装不下「预载几页 + 在建几页」。
   // 桌面内存宽裕给 256MB;手机内存有限,256MB 会造成内存压力 / GC 卡顿 / 甚至 OOM,
   // 降到 128MB(仍够容纳预载几页 + 封面)。
