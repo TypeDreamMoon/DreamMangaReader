@@ -2,7 +2,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
-import '../../app/theme/app_colors.dart';
+import '../app/theme/app_colors.dart';
 
 /// 毛玻璃表面。`ClipRRect → BackdropFilter(模糊身后内容) → 半透明填充`。
 ///

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme/app_colors.dart';
+import 'glass.dart';
 
 /// 统一底部弹层外壳:圆角顶 + SafeArea + 内边距 + 标题行(+可选拖拽条/关闭/尾部文字)。
 ///
@@ -18,17 +19,18 @@ Future<T?> showAppSheet<T>(
   double topRadius = 18,
   double? heightFactor,
   bool resizeForKeyboard = false,
+  bool glass = false,
   EdgeInsets bodyPadding = const EdgeInsets.fromLTRB(18, 12, 18, 8),
   required Widget Function(BuildContext ctx, StateSetter setSheet) body,
 }) {
   final p = context.palette;
+  final topR = BorderRadius.vertical(top: Radius.circular(topRadius));
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: p.surface,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(topRadius)),
-    ),
+    // 玻璃态:填充交给 GlassSurface(毛玻璃),弹层本身透明。
+    backgroundColor: glass ? Colors.transparent : p.surface,
+    shape: RoundedRectangleBorder(borderRadius: topR),
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setSheet) {
         final pp = ctx.palette;
@@ -96,6 +98,14 @@ Future<T?> showAppSheet<T>(
           sheet = Padding(
             padding:
                 EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: sheet,
+          );
+        }
+        if (glass) {
+          sheet = GlassSurface(
+            borderRadius: topR,
+            blur: 24,
+            border: Border.all(color: pp.line),
             child: sheet,
           );
         }

@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import 'animations.dart';
-import 'glass.dart';
 
 /// 触发源选择弹层的胶囊按钮(书架/发现共用)。
 class SourcePickerPill extends StatelessWidget {
@@ -67,76 +67,37 @@ Future<String?> showSourcePicker(
     for (final s in registeredSources)
       if (store.isSourceEnabled(s.id) || s.id == currentId) s,
   ];
-  return showModalBottomSheet<String>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (ctx) {
-      final p = ctx.palette;
-      return GlassSurface(
-        borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(22)),
-        blur: 24,
-        border: Border.all(color: p.line),
-        child: Container(
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.72),
-          child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: p.line, borderRadius: BorderRadius.circular(2)),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.dashboard_rounded, size: 18, color: p.accent),
-                    const SizedBox(width: 8),
-                    Text('选择漫画源',
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16)),
-                  ],
-                ),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  // 左 8 + 卡片内 12 = 20,与标题行左缘对齐;底部留够、不贴弹层边。
-                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
-                  children: [
-                    if (includeMixed)
-                      _SourceRow(
-                        glyph: '混',
-                        name: '混合 · 全部源',
-                        subtitle: '同时搜索 / 浏览所有启用的源',
-                        selected: currentId == mixedId,
-                        onTap: () => Navigator.pop(ctx, mixedId),
-                      ),
-                    for (final s in sources)
-                      _SourceRow(
-                        glyph: s.name.characters.first,
-                        name: s.name,
-                        subtitle: s.experimental ? '实验性' : null,
-                        selected: currentId == s.id,
-                        onTap: () => Navigator.pop(ctx, s.id),
-                      ),
-                  ],
-                ),
-              ),
-            ],
+  // 外壳(毛玻璃/圆角/拖拽条/SafeArea/标题「选择漫画源」)统一走 showAppSheet(glass);
+  // 源数量少(≤ 全部启用源),随内容自适应即可,无需固定限高。
+  return showAppSheet<String>(
+    context,
+    title: '选择漫画源',
+    titleIcon: Icons.dashboard_rounded,
+    showDragHandle: true,
+    glass: true,
+    topRadius: 22,
+    bodyPadding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
+    body: (ctx, setSheet) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (includeMixed)
+          _SourceRow(
+            glyph: '混',
+            name: '混合 · 全部源',
+            subtitle: '同时搜索 / 浏览所有启用的源',
+            selected: currentId == mixedId,
+            onTap: () => Navigator.pop(ctx, mixedId),
           ),
-        ),
-      ));
-    },
+        for (final s in sources)
+          _SourceRow(
+            glyph: s.name.characters.first,
+            name: s.name,
+            subtitle: s.experimental ? '实验性' : null,
+            selected: currentId == s.id,
+            onTap: () => Navigator.pop(ctx, s.id),
+          ),
+      ],
+    ),
   );
 }
 

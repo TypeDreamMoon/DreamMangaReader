@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/update/update_service.dart';
-import '../common/glass.dart';
+import '../../ui/glass.dart';
 import '../discovery/discovery_page.dart';
 import '../downloads/downloads_page.dart';
 import '../library/library_page.dart';

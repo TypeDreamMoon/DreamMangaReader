@@ -71,9 +71,7 @@ class _SplashGateState extends State<SplashGate>
                             opacity: seal.clamp(0.0, 1.0),
                             child: Transform.scale(
                               scale: 0.72 + 0.28 * seal,
-                              child: Transform.rotate(
-                                  angle: -0.05 * (1 - seal),
-                                  child: const AppLogo(size: 120, radius: 26)),
+                              child: const AppLogo(size: 120),
                             ),
                           ),
                           const SizedBox(height: 24),
