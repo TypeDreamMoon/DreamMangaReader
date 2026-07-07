@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+
+import '../net/image_cache.dart' show dirSizeBytes;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,6 +52,23 @@ class SourceRepository {
     final d = Directory('${base.path}/sources');
     if (!await d.exists()) await d.create(recursive: true);
     return d;
+  }
+
+  /// 源缓存(清单 + 脚本)占用的磁盘字节数。
+  Future<int> cacheSizeBytes() async {
+    try {
+      return await dirSizeBytes(await _cacheDir());
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 清掉源缓存(下次启动/刷新会重新拉取)。内存里已加载的源不受影响。
+  Future<void> clearCache() async {
+    try {
+      final d = await _cacheDir();
+      if (await d.exists()) await d.delete(recursive: true);
+    } catch (_) {}
   }
 
   /// 启动时调用(在 runApp 之前)。任何异常都回退到缓存 / 空,绝不让启动崩。

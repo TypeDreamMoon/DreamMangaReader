@@ -2,12 +2,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/auth_store.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/source_health.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_repository.dart';
+import 'source_login_page.dart';
 
 /// 源管理:启用/禁用漫画源(至少保留一个)+ 每个源的**可用性状态点**。
 /// 打开即联网自检各源(getDiscovery);点圆点看检测日志。禁用的源不在书架源切换器里出现。
@@ -222,6 +224,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     final p = context.palette;
     final store = LibraryScope.of(context);
     final sc = SourceScope.of(context);
+    final auth = AuthScope.of(context); // 依赖:登录/登出后行内登录按钮自动刷新
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
@@ -265,7 +268,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
             for (final s in registeredSources)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: _row(s, p, store, sc),
+                child: _row(s, p, store, sc, auth),
               ),
           ],
         ],
@@ -380,7 +383,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
         ),
       );
 
-  Widget _row(SourceMeta s, AppPalette p, LibraryStore store, SourceController sc) {
+  Widget _row(SourceMeta s, AppPalette p, LibraryStore store,
+      SourceController sc, AuthStore auth) {
     final r = _health[s.id] ?? SourceHealthResult.unknown;
     final enabled = store.isSourceEnabled(s.id);
     return Container(
@@ -423,6 +427,23 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               ],
             ),
           ),
+          // 需要账号的源:行内直接放登录入口(已登录=实心账号图标+主题色)。
+          if (s.needsLogin)
+            IconButton(
+              tooltip: auth.isLoggedIn(s.id)
+                  ? '已登录:${auth.nicknameOf(s.id) ?? auth.usernameOf(s.id) ?? ''}'
+                  : '登录 ${s.name}',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => SourceLoginPage(meta: s))),
+              icon: Icon(
+                auth.isLoggedIn(s.id)
+                    ? Icons.account_circle_rounded
+                    : Icons.login_rounded,
+                color: auth.isLoggedIn(s.id) ? p.accent : p.textMuted,
+                size: 20,
+              ),
+            ),
           Switch(
             value: enabled,
             onChanged: (v) {

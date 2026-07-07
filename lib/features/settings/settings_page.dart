@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/app_info.dart';
-import '../../app/auth_store.dart';
 import '../../app/backup.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
@@ -13,12 +12,11 @@ import '../../app/theme/app_theme.dart';
 import '../../app/theme/theme_controller.dart';
 import '../../core/net/app_proxy.dart';
 import '../../core/net/image_cache.dart';
+import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
 import '../../core/update/update_service.dart';
 import '../common/smooth_scroll.dart';
 import 'about_page.dart';
-import '../../core/source/source_registry.dart';
-import 'source_login_page.dart';
 import 'font_picker_sheet.dart';
 import 'proxy_settings_page.dart';
 import 'source_management_page.dart';
@@ -31,7 +29,6 @@ class SettingsPage extends StatelessWidget {
     final p = context.palette;
     final theme = ThemeScope.of(context);
     final lib = LibraryScope.of(context);
-    final auth = AuthScope.of(context);
     const desktop = {
       TargetPlatform.windows,
       TargetPlatform.linux,
@@ -322,28 +319,10 @@ class SettingsPage extends StatelessWidget {
                 '启用/禁用漫画源',
                 () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const SourceManagementPage()))),
-            // 需要账号的源(needsLogin)各出一个账号入口;不需登录的源不显示。
-            for (final m in registeredSources.where((s) => s.needsLogin))
-              _tile(
-                  p,
-                  Icons.account_circle_rounded,
-                  '${m.name} 账号',
-                  auth.isLoggedIn(m.id)
-                      ? '已登录:${auth.nicknameOf(m.id) ?? auth.usernameOf(m.id) ?? ''} · 走账号 API'
-                      : '登录后 ${m.name} 走账号 API(更快、少限流)',
-                  () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => SourceLoginPage(meta: m)))),
             _tile(p, Icons.backup_rounded, '备份与恢复', '导出/导入书架与进度',
                 () => _backup(context, lib)),
-            _tile(p, Icons.cleaning_services_rounded, '清理缓存', '清空已缓存的封面与章节图',
-                () async {
-              await clearImageCache();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已清理图片缓存')),
-                );
-              }
-            }),
+            _tile(p, Icons.cleaning_services_rounded, '清理缓存', '查看占用 · 分类清理',
+                () => _showCacheSheet(context)),
           ]),
           _group(context, p, '更新', [
             _switch(p, Icons.system_update_rounded, '自动检查更新', '启动时后台检查有无新版本',
@@ -648,5 +627,145 @@ class SettingsPage extends StatelessWidget {
                 style: TextStyle(color: p.textMuted, fontSize: 12)),
         trailing: Icon(Icons.chevron_right_rounded, color: p.textMuted),
         onTap: onTap,
+      );
+
+  Future<void> _showCacheSheet(BuildContext context) => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: context.palette.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (_) => const _CacheSheet(),
+      );
+}
+
+/// 缓存清理弹层:分别展示图片缓存 / 源缓存占用,可各自清理。
+class _CacheSheet extends StatefulWidget {
+  const _CacheSheet();
+
+  @override
+  State<_CacheSheet> createState() => _CacheSheetState();
+}
+
+class _CacheSheetState extends State<_CacheSheet> {
+  int? _imgBytes;
+  int? _srcBytes;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final img = await imageCacheSizeBytes();
+    final src = await SourceRepository.instance.cacheSizeBytes();
+    if (mounted) {
+      setState(() {
+        _imgBytes = img;
+        _srcBytes = src;
+      });
+    }
+  }
+
+  static String _fmt(int? b) {
+    if (b == null) return '…';
+    if (b < 1024) return '$b B';
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
+    if (b < 1024 * 1024 * 1024) {
+      return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  Future<void> _clear(Future<void> Function() op, String done) async {
+    setState(() => _busy = true);
+    await op();
+    await _refresh();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(done), duration: const Duration(seconds: 1)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('清理缓存',
+                style: TextStyle(
+                    color: p.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text('只清缓存,不动已下载章节与书架数据。',
+                style: TextStyle(color: p.textMuted, fontSize: 12)),
+            const SizedBox(height: 14),
+            _cacheRow(p, Icons.image_rounded, '图片缓存', '封面 / 章节图',
+                _fmt(_imgBytes),
+                _busy ? null : () => _clear(clearImageCache, '已清理图片缓存')),
+            const SizedBox(height: 8),
+            _cacheRow(p, Icons.dataset_rounded, '源缓存', '清单 / 脚本 · 清后自动重拉',
+                _fmt(_srcBytes),
+                _busy
+                    ? null
+                    : () => _clear(SourceRepository.instance.clearCache,
+                        '已清理源缓存')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cacheRow(AppPalette p, IconData icon, String title, String sub,
+          String size, VoidCallback? onClear) =>
+      Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+        decoration: BoxDecoration(
+          color: p.background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: p.line),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: p.accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(title,
+                          style: TextStyle(
+                              color: p.textPrimary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14)),
+                      const SizedBox(width: 8),
+                      Text(size,
+                          style: TextStyle(
+                              color: p.accent,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+                ],
+              ),
+            ),
+            TextButton(onPressed: onClear, child: const Text('清理')),
+          ],
+        ),
       );
 }

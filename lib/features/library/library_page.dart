@@ -451,16 +451,16 @@ class _LibraryPageState extends State<LibraryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Flexible(
-                        child: MangaCover(
-                          manga: m,
-                          sourceLabel: meta.name,
-                          headers: imageHeadersOf(meta),
-                          updated: m.status == MangaStatus.ongoing,
-                          aspect: aspectForId(m.id),
-                          heroTag: tag,
-                          onTap: () => _openManga(m, meta, heroTag: tag),
-                        ),
+                      // 瀑布流 tile 高度由内容决定(无界主轴)→ 不能用 Flexible。
+                      // MangaCover 自带 AspectRatio,直接放,高度自然算出。
+                      MangaCover(
+                        manga: m,
+                        sourceLabel: meta.name,
+                        headers: imageHeadersOf(meta),
+                        updated: m.status == MangaStatus.ongoing,
+                        aspect: aspectForId(m.id),
+                        heroTag: tag,
+                        onTap: () => _openManga(m, meta, heroTag: tag),
                       ),
                       const SizedBox(height: 6),
                       Text(m.title,

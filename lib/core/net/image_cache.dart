@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// 全 App 共用的图片磁盘缓存管理器(封面 + 章节页共用)。
 ///
@@ -21,3 +24,29 @@ const String _cacheKey = 'dmr_images';
 
 /// 清空图片磁盘缓存(设置页「清理缓存」用)。
 Future<void> clearImageCache() => appImageCache.emptyCache();
+
+/// 图片缓存(封面 + 章节图)占用的磁盘字节数。取不到则 0。
+Future<int> imageCacheSizeBytes() async {
+  try {
+    final tmp = await getTemporaryDirectory();
+    return dirSizeBytes(Directory('${tmp.path}/$_cacheKey'));
+  } catch (_) {
+    return 0;
+  }
+}
+
+/// 递归统计目录字节数(缓存大小展示共用)。
+Future<int> dirSizeBytes(Directory d) async {
+  if (!await d.exists()) return 0;
+  var total = 0;
+  try {
+    await for (final e in d.list(recursive: true, followLinks: false)) {
+      if (e is File) {
+        try {
+          total += await e.length();
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return total;
+}
