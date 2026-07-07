@@ -1,8 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/auth_store.dart';
+import '../../core/net/github_oauth.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
@@ -99,6 +101,41 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       if (!mounted) return;
       setState(() => _reloading = false);
       showAppNotify(context, '导入失败:$e', kind: AppNotifyKind.error);
+    }
+  }
+
+  /// 用 GitHub 设备码流登录换取访问令牌,自动填入令牌框并用当前仓库地址重载。
+  Future<void> _githubLogin(SourceController sc) async {
+    if (!GithubOAuth.configured) {
+      showAppNotify(context,
+          'GitHub 登录需先配置 OAuth Client ID(见 github_oauth.dart 注释),或继续用手动令牌',
+          kind: AppNotifyKind.warn, duration: const Duration(seconds: 5));
+      return;
+    }
+    setState(() => _reloading = true);
+    GithubDeviceCode dc;
+    try {
+      dc = await GithubOAuth.startDeviceFlow();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _reloading = false);
+      showAppNotify(context, 'GitHub 登录发起失败:$e', kind: AppNotifyKind.error);
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _reloading = false);
+    // 弹框:展示 user_code + 打开授权页,后台轮询;成功 pop 出 token。
+    final token = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _GithubDeviceDialog(dc),
+    );
+    if (token != null && token.isNotEmpty && mounted) {
+      _tokenCtrl.text = token;
+      await _applyRepo(() async {
+        await _repo.setToken(token);
+        await _repo.setRepoUrl(_urlCtrl.text);
+      }, sc);
     }
   }
 
@@ -389,7 +426,22 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                     borderSide: BorderSide(color: p.accent)),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 4),
+            // 用 GitHub 登录换取令牌(设备码流),免手动粘贴 PAT。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _reloading ? null : () => _githubLogin(sc),
+                icon: const Icon(Icons.login_rounded, size: 16),
+                label: const Text('用 GitHub 登录(拉私有仓库,免粘贴令牌)',
+                    style: TextStyle(fontSize: 12.5)),
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(0, 32)),
+              ),
+            ),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
@@ -514,6 +566,108 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// GitHub 设备码授权弹框:展示验证码 + 打开授权页,后台轮询;授权成功自动 pop 出 access_token。
+class _GithubDeviceDialog extends StatefulWidget {
+  const _GithubDeviceDialog(this.dc);
+  final GithubDeviceCode dc;
+
+  @override
+  State<_GithubDeviceDialog> createState() => _GithubDeviceDialogState();
+}
+
+class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
+  bool _cancelled = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _poll();
+  }
+
+  Future<void> _poll() async {
+    try {
+      final token =
+          await GithubOAuth.pollForToken(widget.dc, cancelled: () => _cancelled);
+      if (mounted) Navigator.of(context).pop(token);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return AlertDialog(
+      backgroundColor: p.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text('用 GitHub 登录',
+          style: TextStyle(
+              color: p.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('1. 复制下面的验证码:',
+              style: TextStyle(color: p.textMuted, fontSize: 13)),
+          const SizedBox(height: 8),
+          Center(
+            child: SelectableText(widget.dc.userCode,
+                style: TextStyle(
+                    color: p.accent,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 4,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+          ),
+          const SizedBox(height: 12),
+          Text('2. 打开授权页,粘贴验证码并授权:',
+              style: TextStyle(color: p.textMuted, fontSize: 13)),
+          const SizedBox(height: 8),
+          Center(
+            child: FilledButton.icon(
+              onPressed: () => launchUrl(Uri.parse(widget.dc.verificationUri),
+                  mode: LaunchMode.externalApplication),
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              label: const Text('打开 GitHub 授权页'),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_error != null)
+            Text(_error!,
+                style: const TextStyle(color: Color(0xFFE5534B), fontSize: 12.5))
+          else
+            Row(children: [
+              SizedBox(
+                  width: 14,
+                  height: 14,
+                  child:
+                      CircularProgressIndicator(strokeWidth: 2, color: p.accent)),
+              const SizedBox(width: 8),
+              Text('等待授权…', style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+            ]),
+        ],
+      ),
+      actions: [
+        if (_error != null)
+          TextButton(
+              onPressed: () {
+                setState(() => _error = null);
+                _poll();
+              },
+              child: const Text('重试')),
+        TextButton(
+          onPressed: () {
+            _cancelled = true;
+            Navigator.of(context).pop();
+          },
+          child: const Text('取消'),
+        ),
+      ],
     );
   }
 }
