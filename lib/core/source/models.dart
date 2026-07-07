@@ -69,6 +69,22 @@ class PageImage {
   });
 }
 
+/// 番剧一集的一个可播放视频源(不同清晰度 / 线路)。宿主把 [url] 交给播放器,
+/// [headers] 带上防盗链的 Referer/UA;[quality] 是给用户看的清晰度/线路标签。
+class VideoTrack {
+  final String url;
+  final String quality; // 如 "1080p" / "线路1" / "Default"
+  final Map<String, String>? headers;
+  final bool hls; // true = m3u8(HLS 流);false = 直链(mp4 等)
+
+  const VideoTrack({
+    required this.url,
+    this.quality = '',
+    this.headers,
+    this.hls = false,
+  });
+}
+
 /// 分页结果(对应参考项目 handle* 的 canLoadMore / nextPage)。
 class Paged<T> {
   final List<T> items;

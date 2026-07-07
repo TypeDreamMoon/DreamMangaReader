@@ -81,6 +81,10 @@ class _FakeSource implements MangaSource {
       pages;
 
   @override
+  Future<List<VideoTrack>> getVideo(String animeId, String episodeId) async =>
+      const [];
+
+  @override
   Future<Paged<Chapter>> getChapters(String mangaId, {int? page}) async =>
       const Paged([]);
   @override

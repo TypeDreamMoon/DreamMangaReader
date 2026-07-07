@@ -81,6 +81,12 @@ abstract class MangaSource {
   Future<Paged<Chapter>> getChapters(String mangaId, {int? page});
   Future<List<PageImage>> getPages(String mangaId, String chapterId);
 
+  /// 番剧一集的可播放视频源(清晰度 / 线路列表)。仅番剧源(meta.kind='anime')实现,
+  /// 默认不支持。参数复用漫画契约:animeId 即 mangaId、episodeId 即 chapterId
+  /// (番剧沿用 discovery/search/detail/chapters,仅把 getPages 换成本方法)。
+  Future<List<VideoTrack>> getVideo(String animeId, String episodeId) async =>
+      throw UnsupportedError('该源不支持视频播放');
+
   /// 源自带登录(可选)。默认不支持;需要账号的源在脚本里实现 prepareLogin/handleLogin,
   /// 用账号密码换回 token。登录协议(host/端点/编码)全在源脚本里,引擎不感知具体站点。
   Future<SourceLogin> login(String username, String password) async =>

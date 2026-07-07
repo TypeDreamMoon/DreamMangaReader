@@ -82,6 +82,10 @@ class HelloSource implements MangaSource {
       ];
 
   @override
+  Future<List<VideoTrack>> getVideo(String animeId, String episodeId) async =>
+      throw UnsupportedError('演示源不支持视频播放');
+
+  @override
   Future<SourceLogin> login(String username, String password) async =>
       throw UnsupportedError('演示源不支持登录');
 

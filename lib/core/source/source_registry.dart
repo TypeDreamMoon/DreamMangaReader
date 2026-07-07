@@ -21,6 +21,7 @@ class SourceMeta {
     required this.id,
     required this.name,
     required this.script,
+    this.kind = 'manga', // 'manga' | 'anime' —— 决定按内容类型归入书架/发现哪一档
     this.experimental = false,
     this.useWebView = false, // 站点拦裸 HTTP 时走隐藏 WebView 抓取
     this.imageReferer, // 图片(封面/页面)加载所需的 Referer
@@ -33,6 +34,7 @@ class SourceMeta {
         id: j['id'] as String,
         name: (j['name'] as String?) ?? j['id'] as String,
         script: script,
+        kind: (j['kind'] as String?) ?? 'manga',
         experimental: (j['experimental'] as bool?) ?? false,
         useWebView: (j['useWebView'] as bool?) ?? false,
         imageReferer: j['imageReferer'] as String?,
@@ -42,6 +44,11 @@ class SourceMeta {
   final String id;
   final String name;
   final String script;
+
+  /// 内容类型:'manga'(默认)或 'anime'(番剧)。
+  final String kind;
+  bool get isAnime => kind == 'anime';
+
   final bool experimental;
   final bool useWebView;
   final String? imageReferer;

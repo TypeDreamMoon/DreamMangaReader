@@ -108,6 +108,10 @@ class _FakeSource implements MangaSource {
       byChapter[chapterId] ?? const [];
 
   @override
+  Future<List<VideoTrack>> getVideo(String animeId, String episodeId) async =>
+      const [];
+
+  @override
   String get id => 'fake';
   @override
   String get name => 'Fake';

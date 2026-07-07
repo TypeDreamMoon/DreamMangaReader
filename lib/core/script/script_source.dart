@@ -229,6 +229,24 @@ class ScriptSource implements MangaSource {
       );
 
   @override
+  Future<List<VideoTrack>> getVideo(String animeId, String episodeId) => _run(
+        'prepareVideo',
+        [animeId, episodeId],
+        'handleVideo',
+        (j) => [
+          for (final m in (j as List).cast<Map<String, dynamic>>())
+            VideoTrack(
+              url: m['url'] as String,
+              quality: (m['quality'] as String?) ?? '',
+              headers: (m['headers'] as Map?)?.map(
+                  (k, v) => MapEntry(k.toString(), v.toString())),
+              hls: (m['hls'] as bool?) ??
+                  (m['url'] as String).contains('.m3u8'),
+            ),
+        ],
+      );
+
+  @override
   Future<SourceLogin> login(String username, String password) async {
     final has = _js.evalSync("typeof __source.prepareLogin === 'function'");
     if (has != 'true') throw UnsupportedError('该源不支持登录');
