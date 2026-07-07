@@ -1,21 +1,28 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
-/// hertz-iam 账号登录客户端(直连授权 / Resource Owner Password Credentials）。
+/// 桌面(Windows/Linux)OAuth 回调的固定本机端口。IAM 需注册
+/// `http://localhost:$kDesktopRedirectPort/` 为 redirect_uri。
+const int kDesktopRedirectPort = 8765;
+
+/// hertz-iam 账号登录客户端(浏览器 OAuth 授权码 + PKCE)。
 ///
 /// 用途:让 App 用 IAM 账号登录,拿到 access/refresh token,给 [HertzAccountBackend]
 /// 调 `dreamreader-sync` 用。IAM 只管认证,数据存在自建的 dreamreader-sync。
 ///
-/// token 端点:`POST {issuer}/realms/user/token`(form-urlencoded)
-///   - grant_type=password:client_id/username/password/device_id
-///   - grant_type=refresh_token:client_id/refresh_token
-/// 响应:{ access_token, token_type:"Bearer", expires_in(秒), refresh_token }
+/// 登录:[loginBrowser] 打开系统浏览器授权 → 回调取 code → `POST {issuer}/realms/user/token`
+/// (grant_type=authorization_code + code_verifier)换 token;之后用 refresh_token 续期。
+/// 响应:{ access_token, token_type:"Bearer", expires_in(秒), refresh_token }。
 ///
-/// 【前置】IAM 里要把 client(默认 `dreamreader`)注册为允许 password + refresh_token
-/// 授权的 consumer,否则 password 登录会被拒(ErrGrantNotAllowed)。
+/// 【前置】IAM 里 client(默认 `dreamreader`)需为 public、允许 authorization_code +
+/// refresh_token、开 PKCE,并注册对应 redirect_uri(见 [loginBrowser])。
 ///
 /// token 存 [FlutterSecureStorage](Android Keystore / Windows DPAPI),不落明文 prefs。
 class IamAuth {
@@ -34,7 +41,6 @@ class IamAuth {
   String? _refreshToken;
   int _expiresAtMs = 0;
   String? _username;
-  String? _deviceId;
 
   bool get isLoggedIn => (_refreshToken?.isNotEmpty ?? false);
   String? get username => _username;
@@ -43,20 +49,14 @@ class IamAuth {
   static const _kRefresh = 'iam.refresh';
   static const _kExpiresAt = 'iam.expiresAt';
   static const _kUsername = 'iam.username';
-  static const _kDeviceId = 'iam.deviceId';
 
-  /// 读回持久化的 token 与配置;首次生成稳定 device_id。
+  /// 读回持久化的 token 与配置。
   Future<void> load({required String issuer, required String clientId}) async {
     configure(issuer: issuer, clientId: clientId);
     _accessToken = await _storage.read(key: _kAccess);
     _refreshToken = await _storage.read(key: _kRefresh);
     _expiresAtMs = int.tryParse(await _storage.read(key: _kExpiresAt) ?? '') ?? 0;
     _username = await _storage.read(key: _kUsername);
-    _deviceId = await _storage.read(key: _kDeviceId);
-    if (_deviceId == null || _deviceId!.isEmpty) {
-      _deviceId = _genDeviceId();
-      await _storage.write(key: _kDeviceId, value: _deviceId);
-    }
   }
 
   /// 只更新 issuer/clientId(用户在设置里改了地址时)。
@@ -75,38 +75,75 @@ class IamAuth {
         validateStatus: (s) => s != null && s < 500,
       ));
 
-  /// 用户名 + 密码登录。
-  Future<void> loginPassword(String username, String password) async {
+  /// 浏览器 OAuth 登录(授权码 + PKCE)。
+  ///
+  /// 打开系统浏览器到 IAM 授权页,用户在浏览器里登录/授权 → IAM 回调到本机
+  /// redirect_uri(Android 自定义 scheme;Windows/Linux localhost 回环)→ 取 code →
+  /// 用 code_verifier 换 token。密码全程不经过 App。
+  ///
+  /// 【前置】IAM 里 client 需为 public、允许 authorization_code(+refresh_token)、开 PKCE,
+  /// 并注册下列 redirect_uri:
+  ///   - Android:`dreammangareader://auth`
+  ///   - Windows/Linux:`http://localhost:$kDesktopRedirectPort/`
+  Future<void> loginBrowser() async {
     _requireConfig();
+    final verifier = _randomUrlSafe(64);
+    final challenge = _s256(verifier);
+    final state = _randomUrlSafe(24);
+    final (callbackScheme, redirectUri) = _redirect();
+
+    final authUrl = Uri.parse('$issuer/realms/user/authorize').replace(
+      queryParameters: {
+        'response_type': 'code',
+        'client_id': clientId,
+        'redirect_uri': redirectUri,
+        'code_challenge': challenge,
+        'code_challenge_method': 'S256',
+        'state': state,
+        'scope': 'openid',
+      },
+    ).toString();
+
+    final result = await FlutterWebAuth2.authenticate(
+      url: authUrl,
+      callbackUrlScheme: callbackScheme,
+    );
+
+    final res = Uri.parse(result);
+    final err = res.queryParameters['error'];
+    if (err != null) {
+      throw Exception('授权被拒绝:${res.queryParameters['error_description'] ?? err}');
+    }
+    if (res.queryParameters['state'] != state) {
+      throw Exception('state 不匹配,已中止(可能被劫持)');
+    }
+    final code = res.queryParameters['code'];
+    if (code == null || code.isEmpty) throw Exception('未拿到授权码');
+
     final r = await _dio().post<Map<String, dynamic>>(
       _tokenUrl,
       data: {
-        'grant_type': 'password',
+        'grant_type': 'authorization_code',
         'client_id': clientId,
-        'username': username.trim(),
-        'password': password,
-        'device_id': _deviceId,
+        'code': code,
+        'redirect_uri': redirectUri,
+        'code_verifier': verifier,
       },
       options: Options(contentType: Headers.formUrlEncodedContentType),
     );
-    await _consumeToken(r, fallbackUsername: username.trim());
+    await _consumeToken(r);
   }
 
-  /// 邮箱验证码登录(需先由 IAM 发码;当前 UI 未接,保留给后续)。
-  Future<void> loginEmailCode(String email, String code) async {
-    _requireConfig();
-    final r = await _dio().post<Map<String, dynamic>>(
-      _tokenUrl,
-      data: {
-        'grant_type': 'email_code',
-        'client_id': clientId,
-        'email': email.trim(),
-        'verification_code': code.trim(),
-        'device_id': _deviceId,
-      },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
-    );
-    await _consumeToken(r, fallbackUsername: email.trim());
+  /// 按平台给出 (callbackUrlScheme, redirect_uri)。桌面用 localhost 回环(flutter_web_auth_2
+  /// 限制回调必须是 http://localhost:{port});移动端用自定义 scheme。
+  (String, String) _redirect() {
+    if (Platform.isWindows || Platform.isLinux) {
+      return (
+        'http://localhost:$kDesktopRedirectPort',
+        'http://localhost:$kDesktopRedirectPort/',
+      );
+    }
+    return ('dreammangareader', 'dreammangareader://auth');
   }
 
   /// 返回一个有效的 access token;过期(留 30s 余量)则用 refresh 换新;
@@ -207,13 +244,17 @@ class IamAuth {
     return s;
   }
 
-  String _genDeviceId() {
-    // 稳定设备标识,仅供 IAM 区分设备会话,不需强随机。
-    final r = Random();
-    final hex = List<int>.generate(8, (_) => r.nextInt(256))
-        .map((x) => x.toRadixString(16).padLeft(2, '0'))
-        .join();
-    return 'dmr-$hex';
+  /// URL-safe 随机串(用于 PKCE code_verifier 与 state),强随机。
+  static String _randomUrlSafe(int bytes) {
+    final r = Random.secure();
+    final b = List<int>.generate(bytes, (_) => r.nextInt(256));
+    return base64Url.encode(b).replaceAll('=', '');
+  }
+
+  /// PKCE S256:base64url(sha256(verifier)),去掉 padding。
+  static String _s256(String verifier) {
+    final digest = sha256.convert(ascii.encode(verifier));
+    return base64Url.encode(digest.bytes).replaceAll('=', '');
   }
 
   static String _statusMsg(int s) {

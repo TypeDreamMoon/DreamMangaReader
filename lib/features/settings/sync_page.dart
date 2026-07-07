@@ -28,8 +28,6 @@ class _SyncPageState extends State<SyncPage> {
   late final _hSyncCtrl = TextEditingController(text: _sync.hertzSyncUrl);
   late final _hIssuerCtrl = TextEditingController(text: _sync.hertzIssuer);
   late final _hClientCtrl = TextEditingController(text: _sync.hertzClientId);
-  late final _loginUserCtrl = TextEditingController();
-  final _loginPassCtrl = TextEditingController();
 
   late String _kind = _sync.backendKind;
   late String _preset = _sync.hertzPreset; // 'custom' | 'hertz'
@@ -46,8 +44,6 @@ class _SyncPageState extends State<SyncPage> {
     _hSyncCtrl.dispose();
     _hIssuerCtrl.dispose();
     _hClientCtrl.dispose();
-    _loginUserCtrl.dispose();
-    _loginPassCtrl.dispose();
     super.dispose();
   }
 
@@ -80,11 +76,10 @@ class _SyncPageState extends State<SyncPage> {
       clientId: _hClientCtrl.text,
     );
     try {
-      await _sync.auth.loginPassword(_loginUserCtrl.text, _loginPassCtrl.text);
-      _loginPassCtrl.clear();
+      await _sync.auth.loginBrowser();
       if (!mounted) return;
       setState(() => _loginBusy = false);
-      showAppNotify(context, '登录成功:${_sync.auth.username ?? _loginUserCtrl.text}',
+      showAppNotify(context, '登录成功:${_sync.auth.username ?? '账号'}',
           kind: AppNotifyKind.success);
     } catch (e) {
       if (!mounted) return;
@@ -334,9 +329,8 @@ class _SyncPageState extends State<SyncPage> {
               ],
             )
           else ...[
-            _field(p, _loginUserCtrl, '用户名', '账号 / 用户名'),
-            const SizedBox(height: 10),
-            _field(p, _loginPassCtrl, '密码', '登录密码', obscure: true),
+            Text('用系统浏览器打开 IAM 登录页,授权后自动返回 App(密码不经过 App)。',
+                style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -347,8 +341,8 @@ class _SyncPageState extends State<SyncPage> {
                         width: 15,
                         height: 15,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.login_rounded, size: 18),
-                label: const Text('登录'),
+                    : const Icon(Icons.open_in_browser_rounded, size: 18),
+                label: const Text('浏览器登录'),
               ),
             ),
           ],

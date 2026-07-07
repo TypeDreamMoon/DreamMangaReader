@@ -46,6 +46,8 @@ dependencies:
   shared_preferences: ^2.5.5
   # IAM 账号登录后 access/refresh token 的安全存储(Android Keystore / Windows DPAPI)。
   flutter_secure_storage: ^9.2.4
+  # 浏览器 OAuth 登录(授权码 + PKCE):Android Custom Tabs + Windows localhost 回环。
+  flutter_web_auth_2: ^3.1.2
   cached_network_image: ^3.4.1
   scrollable_positioned_list: ^0.3.8
   flutter_cache_manager: ^3.4.1

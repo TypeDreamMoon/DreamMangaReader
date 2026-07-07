@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   media_kit_video
   url_launcher_windows
   volume_controller
+  window_to_front
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
