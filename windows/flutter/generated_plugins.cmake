@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_webview_window
   flutter_inappwebview_windows
   flutter_js
   flutter_secure_storage_windows
