@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
+import 'sync_backend.dart';
+
 /// WebDAV 同步后端:把同步 blob 存成远端一个 JSON 文件(`DreamMangaReader/sync.json`)。
 /// 只用到 WebDAV 的 MKCOL(建目录)+ PUT(写)+ GET(读),Basic 认证。兼容 坚果云/Nextcloud/
 /// Apache mod_dav 等。走 App 已注入的全局代理(dio 跟随 HttpOverrides)。
-class WebDavBackend {
+class WebDavBackend implements SyncBackend {
   WebDavBackend({
     required String baseUrl,
     required this.username,
@@ -45,6 +47,7 @@ class WebDavBackend {
   }
 
   /// 测试连通 + 认证:MKCOL 同步目录。201=新建、405/301=已存在 → 都算通;401/403=认证/权限错。
+  @override
   Future<(bool, String)> test() async {
     try {
       final dio = _client();
@@ -62,6 +65,7 @@ class WebDavBackend {
   }
 
   /// 拉远端 blob;还没同步过(404 / 空)返回 null。
+  @override
   Future<Map<String, dynamic>?> pull() async {
     final dio = _client();
     final r = await dio.get<String>(_fileUrl,
@@ -74,6 +78,7 @@ class WebDavBackend {
   }
 
   /// 推 blob 到远端(覆盖)。
+  @override
   Future<void> push(Map<String, dynamic> blob) async {
     final dio = _client();
     await _ensureDir(dio);

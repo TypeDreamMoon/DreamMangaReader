@@ -6,7 +6,9 @@ import '../../core/source/source_repository.dart';
 import '../../core/sync/sync_controller.dart';
 import '../../ui/ui.dart';
 
-/// 云同步设置页(WebDAV)。配 地址/账密 → 测试 → 一键同步 / 自动同步。
+/// 云同步设置页。两种后端可切换:
+///   - WebDAV:配 地址/账密。
+///   - 账号:登录 IAM 账号,数据存自建 dreamreader-sync(ETag 乐观并发)。
 /// 同步范围:收藏、阅读进度、阅读设置、源开关、源仓库配置。不含每源登录 token 与下载文件。
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -17,11 +19,22 @@ class SyncPage extends StatefulWidget {
 
 class _SyncPageState extends State<SyncPage> {
   final _sync = SyncController.instance;
+
+  // WebDAV
   late final _urlCtrl = TextEditingController(text: _sync.url);
   late final _userCtrl = TextEditingController(text: _sync.username);
   late final _passCtrl = TextEditingController(text: _sync.password);
+  // 账号服务
+  late final _hSyncCtrl = TextEditingController(text: _sync.hertzSyncUrl);
+  late final _hIssuerCtrl = TextEditingController(text: _sync.hertzIssuer);
+  late final _hClientCtrl = TextEditingController(text: _sync.hertzClientId);
+  late final _loginUserCtrl = TextEditingController();
+  final _loginPassCtrl = TextEditingController();
+
+  late String _kind = _sync.backendKind;
   late bool _auto = _sync.auto;
   bool _busy = false;
+  bool _loginBusy = false;
   String _result = '';
 
   @override
@@ -29,15 +42,62 @@ class _SyncPageState extends State<SyncPage> {
     _urlCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
+    _hSyncCtrl.dispose();
+    _hIssuerCtrl.dispose();
+    _hClientCtrl.dispose();
+    _loginUserCtrl.dispose();
+    _loginPassCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _persist() => _sync.saveConfig(
+  /// 把当前 UI 配置落盘(选定后端 + 该后端的字段 + 自动开关)。
+  Future<void> _persist() async {
+    await _sync.setBackendKind(_kind);
+    if (_kind == 'hertz') {
+      await _sync.saveHertzConfig(
+        syncUrl: _hSyncCtrl.text,
+        issuer: _hIssuerCtrl.text,
+        clientId: _hClientCtrl.text,
+      );
+      await _sync.setAuto(_auto);
+    } else {
+      await _sync.saveConfig(
         url: _urlCtrl.text,
         username: _userCtrl.text,
         password: _passCtrl.text,
         auto: _auto,
       );
+    }
+  }
+
+  Future<void> _login() async {
+    setState(() => _loginBusy = true);
+    // 登录前先把地址/client 落盘,IamAuth 才有正确的 issuer/clientId。
+    await _sync.saveHertzConfig(
+      syncUrl: _hSyncCtrl.text,
+      issuer: _hIssuerCtrl.text,
+      clientId: _hClientCtrl.text,
+    );
+    try {
+      await _sync.auth.loginPassword(_loginUserCtrl.text, _loginPassCtrl.text);
+      _loginPassCtrl.clear();
+      if (!mounted) return;
+      setState(() => _loginBusy = false);
+      showAppNotify(context, '登录成功:${_sync.auth.username ?? _loginUserCtrl.text}',
+          kind: AppNotifyKind.success);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loginBusy = false);
+      showAppNotify(context, '登录失败:$e', kind: AppNotifyKind.error);
+    }
+  }
+
+  Future<void> _logout() async {
+    await _sync.auth.logout();
+    if (!mounted) return;
+    setState(() {});
+    showAppNotify(context, '已退出登录', kind: AppNotifyKind.success);
+  }
 
   Future<void> _test() async {
     setState(() {
@@ -90,6 +150,7 @@ class _SyncPageState extends State<SyncPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final isHertz = _kind == 'hertz';
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
@@ -102,46 +163,35 @@ class _SyncPageState extends State<SyncPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
-              '把 收藏 / 阅读进度 / 阅读设置 / 源开关 / 源仓库配置 通过 WebDAV 跨设备同步。'
+              '把 收藏 / 阅读进度 / 阅读设置 / 源开关 / 源仓库配置 跨设备同步。'
               '双向合并、不丢收藏与进度(同一条按更新时间取新)。不同步每源登录态与下载文件。',
               style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.55),
             ),
           ),
-          AppCard(
-            radius: 14,
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _field(p, _urlCtrl, 'WebDAV 地址',
-                    '如 https://dav.jianguoyun.com/dav/'),
-                const SizedBox(height: 10),
-                _field(p, _userCtrl, '账号', '用户名 / 邮箱'),
-                const SizedBox(height: 10),
-                _field(p, _passCtrl, '密码', '密码 / 应用授权码', obscure: true),
-                const SizedBox(height: 6),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  value: _auto,
-                  activeThumbColor: p.accent,
-                  title: Text('启动时自动同步',
-                      style: TextStyle(
-                          color: p.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600)),
-                  subtitle: Text('每次打开 App 后台合并一次',
-                      style: TextStyle(color: p.textMuted, fontSize: 12)),
-                  onChanged: _busy
-                      ? null
-                      : (v) {
-                          setState(() => _auto = v);
-                          _persist();
-                        },
-                ),
-              ],
-            ),
+          // 后端切换
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                  value: 'webdav',
+                  label: Text('WebDAV'),
+                  icon: Icon(Icons.folder_shared_rounded, size: 17)),
+              ButtonSegment(
+                  value: 'hertz',
+                  label: Text('账号'),
+                  icon: Icon(Icons.account_circle_rounded, size: 17)),
+            ],
+            selected: {_kind},
+            onSelectionChanged: _busy
+                ? null
+                : (s) {
+                    setState(() => _kind = s.first);
+                    _sync.setBackendKind(_kind);
+                  },
           ),
+          const SizedBox(height: 12),
+          if (isHertz) _hertzCard(p) else _webdavCard(p),
+          const SizedBox(height: 12),
+          _autoCard(p),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -183,12 +233,115 @@ class _SyncPageState extends State<SyncPage> {
                     color: p.textPrimary, fontSize: 12.5, height: 1.5)),
           ],
           const SizedBox(height: 20),
-          Text('提示:坚果云等需在网页端「安全选项 → 添加应用」生成专用密码,别用登录密码。',
-              style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.5)),
+          Text(
+            isHertz
+                ? '提示:账号同步需要自建的 dreamreader-sync 服务,并在 IAM 里把 client(默认 dreamreader)'
+                    '开启 密码 + 刷新令牌 授权。账号在 IAM 网页端注册。'
+                : '提示:坚果云等需在网页端「安全选项 → 添加应用」生成专用密码,别用登录密码。',
+            style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.5),
+          ),
         ],
       ),
     );
   }
+
+  Widget _webdavCard(AppPalette p) => AppCard(
+        radius: 14,
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _field(p, _urlCtrl, 'WebDAV 地址', '如 https://dav.jianguoyun.com/dav/'),
+            const SizedBox(height: 10),
+            _field(p, _userCtrl, '账号', '用户名 / 邮箱'),
+            const SizedBox(height: 10),
+            _field(p, _passCtrl, '密码', '密码 / 应用授权码', obscure: true),
+          ],
+        ),
+      );
+
+  Widget _hertzCard(AppPalette p) {
+    final loggedIn = _sync.auth.isLoggedIn;
+    return AppCard(
+      radius: 14,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _field(p, _hSyncCtrl, '同步服务地址', '如 https://sync.yourhost.com'),
+          const SizedBox(height: 10),
+          _field(p, _hIssuerCtrl, 'IAM 地址', '如 https://iam.yourhost.com'),
+          const SizedBox(height: 10),
+          _field(p, _hClientCtrl, 'client_id', '默认 dreamreader'),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1, color: p.line),
+          ),
+          if (loggedIn)
+            Row(
+              children: [
+                Icon(Icons.check_circle_rounded, size: 18, color: p.accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('已登录:${_sync.auth.username ?? '账号'}',
+                      style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700)),
+                ),
+                TextButton(
+                  onPressed: _loginBusy ? null : _logout,
+                  child: const Text('退出登录'),
+                ),
+              ],
+            )
+          else ...[
+            _field(p, _loginUserCtrl, '用户名', '账号 / 用户名'),
+            const SizedBox(height: 10),
+            _field(p, _loginPassCtrl, '密码', '登录密码', obscure: true),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _loginBusy ? null : _login,
+                icon: _loginBusy
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.login_rounded, size: 18),
+                label: const Text('登录'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _autoCard(AppPalette p) => AppCard(
+        radius: 14,
+        padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
+        child: SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          value: _auto,
+          activeThumbColor: p.accent,
+          title: Text('启动时自动同步',
+              style: TextStyle(
+                  color: p.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          subtitle: Text('每次打开 App 后台合并一次',
+              style: TextStyle(color: p.textMuted, fontSize: 12)),
+          onChanged: _busy
+              ? null
+              : (v) {
+                  setState(() => _auto = v);
+                  _sync.setAuto(v);
+                },
+        ),
+      );
 
   Widget _field(AppPalette p, TextEditingController c, String label, String hint,
       {bool obscure = false}) {
