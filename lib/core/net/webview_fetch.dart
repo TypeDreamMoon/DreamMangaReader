@@ -22,6 +22,7 @@ bool _looksLikeGate(String html) {
     'checking your browser', // CF / DDoS 盾
     'challenge-platform', 'cf-chl', 'jschl', '_cf_chl', // CF 挑战脚本
     'ddos-guard', 'please wait', 'enable javascript',
+    '系统安全验证', // 苹果CMS mac_verify 门(acgbibi 搜索)
     '正在跳转', '请稍候', '稍等',
   ];
   for (final m in markers) {

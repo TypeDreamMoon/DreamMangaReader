@@ -30,7 +30,10 @@ class AnimePlayerPage extends StatefulWidget {
 }
 
 class _AnimePlayerPageState extends State<AnimePlayerPage> {
-  late final Player _player = Player();
+  // 更大的前向缓冲(默认桌面 32MB);HLS 每片才 2s,大缓冲能一次装下更多片。
+  late final Player _player = Player(
+    configuration: const PlayerConfiguration(bufferSize: 64 * 1024 * 1024),
+  );
   late final VideoController _controller = VideoController(_player);
   late final MangaSource _source = buildSource(widget.meta);
 
@@ -43,7 +46,29 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    await _tuneBuffering();
+    await _load();
+  }
+
+  /// 番剧源的 m3u8 分片常仅 2 秒/片;libmpv 默认 `demuxer-readahead-secs` 只有 ~1s,
+  /// 于是「播一片 → 等下一片」= 每 2 秒卡一下。这里放大预读 + 缓存,让它一次预抓多片、
+  /// 平滑网络抖动;换来稍长的首帧缓冲,但播放连贯。Win/Android 同为 libmpv 后端,通用。
+  Future<void> _tuneBuffering() async {
+    final p = _player.platform;
+    if (p is NativePlayer) {
+      await p.setProperty('cache', 'yes');
+      await p.setProperty('cache-secs', '60'); // 缓存已解复用的 60s
+      await p.setProperty('demuxer-readahead-secs', '30'); // 向前预读 30s(≈15 片)
+      await p.setProperty('demuxer-max-bytes', '${64 * 1024 * 1024}');
+      await p.setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
+      // 网络抖动/分片瞬断时自动重连,别直接判死。
+      await p.setProperty('stream-lavf-o',
+          'reconnect=1,reconnect_streamed=1,reconnect_delay_max=5');
+    }
   }
 
   @override
