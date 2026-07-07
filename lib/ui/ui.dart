@@ -4,6 +4,7 @@
 /// 间距/描边/圆角改一处即全局生效。用法:`import '../../ui/ui.dart';`
 library;
 
+export 'app_bottom_sheet.dart';
 export 'app_card.dart';
 export 'app_filter_chip.dart';
 export 'app_list_row.dart';

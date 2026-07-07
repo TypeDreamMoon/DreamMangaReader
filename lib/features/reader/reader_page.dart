@@ -13,6 +13,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
+import '../../ui/ui.dart';
 
 /// 沉浸式阅读器:翻页(paged)/ 条漫竖读(webtoon)两种模式 + 半透明控制层。
 ///
@@ -915,180 +916,142 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  // 阅读设置面板(参考主流阅读器)。
+  // 阅读设置面板(复用 lib/ui 的 showAppSheet + AppSwitchRow/AppSliderRow)。
   void _openSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: context.palette.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) {
+    showAppSheet<void>(
+      context,
+      title: '阅读设置',
+      bodyPadding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
+      body: (ctx, setSheet) {
         final p = ctx.palette;
-        return StatefulBuilder(
-          builder: (ctx, setSheet) {
-            void apply(VoidCallback f) {
-              f();
-              setSheet(() {});
-            }
+        void apply(VoidCallback f) {
+          f();
+          setSheet(() {});
+        }
 
-            TextStyle t(Color c, [double s = 13.5]) => TextStyle(
-                color: c, fontSize: s, fontWeight: FontWeight.w600);
-            return SafeArea(
-              child: SingleChildScrollView(
-                child: Padding(
-                  // 左侧留够呼吸,别让开关标题贴着弹层边缘。
-                  padding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                    Text('阅读设置',
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 14),
-                    Text('阅读模式',
-                        style: TextStyle(color: p.textMuted, fontSize: 12)),
-                    const SizedBox(height: 8),
-                    SegmentedButton<ReaderMode>(
-                      segments: const [
-                        ButtonSegment(
-                            value: ReaderMode.paged,
-                            label: Text('普通'),
-                            icon: Icon(Icons.arrow_forward_rounded, size: 15)),
-                        ButtonSegment(
-                            value: ReaderMode.pagedRtl,
-                            label: Text('日漫'),
-                            icon: Icon(Icons.arrow_back_rounded, size: 15)),
-                        ButtonSegment(
-                            value: ReaderMode.webtoon,
-                            label: Text('滚动'),
-                            icon: Icon(Icons.arrow_downward_rounded, size: 15)),
-                      ],
-                      selected: {_mode},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (s) =>
-                          apply(() => _switchMode(s.first)),
-                    ),
-                    if (_mode == ReaderMode.webtoon) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.aspect_ratio_rounded,
-                              size: 18, color: p.textMuted),
-                          const SizedBox(width: 8),
-                          Flexible(child: Text('横屏内容宽度', style: t(p.textPrimary))),
-                          Expanded(
-                            child: Slider(
-                              value:
-                                  (_store?.webtoonWidth ?? 0.5).clamp(0.3, 1.0),
-                              min: 0.3,
-                              max: 1.0,
-                              divisions: 14,
-                              label:
-                                  '${((_store?.webtoonWidth ?? 0.5) * 100).round()}%',
-                              onChanged: (v) => apply(() {
-                                _store?.webtoonWidth = v;
-                                setState(() {}); // 阅读器按新宽度即时重建
-                              }),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 42,
-                            child: Text(
-                                '${((_store?.webtoonWidth ?? 0.5) * 100).round()}%',
-                                textAlign: TextAlign.end,
-                                style:
-                                    TextStyle(color: p.textMuted, fontSize: 12)),
-                          ),
-                        ],
-                      ),
-                      Text('仅横屏生效 · 越窄一屏看得越长',
-                          style: TextStyle(color: p.textMuted, fontSize: 11)),
-                    ],
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                      dense: true,
-                      title: Text('双页同看', style: t(p.textPrimary)),
-                      subtitle: Text('翻页模式下并排显示两页',
-                          style: TextStyle(color: p.textMuted, fontSize: 11)),
-                      value: _dual,
-                      onChanged:
-                          _isPaged ? (v) => apply(() => _setDual(v)) : null,
-                    ),
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                      dense: true,
-                      title: Text('允许双击缩放', style: t(p.textPrimary)),
-                      value: _dtZoom,
-                      onChanged: (v) => apply(() {
-                        setState(() => _dtZoom = v);
-                        _store?.doubleTapZoom = v;
-                      }),
-                    ),
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                      dense: true,
-                      title: Text('展示页码', style: t(p.textPrimary)),
-                      value: _showPageNum,
-                      onChanged: (v) => apply(() {
-                        setState(() => _showPageNum = v);
-                        _store?.showPageNumber = v;
-                      }),
-                    ),
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                      dense: true,
-                      title: Text('点击分区翻页', style: t(p.textPrimary)),
-                      subtitle: Text('屏幕左/右侧点击翻页,中间切控制条',
-                          style: TextStyle(color: p.textMuted, fontSize: 11)),
-                      value: _store?.readerGestures ?? true,
-                      onChanged: (v) =>
-                          apply(() => _store?.readerGestures = v),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: () {
-                          Navigator.of(ctx).pop();
-                          setState(() => _showHint = true);
-                        },
-                        icon: const Icon(Icons.gesture_rounded, size: 16),
-                        label: const Text('查看手势提示'),
-                        style: TextButton.styleFrom(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 8)),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text('亮度',
-                        style: TextStyle(color: p.textMuted, fontSize: 12)),
-                    Row(
-                      children: [
-                        Icon(Icons.nightlight_round,
-                            size: 18, color: p.textMuted),
-                        Expanded(
-                          child: Slider(
-                            value: _brightness,
-                            min: 0.25,
-                            max: 1.0,
-                            onChanged: (v) => apply(() {
-                              setState(() => _brightness = v);
-                              _store?.brightness = v;
-                            }),
-                          ),
-                        ),
-                        Icon(Icons.wb_sunny_rounded, size: 18, color: p.textMuted),
-                      ],
-                    ),
-                  ],
-                ),
+        TextStyle label(Color c) =>
+            TextStyle(color: c, fontSize: 12);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('阅读模式', style: label(p.textMuted)),
+            const SizedBox(height: 8),
+            SegmentedButton<ReaderMode>(
+              segments: const [
+                ButtonSegment(
+                    value: ReaderMode.paged,
+                    label: Text('普通'),
+                    icon: Icon(Icons.arrow_forward_rounded, size: 15)),
+                ButtonSegment(
+                    value: ReaderMode.pagedRtl,
+                    label: Text('日漫'),
+                    icon: Icon(Icons.arrow_back_rounded, size: 15)),
+                ButtonSegment(
+                    value: ReaderMode.webtoon,
+                    label: Text('滚动'),
+                    icon: Icon(Icons.arrow_downward_rounded, size: 15)),
+              ],
+              selected: {_mode},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => apply(() => _switchMode(s.first)),
+            ),
+            if (_mode == ReaderMode.webtoon) ...[
+              const SizedBox(height: 8),
+              AppSliderRow(
+                icon: Icons.aspect_ratio_rounded,
+                iconColor: p.textMuted,
+                label: '横屏内容宽度',
+                value: (_store?.webtoonWidth ?? 0.5).clamp(0.3, 1.0),
+                min: 0.3,
+                max: 1.0,
+                divisions: 14,
+                pct: true,
+                valueWidth: 42,
+                valueFontSize: 12,
+                onChanged: (v) => apply(() {
+                  _store?.webtoonWidth = v;
+                  setState(() {}); // 阅读器按新宽度即时重建
+                }),
               ),
+              Text('仅横屏生效 · 越窄一屏看得越长',
+                  style: TextStyle(color: p.textMuted, fontSize: 11)),
+            ],
+            AppSwitchRow(
+              title: '双页同看',
+              subtitle: '翻页模式下并排显示两页',
+              value: _dual,
+              onChanged: _isPaged ? (v) => apply(() => _setDual(v)) : null,
+              contentPadding: const EdgeInsets.symmetric(vertical: 2),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            AppSwitchRow(
+              title: '允许双击缩放',
+              value: _dtZoom,
+              onChanged: (v) => apply(() {
+                setState(() => _dtZoom = v);
+                _store?.doubleTapZoom = v;
+              }),
+              contentPadding: const EdgeInsets.symmetric(vertical: 2),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+            ),
+            AppSwitchRow(
+              title: '展示页码',
+              value: _showPageNum,
+              onChanged: (v) => apply(() {
+                setState(() => _showPageNum = v);
+                _store?.showPageNumber = v;
+              }),
+              contentPadding: const EdgeInsets.symmetric(vertical: 2),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+            ),
+            AppSwitchRow(
+              title: '点击分区翻页',
+              subtitle: '屏幕左/右侧点击翻页,中间切控制条',
+              value: _store?.readerGestures ?? true,
+              onChanged: (v) => apply(() => _store?.readerGestures = v),
+              contentPadding: const EdgeInsets.symmetric(vertical: 2),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  setState(() => _showHint = true);
+                },
+                icon: const Icon(Icons.gesture_rounded, size: 16),
+                label: const Text('查看手势提示'),
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
               ),
-            );
-          },
+            ),
+            const SizedBox(height: 6),
+            Text('亮度', style: label(p.textMuted)),
+            AppSliderRow(
+              leading: Icon(Icons.nightlight_round, size: 18, color: p.textMuted),
+              value: _brightness,
+              min: 0.25,
+              max: 1.0,
+              showValueText: false,
+              trailing:
+                  Icon(Icons.wb_sunny_rounded, size: 18, color: p.textMuted),
+              onChanged: (v) => apply(() {
+                setState(() => _brightness = v);
+                _store?.brightness = v;
+              }),
+            ),
+          ],
         );
       },
     );

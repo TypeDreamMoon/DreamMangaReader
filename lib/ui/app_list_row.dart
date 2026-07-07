@@ -106,6 +106,10 @@ class AppSwitchRow extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.contentPadding = EdgeInsets.zero,
+    this.dense = false,
+    this.titleSize = 14,
+    this.titleWeight = FontWeight.w700,
+    this.subtitleSize = 12,
   });
 
   final IconData? icon;
@@ -115,6 +119,10 @@ class AppSwitchRow extends StatelessWidget {
   final bool value;
   final ValueChanged<bool>? onChanged;
   final EdgeInsetsGeometry contentPadding;
+  final bool dense;
+  final double titleSize;
+  final FontWeight titleWeight;
+  final double subtitleSize;
 
   @override
   Widget build(BuildContext context) {
@@ -125,18 +133,19 @@ class AppSwitchRow extends StatelessWidget {
       horizontalTitleGap: 10,
       child: SwitchListTile(
         contentPadding: contentPadding,
+        dense: dense,
         tileColor: Colors.transparent,
         secondary: leading ??
             (icon != null ? Icon(icon, color: p.accent, size: 18) : null),
         title: Text(title,
             style: TextStyle(
                 color: p.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 14)),
+                fontWeight: titleWeight,
+                fontSize: titleSize)),
         subtitle: subtitle == null
             ? null
             : Text(subtitle!,
-                style: TextStyle(color: p.textMuted, fontSize: 12)),
+                style: TextStyle(color: p.textMuted, fontSize: subtitleSize)),
         value: value,
         onChanged: onChanged,
       ),
