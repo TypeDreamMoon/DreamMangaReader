@@ -36,13 +36,18 @@ class _AboutPageState extends State<AboutPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: const Text('关于',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: ListView(
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
         children: [
           _hero(p),
@@ -110,6 +115,8 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

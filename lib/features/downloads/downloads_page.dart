@@ -29,15 +29,20 @@ class DownloadsPage extends StatelessWidget {
       ..sort((a, b) =>
           groups[b]!.first.doneAt.compareTo(groups[a]!.first.doneAt));
 
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: const Text('下载',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: keys.isEmpty
-          ? _empty(p, dl)
-          : AppScrollView(
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: keys.isEmpty
+              ? _empty(p, dl)
+              : AppScrollView(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
               children: [
                 if (dl.activeCount > 0)
@@ -60,6 +65,8 @@ class DownloadsPage extends StatelessWidget {
                 for (final k in keys) _mangaTile(context, p, dl, groups[k]!),
               ],
             ),
+        ),
+      ),
     );
   }
 

@@ -14,6 +14,7 @@ import '../../core/net/app_proxy.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
+import '../common/transitions.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
 import 'about_page.dart';
@@ -42,13 +43,18 @@ class SettingsPage extends StatelessWidget {
     // 拉不到底。读顶层 context(设置页自身 Scaffold 之上),拿到被底栏遮挡的高度。
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: const Text('设置',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: SmoothScroll(
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: SmoothScroll(
         builder: (sc) => ListView(
         controller: sc,
         padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
@@ -252,35 +258,18 @@ class SettingsPage extends StatelessWidget {
               ),
               _sliderRow(p, Icons.blur_on_rounded, '背景模糊', lib.bgBlur, 0, 40, 40,
                   (v) => lib.bgBlur = v),
-              const SizedBox(height: 10),
-              // 色板单独一行并可折行:窄屏/放大时不再水平溢出(裸 Row 装不下 7 个)。
-              Row(
-                children: [
-                  Icon(Icons.palette_rounded, size: 18, color: p.accent),
-                  const SizedBox(width: 8),
-                  Text('混合色',
-                      style: TextStyle(
-                          color: p.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 0, // 水平间距由 _swatch 自带的 right:8 提供
-                runSpacing: 8,
-                children: [
-                  for (final c in const [
-                    0xFF000000,
-                    0xFF0C1A2B,
-                    0xFF1B0C2B,
-                    0xFF0C2B22,
-                    0xFF2B1810,
-                    0xFFFFFFFF,
-                  ])
-                    _swatch(p, lib, c),
-                  _swatch(p, lib, _argb(p.accent)), // 跟随主题色
-                ],
+              Padding(
+                padding: const EdgeInsets.only(left: 26, top: 4, bottom: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.palette_rounded, size: 16, color: p.textMuted),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('混合色随主题自动 · 深色系用暗调、浅色用白调',
+                          style: TextStyle(color: p.textMuted, fontSize: 11)),
+                    ),
+                  ],
+                ),
               ),
               _sliderRow(p, Icons.opacity_rounded, '混合强度', lib.bgTintAlpha, 0, 1,
                   20, (v) => lib.bgTintAlpha = v, pct: true),
@@ -339,10 +328,12 @@ class SettingsPage extends StatelessWidget {
               '关于',
               '${AppInfo.name} · v${AppInfo.version}',
               () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AboutPage())),
+                  appRoute(const AboutPage())),
             ),
           ]),
         ],
+        ),
+      ),
         ),
       ),
     );
@@ -413,28 +404,6 @@ class SettingsPage extends StatelessWidget {
     } else {
       await showUpdateDialog(context, info);
     }
-  }
-
-  int _argb(Color c) => c.toARGB32();
-
-  Widget _swatch(AppPalette p, LibraryStore lib, int argb) {
-    final sel = lib.bgTintColor == argb;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: () => lib.bgTintColor = argb,
-        child: Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: Color(argb),
-            shape: BoxShape.circle,
-            border: Border.all(
-                color: sel ? p.accent : p.line, width: sel ? 2.5 : 1),
-          ),
-        ),
-      ),
-    );
   }
 
   // 系统内所有字体做成下拉:点开是可搜索的懒加载列表(每条用该字体自身渲染)。

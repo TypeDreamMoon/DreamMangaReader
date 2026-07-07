@@ -7,6 +7,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
@@ -230,9 +231,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     final p = context.palette;
     final store = LibraryScope.of(context);
     final columns = store.gridColumns;
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: const Text('发现',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
@@ -268,7 +270,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Column(
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: Column(
         children: [
           _kindSwitcher(p),
           if (_kind == ContentKind.manga) ...[
@@ -288,6 +294,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           ] else
             Expanded(child: _comingSoon(p, _kind)),
         ],
+          ),
+        ),
       ),
     );
   }

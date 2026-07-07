@@ -27,8 +27,9 @@ class AppBackground extends StatelessWidget {
     return ValueListenableBuilder<Color?>(
       valueListenable: DetailTint.color,
       builder: (context, detail, _) {
-        var tint =
-            Color(lib.bgTintColor).withValues(alpha: lib.bgTintAlpha);
+        // 混合色随主题自动:深色系(OLED/Dark)取暗调、Light 取白调 —— 直接用主题底色,
+        // 把背景图压成与当前主题一致的明暗,文字在任何背景图上都可读。
+        var tint = p.background.withValues(alpha: lib.bgTintAlpha);
         if (detail != null) {
           // 详情页:把混合色往封面主题色混(融合强度设置里可调)。
           // 低强度 → 更接近用户设的底色(默认黑);高强度 → 更接近封面主题色。
