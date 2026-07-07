@@ -133,10 +133,7 @@ class _AboutPageState extends State<AboutPage> {
           GestureDetector(
             onTap: _onSealTap,
             behavior: HitTestBehavior.opaque,
-            child: Transform.rotate(
-              angle: -0.04,
-              child: const AppLogo(size: 96, radius: 20),
-            ),
+            child: const AppLogo(size: 96),
           ),
           const SizedBox(height: 18),
           Text(AppInfo.name,

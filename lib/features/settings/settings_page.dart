@@ -456,14 +456,15 @@ class SettingsPage extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(context.radius),
       onTap: () async {
-        final picked = await showModalBottomSheet<String>(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: p.surface,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-          ),
-          builder: (_) => FontPickerSheet(fonts: fonts, current: lib.uiFont),
+        final picked = await showAppSheet<String>(
+          context,
+          title: '选择字体',
+          trailingText: '${fonts.length} 个',
+          showCloseButton: true,
+          resizeForKeyboard: true,
+          heightFactor: 0.72,
+          body: (ctx, setSheet) =>
+              FontPickerSheet(fonts: fonts, current: lib.uiFont),
         );
         if (picked != null) lib.uiFont = picked;
       },
@@ -609,13 +610,11 @@ class SettingsPage extends StatelessWidget {
         contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
       );
 
-  Future<void> _showCacheSheet(BuildContext context) => showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: context.palette.surface,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-        ),
-        builder: (_) => const _CacheSheet(),
+  Future<void> _showCacheSheet(BuildContext context) => showAppSheet<void>(
+        context,
+        title: '清理缓存',
+        bodyPadding: const EdgeInsets.fromLTRB(20, 12, 16, 24),
+        body: (ctx, setSheet) => const _CacheSheet(),
       );
 }
 
@@ -672,35 +671,24 @@ class _CacheSheetState extends State<_CacheSheet> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('清理缓存',
-                style: TextStyle(
-                    color: p.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text('只清缓存,不动已下载章节与书架数据。',
-                style: TextStyle(color: p.textMuted, fontSize: 12)),
-            const SizedBox(height: 14),
-            _cacheRow(p, Icons.image_rounded, '图片缓存', '封面 / 章节图',
-                _fmt(_imgBytes),
-                _busy ? null : () => _clear(clearImageCache, '已清理图片缓存')),
-            const SizedBox(height: 8),
-            _cacheRow(p, Icons.dataset_rounded, '源缓存', '清单 / 脚本 · 清后自动重拉',
-                _fmt(_srcBytes),
-                _busy
-                    ? null
-                    : () => _clear(SourceRepository.instance.clearCache,
-                        '已清理源缓存')),
-          ],
-        ),
-      ),
+    // 外壳(圆角/SafeArea/内边距/标题「清理缓存」)由 showAppSheet 提供,这里只出内容。
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('只清缓存,不动已下载章节与书架数据。',
+            style: TextStyle(color: p.textMuted, fontSize: 12)),
+        const SizedBox(height: 14),
+        _cacheRow(p, Icons.image_rounded, '图片缓存', '封面 / 章节图', _fmt(_imgBytes),
+            _busy ? null : () => _clear(clearImageCache, '已清理图片缓存')),
+        const SizedBox(height: 8),
+        _cacheRow(p, Icons.dataset_rounded, '源缓存', '清单 / 脚本 · 清后自动重拉',
+            _fmt(_srcBytes),
+            _busy
+                ? null
+                : () => _clear(
+                    SourceRepository.instance.clearCache, '已清理源缓存')),
+      ],
     );
   }
 

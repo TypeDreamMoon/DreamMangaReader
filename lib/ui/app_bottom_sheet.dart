@@ -57,10 +57,12 @@ Future<T?> showAppSheet<T>(
           ],
         ];
 
+        final bounded = heightFactor != null;
         final inner = Padding(
           padding: bodyPadding,
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            // 限高时填满(让 body 里的 Flexible/Expanded 列表撑开);自适应时收拢。
+            mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (showDragHandle)
@@ -76,7 +78,9 @@ Future<T?> showAppSheet<T>(
                 ),
               Row(children: header),
               const SizedBox(height: 12),
-              body(ctx, setSheet),
+              bounded
+                  ? Expanded(child: body(ctx, setSheet))
+                  : body(ctx, setSheet),
             ],
           ),
         );

@@ -14,6 +14,7 @@ import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
@@ -127,14 +128,14 @@ class _DetailPageState extends State<DetailPage> {
 
   /// 手动搜索 Bangumi 并绑定(自动匹配不准/没匹配到时用)。绑定会持久化。
   Future<void> _openBangumiSearch() async {
-    final picked = await showModalBottomSheet<BangumiCandidate>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.palette.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (_) => BangumiSearchSheet(initialQuery: widget.manga.title),
+    final picked = await showAppSheet<BangumiCandidate>(
+      context,
+      title: '搜索 Bangumi',
+      showCloseButton: true,
+      resizeForKeyboard: true,
+      heightFactor: 0.7,
+      body: (ctx, setSheet) =>
+          BangumiSearchSheet(initialQuery: widget.manga.title),
     );
     if (picked == null || !mounted) return;
     setState(() => _bgmLoading = true);

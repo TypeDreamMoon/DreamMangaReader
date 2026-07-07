@@ -40,61 +40,33 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.72,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text('选择字体',
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800)),
-                    const Spacer(),
-                    Text('${widget.fonts.length} 个',
-                        style: TextStyle(color: p.textMuted, fontSize: 12)),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded, size: 20),
-                      color: p.textMuted,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: _c,
-                  onChanged: _filter,
-                  style: TextStyle(color: p.textPrimary, fontSize: 14),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: '搜索字体名',
-                    hintStyle: TextStyle(color: p.textMuted),
-                    prefixIcon: Icon(Icons.search_rounded, color: p.textMuted),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _filtered.length + 1,
-                    itemBuilder: (_, i) {
-                      // 首行固定「系统默认」(空字符串)。
-                      final family = i == 0 ? '' : _filtered[i - 1];
-                      return _row(p, family);
-                    },
-                  ),
-                ),
-              ],
-            ),
+    // 外壳(圆角/SafeArea/限高/键盘避让/标题「选择字体」+ 计数 + 关闭)由 showAppSheet 提供。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _c,
+          onChanged: _filter,
+          style: TextStyle(color: p.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: '搜索字体名',
+            hintStyle: TextStyle(color: p.textMuted),
+            prefixIcon: Icon(Icons.search_rounded, color: p.textMuted),
           ),
         ),
-      ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _filtered.length + 1,
+            itemBuilder: (_, i) {
+              // 首行固定「系统默认」(空字符串)。
+              final family = i == 0 ? '' : _filtered[i - 1];
+              return _row(p, family);
+            },
+          ),
+        ),
+      ],
     );
   }
 

@@ -54,58 +54,29 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        // 用「最大高度」而非固定高度:键盘弹起挤压可用空间时内容可收缩,不再撑破溢出。
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.7),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text('搜索 Bangumi',
-                        style: TextStyle(
-                            color: _pink,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900)),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded, size: 20),
-                      color: p.textMuted,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: _c,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => _run(),
-                  style: TextStyle(color: p.textPrimary, fontSize: 14),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: '输入条目名',
-                    hintStyle: TextStyle(color: p.textMuted),
-                    suffixIcon: IconButton(
-                      onPressed: _run,
-                      icon: const Icon(Icons.search_rounded, size: 20),
-                      color: p.accent,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Flexible(child: _body(p)),
-              ],
+    // 外壳(圆角/SafeArea/限高/键盘避让/标题「搜索 Bangumi」+ 关闭)由 showAppSheet 提供。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _c,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _run(),
+          style: TextStyle(color: p.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: '输入条目名',
+            hintStyle: TextStyle(color: p.textMuted),
+            suffixIcon: IconButton(
+              onPressed: _run,
+              icon: const Icon(Icons.search_rounded, size: 20),
+              color: p.accent,
             ),
           ),
         ),
-      ),
+        const SizedBox(height: 12),
+        Expanded(child: _body(p)),
+      ],
     );
   }
 
