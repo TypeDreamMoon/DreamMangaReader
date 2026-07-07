@@ -375,8 +375,8 @@ class SettingsPage extends StatelessWidget {
               final ok = await importBackup(lib);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(ok ? '已从备份恢复' : '没找到备份文件')));
+                showAppNotify(context, ok ? '已从备份恢复' : '没找到备份文件',
+                    kind: ok ? AppNotifyKind.success : AppNotifyKind.error);
               }
             },
             child: const Text('恢复'),
@@ -386,8 +386,8 @@ class SettingsPage extends StatelessWidget {
               final out = await exportBackup(lib);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text('已导出:$out')));
+                showAppNotify(context, '已导出:$out',
+                    kind: AppNotifyKind.success);
               }
             },
             child: const Text('导出'),
@@ -404,14 +404,12 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _checkUpdate(BuildContext context, LibraryStore lib) async {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(
-        content: Text('正在检查更新…'), duration: Duration(seconds: 3)));
+    showAppNotify(context, '正在检查更新…',
+        icon: Icons.sync_rounded, duration: const Duration(seconds: 6));
     final info = await UpdateService.check(includeBeta: lib.updateIncludeBeta);
     if (!context.mounted) return;
-    messenger.clearSnackBars();
     if (info == null) {
-      messenger.showSnackBar(const SnackBar(content: Text('已是最新版本')));
+      showAppNotify(context, '已是最新版本', kind: AppNotifyKind.success);
     } else {
       await showUpdateDialog(context, info);
     }
@@ -664,8 +662,7 @@ class _CacheSheetState extends State<_CacheSheet> {
     await _refresh();
     if (!mounted) return;
     setState(() => _busy = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(done), duration: const Duration(seconds: 1)));
+    showAppNotify(context, done, kind: AppNotifyKind.success);
   }
 
   @override

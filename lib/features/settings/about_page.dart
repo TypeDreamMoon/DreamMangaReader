@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_info.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/app_logo.dart';
 import '../debug/debug_page.dart';
 
@@ -23,19 +24,12 @@ class _AboutPageState extends State<AboutPage> {
     _sealTaps++;
     if (_sealTaps >= 5) {
       _sealTaps = 0;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(const SnackBar(
-            content: Text('已进入调试工具'), duration: Duration(seconds: 1)));
+      showAppNotify(context, '已进入调试工具', kind: AppNotifyKind.success);
       Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => const DebugPage()));
     } else if (_sealTaps >= 3) {
       final left = 5 - _sealTaps;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(SnackBar(
-            content: Text('再点 $left 次进入调试工具'),
-            duration: const Duration(milliseconds: 900)));
+      showAppNotify(context, '再点 $left 次进入调试工具', kind: AppNotifyKind.info);
     }
   }
 
@@ -123,8 +117,7 @@ class _AboutPageState extends State<AboutPage> {
   Future<void> _open(BuildContext context, String url) async {
     final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('打不开链接,请手动访问仓库地址')));
+      showAppNotify(context, '打不开链接,请手动访问仓库地址', kind: AppNotifyKind.error);
     }
   }
 

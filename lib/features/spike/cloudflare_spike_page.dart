@@ -6,6 +6,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../ui/ui.dart';
 
 /// 经典的 Cloudflare 挑战测试站(公开、无版权内容),用于验证过盾链路。
 /// 真实修源时把它换成目标漫画站的基域名。
@@ -204,9 +205,7 @@ class _CloudflareSpikePageState extends State<CloudflareSpikePage> {
 
   void _copyLog() {
     Clipboard.setData(ClipboardData(text: _logBuf.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('日志已复制'), duration: Duration(seconds: 1)),
-    );
+    showAppNotify(context, '日志已复制', kind: AppNotifyKind.success);
   }
 
   @override

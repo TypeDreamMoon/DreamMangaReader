@@ -145,9 +145,7 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted) return;
     if (info == null) {
       setState(() => _bgmLoading = false); // 保留原卡片状态,只提示
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('加载该条目失败,请重试')),
-      );
+      showAppNotify(context, '加载该条目失败,请重试', kind: AppNotifyKind.error);
       return;
     }
     final key = '${widget.meta.id}:${widget.manga.id}';
@@ -199,9 +197,7 @@ class _DetailPageState extends State<DetailPage> {
     if (uri == null) return;
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: SelectableText('打不开链接:$raw')),
-      );
+      showAppNotify(context, '打不开链接:$raw', kind: AppNotifyKind.error);
     }
   }
 
@@ -598,9 +594,8 @@ class _DetailPageState extends State<DetailPage> {
       dl.enqueue(widget.meta, widget.manga, c, _imgHeaders);
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已加入下载队列 · ${todo.length} 话')),
-      );
+      showAppNotify(context, '已加入下载队列 · ${todo.length} 话',
+          kind: AppNotifyKind.success);
     }
   }
 

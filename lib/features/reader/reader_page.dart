@@ -136,9 +136,7 @@ class _ReaderPageState extends State<ReaderPage> {
         // 空章节 —— 退回并提示(延到帧后,getPages 可能极快返回时树处于锁定期)。
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('本章暂无图片,已返回')),
-          );
+          showAppNotify(context, '本章暂无图片,已返回', kind: AppNotifyKind.info);
           Navigator.of(context).maybePop();
         });
         return;

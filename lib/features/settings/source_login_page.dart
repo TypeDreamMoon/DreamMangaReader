@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/auth_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 
 /// 通用源账号登录页。某些源的内容(详情/章节/图片)需要登录后才能读;登录后 App 用
 /// 你的账号 Token 直连该源 API。登录**协议**在源脚本里,本页只做通用 UI。**密码不落盘**。
@@ -40,9 +41,8 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
       await auth.login(widget.meta, _userCtrl.text, _pwCtrl.text);
       if (mounted) {
         _pwCtrl.clear();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已登录,$_sourceName 现在走账号 API')),
-        );
+        showAppNotify(context, '已登录,$_sourceName 现在走账号 API',
+            kind: AppNotifyKind.success);
       }
     } catch (e) {
       if (mounted) {
@@ -121,9 +121,8 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
               : () async {
                   await auth.logout(id);
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已退出登录')),
-                    );
+                    showAppNotify(context, '已退出登录',
+                        kind: AppNotifyKind.success);
                   }
                 },
           icon: const Icon(Icons.logout_rounded, size: 18),

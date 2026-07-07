@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../core/net/app_proxy.dart';
+import '../../ui/ui.dart';
 
 /// 网络代理设置:不使用代理 / 使用系统代理 / 自定义,带"测试连接"预演。
 class ProxySettingsPage extends StatefulWidget {
@@ -58,8 +59,8 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
     final v = _mode == 0 ? 'DIRECT' : (_mode == 1 ? null : _ctrl.text.trim());
     await AppProxy.setOverride(v);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('代理已保存:${AppProxy.current ?? '直连'}')));
+    showAppNotify(context, '代理已保存:${AppProxy.current ?? '直连'}',
+        kind: AppNotifyKind.success);
     Navigator.of(context).pop();
   }
 

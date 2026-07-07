@@ -15,6 +15,7 @@ import '../../core/script/script_source.dart';
 import '../../core/source/hello_source.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../spike/cloudflare_spike_page.dart';
 
 /// 调试工具:环境信息 + 各环节自检 + 抓取探针。产品页面不含这些,统一收在这里。
@@ -577,11 +578,7 @@ class _DebugPageState extends State<DebugPage> {
                 tooltip: '复制',
                 onPressed: () {
                   Clipboard.setData(ClipboardData(text: text));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('已复制'),
-                        duration: Duration(seconds: 1)),
-                  );
+                  showAppNotify(context, '已复制', kind: AppNotifyKind.success);
                 },
                 icon: Icon(Icons.copy_rounded, color: p.textMuted),
               ),

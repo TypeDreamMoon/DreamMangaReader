@@ -53,8 +53,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_repo.status), duration: const Duration(seconds: 2)));
+    showAppNotify(context, _repo.status, kind: AppNotifyKind.info);
     _checkAll();
   }
 
@@ -88,15 +87,12 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       _revalidate(sc);
       if (!mounted) return;
       setState(() => _reloading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已添加本地源:$name'),
-          duration: const Duration(seconds: 2)));
+      showAppNotify(context, '已添加本地源:$name', kind: AppNotifyKind.success);
       _checkAll();
     } catch (e) {
       if (!mounted) return;
       setState(() => _reloading = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('添加失败:$e')));
+      showAppNotify(context, '添加失败:$e', kind: AppNotifyKind.error);
     }
   }
 
@@ -106,9 +102,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('已移除本地源:${s.name}'),
-        duration: const Duration(seconds: 1)));
+    showAppNotify(context, '已移除本地源:${s.name}', kind: AppNotifyKind.success);
   }
 
   Future<void> _checkAll() async {
@@ -224,8 +218,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           TextButton(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: r.log));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('日志已复制'), duration: Duration(seconds: 1)));
+              showAppNotify(context, '日志已复制', kind: AppNotifyKind.success);
             },
             child: const Text('复制'),
           ),

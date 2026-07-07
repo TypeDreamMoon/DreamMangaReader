@@ -6,6 +6,7 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/glass.dart';
+import '../../ui/tab_entrance.dart';
 import '../discovery/discovery_page.dart';
 import '../downloads/downloads_page.dart';
 import '../library/library_page.dart';
@@ -86,11 +87,12 @@ class _HomeShellState extends State<HomeShell>
 
   @override
   Widget build(BuildContext context) {
+    // 切页入场只做整页淡入;方向性平移交给各页(标题栏落下、内容升起,见 TabEntrance),
+    // 不再整页统一上移——否则标题栏也跟着一起上移,做不出「上下对开」。
     final body = FadeTransition(
       opacity: _t.drive(Tween(begin: 0.4, end: 1)),
-      child: SlideTransition(
-        position: _t.drive(Tween(
-            begin: const Offset(0, 0.02), end: Offset.zero)),
+      child: TabEntrance(
+        animation: _t,
         child: IndexedStack(
           index: _index,
           children: [

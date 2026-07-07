@@ -7,6 +7,7 @@ import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
@@ -88,9 +89,11 @@ class _LibraryPageState extends State<LibraryPage> {
     final p = context.palette;
     final store = LibraryScope.of(context); // 依赖:收藏/进度变了自动重建
     final meta = _sc?.current; // 可能未配置源 → null
+    // 内容延伸到毛玻璃标题栏之后 → 标题栏能糊到身后背景图;body 手动留出顶部内边距。
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: const Text('书架',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
@@ -115,37 +118,44 @@ class _LibraryPageState extends State<LibraryPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Column(
-        children: [
-          // 搜索框展开/收起用高度动画,避免书架内容硬跳。
-          AnimatedSize(
-            duration: LibraryStore.animationsEnabled
-                ? const Duration(milliseconds: 220)
-                : Duration.zero,
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: _showShelfSearch
-                ? _shelfSearchField(p)
-                : const SizedBox(width: double.infinity),
+      // 内容自下而上升起(标题栏则自上而下落,合成「上下对开」入场)。
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: Column(
+            children: [
+              // 搜索框展开/收起用高度动画,避免书架内容硬跳。
+              AnimatedSize(
+                duration: LibraryStore.animationsEnabled
+                    ? const Duration(milliseconds: 220)
+                    : Duration.zero,
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: _showShelfSearch
+                    ? _shelfSearchField(p)
+                    : const SizedBox(width: double.infinity),
+              ),
+              Expanded(
+                child: _shelfQuery.isNotEmpty
+                    ? _shelfResults(p, store)
+                    : ListView(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        children: [
+                          if (store.history.isNotEmpty) _continueStrip(p, store),
+                          if (store.favorites.isNotEmpty)
+                            _favoritesSection(p, store),
+                          if (meta != null) ...[
+                            _sourcePicker(p, meta, store),
+                            _browse(p, meta, store),
+                          ] else
+                            _noSourceHint(p),
+                        ],
+                      ),
+              ),
+            ],
           ),
-          Expanded(
-            child: _shelfQuery.isNotEmpty
-                ? _shelfResults(p, store)
-                : ListView(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    children: [
-                      if (store.history.isNotEmpty) _continueStrip(p, store),
-                      if (store.favorites.isNotEmpty)
-                        _favoritesSection(p, store),
-                      if (meta != null) ...[
-                        _sourcePicker(p, meta, store),
-                        _browse(p, meta, store),
-                      ] else
-                        _noSourceHint(p),
-                    ],
-                  ),
-          ),
-        ],
+        ),
       ),
     );
   }

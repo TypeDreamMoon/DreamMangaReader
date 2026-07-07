@@ -32,29 +32,17 @@ class AppPalette {
     required this.brightness,
   });
 
-  /// OLED —— 纯黑,省电、沉浸。
+  // 深色系(OLED / Dark)共用同一套「内容色」——强调青碧、文字、语义色完全一致,
+  // 只有底/面/线的深度不同(OLED 纯黑更沉、Dark 深灰更柔),换起来是同一副长相。
+
+  /// OLED —— 纯黑,省电、沉浸;内容色与 Dark 统一。
   static const oled = AppPalette(
     background: Color(0xFF000000),
     surface: Color(0xFF0C100F),
     elevated: Color(0xFF151C1A),
     line: Color(0xFF1E2724),
-    textPrimary: Color(0xFFECF3F1),
-    textMuted: Color(0xFF8A9793),
-    accent: Color(0xFF17D0BA),
-    accentSoft: Color(0xFF4EE7D5),
-    onAccent: Color(0xFF03201D),
-    downloaded: Color(0xFFE7B15A),
-    brightness: Brightness.dark,
-  );
-
-  /// Dark —— 深灰,比 OLED 略亮,常规护眼夜间。
-  static const dark = AppPalette(
-    background: Color(0xFF15181B),
-    surface: Color(0xFF1E2225),
-    elevated: Color(0xFF282E31),
-    line: Color(0xFF333A3D),
-    textPrimary: Color(0xFFEAF0EE),
-    textMuted: Color(0xFF93A0A0),
+    textPrimary: Color(0xFFEAF1EF),
+    textMuted: Color(0xFF8F9C98),
     accent: Color(0xFF22D3BD),
     accentSoft: Color(0xFF5CE9D8),
     onAccent: Color(0xFF04211D),
@@ -62,18 +50,33 @@ class AppPalette {
     brightness: Brightness.dark,
   );
 
-  /// Light —— 浅色;青碧加深以保证在白底上的对比度。
+  /// Dark —— 深灰,比 OLED 略亮,常规护眼夜间;内容色与 OLED 统一。
+  static const dark = AppPalette(
+    background: Color(0xFF15181B),
+    surface: Color(0xFF1E2225),
+    elevated: Color(0xFF282E31),
+    line: Color(0xFF333A3D),
+    textPrimary: Color(0xFFEAF1EF),
+    textMuted: Color(0xFF8F9C98),
+    accent: Color(0xFF22D3BD),
+    accentSoft: Color(0xFF5CE9D8),
+    onAccent: Color(0xFF04211D),
+    downloaded: Color(0xFFE7B15A),
+    brightness: Brightness.dark,
+  );
+
+  /// Light —— 明亮浅色;薄荷底 + 白面,淡青抬升层次,青碧强调更鲜亮。
   static const light = AppPalette(
-    background: Color(0xFFF5F7F5),
+    background: Color(0xFFF4FAF8),
     surface: Color(0xFFFFFFFF),
-    elevated: Color(0xFFFFFFFF),
-    line: Color(0xFFE4E8E6),
-    textPrimary: Color(0xFF161B1A),
-    textMuted: Color(0xFF68736F),
-    accent: Color(0xFF0E9E8E),
-    accentSoft: Color(0xFF0B8577),
+    elevated: Color(0xFFEBF4F1),
+    line: Color(0xFFE0E9E6),
+    textPrimary: Color(0xFF121D1A),
+    textMuted: Color(0xFF5D6B66),
+    accent: Color(0xFF0FA694),
+    accentSoft: Color(0xFF14C6B2),
     onAccent: Color(0xFFFFFFFF),
-    downloaded: Color(0xFFC88A2E),
+    downloaded: Color(0xFFC8892C),
     brightness: Brightness.light,
   );
 }
