@@ -534,7 +534,7 @@ class SettingsPage extends StatelessWidget {
   Widget _switch(AppPalette p, IconData icon, String title, String? sub,
           bool value, ValueChanged<bool> onChanged) =>
       SwitchListTile(
-        contentPadding: EdgeInsets.zero,
+        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
         tileColor: Colors.transparent,
         secondary: Icon(icon, color: p.accent, size: 18),
         title: Text(title,
@@ -553,12 +553,12 @@ class SettingsPage extends StatelessWidget {
   Widget _group(BuildContext context, AppPalette p, String label,
           List<Widget> children) =>
       Padding(
-        padding: const EdgeInsets.only(bottom: 18),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(2, 0, 4, 10),
+              padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
               child: _label(p, label),
             ),
             // 用 Material(而非纯 DecoratedBox)当卡片:里面的 ListTile 才有地方画
@@ -573,13 +573,14 @@ class SettingsPage extends StatelessWidget {
                   side: BorderSide(color: p.line),
                 ),
                 child: Padding(
-                  // 左侧多留呼吸(图标/文字不贴卡片内缘);右侧给开关/箭头留位。
-                  padding: const EdgeInsets.fromLTRB(18, 12, 14, 12),
+                  // 左右都留呼吸,图标/文字与开关/箭头都不贴卡片内缘。所有行(开关/条目/
+                  // 滑块)统一由这一处内边距控制,图标列始终对齐。
+                  padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
                   // 卡内 ListTile/SwitchListTile 默认前导宽 + 间隙很大,导致图标/文字
                   // 和滑块行(自定义 Row)左缘对不齐、看着乱。统一成紧凑前导:图标与
                   // 滑块行图标同一列(卡片内缘留白由外层 Padding 统一给)。
                   child: ListTileTheme.merge(
-                    contentPadding: EdgeInsets.zero,
+                    contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
                     minLeadingWidth: 0,
                     horizontalTitleGap: 10,
                     // 相邻条目之间补竖向间距,别挤成一坨。
@@ -600,20 +601,52 @@ class SettingsPage extends StatelessWidget {
         ),
       );
 
-  Widget _label(AppPalette p, String text) => Text(
-        text.toUpperCase(),
-        style: TextStyle(
-          color: p.accent,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 2,
-        ),
+  Widget _label(AppPalette p, String text) => Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 朱印意象:accent 渐变小竖条,当分组标记。
+          Container(
+            width: 3.5,
+            height: 15,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [p.accent, p.accent.withValues(alpha: 0.45)],
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Text(
+            text,
+            style: TextStyle(
+              color: p.textPrimary,
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.5,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(width: 12),
+          // 尾部渐隐细线,给分组收个尾。
+          Expanded(
+            child: Container(
+              height: 1,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [p.line, p.line.withValues(alpha: 0)],
+                ),
+              ),
+            ),
+          ),
+        ],
       );
 
   Widget _tile(AppPalette p, IconData icon, String title, String? subtitle,
           VoidCallback onTap) =>
       ListTile(
-        contentPadding: EdgeInsets.zero,
+        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
         tileColor: Colors.transparent,
         leading: Icon(icon, color: p.accent, size: 18),
         title: Text(title,
