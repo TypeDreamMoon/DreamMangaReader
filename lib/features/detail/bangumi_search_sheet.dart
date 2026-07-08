@@ -17,7 +17,6 @@ class BangumiSearchSheet extends StatefulWidget {
 }
 
 class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
-  static const _pink = Color(0xFFF09199);
   late final TextEditingController _c =
       TextEditingController(text: widget.initialQuery);
   bool _loading = false;
@@ -155,8 +154,8 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
                     Row(
                       children: [
                         if (c.score > 0) ...[
-                          const Icon(Icons.star_rounded,
-                              size: 13, color: _pink),
+                          Icon(Icons.star_rounded,
+                              size: 13, color: p.bangumi),
                           const SizedBox(width: 2),
                           Text(c.score.toStringAsFixed(1),
                               style:

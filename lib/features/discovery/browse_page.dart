@@ -105,19 +105,17 @@ class _BrowsePageState extends State<BrowsePage> {
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
       ),
       body: _sections.isEmpty
-          ? Center(
-              child: Text('该源暂无浏览板块',
-                  style: TextStyle(color: p.textMuted, fontSize: 13)))
+          ? const EmptyState(title: '该源暂无浏览板块')
           : Column(
               children: [
-                _tabs(p),
+                _tabs(),
                 Expanded(child: _grid(p)),
               ],
             ),
     );
   }
 
-  Widget _tabs(AppPalette p) => SizedBox(
+  Widget _tabs() => SizedBox(
         height: 48,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -126,24 +124,10 @@ class _BrowsePageState extends State<BrowsePage> {
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (_, i) {
             final sel = i == _sel;
-            return GestureDetector(
+            return AppFilterChip(
+              label: _sections[i].name,
+              selected: sel,
               onTap: () => _select(i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: sel ? p.accent.withValues(alpha: 0.16) : p.surface,
-                  borderRadius: BorderRadius.circular(context.radius),
-                  border: Border.all(
-                      color: sel ? p.accent : p.line, width: sel ? 1.5 : 1),
-                ),
-                child: Text(_sections[i].name,
-                    style: TextStyle(
-                        color: sel ? p.accent : p.textPrimary,
-                        fontSize: 13,
-                        fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
-              ),
             );
           },
         ),
@@ -162,9 +146,7 @@ class _BrowsePageState extends State<BrowsePage> {
           ),
         );
       }
-      return Center(
-          child: Text('该板块暂无内容',
-              style: TextStyle(color: p.textMuted, fontSize: 13)));
+      return const EmptyState(title: '该板块暂无内容');
     }
     return SmoothScroll(
       builder: (sc) => NotificationListener<ScrollNotification>(

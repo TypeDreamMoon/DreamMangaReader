@@ -76,7 +76,10 @@ class _AboutPageState extends State<AboutPage> {
             p,
             Wrap(
               spacing: 8,
-              runSpacing: 8,
+              runSpacing: 10,
+              alignment: WrapAlignment.center, // 词云式:居中流排、大小错落
+              runAlignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 for (final s in registeredSources) _sourceChip(p, s.name),
               ],
@@ -147,36 +150,23 @@ class _AboutPageState extends State<AboutPage> {
               textAlign: TextAlign.center,
               style: TextStyle(color: p.textMuted, fontSize: 12.5)),
           const SizedBox(height: 12),
-          Container(
+          AppPill(
+            text: 'v${AppInfo.version}',
+            fill: p.accent.withValues(alpha: 0.16),
+            textColor: p.accent,
+            fontSize: 12,
+            radius: 20,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: p.accent.withValues(alpha: 0.16),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text('v${AppInfo.version}',
-                style: TextStyle(
-                    color: p.accent, fontSize: 12, fontWeight: FontWeight.w700)),
           ),
         ],
       );
 
-  Widget _section(AppPalette p, String text) => Text(
-        text.toUpperCase(),
-        style: TextStyle(
-            color: p.accent,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 2),
-      );
+  // 页内小助手改为委托设计系统组件(去掉手搓样式,call site 不变)。
+  Widget _section(AppPalette p, String text) => AppSectionLabel(text);
 
-  Widget _card(AppPalette p, Widget child) => Container(
+  Widget _card(AppPalette p, Widget child) => AppCard(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: p.line),
-        ),
         child: child,
       );
 
@@ -210,35 +200,34 @@ class _AboutPageState extends State<AboutPage> {
         ),
       );
 
-  Widget _sourceChip(AppPalette p, String name) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: p.elevated,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: p.line),
-        ),
-        child: Text(name,
-            style: TextStyle(
-                color: p.textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600)),
-      );
+  // 词云式来源标签:按名字散列做大小 / 强调错落,像词云的高低频词。
+  Widget _sourceChip(AppPalette p, String name) {
+    final h = name.codeUnits.fold<int>(7, (a, c) => (a * 31 + c) & 0x7fffffff);
+    const sizes = [12.0, 13.0, 14.5, 12.5, 16.0, 13.5];
+    final fs = sizes[h % sizes.length];
+    final accent = h % 3 == 0; // 约三分之一用青碧强调
+    return AppPill(
+      text: name,
+      fill: accent ? p.accent.withValues(alpha: 0.14) : p.elevated,
+      border: accent ? p.accent.withValues(alpha: 0.40) : p.line,
+      textColor: accent ? p.accent : p.textPrimary,
+      fontSize: fs,
+      fontWeight: FontWeight.w700,
+      radius: 20,
+      padding: EdgeInsets.symmetric(
+          horizontal: 10 + fs * 0.15, vertical: 4 + fs * 0.15),
+    );
+  }
 
   Widget _linkTile(AppPalette p, IconData icon, String title, String subtitle,
           VoidCallback onTap) =>
-      ListTile(
-        tileColor: p.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: p.line),
-        ),
-        leading: Icon(icon, color: p.accent),
-        title: Text(title,
-            style: TextStyle(
-                color: p.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 14)),
-        subtitle: Text(subtitle,
-            style: TextStyle(color: p.textMuted, fontSize: 12)),
-        trailing: Icon(Icons.open_in_new_rounded, size: 18, color: p.textMuted),
+      AppListRow.card(
+        icon: icon,
+        title: title,
+        subtitle: subtitle,
+        subtitleMaxLines: 1,
+        trailing:
+            Icon(Icons.open_in_new_rounded, size: 18, color: p.textMuted),
         onTap: onTap,
       );
 }

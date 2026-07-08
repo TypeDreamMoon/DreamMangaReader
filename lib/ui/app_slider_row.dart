@@ -58,7 +58,8 @@ class AppSliderRow extends StatelessWidget {
           leading!
         else if (icon != null) ...[
           Icon(icon, size: 18, color: iconColor ?? p.accent),
-          const SizedBox(width: 8),
+          // 10 与 ListTile 的 horizontalTitleGap 对齐,各类行标签左缘统一。
+          const SizedBox(width: 10),
         ],
         if (label != null)
           Text(label!,

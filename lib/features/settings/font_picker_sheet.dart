@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_theme.dart';
+import '../../ui/ui.dart';
 
 /// 系统字体选择器:搜索 + **懒加载**列表(每行用该字体渲染,ListView.builder
 /// 只建可见项 → 只加载看得到的字体,几百个字体也不卡)。
@@ -44,16 +45,10 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
+        AppSearchField(
           controller: _c,
+          hint: '搜索字体名',
           onChanged: _filter,
-          style: TextStyle(color: p.textPrimary, fontSize: 14),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: '搜索字体名',
-            hintStyle: TextStyle(color: p.textMuted),
-            prefixIcon: Icon(Icons.search_rounded, color: p.textMuted),
-          ),
         ),
         const SizedBox(height: 8),
         Expanded(

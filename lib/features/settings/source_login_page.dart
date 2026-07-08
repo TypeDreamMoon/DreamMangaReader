@@ -68,13 +68,8 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
         children: [
-          Container(
+          AppCard(
             padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: p.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: p.line),
-            ),
             child: Text(
               '$_sourceName 的内容(详情 / 章节 / 图片)需要登录后才能读。登录后本 App 用你的账号 '
               'Token 直连该源 API,比未登录路径更快更稳、也不易被限流。\n\n'
@@ -136,37 +131,30 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
+        AppTextField(
           controller: _userCtrl,
           enabled: !_busy,
+          label: '账号(用户名 / 邮箱)',
           autofillHints: const [AutofillHints.username],
-          decoration: const InputDecoration(
-            labelText: '账号(用户名 / 邮箱)',
-            border: OutlineInputBorder(),
-          ),
         ),
         const SizedBox(height: 14),
-        TextField(
+        AppTextField(
           controller: _pwCtrl,
           enabled: !_busy,
-          obscureText: _obscure,
+          obscure: _obscure,
+          label: '密码',
           autofillHints: const [AutofillHints.password],
           onSubmitted: (_) => _busy ? null : _login(auth),
-          decoration: InputDecoration(
-            labelText: '密码',
-            border: const OutlineInputBorder(),
-            suffixIcon: IconButton(
-              icon: Icon(_obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                  size: 20),
-              onPressed: () => setState(() => _obscure = !_obscure),
-            ),
+          suffixIcon: IconButton(
+            icon: Icon(_obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                size: 20),
+            onPressed: () => setState(() => _obscure = !_obscure),
           ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
           Text(_error!,
-              style:
-                  TextStyle(color: Colors.redAccent.shade100, fontSize: 12.5)),
+              style: TextStyle(color: p.statusFail, fontSize: 12.5)),
         ],
         const SizedBox(height: 20),
         FilledButton(

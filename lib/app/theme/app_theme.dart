@@ -121,8 +121,21 @@ ThemeData buildTheme(AppThemeVariant variant,
       backgroundColor: p.surface,
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
+      // 描边/分段线走 p.line(与每行卡片描边一致,不再吃 M3 默认的 onSurface 高对比);
+      // 选中段用 accent@20% 淡填 + accent 文字/图标,与导航栏选中高亮同一套克制语言。
       style: ButtonStyle(
         shape: WidgetStatePropertyAll(shape),
+        side: WidgetStatePropertyAll(BorderSide(color: p.line)),
+        backgroundColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? p.accent.withValues(alpha: 0.20)
+                : Colors.transparent),
+        foregroundColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? p.accent : p.textMuted),
+        iconColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? p.accent : p.textMuted),
+        textStyle: const WidgetStatePropertyAll(
+            TextStyle(fontWeight: FontWeight.w600)),
       ),
     ),
     bottomSheetTheme: BottomSheetThemeData(

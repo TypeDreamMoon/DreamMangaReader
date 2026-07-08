@@ -76,13 +76,9 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          Container(
+          AppCard(
+            color: p.elevated,
             padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: p.elevated,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: p.line),
-            ),
             child: Row(
               children: [
                 Icon(Icons.info_outline_rounded, size: 18, color: p.accent),
@@ -106,25 +102,11 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
             const SizedBox(height: 4),
             Padding(
               padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
-              child: TextField(
+              child: AppTextField(
                 controller: _ctrl,
-                style: TextStyle(color: p.textPrimary, fontSize: 14),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'host:port,如 127.0.0.1:7890',
-                  hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
-                  prefixIcon: Icon(Icons.link_rounded, size: 18, color: p.textMuted),
-                  filled: true,
-                  fillColor: p.surface,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.line),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.line),
-                  ),
-                ),
+                hint: 'host:port,如 127.0.0.1:7890',
+                prefixIcon:
+                    Icon(Icons.link_rounded, size: 18, color: p.textMuted),
               ),
             ),
           ],
@@ -154,22 +136,16 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
           ),
           if (_result.isNotEmpty) ...[
             const SizedBox(height: 14),
-            Container(
+            AppCard(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: p.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: _result.startsWith('测试中')
-                        ? p.line
-                        : (_ok
-                            ? const Color(0xFF3FB950)
-                            : const Color(0xFFE5534B))),
-              ),
+              borderColor: _result.startsWith('测试中')
+                  ? p.line
+                  : (_ok ? p.statusOk : p.statusFail),
               child: SelectableText(
                 _result,
-                style: TextStyle(color: p.textPrimary, fontSize: 12.5, height: 1.5),
+                style:
+                    TextStyle(color: p.textPrimary, fontSize: 12.5, height: 1.5),
               ),
             ),
           ],
@@ -179,52 +155,15 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
   }
 
   Widget _option(
-      AppPalette p, int value, IconData icon, String title, String subtitle) {
-    final sel = _mode == value;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        onTap: () => setState(() => _mode = value),
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: sel ? p.accent.withValues(alpha: 0.08) : p.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: sel ? p.accent : p.line),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                sel
-                    ? Icons.radio_button_checked_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                color: sel ? p.accent : p.textMuted,
-                size: 20,
-              ),
-              const SizedBox(width: 12),
-              Icon(icon, color: sel ? p.accent : p.textMuted, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14)),
-                    const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: TextStyle(
-                            color: p.textMuted, fontSize: 11.5, height: 1.4)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          AppPalette p, int value, IconData icon, String title, String subtitle) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: AppSelectableRow(
+          icon: icon,
+          title: title,
+          subtitle: subtitle,
+          selected: _mode == value,
+          onTap: () => setState(() => _mode = value),
         ),
-      ),
-    );
-  }
+      );
 }

@@ -16,8 +16,14 @@ class AppPalette {
   final Color accentSoft; // 青碧亮变体(高亮/发光)
   final Color onAccent; // 强调色上的文字
   final Color downloaded; // 语义:已下载(琥珀)
+  final Color statusOk; // 语义:成功/在线(绿)
+  final Color statusWarn; // 语义:警告/空(琥珀)
+  final Color statusFail; // 语义:失败/错误(红)
+  final Color bangumi; // Bangumi 品牌粉
   final Brightness brightness;
 
+  // 语义状态色 + 品牌色跨主题一致(与各页此前硬编码的值相同),故给默认值,
+  // 三套主题的 const 实例无需逐一声明。
   const AppPalette({
     required this.background,
     required this.surface,
@@ -30,6 +36,10 @@ class AppPalette {
     required this.onAccent,
     required this.downloaded,
     required this.brightness,
+    this.statusOk = const Color(0xFF3FB950),
+    this.statusWarn = const Color(0xFFD9A441),
+    this.statusFail = const Color(0xFFE5534B),
+    this.bangumi = const Color(0xFFF09199),
   });
 
   // 深色系(OLED / Dark)共用同一套「内容色」——强调青碧、文字、语义色完全一致,

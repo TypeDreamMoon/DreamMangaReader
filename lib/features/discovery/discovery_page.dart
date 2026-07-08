@@ -442,47 +442,101 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ),
       );
 
-  Widget _filterBar(AppPalette p) => Container(
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: p.line)),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 6),
+  Widget _filterBar(AppPalette p) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: [for (final f in _filters) _filterRow(p, f)],
+          children: [
+            for (var i = 0; i < _filters.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              _filterRow(p, _filters[i]),
+            ],
+          ],
         ),
       );
 
-  Widget _filterRow(AppPalette p, FilterDef f) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 12),
+  Widget _filterRow(AppPalette p, FilterDef f) => _filterCard(
+        p,
+        _filterIcon(f),
+        f.label,
+        [
+          for (final o in f.options)
+            _chip(p, o.label, (_selected[f.id] ?? '') == o.value,
+                () => _pick(f.id, o.value)),
+        ],
+      );
+
+  // 单个筛选维度 = 一张描边卡(参照设置页 UI 库风格):图标 + 维度名 + 横滑 chips。
+  Widget _filterCard(
+          AppPalette p, IconData icon, String label, List<Widget> chips) =>
+      AppCard(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            Icon(icon, size: 16, color: p.accent),
+            const SizedBox(width: 8),
             SizedBox(
-              width: 44,
-              child: Text(f.label,
+              // 固定宽保证各行 chips 左缘对齐;52 容得下 4 个中文维度名,更长才省略。
+              width: 52,
+              child: Text(label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      color: p.textMuted,
-                      fontSize: 11,
+                      color: p.textPrimary,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700)),
             ),
+            const SizedBox(width: 6),
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final o in f.options)
-                      _chip(p, o.label, (_selected[f.id] ?? '') == o.value,
-                          () => _pick(f.id, o.value)),
-                  ],
+              // 关掉桌面横向滚动条(与书架/阅读器横滑条一致),免得压在矮卡片里的 chips 上。
+              child: ScrollConfiguration(
+                behavior:
+                    ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: chips),
                 ),
               ),
             ),
           ],
         ),
       );
+
+  // 按维度名/类型猜一个贴切的前导图标;源自定义维度也有兜底(tune)。
+  IconData _filterIcon(FilterDef f) {
+    if (f.type == 'sort') return Icons.sort_rounded;
+    final l = f.label;
+    if (l.contains('地区') ||
+        l.contains('地域') ||
+        l.contains('区域') ||
+        l.contains('国')) {
+      return Icons.public_rounded;
+    }
+    if (l.contains('受众') ||
+        l.contains('读者') ||
+        l.contains('性别') ||
+        l.contains('对象')) {
+      return Icons.groups_rounded;
+    }
+    if (l.contains('进度') ||
+        l.contains('状态') ||
+        l.contains('连载') ||
+        l.contains('連載')) {
+      return Icons.timelapse_rounded;
+    }
+    if (l.contains('排序') || l.contains('sort')) return Icons.sort_rounded;
+    if (l.contains('剧情') ||
+        l.contains('题材') ||
+        l.contains('类型') ||
+        l.contains('類型') ||
+        l.contains('分类') ||
+        l.contains('genre')) {
+      return Icons.local_offer_rounded;
+    }
+    return Icons.tune_rounded;
+  }
 
   // 展开/收起用的高度动画包装(关动画时零时长=瞬时)。
   Widget _animExpand(Widget child) => AnimatedSize(
@@ -571,22 +625,20 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   }
 
   // 混合模式的通用筛选栏(排序 + 进度),各源尽力翻译。
-  Widget _mixedFilterBar(AppPalette p) => Container(
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: p.line)),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 6),
+  Widget _mixedFilterBar(AppPalette p) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _mixedRow(p, '排序', const [
+            _mixedRow(p, Icons.sort_rounded, '排序', const [
               ('latest', '最新更新'),
               ('popular', '人气'),
             ], _mixedSort, (v) {
               _mixedSort = v;
               _reset();
             }),
-            _mixedRow(p, '进度', const [
+            const SizedBox(height: 8),
+            _mixedRow(p, Icons.timelapse_rounded, '进度', const [
               ('', '全部'),
               ('ongoing', '连载中'),
               ('completed', '已完结'),
@@ -598,35 +650,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ),
       );
 
-  Widget _mixedRow(AppPalette p, String label, List<(String, String)> opts,
-          String cur, void Function(String) onPick) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 12),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 44,
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: p.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700)),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final o in opts)
-                      _chip(p, o.$2, cur == o.$1, () => onPick(o.$1)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+  Widget _mixedRow(AppPalette p, IconData icon, String label,
+          List<(String, String)> opts, String cur,
+          void Function(String) onPick) =>
+      _filterCard(
+        p,
+        icon,
+        label,
+        [
+          for (final o in opts) _chip(p, o.$2, cur == o.$1, () => onPick(o.$1)),
+        ],
       );
 
   Widget _grid(AppPalette p, int columns) {

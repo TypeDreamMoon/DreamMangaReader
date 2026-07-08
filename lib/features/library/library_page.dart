@@ -191,9 +191,7 @@ class _LibraryPageState extends State<LibraryPage> {
     final favs =
         store.favorites.where((f) => f.title.toLowerCase().contains(q)).toList();
     if (favs.isEmpty) {
-      return Center(
-          child: Text('收藏里没有匹配「$_shelfQuery」的',
-              style: TextStyle(color: p.textMuted, fontSize: 13)));
+      return EmptyState(title: '收藏里没有匹配「$_shelfQuery」的');
     }
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),

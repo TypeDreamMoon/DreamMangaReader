@@ -344,13 +344,13 @@ class _SyncPageState extends State<SyncPage> {
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(
-                  value: 'custom',
-                  label: Text('Custom'),
-                  icon: Icon(Icons.tune_rounded, size: 16)),
-              ButtonSegment(
                   value: 'hertz',
                   label: Text('Hertz Service'),
                   icon: Icon(Icons.verified_rounded, size: 16)),
+              ButtonSegment(
+                  value: 'custom',
+                  label: Text('Custom'),
+                  icon: Icon(Icons.tune_rounded, size: 16)),
             ],
             selected: {_preset},
             onSelectionChanged:
@@ -439,13 +439,14 @@ class _SyncPageState extends State<SyncPage> {
               runSpacing: 2,
               children: [
                 for (final c in SyncCategory.values)
-                  FilterChip(
-                    label: Text(kCatLabels[c]!),
+                  AppFilterChip(
+                    label: kCatLabels[c]!,
                     selected: _sync.syncCategories.contains(c),
-                    onSelected: _busy
-                        ? null
-                        : (v) {
-                            _sync.setSyncCategory(c, v);
+                    onTap: _busy
+                        ? () {}
+                        : () {
+                            final sel = _sync.syncCategories.contains(c);
+                            _sync.setSyncCategory(c, !sel);
                             setState(() {});
                           },
                   ),
@@ -457,19 +458,14 @@ class _SyncPageState extends State<SyncPage> {
 
   Widget _autoCard(AppPalette p) => AppCard(
         radius: 14,
-        padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
-        child: SwitchListTile(
-          contentPadding: EdgeInsets.zero,
+        padding: EdgeInsets.zero, // 让 AppSwitchRow 的 contentPadding 独当留白,避免双重内缩
+        child: AppSwitchRow(
           dense: true,
+          contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+          title: '启动时自动同步',
+          titleWeight: FontWeight.w600,
+          subtitle: '每次打开 App 后台双向合并一次(不丢本地)',
           value: _auto,
-          activeThumbColor: p.accent,
-          title: Text('启动时自动同步',
-              style: TextStyle(
-                  color: p.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
-          subtitle: Text('每次打开 App 后台双向合并一次(不丢本地)',
-              style: TextStyle(color: p.textMuted, fontSize: 12)),
           onChanged: _busy
               ? null
               : (v) {
@@ -490,26 +486,11 @@ class _SyncPageState extends State<SyncPage> {
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        TextField(
+        AppTextField(
           controller: c,
+          hint: hint,
+          obscure: obscure,
           enabled: enabled && !_busy,
-          obscureText: obscure,
-          style: TextStyle(color: p.textPrimary, fontSize: 13),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: hint,
-            hintStyle: TextStyle(color: p.textMuted, fontSize: 12.5),
-            filled: true,
-            fillColor: p.background,
-            contentPadding:
-                const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: p.line)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: p.accent)),
-          ),
         ),
       ],
     );

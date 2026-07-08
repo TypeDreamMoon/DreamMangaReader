@@ -142,38 +142,16 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   /// 删除源(带二次确认)。本地源=真删文件;仓库源=隐藏(可在源仓库卡片恢复)。
   Future<void> _deleteSource(SourceMeta s, SourceController sc) async {
     final isLocal = _repo.localIds.contains(s.id);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final p = ctx.palette;
-        return AlertDialog(
-          backgroundColor: p.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: Text('删除源',
-              style: TextStyle(
-                  color: p.textPrimary,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800)),
-          content: Text(
-            isLocal
-                ? '确定删除本地源「${s.name}」?会删掉本地脚本文件,不可撤销。'
-                : '确定删除源「${s.name}」?会从列表隐藏(重载仓库也不再出现),之后可在源仓库卡片「恢复已删除的源」找回。',
-            style: TextStyle(color: p.textMuted, fontSize: 13.5, height: 1.5),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('取消')),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: _red),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
+    final ok = await showAppConfirm(
+      context,
+      title: '删除源',
+      message: isLocal
+          ? '确定删除本地源「${s.name}」?会删掉本地脚本文件,不可撤销。'
+          : '确定删除源「${s.name}」?会从列表隐藏(重载仓库也不再出现),之后可在源仓库卡片「恢复已删除的源」找回。',
+      confirmLabel: '删除',
+      destructive: true,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     setState(() => _reloading = true);
     await _repo.deleteSource(s.id);
     _revalidate(sc);
@@ -210,18 +188,14 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     if (mounted) setState(() => _health[s.id] = r);
   }
 
-  static const _green = Color(0xFF3FB950);
-  static const _amber = Color(0xFFD9A441);
-  static const _red = Color(0xFFE5534B);
-
   Color _colorOf(SourceHealthStatus st, AppPalette p) {
     switch (st) {
       case SourceHealthStatus.ok:
-        return _green;
+        return p.statusOk;
       case SourceHealthStatus.empty:
-        return _amber;
+        return p.statusWarn;
       case SourceHealthStatus.fail:
-        return _red;
+        return p.statusFail;
       case SourceHealthStatus.checking:
         return p.accent;
       case SourceHealthStatus.unknown:
@@ -271,57 +245,47 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   void _showLog(SourceMeta s) {
     final p = context.palette;
     final r = _health[s.id] ?? SourceHealthResult.unknown;
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: p.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Row(
-          children: [
-            _dot(s, p),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text('${s.name} · 检测日志',
-                  style: TextStyle(
-                      color: p.textPrimary, fontSize: 16, fontWeight: FontWeight.w800)),
-            ),
-          ],
-        ),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            child: SelectableText(
-              r.log,
-              style: TextStyle(
-                color: p.textPrimary,
-                fontSize: 12.5,
-                height: 1.55,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+    showAppDialog<void>(
+      context,
+      title: '${s.name} · 检测日志',
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
+          child: SelectableText(
+            r.log,
+            style: TextStyle(
+              color: p.textPrimary,
+              fontSize: 12.5,
+              height: 1.55,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: r.log));
-              showAppNotify(context, '日志已复制', kind: AppNotifyKind.success);
-            },
-            child: const Text('复制'),
-          ),
-          TextButton(
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: r.log));
+            showAppNotify(context, '日志已复制', kind: AppNotifyKind.success);
+          },
+          child: const Text('复制'),
+        ),
+        Builder(
+          builder: (ctx) => TextButton(
             onPressed: () {
               Navigator.of(ctx).pop();
               _checkOne(s);
             },
             child: const Text('重新检测'),
           ),
-          TextButton(
+        ),
+        Builder(
+          builder: (ctx) => TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('关闭'),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -356,12 +320,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           _repoCard(p, sc),
           const SizedBox(height: 16),
           if (registeredSources.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
-              child: Text(
-                '还没有加载到任何源。填入上面的源仓库地址,或选择一个包含 index.json 的本地目录。',
-                style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.5),
-              ),
+            const EmptyState(
+              title: '还没有加载到任何源',
+              message: '填入上面的源仓库地址,或选择一个包含 index.json 的本地目录。',
             )
           else ...[
             Padding(
@@ -427,48 +388,18 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               ],
             ),
             const SizedBox(height: 10),
-            TextField(
+            AppTextField(
               controller: _urlCtrl,
               enabled: !_reloading,
-              style: TextStyle(color: p.textPrimary, fontSize: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '源仓库地址(index.json 所在的 raw 根 URL)',
-                hintStyle: TextStyle(color: p.textMuted, fontSize: 12.5),
-                filled: true,
-                fillColor: p.background,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.line)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.accent)),
-              ),
+              hint: '源仓库地址(index.json 所在的 raw 根 URL)',
             ),
             const SizedBox(height: 8),
             // 访问令牌:填了才能拉**私有**源仓库(留空 = 公开地址直接拉)。
-            TextField(
+            AppTextField(
               controller: _tokenCtrl,
               enabled: !_reloading,
-              obscureText: true,
-              style: TextStyle(color: p.textPrimary, fontSize: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '访问令牌(拉私有仓库用,可留空)',
-                hintStyle: TextStyle(color: p.textMuted, fontSize: 12.5),
-                filled: true,
-                fillColor: p.background,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.line)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.accent)),
-              ),
+              obscure: true,
+              hint: '访问令牌(拉私有仓库用,可留空)',
             ),
             const SizedBox(height: 4),
             // 用 GitHub 登录换取令牌(设备码流),免手动粘贴 PAT。
@@ -574,8 +505,10 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                   '${_repo.localIds.contains(s.id) ? '本地 · ' : ''}${s.experimental ? '实验性 · ' : ''}${_labelOf(r)}',
                   style: TextStyle(
                     color: r.status == SourceHealthStatus.fail
-                        ? _red
-                        : (r.status == SourceHealthStatus.empty ? _amber : p.textMuted),
+                        ? p.statusFail
+                        : (r.status == SourceHealthStatus.empty
+                            ? p.statusWarn
+                            : p.textMuted),
                     fontSize: 12,
                   ),
                 ),
@@ -697,7 +630,7 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
           const SizedBox(height: 14),
           if (_error != null)
             Text(_error!,
-                style: const TextStyle(color: Color(0xFFE5534B), fontSize: 12.5))
+                style: TextStyle(color: p.statusFail, fontSize: 12.5))
           else
             Row(children: [
               SizedBox(

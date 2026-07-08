@@ -9,6 +9,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../app/theme/app_colors.dart';
+import '../../ui/ui.dart';
 
 /// 播放诊断开关。开着时播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错)。
 /// 平时关闭(避免刷屏);排查番剧播放问题时置 true 复现即可。
@@ -305,28 +306,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     );
   }
 
-  Widget _errorView(AppPalette p) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline_rounded,
-                  size: 40, color: Colors.white54),
-              const SizedBox(height: 12),
-              Text('播放失败',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              SelectableText(_error ?? '',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12)),
-              const SizedBox(height: 14),
-              FilledButton(onPressed: _load, child: const Text('重试')),
-            ],
-          ),
-        ),
+  Widget _errorView(AppPalette p) => AppErrorView(
+        onDark: true,
+        icon: Icons.error_outline_rounded,
+        title: '播放失败',
+        message: _error ?? '',
+        onRetry: _load,
+        retryLabel: '重试',
       );
 }

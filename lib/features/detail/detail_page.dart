@@ -396,18 +396,15 @@ class _DetailPageState extends State<DetailPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // 来源角标
-                      Container(
+                      AppPill(
+                        text: widget.meta.name,
+                        fill: acc.withValues(alpha: 0.16),
+                        textColor: Color.lerp(acc, Colors.white, 0.35),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        radius: 6,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: acc.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(widget.meta.name,
-                            style: TextStyle(
-                                color: Color.lerp(acc, Colors.white, 0.35),
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w800)),
                       ),
                       const SizedBox(height: 7),
                       Text(
@@ -468,18 +465,11 @@ class _DetailPageState extends State<DetailPage> {
   Widget _pill(AppPalette p, String text,
       {bool accent = false, Color? accentColor}) {
     final a = accentColor ?? p.accent;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-      decoration: BoxDecoration(
-        color: accent ? a.withValues(alpha: 0.16) : p.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: accent ? a.withValues(alpha: 0.45) : p.line),
-      ),
-      child: Text(text,
-          style: TextStyle(
-              color: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w700)),
+    return AppPill(
+      text: text,
+      fill: accent ? a.withValues(alpha: 0.16) : p.surface,
+      border: accent ? a.withValues(alpha: 0.45) : p.line,
+      textColor: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
     );
   }
 
@@ -697,8 +687,6 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  static const _bgmPink = Color(0xFFF09199); // Bangumi 品牌粉
-
   Widget _bgmIcon(AppPalette p, IconData icon, String tip, VoidCallback onTap) =>
       IconButton(
         onPressed: onTap,
@@ -728,11 +716,11 @@ class _DetailPageState extends State<DetailPage> {
     if (_bgmLoading) {
       return shell(Row(
         children: [
-          const SizedBox(
+          SizedBox(
               width: 15,
               height: 15,
               child:
-                  CircularProgressIndicator(strokeWidth: 2, color: _bgmPink)),
+                  CircularProgressIndicator(strokeWidth: 2, color: p.bangumi)),
           const SizedBox(width: 10),
           Text('正在匹配 Bangumi…',
               style: TextStyle(color: p.textMuted, fontSize: 12)),
@@ -755,7 +743,7 @@ class _DetailPageState extends State<DetailPage> {
             icon: const Icon(Icons.search_rounded, size: 16),
             label: const Text('手动搜索'),
             style: TextButton.styleFrom(
-                foregroundColor: _bgmPink,
+                foregroundColor: p.bangumi,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: const Size(0, 32),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap),
@@ -776,9 +764,9 @@ class _DetailPageState extends State<DetailPage> {
       children: [
         Row(
           children: [
-            const Text('Bangumi',
+            Text('Bangumi',
                 style: TextStyle(
-                    color: _bgmPink,
+                    color: p.bangumi,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.0)),
@@ -816,7 +804,7 @@ class _DetailPageState extends State<DetailPage> {
                                   ? Icons.star_half_rounded
                                   : Icons.star_border_rounded),
                           size: 15,
-                          color: _bgmPink),
+                          color: p.bangumi),
                   ]),
                   const SizedBox(height: 4),
                   Text('${b.rank > 0 ? '#${b.rank} · ' : ''}${b.votesLabel}',
@@ -879,18 +867,15 @@ class _DetailPageState extends State<DetailPage> {
             runSpacing: 6,
             children: [
               for (final t in b.tags.take(8))
-                Container(
+                AppPill(
+                  text: t,
+                  fill: p.bangumi.withValues(alpha: 0.10),
+                  textColor: Color.lerp(p.bangumi, Colors.white, 0.3),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  radius: 6,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _bgmPink.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(t,
-                      style: TextStyle(
-                          color: Color.lerp(_bgmPink, Colors.white, 0.3),
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600)),
                 ),
             ],
           ),
@@ -1012,10 +997,7 @@ class _DetailPageState extends State<DetailPage> {
     if (_error != null) {
       return [
         header,
-        stateBox(Center(
-            child: SelectableText('章节加载失败:\n$_error',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: p.textMuted, fontSize: 12)))),
+        stateBox(AppErrorView(title: '章节加载失败', message: '$_error')),
       ];
     }
     if (_chapters == null) {

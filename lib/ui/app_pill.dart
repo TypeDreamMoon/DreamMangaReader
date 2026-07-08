@@ -81,8 +81,11 @@ class AppPill extends StatelessWidget {
         ],
       );
     }
+    // 仅在有宽度约束时才居中:Container 一旦设 alignment 就会贪婪撑满父级宽度,
+    // 放进 Wrap 会变成「一行一个」。无约束时置 null,让 pill 按内容收缩(词云才成立)。
+    final bounded = maxWidth != null || constraints != null;
     return Container(
-      alignment: Alignment.center,
+      alignment: bounded ? Alignment.center : null,
       constraints:
           maxWidth != null ? BoxConstraints(maxWidth: maxWidth!) : constraints,
       padding: padding,

@@ -103,9 +103,9 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
                     child: Center(child: CircularProgressIndicator()),
                   )
                 else if (_episodes.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 30),
-                    child: Center(child: Text('没有分集')),
+                  const EmptyState(
+                    title: '没有分集',
+                    padding: EdgeInsets.symmetric(vertical: 30, horizontal: 24),
                   )
                 else
                   _episodeGrid(p),
@@ -156,18 +156,13 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         runSpacing: 8,
         children: [
           for (var i = 0; i < _episodes.length; i++)
-            InkWell(
-              onTap: () => _play(i),
-              borderRadius: BorderRadius.circular(context.radius),
-              child: Container(
-                constraints: const BoxConstraints(minWidth: 54),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 54),
+              child: AppCard(
+                onTap: () => _play(i),
+                radius: context.radius,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                decoration: BoxDecoration(
-                  color: p.surface,
-                  borderRadius: BorderRadius.circular(context.radius),
-                  border: Border.all(color: p.line),
-                ),
                 child: Text(
                   _epLabel(_episodes[i], i),
                   textAlign: TextAlign.center,

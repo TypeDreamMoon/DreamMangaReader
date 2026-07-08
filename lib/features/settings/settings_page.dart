@@ -60,54 +60,26 @@ class SettingsPage extends StatelessWidget {
         controller: sc,
         padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
         children: [
-          _group(context, p, '外观', [
-            SegmentedButton<AppThemeVariant>(
+          _group('外观', [
+            _rowCard(AppSegmentedRow<AppThemeVariant>(
+              icon: Icons.palette_rounded,
+              title: '主题',
               segments: [
                 for (final v in AppThemeVariant.values)
                   ButtonSegment(value: v, label: Text(v.shortLabel)),
               ],
               selected: {theme.variant},
-              showSelectedIcon: false,
               onSelectionChanged: (s) => theme.variant = s.first,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.crop_square_rounded, size: 18, color: p.accent),
-                const SizedBox(width: 8),
-                Text('控件圆角',
-                    style: TextStyle(
-                        color: p.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
-                Expanded(
-                  child: Slider(
-                    value: lib.controlRadius,
-                    min: 0,
-                    max: 28,
-                    divisions: 28,
-                    label: lib.controlRadius.round().toString(),
-                    onChanged: (v) => lib.controlRadius = v,
-                  ),
-                ),
-                SizedBox(
-                  width: 26,
-                  child: Text(lib.controlRadius.round().toString(),
-                      textAlign: TextAlign.end,
-                      style: TextStyle(color: p.textMuted, fontSize: 13)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
+            )),
+            _sliderRow(Icons.crop_square_rounded, '控件圆角', lib.controlRadius,
+                0, 28, 28, (v) => lib.controlRadius = v),
             _switch(
-                p,
                 Icons.animation_rounded,
                 '开启动画',
                 '入场 / 页面切换 / 翻页等动画;关掉更省电、更跟手',
                 lib.enableAnimations,
                 (v) => lib.enableAnimations = v),
             _switch(
-                p,
                 Icons.swipe_vertical_rounded,
                 '滚动动画',
                 '列表滚入淡入/滑入 + 桌面滚轮平滑滚动(受「开启动画」总开关约束)',
@@ -115,29 +87,15 @@ class SettingsPage extends StatelessWidget {
                 (v) => lib.scrollAnimations = v),
           ]),
           if (isDesktop)
-            _group(context, p, '桌面', [
-              _sliderRow(p, Icons.zoom_out_map_rounded, '界面缩放', lib.uiScale, 0.7,
+            _group('桌面', [
+              _sliderRow(Icons.zoom_out_map_rounded, '界面缩放', lib.uiScale, 0.7,
                   1.6, 18, (v) => lib.uiScale = v, pct: true),
-              if (isWindows) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Icon(Icons.font_download_rounded,
-                        size: 18, color: p.accent),
-                    const SizedBox(width: 8),
-                    Text('字体',
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                _fontSelector(context, p, lib),
-              ],
+              if (isWindows) _fontSelector(context, p, lib),
             ]),
-          _group(context, p, '阅读', [
-            SegmentedButton<ReaderMode>(
+          _group('阅读', [
+            _rowCard(AppSegmentedRow<ReaderMode>(
+              icon: Icons.menu_book_rounded,
+              title: '阅读模式',
               segments: const [
                 ButtonSegment(
                     value: ReaderMode.paged,
@@ -153,48 +111,22 @@ class SettingsPage extends StatelessWidget {
                     icon: Icon(Icons.arrow_downward_rounded, size: 15)),
               ],
               selected: {lib.readerMode},
-              showSelectedIcon: false,
               onSelectionChanged: (s) => lib.readerMode = s.first,
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Icon(Icons.download_for_offline_rounded,
-                    size: 18, color: p.accent),
-                const SizedBox(width: 8),
-                Text('预加载后续页',
-                    style: TextStyle(
-                        color: p.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
-                Expanded(
-                  child: Slider(
-                    value: lib.preload.toDouble(),
-                    min: 0,
-                    max: 8,
-                    divisions: 8,
-                    label: '${lib.preload}',
-                    onChanged: (v) => lib.preload = v.round(),
-                  ),
-                ),
-                SizedBox(
-                  width: 22,
-                  child: Text('${lib.preload}',
-                      textAlign: TextAlign.end,
-                      style: TextStyle(color: p.textMuted, fontSize: 13)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _switch(p, Icons.auto_stories_rounded, '双页并排', '横屏翻页模式下左右并排显示两页',
+            )),
+            _sliderRow(Icons.download_for_offline_rounded, '预加载后续页',
+                lib.preload.toDouble(), 0, 8, 8, (v) => lib.preload = v.round()),
+            _switch(Icons.auto_stories_rounded, '双页并排', '横屏翻页模式下左右并排显示两页',
                 lib.doublePage, (v) => lib.doublePage = v),
-            _switch(p, Icons.zoom_in_rounded, '双击缩放', '阅读时双击放大 / 还原',
+            _switch(Icons.zoom_in_rounded, '双击缩放', '阅读时双击放大 / 还原',
                 lib.doubleTapZoom, (v) => lib.doubleTapZoom = v),
-            _switch(p, Icons.pin_rounded, '显示页码', '阅读时在角落显示 当前页 / 总页',
+            _switch(Icons.pin_rounded, '显示页码', '阅读时在角落显示 当前页 / 总页',
                 lib.showPageNumber, (v) => lib.showPageNumber = v),
           ]),
-          _group(context, p, '书架', [
-            SegmentedButton<int>(
+          _group('书架', [
+            _rowCard(AppSegmentedRow<int>(
+              icon: Icons.grid_view_rounded,
+              title: '每行列数',
+              subtitle: '封面每行列数 · 自动=按窗宽',
               segments: const [
                 ButtonSegment(value: 0, label: Text('自动')),
                 ButtonSegment(value: 3, label: Text('3')),
@@ -203,44 +135,13 @@ class SettingsPage extends StatelessWidget {
                 ButtonSegment(value: 6, label: Text('6')),
               ],
               selected: {lib.gridColumns},
-              showSelectedIcon: false,
               onSelectionChanged: (s) => lib.gridColumns = s.first,
-            ),
-            const SizedBox(height: 6),
-            Text('封面每行列数 · 自动=按窗宽',
-                style: TextStyle(color: p.textMuted, fontSize: 11)),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.rounded_corner_rounded, size: 18, color: p.accent),
-                const SizedBox(width: 8),
-                Text('封面圆角',
-                    style: TextStyle(
-                        color: p.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
-                Expanded(
-                  child: Slider(
-                    value: lib.coverRadius,
-                    min: 0,
-                    max: 24,
-                    divisions: 12,
-                    label: lib.coverRadius.round().toString(),
-                    onChanged: (v) => lib.coverRadius = v,
-                  ),
-                ),
-                SizedBox(
-                  width: 26,
-                  child: Text(lib.coverRadius.round().toString(),
-                      textAlign: TextAlign.end,
-                      style: TextStyle(color: p.textMuted, fontSize: 13)),
-                ),
-              ],
-            ),
+            )),
+            _sliderRow(Icons.rounded_corner_rounded, '封面圆角', lib.coverRadius,
+                0, 24, 12, (v) => lib.coverRadius = v),
           ]),
-          _group(context, p, '背景', [
+          _group('背景', [
             _tile(
-              p,
               Icons.wallpaper_rounded,
               '背景图片',
               lib.bgImage.isEmpty
@@ -249,18 +150,17 @@ class SettingsPage extends StatelessWidget {
               () => _pickBg(lib),
             ),
             if (lib.bgImage.isNotEmpty) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => lib.bgImage = '',
-                  icon: const Icon(Icons.close_rounded, size: 16),
-                  label: const Text('清除背景图'),
-                ),
-              ),
-              _sliderRow(p, Icons.blur_on_rounded, '背景模糊', lib.bgBlur, 0, 40, 40,
+              _rowCard(AppListRow(
+                icon: Icons.close_rounded,
+                title: '清除背景图',
+                onTap: () => lib.bgImage = '',
+                showChevron: false,
+                contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              )),
+              _sliderRow(Icons.blur_on_rounded, '背景模糊', lib.bgBlur, 0, 40, 40,
                   (v) => lib.bgBlur = v),
               Padding(
-                padding: const EdgeInsets.only(left: 26, top: 4, bottom: 6),
+                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
                 child: Row(
                   children: [
                     Icon(Icons.palette_rounded, size: 16, color: p.textMuted),
@@ -272,18 +172,17 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _sliderRow(p, Icons.opacity_rounded, '混合强度', lib.bgTintAlpha, 0, 1,
+              _sliderRow(Icons.opacity_rounded, '混合强度', lib.bgTintAlpha, 0, 1,
                   20, (v) => lib.bgTintAlpha = v, pct: true),
-              _sliderRow(p, Icons.gradient_rounded, '详情页融合',
+              _sliderRow(Icons.gradient_rounded, '详情页融合',
                   lib.detailTintStrength, 0, 1, 20,
                   (v) => lib.detailTintStrength = v, pct: true),
               Padding(
-                padding: const EdgeInsets.only(left: 26, bottom: 6),
+                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
                 child: Text('详情页背景融入封面主题色的强度 · 越低越接近底色',
                     style: TextStyle(color: p.textMuted, fontSize: 11)),
               ),
               _switch(
-                  p,
                   Icons.auto_stories_rounded,
                   '阅读器显示背景',
                   '阅读时也透出全局背景(默认关,专注阅读)',
@@ -291,9 +190,8 @@ class SettingsPage extends StatelessWidget {
                   (v) => lib.readerBackground = v),
             ],
           ]),
-          _group(context, p, '网络', [
+          _group('网络', [
             _tile(
-              p,
               Icons.vpn_lock_rounded,
               '网络代理',
               '当前:${AppProxy.current ?? '直连'} · ${AppProxy.sourceLabel}',
@@ -301,34 +199,32 @@ class SettingsPage extends StatelessWidget {
                   MaterialPageRoute(builder: (_) => const ProxySettingsPage())),
             ),
           ]),
-          _group(context, p, '数据', [
+          _group('数据', [
             _tile(
-                p,
                 Icons.source_rounded,
                 '源管理',
                 '启用/禁用漫画源',
                 () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const SourceManagementPage()))),
-            _tile(p, Icons.backup_rounded, '备份与恢复', '导出/导入书架与进度',
+            _tile(Icons.backup_rounded, '备份与恢复', '导出/导入书架与进度',
                 () => _backup(context, lib)),
-            _tile(p, Icons.cloud_sync_rounded, '云同步 (WebDAV)',
+            _tile(Icons.cloud_sync_rounded, '云同步 (WebDAV)',
                 '收藏 / 进度 / 设置 / 源 跨设备同步',
                 () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SyncPage()))),
-            _tile(p, Icons.cleaning_services_rounded, '清理缓存', '查看占用 · 分类清理',
+            _tile(Icons.cleaning_services_rounded, '清理缓存', '查看占用 · 分类清理',
                 () => _showCacheSheet(context)),
           ]),
-          _group(context, p, '更新', [
-            _switch(p, Icons.system_update_rounded, '自动检查更新', '启动时后台检查有无新版本',
+          _group('更新', [
+            _switch(Icons.system_update_rounded, '自动检查更新', '启动时后台检查有无新版本',
                 lib.autoCheckUpdate, (v) => lib.autoCheckUpdate = v),
-            _switch(p, Icons.science_rounded, '包含测试版', '检查时把 Beta / RC 预发布也算进来',
+            _switch(Icons.science_rounded, '包含测试版', '检查时把 Beta / RC 预发布也算进来',
                 lib.updateIncludeBeta, (v) => lib.updateIncludeBeta = v),
-            _tile(p, Icons.refresh_rounded, '立即检查更新',
+            _tile(Icons.refresh_rounded, '立即检查更新',
                 '当前 v${AppInfo.version}', () => _checkUpdate(context, lib)),
           ]),
-          _group(context, p, '其它', [
+          _group('其它', [
             _tile(
-              p,
               Icons.info_outline_rounded,
               '关于',
               '${AppInfo.name} · v${AppInfo.version}',
@@ -425,8 +321,19 @@ class SettingsPage extends StatelessWidget {
             'SimHei',
           ];
     final label = lib.uiFont.isEmpty ? '系统默认' : lib.uiFont;
-    return InkWell(
-      borderRadius: BorderRadius.circular(context.radius),
+    return _rowCard(AppSelectRow(
+      icon: Icons.font_download_rounded,
+      title: '字体',
+      value: label,
+      contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      // 用选中字体自身渲染右侧值,一眼看清字形。
+      valueStyle: TextStyle(
+        fontFamily: lib.uiFont.isEmpty ? null : lib.uiFont,
+        fontFamilyFallback: kFontFallback,
+        color: p.textPrimary,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
       onTap: () async {
         final picked = await showAppSheet<String>(
           context,
@@ -440,66 +347,46 @@ class SettingsPage extends StatelessWidget {
         );
         if (picked != null) lib.uiFont = picked;
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(context.radius),
-          border: Border.all(color: p.line),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: lib.uiFont.isEmpty ? null : lib.uiFont,
-                  fontFamilyFallback: kFontFallback,
-                  color: p.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            Icon(Icons.arrow_drop_down_rounded, color: p.textMuted),
-          ],
-        ),
-      ),
-    );
+    ));
   }
 
-  // 复用 lib/ui 的 AppSliderRow(设置页/阅读设置共用同一形状)。
-  Widget _sliderRow(AppPalette p, IconData icon, String label, double value,
+  // 单个设置条目的独立描边卡(参照「开启动画」开关行:横向 + 边框)。
+  // 每行自成一张 surface + line 描边卡,分组不再套外层大卡。
+  Widget _rowCard(Widget child, {EdgeInsetsGeometry padding = EdgeInsets.zero}) =>
+      AppCard(width: double.infinity, padding: padding, child: child);
+
+  // 复用 lib/ui 的 AppSliderRow(设置页/阅读设置共用同一形状),自带描边卡。
+  Widget _sliderRow(IconData icon, String label, double value,
           double min, double max, int div, ValueChanged<double> onChanged,
           {bool pct = false}) =>
-      AppSliderRow(
-        icon: icon,
-        label: label,
-        value: value,
-        min: min,
-        max: max,
-        divisions: div,
-        onChanged: onChanged,
-        pct: pct,
+      _rowCard(
+        AppSliderRow(
+          icon: icon,
+          label: label,
+          value: value,
+          min: min,
+          max: max,
+          divisions: div,
+          onChanged: onChanged,
+          pct: pct,
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       );
 
-  // 分组卡里用的扁平开关(复用 AppSwitchRow;卡片已提供 surface)。
-  Widget _switch(AppPalette p, IconData icon, String title, String? sub,
+  // 开关行(复用 AppSwitchRow),自带描边卡。
+  Widget _switch(IconData icon, String title, String? sub,
           bool value, ValueChanged<bool> onChanged) =>
-      AppSwitchRow(
+      _rowCard(AppSwitchRow(
         icon: icon,
         title: title,
         subtitle: sub,
         value: value,
         onChanged: onChanged,
-        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
-      );
+        contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      ));
 
-  /// 一个设置分类:小标题 + 圆角卡片容器(把该类所有控件裹在一起)。
-  Widget _group(BuildContext context, AppPalette p, String label,
-          List<Widget> children) =>
+  /// 一个设置分类:小标题 + 一列「各自描边」的条目卡(参照「开启动画」样式)。
+  Widget _group(String label, List<Widget> children) =>
       Padding(
         padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
         child: Column(
@@ -509,36 +396,26 @@ class SettingsPage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(15, 0, 15, 10),
               child: AppSectionHeading(label),
             ),
-            // 分组卡片(共享 AppCard)。条目左右留白由各行自带的 contentPadding 给;
-            // 相邻条目补 6px 竖向间距。
-            AppCard(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var i = 0; i < children.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 6),
-                    children[i],
-                  ],
-                ],
-              ),
-            ),
+            // 每个条目一张独立描边卡,相邻卡补 8px 竖向间距。
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              children[i],
+            ],
           ],
         ),
       );
 
-  // 可点条目行(复用 AppListRow;onTap 非空自动补右箭头)。
-  Widget _tile(AppPalette p, IconData icon, String title, String? subtitle,
+  // 可点条目行(复用 AppListRow;onTap 非空自动补右箭头),自带描边卡。
+  Widget _tile(IconData icon, String title, String? subtitle,
           VoidCallback onTap) =>
-      AppListRow(
+      _rowCard(AppListRow(
         icon: icon,
         title: title,
         subtitle: subtitle,
         subtitleMaxLines: 1,
         onTap: onTap,
-        contentPadding: const EdgeInsets.fromLTRB(25, 0, 25, 0),
-      );
+        contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      ));
 
   Future<void> _showCacheSheet(BuildContext context) => showAppSheet<void>(
         context,

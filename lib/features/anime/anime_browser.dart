@@ -5,6 +5,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
@@ -231,9 +232,7 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
           ),
         );
       }
-      return Center(
-          child: Text('没有内容',
-              style: TextStyle(color: p.textMuted, fontSize: 13)));
+      return const EmptyState(title: '没有内容');
     }
     return GridView.builder(
       controller: _scroll,
