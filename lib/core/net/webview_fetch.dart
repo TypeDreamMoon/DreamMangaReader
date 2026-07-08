@@ -88,6 +88,11 @@ class WebViewFetcher {
       initialSettings: InAppWebViewSettings(
         userAgent: userAgent,
         javaScriptEnabled: true,
+        // Cloudflare 挑战靠 DOM 存储(localStorage)存状态 + 第三方 cookie 接 cf_clearance;
+        // 缺了这些挑战 JS 跑不完,永远停在门页(Android 尤其明显)。一并开数据库存储。
+        domStorageEnabled: true,
+        databaseEnabled: true,
+        thirdPartyCookiesEnabled: true,
       ),
       onLoadStop: (controller, u) async {
         if (started) return;
@@ -156,6 +161,11 @@ class WebViewFetcher {
       initialSettings: InAppWebViewSettings(
         userAgent: userAgent,
         javaScriptEnabled: true,
+        // Cloudflare 挑战靠 DOM 存储(localStorage)存状态 + 第三方 cookie 接 cf_clearance;
+        // 缺了这些挑战 JS 跑不完,永远停在门页(Android 尤其明显)。一并开数据库存储。
+        domStorageEnabled: true,
+        databaseEnabled: true,
+        thirdPartyCookiesEnabled: true,
       ),
       onLoadStop: (controller, u) async {
         if (started) return;
