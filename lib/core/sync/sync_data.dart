@@ -1,3 +1,8 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path_provider/path_provider.dart';
+
 import '../../app/library_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
@@ -28,9 +33,50 @@ class SyncData {
   static List<String> _strList(Object? v) =>
       (v is List) ? v.map((e) => e.toString()).toList() : <String>[];
 
-  /// library 里属于「设置」类别的键(排除收藏/历史/源开关与版本标记)。
+  /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图内容与版本标记)。
   static bool _isSettingsKey(String k) =>
-      k != 'v' && k != 'favorites' && k != 'history' && k != 'disabledSources';
+      k != 'v' &&
+      k != 'favorites' &&
+      k != 'history' &&
+      k != 'disabledSources' &&
+      k != 'bgImageData' &&
+      k != 'bgImageExt';
+
+  /// 背景图:设置里只存本地路径,跨设备无意义;上传时把图片内容(base64)也带上,
+  /// 有 3MB 上限(免撑爆 blob;更大就只同步路径,目标机自行处理)。
+  static void _embedBgImage(Map<String, dynamic> outLib, Object? bgPath) {
+    final p = (bgPath is String) ? bgPath.trim() : '';
+    if (p.isEmpty) return;
+    try {
+      final f = File(p);
+      if (!f.existsSync()) return;
+      final len = f.lengthSync();
+      if (len <= 0 || len > 3 * 1024 * 1024) return;
+      outLib['bgImageData'] = base64Encode(f.readAsBytesSync());
+      final dot = p.lastIndexOf('.');
+      outLib['bgImageExt'] =
+          (dot >= 0 && p.length - dot <= 6) ? p.substring(dot + 1).toLowerCase() : 'png';
+    } catch (_) {}
+  }
+
+  /// 应用背景图:带了内容就落到本机再指过去;没带则清掉本机不存在的悬空路径(免坏图)。
+  static Future<void> _applyBgImage(
+      Map<String, dynamic> blib, LibraryStore lib) async {
+    try {
+      final data = blib['bgImageData'] as String?;
+      if (data != null && data.isNotEmpty) {
+        final ext =
+            (blib['bgImageExt'] as String?)?.replaceAll(RegExp(r'[^a-z0-9]'), '');
+        final dir = await getApplicationSupportDirectory();
+        final file = File('${dir.path}/synced_bg.${ext == null || ext.isEmpty ? 'png' : ext}');
+        await file.writeAsBytes(base64Decode(data));
+        lib.bgImage = file.path;
+      } else {
+        final cur = lib.bgImage.trim();
+        if (cur.isNotEmpty && !File(cur).existsSync()) lib.bgImage = '';
+      }
+    } catch (_) {}
+  }
 
   /// 源 id 是否为番剧源。未知(源已移除/未加载)按漫画处理。
   static bool _isAnimeId(String id) {
@@ -78,6 +124,7 @@ class SyncData {
       for (final e in full.entries) {
         if (_isSettingsKey(e.key)) outLib[e.key] = e.value;
       }
+      _embedBgImage(outLib, full['bgImage']); // 背景图内容一并带上
     }
     final allDisabled = _strList(full['disabledSources']);
     if (categories.contains(SyncCategory.mangaSources)) {
@@ -263,6 +310,11 @@ class SyncData {
 
     await lib.importData(toImport,
         replaceFavorites: importFav, replaceHistory: importHist);
+
+    // 背景图:覆盖模式下落地图片内容并指向本机路径(追加不动设置)。
+    if (modes[SyncCategory.settings] == false) {
+      await _applyBgImage(blib, lib);
+    }
 
     // 源仓库:只有覆盖(false)才应用。失败不连累整体。
     if (modes[SyncCategory.sourceRepo] == false) {
