@@ -204,11 +204,12 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
     try {
       final sel = syncCategories;
+      final applyModes = {for (final c in sel) c: false}; // 自动同步:合并后整份覆盖本地
       final backend = _backend();
       final local = SyncData.build(lib, repo, categories: sel);
       final remote = await backend.pull();
       var merged = remote == null ? local : SyncData.merge(local, remote);
-      await SyncData.apply(merged, lib, repo, categories: sel);
+      await SyncData.apply(merged, lib, repo, modes: applyModes);
 
       // 推回;账号后端可能因并发写入抛 SyncConflict → 与服务端最新态重合并后重试。
       var attempt = 0;
@@ -222,7 +223,7 @@ class SyncController extends ChangeNotifier {
           }
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
-            await SyncData.apply(merged, lib, repo, categories: sel);
+            await SyncData.apply(merged, lib, repo, modes: applyModes);
           }
         }
       }
@@ -273,17 +274,16 @@ class SyncController extends ChangeNotifier {
     }
   }
 
-  /// 下载:服务器 → 本地所选 [categories]。[append]=追加(不丢本地),否则覆盖。
+  /// 下载:服务器 → 本地。[modes] 逐类别指定方式(false=覆盖 · true=追加;不在 map=不下载)。
   Future<String> downloadNow(
     LibraryStore lib,
     SourceRepository repo, {
-    required Set<SyncCategory> categories,
-    required bool append,
+    required Map<SyncCategory, bool> modes,
   }) async {
     if (!configured) {
       throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
     }
-    if (categories.isEmpty) throw Exception('至少选择一项要下载的内容');
+    if (modes.isEmpty) throw Exception('至少选择一项要下载的内容');
     if (_syncing) throw Exception('正在同步中…');
     _syncing = true;
     status = '下载中…';
@@ -295,10 +295,9 @@ class SyncController extends ChangeNotifier {
         status = '服务器暂无数据';
         return status;
       }
-      await SyncData.apply(remote, lib, repo,
-          categories: categories, append: append);
+      await SyncData.apply(remote, lib, repo, modes: modes);
       await _stampSynced();
-      status = '已下载(${append ? '追加' : '覆盖'}) · ${_catLabel(categories)}';
+      status = '已下载 · ${modes.length} 项';
       return status;
     } finally {
       _syncing = false;

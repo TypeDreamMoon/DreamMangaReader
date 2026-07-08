@@ -156,14 +156,14 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
-  /// 下载:弹窗选类别 + 覆盖/追加 → 服务器 → 本地。
+  /// 下载:弹窗逐类别选 跳过/覆盖/追加 → 服务器 → 本地。
   Future<void> _download() async {
     final lib = LibraryScope.of(context);
-    final res = await showDialog<(Set<SyncCategory>, bool)>(
+    final modes = await showDialog<Map<SyncCategory, bool>>(
       context: context,
       builder: (_) => _DownloadDialog(initial: _sync.syncCategories),
     );
-    if (res == null || !mounted) return;
+    if (modes == null || !mounted) return;
     setState(() {
       _busy = true;
       _result = '';
@@ -171,7 +171,7 @@ class _SyncPageState extends State<SyncPage> {
     await _persist();
     try {
       final s = await _sync.downloadNow(lib, SourceRepository.instance,
-          categories: res.$1, append: res.$2);
+          modes: modes);
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -516,7 +516,10 @@ class _SyncPageState extends State<SyncPage> {
   }
 }
 
-/// 下载弹窗:选要下载的类别 + 覆盖/追加模式。确定返回 (类别集合, 是否追加)。
+/// 下载单类的方式。
+enum _DlMode { skip, overwrite, append }
+
+/// 下载弹窗:逐类别选 跳过 / 覆盖 / 追加。确定返回 {类别: 是否追加}(跳过的不含)。
 class _DownloadDialog extends StatefulWidget {
   const _DownloadDialog({required this.initial});
   final Set<SyncCategory> initial;
@@ -526,71 +529,96 @@ class _DownloadDialog extends StatefulWidget {
 }
 
 class _DownloadDialogState extends State<_DownloadDialog> {
-  late final Set<SyncCategory> _sel = {...widget.initial};
-  bool _append = false; // false=覆盖 · true=追加
+  // 默认:同步内容里勾了的 → 覆盖;没勾的 → 跳过。
+  late final Map<SyncCategory, _DlMode> _mode = {
+    for (final c in SyncCategory.values)
+      c: widget.initial.contains(c) ? _DlMode.overwrite : _DlMode.skip,
+  };
+
+  void _setAll(_DlMode m) => setState(() {
+        for (final c in SyncCategory.values) {
+          _mode[c] = (m == _DlMode.append && !SyncData.supportsAppend(c))
+              ? _DlMode.overwrite // 不支持追加的类别退化为覆盖
+              : m;
+        }
+      });
+
+  List<ButtonSegment<_DlMode>> _segments(SyncCategory c) => [
+        const ButtonSegment(value: _DlMode.skip, label: Text('跳过')),
+        const ButtonSegment(value: _DlMode.overwrite, label: Text('覆盖')),
+        if (SyncData.supportsAppend(c))
+          const ButtonSegment(value: _DlMode.append, label: Text('追加')),
+      ];
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final any = _mode.values.any((m) => m != _DlMode.skip);
     return AlertDialog(
       backgroundColor: p.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text('从服务器下载',
           style: TextStyle(
               color: p.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('下载哪些内容',
-                style: TextStyle(
-                    color: p.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 2,
-              children: [
-                for (final c in SyncCategory.values)
-                  FilterChip(
-                    label: Text(kCatLabels[c]!),
-                    selected: _sel.contains(c),
-                    onSelected: (v) => setState(
-                        () => v ? _sel.add(c) : _sel.remove(c)),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('全部:',
+                      style: TextStyle(color: p.textMuted, fontSize: 12)),
+                  _quick(p, '跳过', () => _setAll(_DlMode.skip)),
+                  _quick(p, '覆盖', () => _setAll(_DlMode.overwrite)),
+                  _quick(p, '追加', () => _setAll(_DlMode.append)),
+                ],
+              ),
+              const SizedBox(height: 2),
+              for (final c in SyncCategory.values)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 56,
+                        child: Text(kCatLabels[c]!,
+                            style: TextStyle(
+                                color: p.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: SegmentedButton<_DlMode>(
+                          showSelectedIcon: false,
+                          style: const ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            textStyle:
+                                WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+                          ),
+                          segments: _segments(c),
+                          selected: {_mode[c]!},
+                          onSelectionChanged: (s) =>
+                              setState(() => _mode[c] = s.first),
+                        ),
+                      ),
+                    ],
                   ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text('方式',
-                style: TextStyle(
-                    color: p.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(
-                    value: false,
-                    label: Text('覆盖'),
-                    icon: Icon(Icons.sync_alt_rounded, size: 16)),
-                ButtonSegment(
-                    value: true,
-                    label: Text('追加'),
-                    icon: Icon(Icons.playlist_add_rounded, size: 16)),
-              ],
-              selected: {_append},
-              onSelectionChanged: (s) => setState(() => _append = s.first),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _append
-                  ? '追加:收藏/源开关取并集,阅读设置与源仓库保持本地不变——不丢本地数据。'
-                  : '覆盖:所选类别用服务器的替换本地(未勾的类别不动)。',
-              style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.45),
-            ),
-          ],
+                ),
+              const SizedBox(height: 10),
+              Text(
+                '覆盖=服务器替换本地;追加=收藏/进度/源开关取并集(不丢本地)。'
+                '设置/源仓库无「追加」,只能覆盖。',
+                style:
+                    TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.45),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -599,12 +627,25 @@ class _DownloadDialogState extends State<_DownloadDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: _sel.isEmpty
-              ? null
-              : () => Navigator.of(context).pop((_sel, _append)),
+          onPressed: any
+              ? () => Navigator.of(context).pop(<SyncCategory, bool>{
+                    for (final e in _mode.entries)
+                      if (e.value != _DlMode.skip)
+                        e.key: e.value == _DlMode.append,
+                  })
+              : null,
           child: const Text('下载'),
         ),
       ],
     );
   }
+
+  Widget _quick(AppPalette p, String label, VoidCallback onTap) => TextButton(
+        onPressed: onTap,
+        style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 32),
+            visualDensity: VisualDensity.compact),
+        child: Text(label, style: const TextStyle(fontSize: 12.5)),
+      );
 }

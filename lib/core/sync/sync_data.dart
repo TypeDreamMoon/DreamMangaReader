@@ -175,54 +175,54 @@ class SyncData {
     return out;
   }
 
-  /// 把 [blob] 的所选类别写回本地。
-  ///
-  /// [append]=false(覆盖):所选类别用 blob 的值替换本地。
-  /// [append]=true(追加):收藏/历史/源开关取并集,设置与源仓库**保持本地不动**。
+  /// 把 [blob] 写回本地——[modes] 逐类别指定方式:
+  ///   不在 map 里 = 不下载该类;`false` = 覆盖(用服务器替换本地);`true` = 追加。
+  /// 追加:收藏/历史/源开关取并集;设置/源仓库无「追加」语义,只有覆盖(false)才应用。
   static Future<void> apply(
     Map<String, dynamic> blob,
     LibraryStore lib,
     SourceRepository repo, {
-    required Set<SyncCategory> categories,
-    bool append = false,
+    required Map<SyncCategory, bool> modes,
   }) async {
     final blib = _map(blob['library']);
     final full = lib.exportData(); // 当前本地态:供追加合并 + 源开关重建
     final toImport = <String, dynamic>{'v': 1};
 
-    final importFav =
-        categories.contains(SyncCategory.favorites) && blib.containsKey('favorites');
-    final importHist =
-        categories.contains(SyncCategory.history) && blib.containsKey('history');
+    final favMode = modes[SyncCategory.favorites];
+    final histMode = modes[SyncCategory.history];
+    final importFav = favMode != null && blib.containsKey('favorites');
+    final importHist = histMode != null && blib.containsKey('history');
     if (importFav) {
-      toImport['favorites'] = append
+      toImport['favorites'] = favMode == true
           ? _mergeFavorites(_list(full['favorites']), _list(blib['favorites']))
           : blib['favorites'];
     }
     if (importHist) {
-      toImport['history'] = append
+      toImport['history'] = histMode == true
           ? _mergeHistory(_map(full['history']), _map(blib['history']))
           : blib['history'];
     }
-    // 设置:追加模式保持本地不动;覆盖模式用 blob 的。
-    if (!append && categories.contains(SyncCategory.settings)) {
+    // 设置:只有覆盖(false)才应用;追加/不选保持本地。
+    if (modes[SyncCategory.settings] == false) {
       for (final e in blib.entries) {
         if (_isSettingsKey(e.key)) toImport[e.key] = e.value;
       }
     }
     // 源开关:按 kind 分别重建整份 disabledSources 交给 importData。
-    final wantManga = categories.contains(SyncCategory.mangaSources) &&
-        blib.containsKey('disabledSourcesManga');
-    final wantAnime = categories.contains(SyncCategory.animeSources) &&
-        blib.containsKey('disabledSourcesAnime');
+    final mangaMode = modes[SyncCategory.mangaSources];
+    final animeMode = modes[SyncCategory.animeSources];
+    final wantManga =
+        mangaMode != null && blib.containsKey('disabledSourcesManga');
+    final wantAnime =
+        animeMode != null && blib.containsKey('disabledSourcesAnime');
     if (wantManga || wantAnime) {
       final result = Set<String>.from(_strList(full['disabledSources']));
       if (wantManga) {
-        if (!append) result.removeWhere((id) => !_isAnimeId(id)); // 覆盖:清本地漫画类
+        if (mangaMode == false) result.removeWhere((id) => !_isAnimeId(id));
         result.addAll(_strList(blib['disabledSourcesManga']));
       }
       if (wantAnime) {
-        if (!append) result.removeWhere(_isAnimeId); // 覆盖:清本地番剧类
+        if (animeMode == false) result.removeWhere(_isAnimeId);
         result.addAll(_strList(blib['disabledSourcesAnime']));
       }
       toImport['disabledSources'] = result.toList();
@@ -231,8 +231,8 @@ class SyncData {
     await lib.importData(toImport,
         replaceFavorites: importFav, replaceHistory: importHist);
 
-    // 源仓库:追加模式保持本地;覆盖模式应用。失败不连累整体。
-    if (!append && categories.contains(SyncCategory.sourceRepo)) {
+    // 源仓库:只有覆盖(false)才应用。失败不连累整体。
+    if (modes[SyncCategory.sourceRepo] == false) {
       try {
         final sr = _map(blob['sourceRepo']);
         final url = (sr['repoUrl'] as String?)?.trim() ?? '';
@@ -249,4 +249,11 @@ class SyncData {
       } catch (_) {}
     }
   }
+
+  /// 哪些类别支持「追加」(其余只有覆盖):收藏/历史/源开关是集合可并;设置/源仓库是整份值。
+  static bool supportsAppend(SyncCategory c) =>
+      c == SyncCategory.favorites ||
+      c == SyncCategory.history ||
+      c == SyncCategory.mangaSources ||
+      c == SyncCategory.animeSources;
 }
