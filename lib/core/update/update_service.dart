@@ -39,61 +39,97 @@ class UpdateService {
     validateStatus: (_) => true,
   ));
 
-  /// 查最新版本。[includeBeta]=true 时把预发布(-beta/-rc)也算进来。
-  /// 返回比当前**主版本号**新的 [UpdateInfo];已是最新 / 查询失败返回 null。
+  /// 查最新版本。[includeBeta]=true 时把预发布(-beta/-rc/-alpha)也算进来。
+  /// **当前若本身是预发布,自动包含预发布**——beta 用户就该收到 beta 更新。
+  /// 返回严格比当前版本高(含 -beta.N 逐级比较)的最高版本;已是最新 / 失败返回 null。
   static Future<UpdateInfo?> check({bool includeBeta = false}) async {
     try {
       final r = await _dio.get<dynamic>(
         'https://api.github.com/repos/$_owner/$_repo/releases',
-        queryParameters: {'per_page': 15},
+        queryParameters: {'per_page': 20},
       );
       if (r.statusCode != 200 || r.data is! List) return null;
       final list = (r.data as List).whereType<Map>().cast<Map<String, dynamic>>();
 
-      // releases 按发布时间倒序;取第一个「非草稿、且(允许测试版或非测试版)」的。
-      Map<String, dynamic>? best;
+      final wantBeta = includeBeta || isPrerelease(AppInfo.version);
+
+      // 遍历所有 release,挑「非草稿、允许的类型、版本号严格更高」里**版本最高**的
+      // (release 列表通常按时间倒序,但版本号未必单调,故按版本号取最大)。
+      UpdateInfo? best;
       for (final rel in list) {
         if (rel['draft'] == true) continue;
-        if (rel['prerelease'] == true && !includeBeta) continue;
-        best = rel;
-        break;
+        final pre = rel['prerelease'] == true;
+        if (pre && !wantBeta) continue;
+        final tag = (rel['tag_name'] ?? '').toString();
+        if (compareVersions(tag, AppInfo.version) <= 0) continue; // 不比当前新
+        if (best != null && compareVersions(tag, best.tag) <= 0) continue;
+        best = UpdateInfo(
+          tag: tag,
+          version: tag.replaceFirst(RegExp(r'^v'), ''),
+          url: (rel['html_url'] ??
+                  'https://github.com/$_owner/$_repo/releases')
+              .toString(),
+          notes: (rel['body'] ?? '').toString().trim(),
+          prerelease: pre,
+        );
       }
-      if (best == null) return null;
-
-      final tag = (best['tag_name'] ?? '').toString();
-      if (_compare(_parse(tag), _parse(AppInfo.version)) <= 0) {
-        return null; // 不比当前新
-      }
-      return UpdateInfo(
-        tag: tag,
-        version: tag.replaceFirst(RegExp(r'^v'), ''),
-        url: (best['html_url'] ??
-                'https://github.com/$_owner/$_repo/releases')
-            .toString(),
-        notes: (best['body'] ?? '').toString().trim(),
-        prerelease: best['prerelease'] == true,
-      );
+      return best;
     } catch (_) {
       return null;
     }
   }
 
-  // "v1.2.0-beta.1" / "1.2.0" → [1,2,0](忽略预发布后缀比主版本)。
-  static List<int> _parse(String s) {
-    final m = RegExp(r'(\d+)\.(\d+)\.(\d+)').firstMatch(s);
-    if (m == null) return const [0, 0, 0];
-    return [
-      int.parse(m.group(1)!),
-      int.parse(m.group(2)!),
-      int.parse(m.group(3)!),
-    ];
+  /// 当前 tag/版本是否为预发布(带 -beta/-rc/-alpha 后缀)。
+  static bool isPrerelease(String s) =>
+      RegExp(r'-(?:beta|rc|alpha)', caseSensitive: false).hasMatch(s);
+
+  /// 语义化版本比较:先比 major.minor.patch;base 相等时正式版 > 预发布,预发布之间
+  /// 按标识符逐段比(beta.3 < beta.4、beta.9 < beta.10、alpha < beta)。a>b 正、a<b 负、相等 0。
+  static int compareVersions(String a, String b) {
+    final (baseA, preA) = _semver(a);
+    final (baseB, preB) = _semver(b);
+    for (var i = 0; i < 3; i++) {
+      if (baseA[i] != baseB[i]) return baseA[i] - baseB[i];
+    }
+    if (preA.isEmpty && preB.isEmpty) return 0;
+    if (preA.isEmpty) return 1; // 正式版 > 预发布
+    if (preB.isEmpty) return -1;
+    final n = preA.length < preB.length ? preA.length : preB.length;
+    for (var i = 0; i < n; i++) {
+      final x = preA[i], y = preB[i];
+      final xn = int.tryParse(x), yn = int.tryParse(y);
+      if (xn != null && yn != null) {
+        if (xn != yn) return xn - yn; // 数字段按数值
+      } else if (xn != null) {
+        return -1; // 数字标识符 < 字母标识符
+      } else if (yn != null) {
+        return 1;
+      } else {
+        final c = x.compareTo(y);
+        if (c != 0) return c;
+      }
+    }
+    return preA.length - preB.length; // 前缀相同时,少标识符者更小
   }
 
-  static int _compare(List<int> a, List<int> b) {
-    for (var i = 0; i < 3; i++) {
-      if (a[i] != b[i]) return a[i] - b[i];
-    }
-    return 0;
+  /// "v1.2.0-beta.3+5" → ([1,2,0], ['beta','3'])。忽略 build 元数据(+…)。
+  static (List<int>, List<String>) _semver(String s) {
+    var t = s.trim().replaceFirst(RegExp(r'^v'), '');
+    final plus = t.indexOf('+');
+    if (plus >= 0) t = t.substring(0, plus);
+    final dash = t.indexOf('-');
+    final basePart = dash >= 0 ? t.substring(0, dash) : t;
+    final preRaw = dash >= 0 ? t.substring(dash + 1) : '';
+    final m = RegExp(r'(\d+)\.(\d+)\.(\d+)').firstMatch(basePart);
+    final base = m == null
+        ? const [0, 0, 0]
+        : [
+            int.parse(m.group(1)!),
+            int.parse(m.group(2)!),
+            int.parse(m.group(3)!)
+          ];
+    final pre = preRaw.isEmpty ? const <String>[] : preRaw.split('.');
+    return (base, pre);
   }
 }
 
