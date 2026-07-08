@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../app/download_store.dart';
@@ -1055,6 +1057,11 @@ class _ReaderPageState extends State<ReaderPage> {
                 ),
               ),
               IconButton(
+                onPressed: _savePage,
+                icon: const Icon(Icons.save_alt_rounded, color: Colors.white),
+                tooltip: '保存 / 分享本页',
+              ),
+              IconButton(
                 onPressed: _openPagesSheet,
                 icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
                 tooltip: '页面',
@@ -1187,6 +1194,61 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
       ),
     );
+  }
+
+  // 当前页对应的本地文件:已下载=直接文件;网络=磁盘缓存(未缓存则 null)。
+  Future<File?> _currentPageFile() async {
+    final img = _cur.img;
+    if (!img.url.startsWith('http')) {
+      final f = File(img.url);
+      return await f.exists() ? f : null;
+    }
+    try {
+      return await appImageCache.getSingleFile(img.url, headers: _headers(img));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 保存文件名:<漫画>_<章节>_p<页>.<ext>(非法字符替换为下划线)。
+  String _pageFileName() {
+    final img = _cur.img;
+    var ext = 'jpg';
+    final u = img.url.split('?').first;
+    final dot = u.lastIndexOf('.');
+    if (dot > 0) {
+      final e = u.substring(dot + 1).toLowerCase();
+      if (RegExp(r'^[a-z0-9]{1,4}$').hasMatch(e)) ext = e;
+    }
+    String safe(String s) => s.replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_');
+    return '${safe(widget.manga.title)}_${safe(_cur.chapter.name)}'
+        '_p${_cur.localPage + 1}.$ext';
+  }
+
+  // 保存 / 分享当前页:移动端走系统分享面板(含保存到相册/文件),桌面另存为。
+  Future<void> _savePage() async {
+    final f = await _currentPageFile();
+    if (!mounted) return;
+    if (f == null) {
+      showAppNotify(context, '本页尚未缓存', kind: AppNotifyKind.warn);
+      return;
+    }
+    final name = _pageFileName();
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        await Share.shareXFiles([XFile(f.path)], fileNameOverrides: [name]);
+      } else {
+        final path = await FilePicker.saveFile(
+            dialogTitle: '保存本页', fileName: name, lockParentWindow: true);
+        if (path == null) return; // 用户取消
+        await f.copy(path);
+        if (mounted) {
+          showAppNotify(context, '已保存', kind: AppNotifyKind.success);
+        }
+      }
+    } catch (e) {
+      if (mounted) showAppNotify(context, '保存失败:$e', kind: AppNotifyKind.error);
+    }
   }
 
   // 页面缩略图跳转:本章各页缩略图网格,点一下跳到该页(高亮当前页)。
