@@ -131,6 +131,9 @@ class _GoogleTranslator implements Translator {
       return out;
     } on DioException catch (e) {
       throw _friendlyDio(e);
+    } on FormatException {
+      // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
+      throw Exception('翻译服务返回异常(检查网络 / 代理)');
     }
   }
 }
@@ -195,6 +198,9 @@ class _MicrosoftTranslator implements Translator {
       throw Exception('微软翻译无结果');
     } on DioException catch (e) {
       throw _friendlyDio(e);
+    } on FormatException {
+      // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
+      throw Exception('翻译服务返回异常(检查网络 / 代理)');
     }
   }
 }
@@ -254,6 +260,9 @@ class _LlmTranslator implements Translator {
       throw Exception('大模型翻译无结果');
     } on DioException catch (e) {
       throw _friendlyDio(e);
+    } on FormatException {
+      // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
+      throw Exception('翻译服务返回异常(检查网络 / 代理)');
     }
   }
 }
