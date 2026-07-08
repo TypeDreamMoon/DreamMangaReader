@@ -6,7 +6,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// 阅读模式:paged=横向翻页(默认),webtoon=纵向连续滚动(条漫)。
 /// 阅读模式:paged=普通横翻(左→右),pagedRtl=日漫横翻(右→左),webtoon=滚动竖读。
-enum ReaderMode { paged, pagedRtl, webtoon }
+enum ReaderMode { paged, pagedRtl, vertical, webtoon }
+
+/// 阅读器底色预设(不显示全局背景图时)。dark=近黑(默认)。
+enum ReaderBackground { dark, black, white, sepia }
+
+/// 阅读器屏幕方向锁(仅移动端生效)。
+enum ReaderOrientation { auto, portrait, landscape }
 
 /// 一本收藏。存足够渲染书架封面的信息(不依赖再次联网)。
 class FavoriteEntry {
@@ -146,6 +152,19 @@ class LibraryStore extends ChangeNotifier {
   static const _kDetailTintStrength = 'lib.detailTintStrength'; // 详情页封面色融合强度
   static const _kReaderGestures = 'lib.readerGestures'; // 阅读器点击分区翻页
   static const _kReaderGestureHintSeen = 'lib.readerGestureHintSeen'; // 手势提示已看过
+  static const _kVolumeKeyPaging = 'lib.volumeKeyPaging'; // Android 音量键翻页
+  static const _kInvertTapZones = 'lib.invertTapZones'; // 反转左右点击翻页方向
+  static const _kReaderBg = 'lib.readerBg'; // 阅读器底色预设
+  static const _kReaderOrientation = 'lib.readerOrientation'; // 阅读器方向锁
+  static const _kKeepScreenOn = 'lib.keepScreenOn'; // 阅读时常亮屏幕
+  static const _kAutoDetectMode = 'lib.autoDetectMode'; // 自动判断条漫(高瘦图)
+  static const _kMangaModes = 'lib.mangaModes'; // 每本漫画的阅读模式覆盖
+  static const _kWebtoonGap = 'lib.webtoonGap'; // 条漫页间距
+  static const _kChapterToast = 'lib.chapterToast'; // 跨章提示新章名
+  static const _kCfGrayscale = 'lib.cfGrayscale'; // 滤镜:黑白
+  static const _kCfInvert = 'lib.cfInvert'; // 滤镜:反色
+  static const _kCfSepia = 'lib.cfSepia'; // 滤镜:护眼纸色
+  static const _kCfContrast = 'lib.cfContrast'; // 滤镜:对比度
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
 
   final Map<String, FavoriteEntry> _favorites = {};
@@ -178,6 +197,19 @@ class LibraryStore extends ChangeNotifier {
   double _detailTintStrength = 0.55; // 详情页封面色融合强度(0=纯底色/黑,1=纯封面色)
   bool _readerGestures = true; // 阅读器左右点击翻页
   bool _readerGestureHintSeen = false; // 首次进入阅读器的手势提示是否已展示
+  bool _volumeKeyPaging = false; // Android 音量键翻页
+  bool _invertTapZones = false; // 反转左右点击翻页方向(左=下一页)
+  ReaderBackground _readerBg = ReaderBackground.dark; // 阅读器底色预设
+  ReaderOrientation _readerOrientation = ReaderOrientation.auto; // 方向锁
+  bool _keepScreenOn = true; // 阅读时常亮屏幕
+  bool _autoDetectMode = true; // 自动判断条漫(高瘦图 → 滚动模式)
+  final Map<String, String> _mangaModes = {}; // 'sid:mid' -> ReaderMode.name
+  double _webtoonGap = 0; // 条漫页间距 px(0~40)
+  bool _chapterToast = true; // 跨章时提示新章名
+  bool _cfGrayscale = false; // 滤镜:黑白
+  bool _cfInvert = false; // 滤镜:反色(暗色漫 / 夜读)
+  bool _cfSepia = false; // 滤镜:护眼纸色
+  double _cfContrast = 1.0; // 滤镜:对比度(0.5~1.5,1=正常)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
 
   /// 全局动画开关的**同步镜像**:动画组件常在 initState/字段初始化处拿不到 context,
@@ -219,6 +251,19 @@ class LibraryStore extends ChangeNotifier {
   double get detailTintStrength => _detailTintStrength;
   bool get readerGestures => _readerGestures;
   bool get readerGestureHintSeen => _readerGestureHintSeen;
+  bool get volumeKeyPaging => _volumeKeyPaging;
+  bool get invertTapZones => _invertTapZones;
+  ReaderBackground get readerBg => _readerBg;
+  ReaderOrientation get readerOrientation => _readerOrientation;
+  bool get keepScreenOn => _keepScreenOn;
+  bool get autoDetectMode => _autoDetectMode;
+  String? mangaMode(String key) => _mangaModes[key];
+  double get webtoonGap => _webtoonGap;
+  bool get chapterToast => _chapterToast;
+  bool get cfGrayscale => _cfGrayscale;
+  bool get cfInvert => _cfInvert;
+  bool get cfSepia => _cfSepia;
+  double get cfContrast => _cfContrast;
   int? bangumiBindingFor(String key) => _bangumiBindings[key];
 
   bool isSourceEnabled(String id) => !_disabledSources.contains(id);
@@ -279,6 +324,7 @@ class LibraryStore extends ChangeNotifier {
       _readerMode = switch (mode) {
         'webtoon' => ReaderMode.webtoon,
         'rtl' => ReaderMode.pagedRtl,
+        'vertical' => ReaderMode.vertical,
         _ => ReaderMode.paged,
       };
       _gridColumns = (prefs.getInt(_kGridColumns) ?? 0).clamp(0, 8);
@@ -307,6 +353,22 @@ class LibraryStore extends ChangeNotifier {
           (prefs.getDouble(_kDetailTintStrength) ?? 0.55).clamp(0, 1);
       _readerGestures = prefs.getBool(_kReaderGestures) ?? true;
       _readerGestureHintSeen = prefs.getBool(_kReaderGestureHintSeen) ?? false;
+      _volumeKeyPaging = prefs.getBool(_kVolumeKeyPaging) ?? false;
+      _invertTapZones = prefs.getBool(_kInvertTapZones) ?? false;
+      _readerBg = ReaderBackground.values.firstWhere(
+          (b) => b.name == prefs.getString(_kReaderBg),
+          orElse: () => ReaderBackground.dark);
+      _readerOrientation = ReaderOrientation.values.firstWhere(
+          (o) => o.name == prefs.getString(_kReaderOrientation),
+          orElse: () => ReaderOrientation.auto);
+      _keepScreenOn = prefs.getBool(_kKeepScreenOn) ?? true;
+      _autoDetectMode = prefs.getBool(_kAutoDetectMode) ?? true;
+      _webtoonGap = (prefs.getDouble(_kWebtoonGap) ?? 0).clamp(0, 40);
+      _chapterToast = prefs.getBool(_kChapterToast) ?? true;
+      _cfGrayscale = prefs.getBool(_kCfGrayscale) ?? false;
+      _cfInvert = prefs.getBool(_kCfInvert) ?? false;
+      _cfSepia = prefs.getBool(_kCfSepia) ?? false;
+      _cfContrast = (prefs.getDouble(_kCfContrast) ?? 1.0).clamp(0.5, 1.5);
       // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
       final bgmRaw = prefs.getString(_kBangumiBindings);
       if (bgmRaw != null) {
@@ -316,6 +378,17 @@ class LibraryStore extends ChangeNotifier {
             m.forEach((k, v) {
               final id = (v as num?)?.toInt();
               if (id != null) _bangumiBindings[k as String] = id;
+            });
+          }
+        } catch (_) {}
+      }
+      final mmRaw = prefs.getString(_kMangaModes);
+      if (mmRaw != null) {
+        try {
+          final m = jsonDecode(mmRaw);
+          if (m is Map) {
+            m.forEach((k, v) {
+              if (v is String) _mangaModes[k as String] = v;
             });
           }
         } catch (_) {}
@@ -337,6 +410,7 @@ class LibraryStore extends ChangeNotifier {
         switch (v) {
           ReaderMode.webtoon => 'webtoon',
           ReaderMode.pagedRtl => 'rtl',
+          ReaderMode.vertical => 'vertical',
           ReaderMode.paged => 'paged',
         });
     notifyListeners(); // 用户动作,低频,即时通知
@@ -493,6 +567,105 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  set volumeKeyPaging(bool v) {
+    if (v == _volumeKeyPaging) return;
+    _volumeKeyPaging = v;
+    _prefs?.setBool(_kVolumeKeyPaging, v);
+    notifyListeners();
+  }
+
+  set invertTapZones(bool v) {
+    if (v == _invertTapZones) return;
+    _invertTapZones = v;
+    _prefs?.setBool(_kInvertTapZones, v);
+    notifyListeners();
+  }
+
+  set readerBg(ReaderBackground v) {
+    if (v == _readerBg) return;
+    _readerBg = v;
+    _prefs?.setString(_kReaderBg, v.name);
+    notifyListeners();
+  }
+
+  set readerOrientation(ReaderOrientation v) {
+    if (v == _readerOrientation) return;
+    _readerOrientation = v;
+    _prefs?.setString(_kReaderOrientation, v.name);
+    notifyListeners();
+  }
+
+  set keepScreenOn(bool v) {
+    if (v == _keepScreenOn) return;
+    _keepScreenOn = v;
+    _prefs?.setBool(_kKeepScreenOn, v);
+    notifyListeners();
+  }
+
+  set autoDetectMode(bool v) {
+    if (v == _autoDetectMode) return;
+    _autoDetectMode = v;
+    _prefs?.setBool(_kAutoDetectMode, v);
+    notifyListeners();
+  }
+
+  set webtoonGap(double v) {
+    v = v.clamp(0, 40);
+    if (v == _webtoonGap) return;
+    _webtoonGap = v;
+    _prefs?.setDouble(_kWebtoonGap, v);
+    notifyListeners();
+  }
+
+  set chapterToast(bool v) {
+    if (v == _chapterToast) return;
+    _chapterToast = v;
+    _prefs?.setBool(_kChapterToast, v);
+    notifyListeners();
+  }
+
+  set cfGrayscale(bool v) {
+    if (v == _cfGrayscale) return;
+    _cfGrayscale = v;
+    _prefs?.setBool(_kCfGrayscale, v);
+    notifyListeners();
+  }
+
+  set cfInvert(bool v) {
+    if (v == _cfInvert) return;
+    _cfInvert = v;
+    _prefs?.setBool(_kCfInvert, v);
+    notifyListeners();
+  }
+
+  set cfSepia(bool v) {
+    if (v == _cfSepia) return;
+    _cfSepia = v;
+    _prefs?.setBool(_kCfSepia, v);
+    notifyListeners();
+  }
+
+  set cfContrast(double v) {
+    v = v.clamp(0.5, 1.5);
+    if (v == _cfContrast) return;
+    _cfContrast = v;
+    _prefs?.setDouble(_kCfContrast, v);
+    notifyListeners();
+  }
+
+  /// 覆盖某本漫画的阅读模式(null=清除覆盖,回退全局默认)。
+  void setMangaMode(String key, ReaderMode? mode) {
+    final name = mode?.name;
+    if (name == null) {
+      if (_mangaModes.remove(key) == null) return;
+    } else {
+      if (_mangaModes[key] == name) return;
+      _mangaModes[key] = name;
+    }
+    _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
+    notifyListeners();
+  }
+
   // 一次性标记:不 notify(无需重建 UI)。
   set readerGestureHintSeen(bool v) {
     if (v == _readerGestureHintSeen) return;
@@ -627,6 +800,19 @@ class LibraryStore extends ChangeNotifier {
         'updateIncludeBeta': _updateIncludeBeta,
         'detailTintStrength': _detailTintStrength,
         'readerGestures': _readerGestures,
+        'volumeKeyPaging': _volumeKeyPaging,
+        'invertTapZones': _invertTapZones,
+        'readerBg': _readerBg.name,
+        'readerOrientation': _readerOrientation.name,
+        'keepScreenOn': _keepScreenOn,
+        'autoDetectMode': _autoDetectMode,
+        'webtoonGap': _webtoonGap,
+        'chapterToast': _chapterToast,
+        'cfGrayscale': _cfGrayscale,
+        'cfInvert': _cfInvert,
+        'cfSepia': _cfSepia,
+        'cfContrast': _cfContrast,
+        'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
         'disabledSources': _disabledSources.toList(),
       };
@@ -655,7 +841,7 @@ class LibraryStore extends ChangeNotifier {
       });
     }
     _readerMode = ReaderMode.values.firstWhere(
-        (m) => m.name == j['readerMode'], orElse: () => ReaderMode.paged);
+        (m) => m.name == j['readerMode'], orElse: () => _readerMode);
     _gridColumns = (j['gridColumns'] as num?)?.toInt() ?? _gridColumns;
     _preload = (j['preload'] as num?)?.toInt() ?? _preload;
     _doublePage = j['doublePage'] as bool? ?? _doublePage;
@@ -683,6 +869,30 @@ class LibraryStore extends ChangeNotifier {
     _detailTintStrength =
         (j['detailTintStrength'] as num?)?.toDouble() ?? _detailTintStrength;
     _readerGestures = j['readerGestures'] as bool? ?? _readerGestures;
+    _volumeKeyPaging = j['volumeKeyPaging'] as bool? ?? _volumeKeyPaging;
+    _invertTapZones = j['invertTapZones'] as bool? ?? _invertTapZones;
+    _readerBg = ReaderBackground.values
+        .firstWhere((b) => b.name == j['readerBg'], orElse: () => _readerBg);
+    _readerOrientation = ReaderOrientation.values.firstWhere(
+        (o) => o.name == j['readerOrientation'],
+        orElse: () => _readerOrientation);
+    _keepScreenOn = j['keepScreenOn'] as bool? ?? _keepScreenOn;
+    _autoDetectMode = j['autoDetectMode'] as bool? ?? _autoDetectMode;
+    _webtoonGap =
+        ((j['webtoonGap'] as num?)?.toDouble() ?? _webtoonGap).clamp(0, 40);
+    _chapterToast = j['chapterToast'] as bool? ?? _chapterToast;
+    _cfGrayscale = j['cfGrayscale'] as bool? ?? _cfGrayscale;
+    _cfInvert = j['cfInvert'] as bool? ?? _cfInvert;
+    _cfSepia = j['cfSepia'] as bool? ?? _cfSepia;
+    _cfContrast =
+        ((j['cfContrast'] as num?)?.toDouble() ?? _cfContrast).clamp(0.5, 1.5);
+    final mm = j['mangaModes'] as Map?;
+    if (mm != null) {
+      _mangaModes.clear();
+      mm.forEach((k, v) {
+        if (v is String) _mangaModes[k as String] = v;
+      });
+    }
     final disabled = j['disabledSources'] as List?;
     if (disabled != null) {
       _disabledSources
@@ -703,6 +913,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setString(_kReaderMode, switch (_readerMode) {
       ReaderMode.webtoon => 'webtoon',
       ReaderMode.pagedRtl => 'rtl',
+      ReaderMode.vertical => 'vertical',
       ReaderMode.paged => 'paged',
     });
     _prefs?.setInt(_kGridColumns, _gridColumns);
@@ -727,6 +938,19 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kUpdateIncludeBeta, _updateIncludeBeta);
     _prefs?.setDouble(_kDetailTintStrength, _detailTintStrength);
     _prefs?.setBool(_kReaderGestures, _readerGestures);
+    _prefs?.setBool(_kVolumeKeyPaging, _volumeKeyPaging);
+    _prefs?.setBool(_kInvertTapZones, _invertTapZones);
+    _prefs?.setString(_kReaderBg, _readerBg.name);
+    _prefs?.setString(_kReaderOrientation, _readerOrientation.name);
+    _prefs?.setBool(_kKeepScreenOn, _keepScreenOn);
+    _prefs?.setBool(_kAutoDetectMode, _autoDetectMode);
+    _prefs?.setDouble(_kWebtoonGap, _webtoonGap);
+    _prefs?.setBool(_kChapterToast, _chapterToast);
+    _prefs?.setBool(_kCfGrayscale, _cfGrayscale);
+    _prefs?.setBool(_kCfInvert, _cfInvert);
+    _prefs?.setBool(_kCfSepia, _cfSepia);
+    _prefs?.setDouble(_kCfContrast, _cfContrast);
+    _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
     notifyListeners();
   }

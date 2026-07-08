@@ -6,11 +6,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../app/download_store.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/net/image_cache.dart';
+import '../../core/platform/reader_keys.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../ui/ui.dart';
@@ -89,11 +91,30 @@ class _ReaderPageState extends State<ReaderPage> {
   String? _error;
   bool _overlay = true;
   bool _showHint = false; // 首次进入的手势提示遮罩
+  bool _pageZoomed = false; // 当前页是否放大(放大时禁用点击翻页,避免误翻)
+  bool _wakeOn = false; // 本页是否已激活常亮(与 _wakeCount 配对)
+  late final String _mangaKey; // 'sid:mid':每本漫画模式覆盖 / 自动判断的键
+  final FocusNode _focus = FocusNode();
+
+  // 常亮屏幕引用计数:章节跳转走 pushReplacement,新页 initState 先于旧页 dispose,
+  // 计数确保中途不被旧页的 disable 关掉(仅最后一个阅读器退出才息屏)。
+  static int _wakeCount = 0;
+  // 沉浸系统栏 / 方向锁引用计数:章节跳转 pushReplacement 时新页 initState 先于旧页
+  // dispose,仅最后一个阅读器退出才恢复系统栏 / 解方向锁(否则会清掉新页刚设的值)。
+  static int _uiCount = 0;
+  // 音量键翻页同样引用计数(章节跳转重叠期不被旧页关掉);_volKeyOn=本页是否已注册。
+  static int _volKeyCount = 0;
+  bool _volKeyOn = false;
+  // 自动判断条漫的图片流监听:退出时若还没解出,主动摘掉(否则 State 被挂到未完成
+  // 的图片请求上,慢网/挂起时长期不释放)。
+  ImageStream? _detectStream;
+  ImageStreamListener? _detectListener;
 
   @override
   void initState() {
     super.initState();
     _curFlat = widget.initialPage;
+    _mangaKey = '${widget.source.id}:${widget.manga.id}';
     _itemPos.itemPositions.addListener(_onWebtoonScroll);
     // 只读(非依赖)scope,initState 里就安全可读;必须在 _loadInitial 之前赋值,
     // 否则首章的 _fetch 同步前缀读到的 _downloads 为 null,会绕过已下载的本地文件、
@@ -101,17 +122,32 @@ class _ReaderPageState extends State<ReaderPage> {
     _store = LibraryScope.read(context);
     _downloads = DownloadScope.maybeRead(context);
     final s = _store!;
-    _mode = s.readerMode;
+    // 每本漫画的模式覆盖优先于全局默认;无覆盖时用全局默认。
+    final savedMode = s.mangaMode(_mangaKey);
+    _mode = savedMode != null
+        ? ReaderMode.values
+            .firstWhere((m) => m.name == savedMode, orElse: () => s.readerMode)
+        : s.readerMode;
     _dual = s.doublePage;
     _dtZoom = s.doubleTapZoom;
     _showPageNum = s.showPageNumber;
     _brightness = s.brightness;
     _loadInitial();
+    if (s.keepScreenOn) {
+      _wakeOn = true;
+      if (_wakeCount++ == 0) WakelockPlus.enable(); // 阅读时常亮(引用计数)
+    }
+    _uiCount++;
+    _applySystemUi();
+    _applyOrientation();
+    if (s.volumeKeyPaging) _enableVolumeKeys();
   }
 
   bool get _isPaged => _mode != ReaderMode.webtoon;
   bool get _rtl => _mode == ReaderMode.pagedRtl;
-  bool get _dualActive => _dual && _isPaged;
+  // 双页仅横向翻页(普通/日漫);竖翻、条漫不并排双页。
+  bool get _dualActive =>
+      _dual && (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl);
   int _pageForFlat(int flat) => _dualActive ? flat ~/ 2 : flat;
   int _flatForPage(int page) => _dualActive ? page * 2 : page;
 
@@ -153,6 +189,7 @@ class _ReaderPageState extends State<ReaderPage> {
         if (showHint) _showHint = true;
       });
       _saveProgress();
+      _maybeAutoDetect(); // 首次打开:高瘦条漫图自动切滚动模式
       _preload();
       _maybeLoadNext(); // 若起始就接近末尾(短章/续读到尾),提前接上下一章
     } catch (e) {
@@ -249,7 +286,18 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _onFlatChanged(int i) {
     if (i == _curFlat || i < 0 || i >= _flat.length) return;
-    setState(() => _curFlat = i);
+    final prevCh = _flat[_curFlat.clamp(0, _flat.length - 1)].chapterIndex;
+    setState(() {
+      _curFlat = i;
+      _pageZoomed = false; // 翻页即退出放大禁翻态(离开的页也会复位缩放)
+    });
+    // 连读跨入新章:提示章节名(避免在帧内插 overlay,延到帧后)。
+    if ((_store?.chapterToast ?? true) && _flat[i].chapterIndex != prevCh) {
+      final name = _flat[i].chapter.name;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) showAppNotify(context, name, kind: AppNotifyKind.info);
+      });
+    }
     _saveProgress();
     _preload();
     _maybeLoadNext();
@@ -270,14 +318,23 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _switchMode(ReaderMode m) {
     if (m == _mode) return;
-    setState(() => _mode = m);
-    _store?.readerMode = m;
+    // 切模式会换 _pageKey → 当前页元素被替换,旧 _ZoomableView 不发缩放回调;
+    // 显式清掉禁翻标记,避免切换后点击翻页失灵。
+    setState(() {
+      _mode = m;
+      _pageZoomed = false;
+    });
+    _store?.setMangaMode(_mangaKey, m); // 记住本漫画的选择
+    _store?.readerMode = m; // 同时更新全局默认(新漫画沿用最近偏好)
     _resyncPaged();
   }
 
   void _setDual(bool v) {
     if (v == _dual) return;
-    setState(() => _dual = v);
+    setState(() {
+      _dual = v;
+      _pageZoomed = false;
+    });
     _store?.doublePage = v;
     _resyncPaged();
   }
@@ -342,8 +399,9 @@ class _ReaderPageState extends State<ReaderPage> {
       // 「阅读器显示背景」开启 → 透明,露出全局背景;否则用近黑纯色。
       backgroundColor: (_store?.readerBackground ?? false)
           ? Colors.transparent
-          : const Color(0xFF050807),
+          : _bgColor(),
       body: Focus(
+        focusNode: _focus,
         autofocus: true,
         onKeyEvent: _onKey, // 键盘快捷键(方向键/空格/PageUp·Down 翻页,Esc 退出)
         child: Listener(
@@ -352,7 +410,8 @@ class _ReaderPageState extends State<ReaderPage> {
             children: [
               // 图片/列表排出无障碍树:漫画页无需 a11y,且大量图片加载会让 Windows
               // 无障碍桥(AXTree)持续报错刷屏、卡到退不出页面。控制条仍保留语义。
-              ExcludeSemantics(child: _content()),
+              // 色彩滤镜(黑白/反色/护眼/对比度)整层套一次,覆盖翻页 + 条漫。
+              ExcludeSemantics(child: _filtered(_content())),
               // 亮度遮罩(在内容之上、控制条之下,不拦手势)。
               if (_brightness < 1.0)
                 Positioned.fill(
@@ -406,7 +465,7 @@ class _ReaderPageState extends State<ReaderPage> {
           ),
         );
 
-    final Widget zones = webtoon
+    final Widget zones = (webtoon || _mode == ReaderMode.vertical)
         ? zone(1, Icons.swap_vert_rounded, '上下滑动翻页\n点击切换控制条', 0.05)
         : gesturesOff
             ? zone(1, Icons.touch_app_rounded, '点击切换控制条\n(翻页手势已关)', 0.05)
@@ -493,17 +552,42 @@ class _ReaderPageState extends State<ReaderPage> {
       return KeyEventResult.ignored;
     }
     final k = event.logicalKey;
-    if (k == LogicalKeyboardKey.arrowRight ||
-        k == LogicalKeyboardKey.arrowDown ||
+    // 阅读顺序(与 RTL 无关):下 / 空格 / PageDown = 下一页,上 / PageUp = 上一页。
+    if (k == LogicalKeyboardKey.arrowDown ||
         k == LogicalKeyboardKey.space ||
         k == LogicalKeyboardKey.pageDown) {
       _turn(1);
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.arrowLeft ||
-        k == LogicalKeyboardKey.arrowUp ||
-        k == LogicalKeyboardKey.pageUp) {
+    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.pageUp) {
       _turn(-1);
+      return KeyEventResult.handled;
+    }
+    // 左右方向键:按屏幕方向(日漫 RTL 镜像),与点击分区一致。
+    if (k == LogicalKeyboardKey.arrowRight) {
+      _turn(_rtl ? -1 : 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      _turn(_rtl ? 1 : -1);
+      return KeyEventResult.handled;
+    }
+    // 章节:N 下一章 / P 上一章。
+    if (k == LogicalKeyboardKey.keyN) {
+      if (_hasNextChapter) _jumpChapter(1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyP) {
+      if (_hasPrevChapter) _jumpChapter(-1);
+      return KeyEventResult.handled;
+    }
+    // 本章首 / 末页。
+    if (k == LogicalKeyboardKey.home) {
+      _jumpTo(_cur.chapterStartFlat);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.end) {
+      _jumpTo(_cur.chapterStartFlat + _cur.localTotal - 1);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.escape) {
@@ -515,7 +599,8 @@ class _ReaderPageState extends State<ReaderPage> {
 
   DateTime _lastWheel = DateTime.fromMillisecondsSinceEpoch(0);
   void _onWheel(PointerSignalEvent event) {
-    if (_mode == ReaderMode.webtoon) return; // 条漫:让 SPL 自己滚
+    // 条漫 / 竖翻:纵向 Scrollable 自己吃滚轮,别再 _turn(否则和原生滚动打架)。
+    if (_mode == ReaderMode.webtoon || _mode == ReaderMode.vertical) return;
     if (event is PointerScrollEvent) {
       final now = DateTime.now();
       if (now.difference(_lastWheel).inMilliseconds < 120) return; // 防一滚翻多页
@@ -552,21 +637,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _content() {
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline_rounded, color: Colors.white54, size: 40),
-              const SizedBox(height: 12),
-              SelectableText('加载失败:\n$_error',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            ],
-          ),
-        ),
-      );
+      return AppErrorView(onDark: true, message: _error!);
     }
     if (_flat.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -575,6 +646,7 @@ class _ReaderPageState extends State<ReaderPage> {
       builder: (context, cons) => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapUp: (d) => _onTapUp(d.localPosition.dx, cons.maxWidth),
+        onLongPress: _openSettings, // 长按调出阅读设置(Kotatsu 式菜单入口)
         child: _mode == ReaderMode.webtoon ? _webtoon() : _paged(),
       ),
     );
@@ -582,21 +654,156 @@ class _ReaderPageState extends State<ReaderPage> {
 
   /// 点击分区:两侧翻页、中间切控制条。日漫(RTL)左右镜像(左=下一页,符合右起阅读)。
   void _onTapUp(double x, double width) {
+    _focus.requestFocus(); // 点内容夺回键盘焦点(用过进度条后方向键仍能翻页)
     // 手势关掉 / 条漫:任意点击只切控制条(不翻页)。
+    // 条漫 / 竖翻:任意点击只切控制条(翻页交给滑动 / 按键 / 滚轮)。
     if (!(_store?.readerGestures ?? true) ||
         _mode == ReaderMode.webtoon ||
+        _mode == ReaderMode.vertical ||
         width <= 0) {
-      setState(() => _overlay = !_overlay);
+      _setOverlay(!_overlay);
       return;
     }
     final left = width * 0.30;
     final right = width * 0.70;
-    if (x < left) {
-      _turn(_rtl ? 1 : -1); // 左侧:普通=上一页 / 日漫=下一页
-    } else if (x > right) {
-      _turn(_rtl ? -1 : 1); // 右侧:普通=下一页 / 日漫=上一页
-    } else {
-      setState(() => _overlay = !_overlay); // 中间:切控制条
+    if (x >= left && x <= right) {
+      _setOverlay(!_overlay); // 中间:切控制条
+      return;
+    }
+    if (_pageZoomed) return; // 放大态:两侧点击不翻页(正在看细节 / 平移)
+    // 右侧默认前进(下一页);日漫 RTL 与「反转翻页方向」各镜像一次(XOR)。
+    var forward = x >= right;
+    if (_rtl) forward = !forward;
+    if (_store?.invertTapZones ?? false) forward = !forward;
+    _turn(forward ? 1 : -1);
+  }
+
+  // 控制条显隐 + 联动系统栏(收起控制条 = 沉浸,隐藏 Android 状态/导航栏)。
+  void _setOverlay(bool v) {
+    setState(() => _overlay = v);
+    _applySystemUi();
+  }
+
+  void _applySystemUi() {
+    if (!(Platform.isAndroid || Platform.isIOS)) return;
+    SystemChrome.setEnabledSystemUIMode(
+        _overlay ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
+  }
+
+  // 屏幕方向锁(仅移动端):自动 / 竖屏 / 横屏。
+  void _applyOrientation() {
+    if (!(Platform.isAndroid || Platform.isIOS)) return;
+    SystemChrome.setPreferredOrientations(
+        switch (_store?.readerOrientation ?? ReaderOrientation.auto) {
+      ReaderOrientation.portrait => const [
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ],
+      ReaderOrientation.landscape => const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ],
+      ReaderOrientation.auto => DeviceOrientation.values,
+    });
+  }
+
+  // 阅读器底色(不显示全局背景图时)。
+  Color _bgColor() => switch (_store?.readerBg ?? ReaderBackground.dark) {
+        ReaderBackground.dark => const Color(0xFF050807),
+        ReaderBackground.black => const Color(0xFF000000),
+        ReaderBackground.white => const Color(0xFFFFFFFF),
+        ReaderBackground.sepia => const Color(0xFFF6ECD8),
+      };
+
+  // 色彩滤镜:按需嵌套 ColorFiltered(对比度 → 纸色 → 黑白 → 反色)。
+  Widget _filtered(Widget child) {
+    final s = _store;
+    if (s == null) return child;
+    var w = child;
+    if (s.cfContrast != 1.0) {
+      w = ColorFiltered(colorFilter: _contrastFilter(s.cfContrast), child: w);
+    }
+    if (s.cfSepia) w = ColorFiltered(colorFilter: _sepiaFilter, child: w);
+    if (s.cfGrayscale) {
+      w = ColorFiltered(colorFilter: _grayscaleFilter, child: w);
+    }
+    if (s.cfInvert) w = ColorFiltered(colorFilter: _invertFilter, child: w);
+    return w;
+  }
+
+  static const ColorFilter _grayscaleFilter = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0, 0, 0, 1, 0,
+  ]);
+  static const ColorFilter _invertFilter = ColorFilter.matrix(<double>[
+    -1, 0, 0, 0, 255, //
+    0, -1, 0, 0, 255, //
+    0, 0, -1, 0, 255, //
+    0, 0, 0, 1, 0,
+  ]);
+  static const ColorFilter _sepiaFilter = ColorFilter.matrix(<double>[
+    0.393, 0.769, 0.189, 0, 0, //
+    0.349, 0.686, 0.168, 0, 0, //
+    0.272, 0.534, 0.131, 0, 0, //
+    0, 0, 0, 1, 0,
+  ]);
+  static ColorFilter _contrastFilter(double c) {
+    final t = 127.5 * (1 - c);
+    return ColorFilter.matrix(<double>[
+      c, 0, 0, 0, t, //
+      0, c, 0, 0, t, //
+      0, 0, c, 0, t, //
+      0, 0, 0, 1, 0,
+    ]);
+  }
+
+  // 首次打开:开「自动判断条漫」且本漫画无手动覆盖时,解首页宽高比,
+  // 高瘦(条漫)图自动切滚动模式(不写覆盖:下次仍按图判;手动切才固定)。
+  void _maybeAutoDetect() {
+    final s = _store;
+    if (s == null || !s.autoDetectMode) return;
+    if (s.mangaMode(_mangaKey) != null) return; // 用户已手动指定
+    if (_mode == ReaderMode.webtoon || _flat.isEmpty) return;
+    final stream =
+        _providerFor(_flat.first.img).resolve(const ImageConfiguration());
+    void done() {
+      final l = _detectListener;
+      if (l != null) _detectStream?.removeListener(l);
+      _detectStream = null;
+      _detectListener = null;
+    }
+
+    final l = ImageStreamListener((info, _) {
+      done();
+      final w = info.image.width, h = info.image.height;
+      if (!mounted || w <= 0) return;
+      if (h / w > 1.8 &&
+          _mode != ReaderMode.webtoon &&
+          s.mangaMode(_mangaKey) == null) {
+        setState(() => _mode = ReaderMode.webtoon);
+      }
+    }, onError: (_, __) => done());
+    _detectStream = stream;
+    _detectListener = l;
+    stream.addListener(l);
+  }
+
+  // 音量键翻页(Android):注册回调 + 引用计数式激活。音量下=下一页(阅读顺序)。
+  void _enableVolumeKeys() {
+    _volKeyOn = true;
+    ReaderKeys.setHandler((d) {
+      if (mounted) _turn(d);
+    });
+    if (_volKeyCount++ == 0) ReaderKeys.setActive(true);
+  }
+
+  void _disableVolumeKeys() {
+    _volKeyOn = false;
+    if (--_volKeyCount == 0) {
+      ReaderKeys.setActive(false);
+      ReaderKeys.clearHandler();
     }
   }
 
@@ -616,16 +823,21 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
       child: PageView.builder(
         controller: _ctrl,
+        scrollDirection:
+            _mode == ReaderMode.vertical ? Axis.vertical : Axis.horizontal,
         reverse: _rtl, // 日漫:右→左翻
         // 预加载开启时提前**建好相邻页的 UI**(配合图片解码预载 → 翻页零加载)。
         allowImplicitScrolling: (_store?.preload ?? 0) > 0,
         itemCount: count,
         onPageChanged: (p) => _onFlatChanged(_flatForPage(p)),
         itemBuilder: (_, p) => _PageTurn(
+          // 内容稳定 key:缩放状态绑到「逻辑页」而非 PageView 槽位,
+          // 双页/模式切换时不会把旧页的放大态套到别的页上。
+          key: ValueKey(_pageKey(p)),
           controller: _ctrl,
           index: p,
           enabled: turn,
-          child: _zoomable(_pagedItem(p)),
+          child: _zoomable(_pagedItem(p), active: p == _pageForFlat(_curFlat)),
         ),
       ),
     );
@@ -653,9 +865,30 @@ class _ReaderPageState extends State<ReaderPage> {
             : Align(alignment: align, child: _image(img, BoxFit.contain)),
       );
 
-  // 缩放:双指恒可缩放;双击缩放按设置开关。
-  Widget _zoomable(Widget child) =>
-      _ZoomableView(doubleTap: _dtZoom, child: child);
+  // 逻辑页的稳定标识(章 index + 章内页码,唯一且不随 PageView 槽位变化)。
+  String _pageKey(int slot) {
+    if (!_dualActive) {
+      final f = _flat[slot];
+      return '${f.chapterIndex}:${f.localPage}';
+    }
+    final a = _flat[2 * slot];
+    final b = (2 * slot + 1) < _flat.length ? _flat[2 * slot + 1] : null;
+    return '${a.chapterIndex}:${a.localPage}|'
+        '${b == null ? '' : '${b.chapterIndex}:${b.localPage}'}';
+  }
+
+  // 缩放:双指恒可缩放;双击缩放按设置开关(仅中间带,不与两侧翻页手势抢)。
+  // active=false(非当前页)时会复位缩放,翻回来不再停在放大态。
+  Widget _zoomable(Widget child, {bool active = true}) => _ZoomableView(
+        doubleTap: _dtZoom,
+        active: active,
+        centerBandOnly: _store?.readerGestures ?? true,
+        onZoomChanged: (z) {
+          if (!active) return;
+          if (z != _pageZoomed) setState(() => _pageZoomed = z);
+        },
+        child: child,
+      );
 
   Widget _webtoon() {
     final size = MediaQuery.of(context).size;
@@ -669,12 +902,18 @@ class _ReaderPageState extends State<ReaderPage> {
       itemPositionsListener: _itemPos,
       initialScrollIndex: _curFlat.clamp(0, _flat.length - 1),
       itemCount: _flat.length,
-      itemBuilder: (_, i) => Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxW),
-          child: _image(_flat[i].img, BoxFit.fitWidth, fullWidth: true),
-        ),
-      ),
+      itemBuilder: (_, i) {
+        final gap = _store?.webtoonGap ?? 0;
+        return Padding(
+          padding: EdgeInsets.only(top: i > 0 ? gap : 0),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxW),
+              child: _image(_flat[i].img, BoxFit.fitWidth, fullWidth: true),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -838,6 +1077,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 onChanged: total > 1
                     ? (v) => _jumpTo(fp.chapterStartFlat + v.round())
                     : null,
+                onChangeEnd: (_) => _focus.requestFocus(),
               ),
             ),
             Text('$total',
@@ -897,6 +1137,7 @@ class _ReaderPageState extends State<ReaderPage> {
                     onChanged: total > 1
                         ? (v) => _jumpTo(fp.chapterStartFlat + v.round())
                         : null,
+                    onChangeEnd: (_) => _focus.requestFocus(),
                   ),
                 ),
               ),
@@ -938,22 +1179,24 @@ class _ReaderPageState extends State<ReaderPage> {
             const SizedBox(height: 8),
             SegmentedButton<ReaderMode>(
               segments: const [
-                ButtonSegment(
-                    value: ReaderMode.paged,
-                    label: Text('普通'),
-                    icon: Icon(Icons.arrow_forward_rounded, size: 15)),
-                ButtonSegment(
-                    value: ReaderMode.pagedRtl,
-                    label: Text('日漫'),
-                    icon: Icon(Icons.arrow_back_rounded, size: 15)),
-                ButtonSegment(
-                    value: ReaderMode.webtoon,
-                    label: Text('滚动'),
-                    icon: Icon(Icons.arrow_downward_rounded, size: 15)),
+                ButtonSegment(value: ReaderMode.paged, label: Text('普通')),
+                ButtonSegment(value: ReaderMode.pagedRtl, label: Text('日漫')),
+                ButtonSegment(value: ReaderMode.vertical, label: Text('竖翻')),
+                ButtonSegment(value: ReaderMode.webtoon, label: Text('滚动')),
               ],
               selected: {_mode},
               showSelectedIcon: false,
               onSelectionChanged: (s) => apply(() => _switchMode(s.first)),
+            ),
+            AppSwitchRow(
+              title: '自动判断条漫',
+              subtitle: '高瘦长条漫画自动用滚动模式(未手动指定时)',
+              value: _store?.autoDetectMode ?? true,
+              onChanged: (v) => apply(() => _store?.autoDetectMode = v),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
             ),
             if (_mode == ReaderMode.webtoon) ...[
               const SizedBox(height: 8),
@@ -975,12 +1218,30 @@ class _ReaderPageState extends State<ReaderPage> {
               ),
               Text('仅横屏生效 · 越窄一屏看得越长',
                   style: TextStyle(color: p.textMuted, fontSize: 11)),
+              AppSliderRow(
+                icon: Icons.density_medium_rounded,
+                iconColor: p.textMuted,
+                label: '页间距',
+                value: (_store?.webtoonGap ?? 0).clamp(0, 40),
+                min: 0,
+                max: 40,
+                divisions: 8,
+                valueWidth: 42,
+                valueFontSize: 12,
+                onChanged: (v) => apply(() {
+                  _store?.webtoonGap = v;
+                  setState(() {}); // 阅读器按新间距即时重建
+                }),
+              ),
             ],
             AppSwitchRow(
               title: '双页同看',
-              subtitle: '翻页模式下并排显示两页',
+              subtitle: '横向翻页模式下并排显示两页',
               value: _dual,
-              onChanged: _isPaged ? (v) => apply(() => _setDual(v)) : null,
+              onChanged:
+                  (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl)
+                      ? (v) => apply(() => _setDual(v))
+                      : null,
               dense: true,
               titleSize: 13.5,
               titleWeight: FontWeight.w600,
@@ -1009,6 +1270,89 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
             ),
             AppSwitchRow(
+              title: '跨章提示',
+              subtitle: '连读进入下一章时提示章节名',
+              value: _store?.chapterToast ?? true,
+              onChanged: (v) => apply(() => _store?.chapterToast = v),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            const SizedBox(height: 6),
+            Text('色彩 / 底色', style: label(p.textMuted)),
+            const SizedBox(height: 8),
+            SegmentedButton<ReaderBackground>(
+              segments: const [
+                ButtonSegment(value: ReaderBackground.dark, label: Text('深色')),
+                ButtonSegment(value: ReaderBackground.black, label: Text('纯黑')),
+                ButtonSegment(value: ReaderBackground.white, label: Text('白')),
+                ButtonSegment(value: ReaderBackground.sepia, label: Text('纸')),
+              ],
+              selected: {_store?.readerBg ?? ReaderBackground.dark},
+              showSelectedIcon: false,
+              onSelectionChanged: (sel) => apply(() {
+                _store?.readerBg = sel.first;
+                setState(() {});
+              }),
+            ),
+            Text('底色在「未显示全局背景图」时生效',
+                style: TextStyle(color: p.textMuted, fontSize: 11)),
+            AppSwitchRow(
+              title: '黑白',
+              value: _store?.cfGrayscale ?? false,
+              onChanged: (v) => apply(() {
+                _store?.cfGrayscale = v;
+                setState(() {});
+              }),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+            ),
+            AppSwitchRow(
+              title: '护眼纸色',
+              subtitle: '暖色纸张色调,久读护眼',
+              value: _store?.cfSepia ?? false,
+              onChanged: (v) => apply(() {
+                _store?.cfSepia = v;
+                setState(() {});
+              }),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            AppSwitchRow(
+              title: '反色',
+              subtitle: '暗色漫画 / 夜间反相',
+              value: _store?.cfInvert ?? false,
+              onChanged: (v) => apply(() {
+                _store?.cfInvert = v;
+                setState(() {});
+              }),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            AppSliderRow(
+              icon: Icons.contrast_rounded,
+              iconColor: p.textMuted,
+              label: '对比度',
+              value: (_store?.cfContrast ?? 1.0).clamp(0.5, 1.5),
+              min: 0.5,
+              max: 1.5,
+              divisions: 20,
+              valueWidth: 42,
+              valueFontSize: 12,
+              onChanged: (v) => apply(() {
+                _store?.cfContrast = v;
+                setState(() {});
+              }),
+            ),
+            const SizedBox(height: 6),
+            Text('手势', style: label(p.textMuted)),
+            AppSwitchRow(
               title: '点击分区翻页',
               subtitle: '屏幕左/右侧点击翻页,中间切控制条',
               value: _store?.readerGestures ?? true,
@@ -1018,6 +1362,34 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
               subtitleSize: 11,
             ),
+            AppSwitchRow(
+              title: '反转翻页方向',
+              subtitle: '左侧点击 = 下一页,右侧 = 上一页(左手 / 习惯反转)',
+              value: _store?.invertTapZones ?? false,
+              onChanged: (v) => apply(() => _store?.invertTapZones = v),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            if (Platform.isAndroid)
+              AppSwitchRow(
+                title: '音量键翻页',
+                subtitle: '音量下 = 下一页,音量上 = 上一页',
+                value: _store?.volumeKeyPaging ?? false,
+                onChanged: (v) => apply(() {
+                  _store?.volumeKeyPaging = v;
+                  if (v && !_volKeyOn) {
+                    _enableVolumeKeys();
+                  } else if (!v && _volKeyOn) {
+                    _disableVolumeKeys();
+                  }
+                }),
+                dense: true,
+                titleSize: 13.5,
+                titleWeight: FontWeight.w600,
+                subtitleSize: 11,
+              ),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
@@ -1031,6 +1403,47 @@ class _ReaderPageState extends State<ReaderPage> {
                     padding: const EdgeInsets.symmetric(horizontal: 8)),
               ),
             ),
+            const SizedBox(height: 6),
+            Text('屏幕', style: label(p.textMuted)),
+            AppSwitchRow(
+              title: '常亮屏幕',
+              subtitle: '阅读时不自动息屏',
+              value: _store?.keepScreenOn ?? true,
+              onChanged: (v) => apply(() {
+                _store?.keepScreenOn = v;
+                // 即时生效:开→拿锁,关→放锁(与全局引用计数配对)。
+                if (v && !_wakeOn) {
+                  _wakeOn = true;
+                  if (_wakeCount++ == 0) WakelockPlus.enable();
+                } else if (!v && _wakeOn) {
+                  _wakeOn = false;
+                  if (--_wakeCount == 0) WakelockPlus.disable();
+                }
+              }),
+              dense: true,
+              titleSize: 13.5,
+              titleWeight: FontWeight.w600,
+              subtitleSize: 11,
+            ),
+            if (Platform.isAndroid || Platform.isIOS) ...[
+              const SizedBox(height: 4),
+              SegmentedButton<ReaderOrientation>(
+                segments: const [
+                  ButtonSegment(
+                      value: ReaderOrientation.auto, label: Text('自动')),
+                  ButtonSegment(
+                      value: ReaderOrientation.portrait, label: Text('竖屏')),
+                  ButtonSegment(
+                      value: ReaderOrientation.landscape, label: Text('横屏')),
+                ],
+                selected: {_store?.readerOrientation ?? ReaderOrientation.auto},
+                showSelectedIcon: false,
+                onSelectionChanged: (sel) => apply(() {
+                  _store?.readerOrientation = sel.first;
+                  _applyOrientation();
+                }),
+              ),
+            ],
             const SizedBox(height: 6),
             Text('亮度', style: label(p.textMuted)),
             AppSliderRow(
@@ -1055,7 +1468,21 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _itemPos.itemPositions.removeListener(_onWebtoonScroll);
+    // 摘掉未完成的自动判断监听(否则 State 被挂在挂起的图片请求上)。
+    final dl = _detectListener;
+    if (dl != null) _detectStream?.removeListener(dl);
     _ctrl.dispose();
+    _focus.dispose();
+    if (_volKeyOn) _disableVolumeKeys(); // 注销音量键(引用计数)
+    if (_wakeOn && --_wakeCount == 0) {
+      WakelockPlus.disable(); // 最后一个持锁的阅读器退出才息屏
+    }
+    // 仅最后一个阅读器退出才恢复系统栏 / 解方向锁;pushReplacement 重叠期(新页已
+    // 在 initState 设好沉浸/方向锁)不清掉,避免闪回或丢失方向锁。
+    if (--_uiCount == 0 && (Platform.isAndroid || Platform.isIOS)) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge); // 恢复系统栏
+      SystemChrome.setPreferredOrientations(DeviceOrientation.values); // 解方向锁
+    }
     super.dispose();
   }
 }
@@ -1065,6 +1492,7 @@ class _ReaderPageState extends State<ReaderPage> {
 /// 读起来像翻纸。静止(t==0)时不套任何变换层(桌面性能 + 不影响缩放命中)。
 class _PageTurn extends StatelessWidget {
   const _PageTurn({
+    super.key,
     required this.controller,
     required this.index,
     required this.enabled,
@@ -1131,9 +1559,25 @@ class _PageTurn extends StatelessWidget {
 }
 
 class _ZoomableView extends StatefulWidget {
-  const _ZoomableView({required this.child, this.doubleTap = true});
+  const _ZoomableView({
+    required this.child,
+    this.doubleTap = true,
+    this.active = true,
+    this.centerBandOnly = false,
+    this.onZoomChanged,
+  });
   final Widget child;
   final bool doubleTap;
+
+  /// 是否为当前页;从 true 变 false(翻走)时复位缩放 —— 翻回来不再停在放大态。
+  final bool active;
+
+  /// 双击缩放只在中间带(30%~70%)触发,两侧让给外层翻页手势:
+  /// 侧边快速点击不会被并成双击而误放大,也没有 300ms 等待。
+  final bool centerBandOnly;
+
+  /// 放大态变化回调(外层据此在放大时禁用点击翻页)。
+  final ValueChanged<bool>? onZoomChanged;
 
   @override
   State<_ZoomableView> createState() => _ZoomableViewState();
@@ -1154,7 +1598,25 @@ class _ZoomableViewState extends State<_ZoomableView> {
   // 放大后才允许拖动平移查看。
   void _onXform() {
     final z = _tc.value.getMaxScaleOnAxis() > 1.01;
-    if (z != _zoomed) setState(() => _zoomed = z);
+    if (z != _zoomed) {
+      setState(() => _zoomed = z);
+      widget.onZoomChanged?.call(z);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ZoomableView old) {
+    super.didUpdateWidget(old);
+    // 翻离当前页:复位缩放。修主 bug「返回上一页会莫名放大」——
+    // 之前缩放态随页面被缓存,翻回来还停在放大。
+    if (old.active && !widget.active && _tc.value != Matrix4.identity()) {
+      // 直接改字段、不走 setState:didUpdateWidget 之后本就会 build,而此刻处于
+      // 构建期,监听器 _onXform 里的 setState 会抛错,故先摘监听再改值。
+      _tc.removeListener(_onXform);
+      _tc.value = Matrix4.identity();
+      _zoomed = false;
+      _tc.addListener(_onXform);
+    }
   }
 
   @override
@@ -1164,17 +1626,18 @@ class _ZoomableViewState extends State<_ZoomableView> {
     super.dispose();
   }
 
-  void _onDoubleTap() {
+  // 以某点为中心,在 放大(2.5x)/复位 之间切换。
+  void _toggleZoomAt(Offset pos) {
     if (_tc.value != Matrix4.identity()) {
       _tc.value = Matrix4.identity(); // 已放大 → 复位
     } else {
       const s = 2.5;
-      // 以双击点为中心放大:缩放置对角、平移置末列(-pos*(s-1) 使该点不动)。
+      // 缩放置对角、平移置末列(-pos*(s-1) 使该点不动)。
       _tc.value = Matrix4.identity()
         ..setEntry(0, 0, s)
         ..setEntry(1, 1, s)
-        ..setEntry(0, 3, -_tapPos.dx * (s - 1))
-        ..setEntry(1, 3, -_tapPos.dy * (s - 1));
+        ..setEntry(0, 3, -pos.dx * (s - 1))
+        ..setEntry(1, 3, -pos.dy * (s - 1));
     }
   }
 
@@ -1187,10 +1650,38 @@ class _ZoomableViewState extends State<_ZoomableView> {
       child: widget.child,
     );
     if (!widget.doubleTap) return viewer;
-    return GestureDetector(
-      onDoubleTapDown: (d) => _tapPos = d.localPosition,
-      onDoubleTap: _onDoubleTap,
-      child: viewer,
+    if (!widget.centerBandOnly) {
+      // 无翻页分区冲突(手势关时):整页双击缩放。
+      return GestureDetector(
+        onDoubleTapDown: (d) => _tapPos = d.localPosition,
+        onDoubleTap: () => _toggleZoomAt(_tapPos),
+        child: viewer,
+      );
+    }
+    // 有翻页分区:双击识别器只铺中间带,两侧不放识别器 → 侧边点击直接翻页,
+    // 不再被并成双击。translucent 让中间带的单击穿透到外层(切控制条),
+    // 双指捏合也穿透到底层 viewer;仅「中间带双击」被这里接住做缩放。
+    return LayoutBuilder(
+      builder: (ctx, cons) {
+        final band = cons.maxWidth * 0.30;
+        return Stack(
+          children: [
+            Positioned.fill(child: viewer),
+            Positioned(
+              left: band,
+              right: band,
+              top: 0,
+              bottom: 0,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onDoubleTapDown: (d) => _tapPos =
+                    Offset(band + d.localPosition.dx, d.localPosition.dy),
+                onDoubleTap: () => _toggleZoomAt(_tapPos),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
