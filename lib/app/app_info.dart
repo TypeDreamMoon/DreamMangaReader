@@ -8,7 +8,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.0.0-beta.5';
+  static const version = '1.0.0';
   static const tagline = '跨平台漫画 + 番剧 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -23,7 +23,8 @@ class AppInfo {
     '云同步:WebDAV / 账号登录(IAM 浏览器授权)· 可选类别双向合并',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓',
     '书架备份 / 恢复 · 源可用性自检',
-    '普通 / 日漫 / 滚动三种阅读模式',
+    '普通 / 日漫 / 竖翻 / 滚动 四种阅读模式 · 缩放适配 · 色彩滤镜',
+    '每漫画模式记忆 + 高瘦条漫自动识别 · 条漫自动滚动 · 保存/分享页',
     'OLED / Dark / Light 三套主题',
   ];
 }
