@@ -171,6 +171,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kCfSepia = 'lib.cfSepia'; // 滤镜:护眼纸色
   static const _kCfContrast = 'lib.cfContrast'; // 滤镜:对比度
   static const _kZoomMode = 'lib.zoomMode'; // 单页缩放/适配模式
+  static const _kAutoScrollSpeed = 'lib.autoScrollSpeed'; // 条漫自动滚动速度 px/s
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
 
   final Map<String, FavoriteEntry> _favorites = {};
@@ -217,6 +218,7 @@ class LibraryStore extends ChangeNotifier {
   bool _cfSepia = false; // 滤镜:护眼纸色
   double _cfContrast = 1.0; // 滤镜:对比度(0.5~1.5,1=正常)
   ZoomMode _zoomMode = ZoomMode.fitScreen; // 单页缩放/适配模式
+  double _autoScrollSpeed = 40; // 条漫自动滚动速度 px/s(10~200)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
 
   /// 全局动画开关的**同步镜像**:动画组件常在 initState/字段初始化处拿不到 context,
@@ -272,6 +274,7 @@ class LibraryStore extends ChangeNotifier {
   bool get cfSepia => _cfSepia;
   double get cfContrast => _cfContrast;
   ZoomMode get zoomMode => _zoomMode;
+  double get autoScrollSpeed => _autoScrollSpeed;
   int? bangumiBindingFor(String key) => _bangumiBindings[key];
 
   bool isSourceEnabled(String id) => !_disabledSources.contains(id);
@@ -380,6 +383,8 @@ class LibraryStore extends ChangeNotifier {
       _zoomMode = ZoomMode.values.firstWhere(
           (z) => z.name == prefs.getString(_kZoomMode),
           orElse: () => ZoomMode.fitScreen);
+      _autoScrollSpeed =
+          (prefs.getDouble(_kAutoScrollSpeed) ?? 40).clamp(10, 200);
       // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
       final bgmRaw = prefs.getString(_kBangumiBindings);
       if (bgmRaw != null) {
@@ -671,6 +676,14 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  set autoScrollSpeed(double v) {
+    v = v.clamp(10, 200);
+    if (v == _autoScrollSpeed) return;
+    _autoScrollSpeed = v;
+    _prefs?.setDouble(_kAutoScrollSpeed, v);
+    notifyListeners();
+  }
+
   /// 覆盖某本漫画的阅读模式(null=清除覆盖,回退全局默认)。
   void setMangaMode(String key, ReaderMode? mode) {
     final name = mode?.name;
@@ -831,6 +844,7 @@ class LibraryStore extends ChangeNotifier {
         'cfSepia': _cfSepia,
         'cfContrast': _cfContrast,
         'zoomMode': _zoomMode.name,
+        'autoScrollSpeed': _autoScrollSpeed,
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
         'disabledSources': _disabledSources.toList(),
@@ -907,6 +921,9 @@ class LibraryStore extends ChangeNotifier {
         ((j['cfContrast'] as num?)?.toDouble() ?? _cfContrast).clamp(0.5, 1.5);
     _zoomMode = ZoomMode.values
         .firstWhere((z) => z.name == j['zoomMode'], orElse: () => _zoomMode);
+    _autoScrollSpeed =
+        ((j['autoScrollSpeed'] as num?)?.toDouble() ?? _autoScrollSpeed)
+            .clamp(10, 200);
     final mm = j['mangaModes'] as Map?;
     if (mm != null) {
       _mangaModes.clear();
@@ -972,6 +989,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kCfSepia, _cfSepia);
     _prefs?.setDouble(_kCfContrast, _cfContrast);
     _prefs?.setString(_kZoomMode, _zoomMode.name);
+    _prefs?.setDouble(_kAutoScrollSpeed, _autoScrollSpeed);
     _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
     notifyListeners();

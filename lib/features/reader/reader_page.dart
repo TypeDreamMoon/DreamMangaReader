@@ -76,6 +76,7 @@ class _ReaderPageState extends State<ReaderPage> {
       PageController(initialPage: widget.initialPage);
   final ItemScrollController _itemCtrl = ItemScrollController();
   final ItemPositionsListener _itemPos = ItemPositionsListener.create();
+  final ScrollOffsetController _webOffsetCtrl = ScrollOffsetController();
 
   LibraryStore? _store;
   DownloadStore? _downloads;
@@ -95,6 +96,8 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _showHint = false; // 首次进入的手势提示遮罩
   bool _pageZoomed = false; // 当前页是否放大(放大时禁用点击翻页,避免误翻)
   bool _wakeOn = false; // 本页是否已激活常亮(与 _wakeCount 配对)
+  Timer? _autoScrollTimer; // 条漫自动滚动定时器
+  bool _autoScrolling = false;
   late final String _mangaKey; // 'sid:mid':每本漫画模式覆盖 / 自动判断的键
   final FocusNode _focus = FocusNode();
 
@@ -320,6 +323,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _switchMode(ReaderMode m) {
     if (m == _mode) return;
+    _stopAutoScroll(); // 离开条漫(或切模式)时停止自动滚动
     // 切模式会换 _pageKey → 当前页元素被替换,旧 _ZoomableView 不发缩放回调;
     // 显式清掉禁翻标记,避免切换后点击翻页失灵。
     setState(() {
@@ -428,6 +432,13 @@ class _ReaderPageState extends State<ReaderPage> {
                 // 横屏:进度条竖排到左侧;竖屏:横排在底部。
                 landscape ? _sideBar() : _bottomBar(),
                 _topBar(), // 放最上层:返回键不被左侧竖排进度条盖住
+                // 条漫自动滚动 播放/暂停(控制条显示时,右下角)。
+                if (_mode == ReaderMode.webtoon && _overlay)
+                  Positioned(
+                    right: 16,
+                    bottom: landscape ? 22 : 108,
+                    child: _autoScrollFab(),
+                  ),
               ] else
                 _fallbackBack(),
               if (_showHint) _gestureHint(),
@@ -637,6 +648,24 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  // 条漫自动滚动 播放/暂停 悬浮按钮。
+  Widget _autoScrollFab() => Material(
+        color: Colors.black.withValues(alpha: 0.55),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _toggleAutoScroll,
+          child: Padding(
+            padding: const EdgeInsets.all(11),
+            child: Icon(
+              _autoScrolling ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 24,
+            ),
+          ),
+        ),
+      );
+
   Widget _content() {
     if (_error != null) {
       return AppErrorView(onDark: true, message: _error!);
@@ -647,7 +676,7 @@ class _ReaderPageState extends State<ReaderPage> {
     return LayoutBuilder(
       builder: (context, cons) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTapUp: (d) => _onTapUp(d.localPosition.dx, cons.maxWidth),
+        onTapUp: (d) => _onTapUp(d.localPosition, cons.biggest),
         onLongPress: _openSettings, // 长按调出阅读设置(Kotatsu 式菜单入口)
         child: _mode == ReaderMode.webtoon ? _webtoon() : _paged(),
       ),
@@ -655,29 +684,91 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   /// 点击分区:两侧翻页、中间切控制条。日漫(RTL)左右镜像(左=下一页,符合右起阅读)。
-  void _onTapUp(double x, double width) {
+  void _onTapUp(Offset pos, Size size) {
     _focus.requestFocus(); // 点内容夺回键盘焦点(用过进度条后方向键仍能翻页)
-    // 手势关掉 / 条漫:任意点击只切控制条(不翻页)。
-    // 条漫 / 竖翻:任意点击只切控制条(翻页交给滑动 / 按键 / 滚轮)。
-    if (!(_store?.readerGestures ?? true) ||
-        _mode == ReaderMode.webtoon ||
-        _mode == ReaderMode.vertical ||
-        width <= 0) {
+    final w = size.width, h = size.height;
+    final gestures = _store?.readerGestures ?? true;
+    if (w <= 0 || h <= 0) {
       _setOverlay(!_overlay);
       return;
     }
-    final left = width * 0.30;
-    final right = width * 0.70;
-    if (x >= left && x <= right) {
+    // 条漫:开手势时上/下 1/3 点击滚动一屏,中间切控制条;关手势只切控制条。
+    if (_mode == ReaderMode.webtoon) {
+      if (gestures && pos.dy < h * 0.33) {
+        _webtoonScrollBy(-h * 0.9);
+      } else if (gestures && pos.dy > h * 0.67) {
+        _webtoonScrollBy(h * 0.9);
+      } else {
+        _setOverlay(!_overlay);
+      }
+      return;
+    }
+    // 竖翻 / 关手势:任意点击只切控制条(翻页交给滑动 / 按键 / 滚轮)。
+    if (_mode == ReaderMode.vertical || !gestures) {
+      _setOverlay(!_overlay);
+      return;
+    }
+    // 横向翻页:左/右翻页,中间切控制条。
+    final left = w * 0.30;
+    final right = w * 0.70;
+    if (pos.dx >= left && pos.dx <= right) {
       _setOverlay(!_overlay); // 中间:切控制条
       return;
     }
     if (_pageZoomed) return; // 放大态:两侧点击不翻页(正在看细节 / 平移)
     // 右侧默认前进(下一页);日漫 RTL 与「反转翻页方向」各镜像一次(XOR)。
-    var forward = x >= right;
+    var forward = pos.dx >= right;
     if (_rtl) forward = !forward;
     if (_store?.invertTapZones ?? false) forward = !forward;
     _turn(forward ? 1 : -1);
+  }
+
+  // 条漫按像素相对滚动(点击上/下区、自动滚动都走它)。
+  void _webtoonScrollBy(double dy) {
+    try {
+      _webOffsetCtrl.animateScroll(
+        offset: dy,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOut,
+      );
+    } catch (_) {}
+  }
+
+  // 自动滚动(仅条漫):每 200ms 按当前设置速度平滑滚一小段(速度每 tick 现读)。
+  void _toggleAutoScroll() {
+    if (_autoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    if (_mode != ReaderMode.webtoon) return;
+    setState(() => _autoScrolling = true);
+    const tick = Duration(milliseconds: 200);
+    _autoScrollTimer = Timer.periodic(tick, (_) {
+      if (!mounted || _mode != ReaderMode.webtoon) {
+        _stopAutoScroll();
+        return;
+      }
+      final speed = (_store?.autoScrollSpeed ?? 40).clamp(10.0, 200.0);
+      try {
+        _webOffsetCtrl.animateScroll(
+          offset: speed * tick.inMilliseconds / 1000.0,
+          duration: tick,
+          curve: Curves.linear,
+        );
+      } catch (_) {
+        _stopAutoScroll();
+      }
+    });
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    if (_autoScrolling && mounted) {
+      setState(() => _autoScrolling = false);
+    } else {
+      _autoScrolling = false;
+    }
   }
 
   // 控制条显隐 + 联动系统栏(收起控制条 = 沉浸,隐藏 Android 状态/导航栏)。
@@ -927,6 +1018,7 @@ class _ReaderPageState extends State<ReaderPage> {
     return ScrollablePositionedList.builder(
       itemScrollController: _itemCtrl,
       itemPositionsListener: _itemPos,
+      scrollOffsetController: _webOffsetCtrl,
       initialScrollIndex: _curFlat.clamp(0, _flat.length - 1),
       itemCount: _flat.length,
       itemBuilder: (_, i) {
@@ -1432,6 +1524,20 @@ class _ReaderPageState extends State<ReaderPage> {
                   setState(() {}); // 阅读器按新间距即时重建
                 }),
               ),
+              AppSliderRow(
+                icon: Icons.speed_rounded,
+                iconColor: p.textMuted,
+                label: '自动滚动速度',
+                value: (_store?.autoScrollSpeed ?? 40).clamp(10, 200),
+                min: 10,
+                max: 200,
+                divisions: 19,
+                valueWidth: 42,
+                valueFontSize: 12,
+                onChanged: (v) => apply(() => _store?.autoScrollSpeed = v),
+              ),
+              Text('播放/暂停:控制条显示时右下角按钮',
+                  style: TextStyle(color: p.textMuted, fontSize: 11)),
             ],
             AppSwitchRow(
               title: '双页同看',
@@ -1667,6 +1773,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _itemPos.itemPositions.removeListener(_onWebtoonScroll);
+    _autoScrollTimer?.cancel(); // 停止自动滚动定时器
     // 摘掉未完成的自动判断监听(否则 State 被挂在挂起的图片请求上)。
     final dl = _detectListener;
     if (dl != null) _detectStream?.removeListener(dl);
