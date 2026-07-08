@@ -239,6 +239,81 @@ class SyncController extends ChangeNotifier {
     }
   }
 
+  /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
+  Future<String> uploadNow(LibraryStore lib, SourceRepository repo) async {
+    if (!configured) {
+      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
+    }
+    if (syncCategories.isEmpty) throw Exception('至少选择一项要同步的内容');
+    if (_syncing) throw Exception('正在同步中…');
+    _syncing = true;
+    status = '上传中…';
+    notifyListeners();
+    try {
+      final backend = _backend();
+      final local = SyncData.build(lib, repo, categories: syncCategories);
+      final remote = await backend.pull();
+      var toPush = remote == null ? local : SyncData.overlay(remote, local);
+      var attempt = 0;
+      while (true) {
+        try {
+          await backend.push(toPush);
+          break;
+        } on SyncConflict catch (c) {
+          if (++attempt > 3) throw Exception('上传冲突,多次重试仍失败,请稍后再试');
+          toPush = c.remote == null ? local : SyncData.overlay(c.remote!, local);
+        }
+      }
+      await _stampSynced();
+      status = '已上传 · ${_catLabel(syncCategories)}';
+      return status;
+    } finally {
+      _syncing = false;
+      notifyListeners();
+    }
+  }
+
+  /// 下载:服务器 → 本地所选 [categories]。[append]=追加(不丢本地),否则覆盖。
+  Future<String> downloadNow(
+    LibraryStore lib,
+    SourceRepository repo, {
+    required Set<SyncCategory> categories,
+    required bool append,
+  }) async {
+    if (!configured) {
+      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
+    }
+    if (categories.isEmpty) throw Exception('至少选择一项要下载的内容');
+    if (_syncing) throw Exception('正在同步中…');
+    _syncing = true;
+    status = '下载中…';
+    notifyListeners();
+    try {
+      final backend = _backend();
+      final remote = await backend.pull();
+      if (remote == null) {
+        status = '服务器暂无数据';
+        return status;
+      }
+      await SyncData.apply(remote, lib, repo,
+          categories: categories, append: append);
+      await _stampSynced();
+      status = '已下载(${append ? '追加' : '覆盖'}) · ${_catLabel(categories)}';
+      return status;
+    } finally {
+      _syncing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _stampSynced() async {
+    lastSyncedAt = DateTime.now().millisecondsSinceEpoch;
+    await (await _p).setInt(_kLastAt, lastSyncedAt);
+  }
+
+  static String _catLabel(Set<SyncCategory> c) =>
+      '${c.length} 项';
+
   /// 启动时自动同步(开了自动 + 当前后端已就绪才跑);best-effort,失败只记状态不抛。
   Future<void> autoSyncOnStart(LibraryStore lib, SourceRepository repo) async {
     if (!auto || !configured) return;

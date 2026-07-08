@@ -73,4 +73,21 @@ void main() {
     final m = SyncData.merge(blob(1, {}, {'repoUrl': 'a'}), blob(1, {}));
     expect((m['sourceRepo'] as Map)['repoUrl'], 'a');
   });
+
+  test('overlay(上传):over 的类别覆盖 base,base 其余保留', () {
+    final base = blob(1, {
+      'favorites': [fav('x', '1', 1)],
+      'gridColumns': 3,
+    }, {'repoUrl': 'a'});
+    final over = blob(2, {
+      'favorites': [fav('y', '2', 2)]
+    }); // 只含收藏
+    final lib = SyncData.overlay(base, over)['library'] as Map;
+    expect((lib['favorites'] as List).length, 1);
+    expect((lib['favorites'] as List).first['m'], '2'); // 覆盖为 over 的收藏
+    expect(lib['gridColumns'], 3); // base 独有的设置 → 保留
+    expect(
+        (SyncData.overlay(base, over)['sourceRepo'] as Map)['repoUrl'], 'a');
+    // over 无 sourceRepo → 保留 base 的
+  });
 }

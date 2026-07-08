@@ -41,6 +41,7 @@ class IamAuth {
   String? _refreshToken;
   int _expiresAtMs = 0;
   String? _username;
+  String? _deviceId; // 稳定设备标识,password 授权带上供 IAM 区分会话
 
   bool get isLoggedIn => (_refreshToken?.isNotEmpty ?? false);
   String? get username => _username;
@@ -49,6 +50,7 @@ class IamAuth {
   static const _kRefresh = 'iam.refresh';
   static const _kExpiresAt = 'iam.expiresAt';
   static const _kUsername = 'iam.username';
+  static const _kDeviceId = 'iam.deviceId';
 
   /// 读回持久化的 token 与配置。
   Future<void> load({required String issuer, required String clientId}) async {
@@ -57,6 +59,11 @@ class IamAuth {
     _refreshToken = await _storage.read(key: _kRefresh);
     _expiresAtMs = int.tryParse(await _storage.read(key: _kExpiresAt) ?? '') ?? 0;
     _username = await _storage.read(key: _kUsername);
+    _deviceId = await _storage.read(key: _kDeviceId);
+    if (_deviceId == null || _deviceId!.isEmpty) {
+      _deviceId = 'dmr-${_randomUrlSafe(8)}';
+      await _storage.write(key: _kDeviceId, value: _deviceId);
+    }
   }
 
   /// 只更新 issuer/clientId(用户在设置里改了地址时)。
@@ -74,6 +81,24 @@ class IamAuth {
         // 4xx 我们自己读 msg;仅 5xx / 网络异常抛。
         validateStatus: (s) => s != null && s < 500,
       ));
+
+  /// 用户名 + 密码登录(ROPC 直连授权)。用于 Custom 自建 IAM——免注册 redirect_uri、
+  /// 免浏览器跳转。要求该 client 允许 `password` 授权。
+  Future<void> loginPassword(String username, String password) async {
+    _requireConfig();
+    final r = await _dio().post<Map<String, dynamic>>(
+      _tokenUrl,
+      data: {
+        'grant_type': 'password',
+        'client_id': clientId,
+        'username': username.trim(),
+        'password': password,
+        'device_id': _deviceId,
+      },
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
+    await _consumeToken(r, fallbackUsername: username.trim());
+  }
 
   /// 浏览器 OAuth 登录(授权码 + PKCE)。
   ///
