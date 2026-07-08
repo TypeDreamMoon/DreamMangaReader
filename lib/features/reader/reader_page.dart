@@ -153,6 +153,10 @@ class _ReaderPageState extends State<ReaderPage> {
   // 双页仅横向翻页(普通/日漫);竖翻、条漫不并排双页。
   bool get _dualActive =>
       _dual && (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl);
+  // 生效缩放模式:竖翻恒 fitScreen(纵向滑动要留给翻页;适宽等会抢走纵拖 → 翻不了页)。
+  ZoomMode get _effZoom => _mode == ReaderMode.vertical
+      ? ZoomMode.fitScreen
+      : (_store?.zoomMode ?? ZoomMode.fitScreen);
   int _pageForFlat(int flat) => _dualActive ? flat ~/ 2 : flat;
   int _flatForPage(int page) => _dualActive ? page * 2 : page;
 
@@ -926,8 +930,7 @@ class _ReaderPageState extends State<ReaderPage> {
         itemBuilder: (_, p) => _PageTurn(
           // 内容稳定 key:缩放状态绑到「逻辑页」而非 PageView 槽位,
           // 双页/模式切换时不会把旧页的放大态套到别的页上。
-          key: ValueKey(
-              '${_pageKey(p)}|${(_store?.zoomMode ?? ZoomMode.fitScreen).name}'),
+          key: ValueKey('${_pageKey(p)}|${_effZoom.name}'),
           controller: _ctrl,
           index: p,
           enabled: turn,
@@ -958,7 +961,7 @@ class _ReaderPageState extends State<ReaderPage> {
   // InteractiveViewer 默认零边距把平移夹在图片边缘内(纵/横向滚动、无漂移)。
   Widget _singlePaged(PageImage img) {
     final size = MediaQuery.of(context).size;
-    switch (_store?.zoomMode ?? ZoomMode.fitScreen) {
+    switch (_effZoom) {
       case ZoomMode.fitScreen:
         return Center(child: _image(img, BoxFit.contain));
       case ZoomMode.fitWidth:
@@ -991,8 +994,8 @@ class _ReaderPageState extends State<ReaderPage> {
   // 缩放:双指恒可缩放;双击缩放按设置开关(仅中间带,不与两侧翻页手势抢)。
   // active=false(非当前页)时会复位缩放,翻回来不再停在放大态。
   Widget _zoomable(Widget child, {bool active = true}) {
-    final zm = _store?.zoomMode ?? ZoomMode.fitScreen;
-    // 双页恒适屏(约束到视口);单页非 fitScreen 走 constrained:false + 常开平移。
+    final zm = _effZoom;
+    // 双页/竖翻恒适屏(约束到视口);横向单页非 fitScreen 走 constrained:false + 常开平移。
     final constrained = _dualActive || zm == ZoomMode.fitScreen;
     return _ZoomableView(
       doubleTap: _dtZoom,
@@ -1288,9 +1291,8 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  // 当前页对应的本地文件:已下载=直接文件;网络=磁盘缓存(未缓存则 null)。
-  Future<File?> _currentPageFile() async {
-    final img = _cur.img;
+  // 某页对应的本地文件:已下载=直接文件;网络=磁盘缓存(未缓存则 null)。
+  Future<File?> _pageFile(PageImage img) async {
     if (!img.url.startsWith('http')) {
       final f = File(img.url);
       return await f.exists() ? f : null;
@@ -1303,29 +1305,29 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   // 保存文件名:<漫画>_<章节>_p<页>.<ext>(非法字符替换为下划线)。
-  String _pageFileName() {
-    final img = _cur.img;
+  String _pageFileName(_FlatPage fp) {
     var ext = 'jpg';
-    final u = img.url.split('?').first;
+    final u = fp.img.url.split('?').first;
     final dot = u.lastIndexOf('.');
     if (dot > 0) {
       final e = u.substring(dot + 1).toLowerCase();
       if (RegExp(r'^[a-z0-9]{1,4}$').hasMatch(e)) ext = e;
     }
     String safe(String s) => s.replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_');
-    return '${safe(widget.manga.title)}_${safe(_cur.chapter.name)}'
-        '_p${_cur.localPage + 1}.$ext';
+    return '${safe(widget.manga.title)}_${safe(fp.chapter.name)}'
+        '_p${fp.localPage + 1}.$ext';
   }
 
   // 保存 / 分享当前页:移动端走系统分享面板(含保存到相册/文件),桌面另存为。
   Future<void> _savePage() async {
-    final f = await _currentPageFile();
+    final fp = _cur; // 快照:文件与文件名取同一页(避免 await 期间翻页错位)
+    final f = await _pageFile(fp.img);
     if (!mounted) return;
     if (f == null) {
       showAppNotify(context, '本页尚未缓存', kind: AppNotifyKind.warn);
       return;
     }
-    final name = _pageFileName();
+    final name = _pageFileName(fp);
     try {
       if (Platform.isAndroid || Platform.isIOS) {
         await Share.shareXFiles([XFile(f.path)], fileNameOverrides: [name]);
@@ -1468,7 +1470,7 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
               subtitleSize: 11,
             ),
-            if (_mode != ReaderMode.webtoon) ...[
+            if (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl) ...[
               const SizedBox(height: 2),
               Text('缩放模式', style: label(p.textMuted)),
               const SizedBox(height: 6),
@@ -1483,7 +1485,8 @@ class _ReaderPageState extends State<ReaderPage> {
                 showSelectedIcon: false,
                 onSelectionChanged: (sel) => apply(() {
                   _store?.zoomMode = sel.first;
-                  setState(() {});
+                  // 重建会换掉 _ZoomableView(不发缩放回调),显式清禁翻标记。
+                  setState(() => _pageZoomed = false);
                 }),
               ),
               Text('适宽/适高/原始:拖动滚动查看,点两侧或按键翻页',
@@ -1942,7 +1945,8 @@ class _ZoomableViewState extends State<_ZoomableView> {
 
   // 以某点为中心,在 放大(2.5x)/复位 之间切换。
   void _toggleZoomAt(Offset pos) {
-    if (_tc.value != Matrix4.identity()) {
+    // 按「缩放」判定,不看平移:适配模式下已滚动(有平移)但未放大时,双击应放大而非复位。
+    if (_tc.value.getMaxScaleOnAxis() > 1.01) {
       _tc.value = Matrix4.identity(); // 已放大 → 复位
     } else {
       const s = 2.5;
