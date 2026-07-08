@@ -132,6 +132,10 @@ class IamAuth {
     final result = await FlutterWebAuth2.authenticate(
       url: authUrl,
       callbackUrlScheme: callbackScheme,
+      // 桌面强制走「系统浏览器 + localhost 回环」而非内嵌 webview:
+      // flutter_web_auth_2 5.x 在 Windows/Linux 默认 useWebview=true(弹内嵌
+      // Authenticate 窗口),我们要的是真·跳系统浏览器。Android 忽略此项(仍走 Custom Tabs)。
+      options: const FlutterWebAuth2Options(useWebview: false),
     );
 
     final res = Uri.parse(result);
