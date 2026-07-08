@@ -20,6 +20,7 @@ import '../common/transitions.dart';
 import '../library/manga_cover.dart';
 import '../reader/reader_page.dart';
 import 'bangumi_search_sheet.dart';
+import 'cross_source_sheet.dart';
 
 class DetailPage extends StatefulWidget {
   const DetailPage(
@@ -156,6 +157,26 @@ class _DetailPageState extends State<DetailPage> {
     });
   }
 
+  /// 换源:在其它已启用源里搜同名漫画,选中后用该源重开详情页(替换当前页,
+  /// 返回即回到来处)。当前源不在候选内。
+  Future<void> _openCrossSource() async {
+    final picked = await showAppSheet<CrossSourcePick>(
+      context,
+      title: '换源',
+      showCloseButton: true,
+      resizeForKeyboard: true,
+      heightFactor: 0.7,
+      body: (ctx, setSheet) => CrossSourceSheet(
+        title: _manga.title,
+        currentSourceId: widget.meta.id,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    Navigator.of(context).pushReplacement(
+      appRoute(DetailPage(manga: picked.manga, meta: picked.meta)),
+    );
+  }
+
   /// 从封面算主色(KMeans),用来给详情页头部/按钮染色。失败静默,保持主题色。
   Future<void> _extractPalette() async {
     final url = _manga.cover;
@@ -229,6 +250,14 @@ class _DetailPageState extends State<DetailPage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            tooltip: '换源',
+            onPressed: _openCrossSource,
+            icon: const Icon(Icons.swap_horiz_rounded),
+          ),
+          const SizedBox(width: 4),
+        ],
         // 毛玻璃:模糊身后封面 + 顶部渐深遮罩,让返回/操作图标在任意封面上都清晰。
         flexibleSpace: ClipRect(
           child: BackdropFilter(
