@@ -37,6 +37,7 @@ class SourceRepository {
   static const _kUrl = 'sources.repoUrl';
   static const _kLocal = 'sources.localDir';
   static const _kToken = 'sources.token';
+  static const _kRemoved = 'sources.removed'; // 用户删掉的仓库源 id(持久隐藏,可恢复)
 
   /// 当前配置(设置页读写)。
   String? repoUrl;
@@ -51,6 +52,9 @@ class SourceRepository {
 
   /// 当前 registeredSources 里哪些是「本地单文件源」(用户手动加的),供 UI 标注/移除。
   Set<String> localIds = {};
+
+  /// 被用户「删除」的仓库源 id:重载后仍过滤掉(本地源是真删文件,不进这里)。可整体恢复。
+  Set<String> removedIds = {};
 
   Future<Directory> _cacheDir() async {
     final base = await getApplicationSupportDirectory();
@@ -90,6 +94,7 @@ class SourceRepository {
     repoUrl = prefs.getString(_kUrl);
     localDir = prefs.getString(_kLocal);
     token = prefs.getString(_kToken);
+    removedIds = (prefs.getStringList(_kRemoved) ?? const <String>[]).toSet();
 
     // 1) 仓库源(URL / 本地目录 / 缓存 / 开发目录)。
     var repo = <SourceMeta>[];
@@ -131,10 +136,17 @@ class SourceRepository {
     final repoIds = repo.map((e) => e.id).toSet();
     final localKept = local.where((e) => !repoIds.contains(e.id)).toList();
 
-    registeredSources = [...repo, ...localKept];
-    localIds = localKept.map((e) => e.id).toSet();
-    status =
-        localKept.isEmpty ? repoStatus : '$repoStatus · +${localKept.length} 本地源';
+    // 过滤掉用户「删除」的仓库源(本地源已真删,不在这里)。
+    final combined = [...repo, ...localKept];
+    registeredSources =
+        combined.where((e) => !removedIds.contains(e.id)).toList();
+    localIds =
+        localKept.where((e) => !removedIds.contains(e.id)).map((e) => e.id).toSet();
+    final hidden = removedIds.isEmpty ? '' : ' · 隐藏 ${removedIds.length}';
+    status = (localKept.isEmpty
+            ? repoStatus
+            : '$repoStatus · +${localKept.length} 本地源') +
+        hidden;
   }
 
   Future<List<SourceMeta>> _loadFromUrl(String base) async {
@@ -334,6 +346,26 @@ class SourceRepository {
       final js = File('${dir.path}/$id.js');
       if (await js.exists()) await js.delete();
     } catch (_) {}
+    await load();
+  }
+
+  /// 删除一个源:本地单文件源 → 真删磁盘文件;仓库源 → 记入隐藏集(重载后仍不显示,可整体恢复)。
+  Future<void> deleteSource(String id) async {
+    if (localIds.contains(id)) {
+      await removeLocalSource(id); // 内部会 load()
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    removedIds.add(id);
+    await prefs.setStringList(_kRemoved, removedIds.toList());
+    await load();
+  }
+
+  /// 恢复所有被删除(隐藏)的仓库源。
+  Future<void> restoreRemoved() async {
+    final prefs = await SharedPreferences.getInstance();
+    removedIds.clear();
+    await prefs.remove(_kRemoved);
     await load();
   }
 

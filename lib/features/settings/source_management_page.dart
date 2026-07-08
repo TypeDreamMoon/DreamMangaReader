@@ -139,13 +139,57 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     }
   }
 
-  Future<void> _removeLocalSource(SourceMeta s, SourceController sc) async {
+  /// 删除源(带二次确认)。本地源=真删文件;仓库源=隐藏(可在源仓库卡片恢复)。
+  Future<void> _deleteSource(SourceMeta s, SourceController sc) async {
+    final isLocal = _repo.localIds.contains(s.id);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final p = ctx.palette;
+        return AlertDialog(
+          backgroundColor: p.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Text('删除源',
+              style: TextStyle(
+                  color: p.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800)),
+          content: Text(
+            isLocal
+                ? '确定删除本地源「${s.name}」?会删掉本地脚本文件,不可撤销。'
+                : '确定删除源「${s.name}」?会从列表隐藏(重载仓库也不再出现),之后可在源仓库卡片「恢复已删除的源」找回。',
+            style: TextStyle(color: p.textMuted, fontSize: 13.5, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('取消')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: _red),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok != true || !mounted) return;
     setState(() => _reloading = true);
-    await _repo.removeLocalSource(s.id);
+    await _repo.deleteSource(s.id);
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    showAppNotify(context, '已移除本地源:${s.name}', kind: AppNotifyKind.success);
+    showAppNotify(context, '已删除源:${s.name}', kind: AppNotifyKind.success);
+  }
+
+  Future<void> _restoreRemoved(SourceController sc) async {
+    setState(() => _reloading = true);
+    await _repo.restoreRemoved();
+    _revalidate(sc);
+    if (!mounted) return;
+    setState(() => _reloading = false);
+    showAppNotify(context, '已恢复删除的源', kind: AppNotifyKind.success);
+    _checkAll();
   }
 
   Future<void> _checkAll() async {
@@ -479,6 +523,21 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 label: const Text('导入本地源(.js / .zip)'),
               ),
             ),
+            // 有删掉的仓库源时,给个一键恢复入口。
+            if (_repo.removedIds.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _reloading ? null : () => _restoreRemoved(sc),
+                  icon: const Icon(Icons.restore_rounded, size: 16),
+                  label: Text('恢复已删除的源(${_repo.removedIds.length})',
+                      style: const TextStyle(fontSize: 12.5)),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 32)),
+                ),
+              ),
           ],
         ),
       );
@@ -523,15 +582,14 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               ],
             ),
           ),
-          // 本地单文件源:给个移除入口。
-          if (_repo.localIds.contains(s.id))
-            IconButton(
-              tooltip: '移除本地源',
-              visualDensity: VisualDensity.compact,
-              onPressed: _reloading ? null : () => _removeLocalSource(s, sc),
-              icon: Icon(Icons.delete_outline_rounded,
-                  color: p.textMuted, size: 20),
-            ),
+          // 删除源(本地=真删文件;仓库=隐藏,可恢复)。带二次确认。
+          IconButton(
+            tooltip: '删除源',
+            visualDensity: VisualDensity.compact,
+            onPressed: _reloading ? null : () => _deleteSource(s, sc),
+            icon: Icon(Icons.delete_outline_rounded,
+                color: p.textMuted, size: 20),
+          ),
           // 需要账号的源:行内直接放登录入口(已登录=实心账号图标+主题色)。
           if (s.needsLogin)
             IconButton(
