@@ -166,6 +166,11 @@ class SyncData {
         outLib[k] = _mergeFavorites(_list(lLib[k]), _list(rLib[k]));
       } else if (k == 'history') {
         outLib[k] = _mergeHistory(_map(lLib[k]), _map(rLib[k]));
+      } else if (k == 'searchHistory') {
+        // 搜索历史随「设置」类别走,但不作 LWW 整份覆盖:两端取并集,
+        // 较新的一方在前,大小写不敏感去重,截断上限(免一端清掉另一端的历史)。
+        outLib[k] =
+            _mergeSearchHistory(_strList(lLib[k]), lTs, _strList(rLib[k]), rTs);
       } else {
         outLib[k] = _lww(
             lLib.containsKey(k), lLib[k], lTs, rLib.containsKey(k), rLib[k], rTs);
@@ -224,6 +229,22 @@ class SyncData {
     add(a);
     add(b);
     return by.values.toList();
+  }
+
+  // 搜索历史并集:新的一方在前,大小写不敏感去重(保留先出现的原样大小写),截断到 30。
+  static List<String> _mergeSearchHistory(
+      List<String> a, int aTs, List<String> b, int bTs) {
+    final first = bTs >= aTs ? b : a;
+    final second = bTs >= aTs ? a : b;
+    final seen = <String>{};
+    final out = <String>[];
+    for (final s in [...first, ...second]) {
+      final t = s.trim();
+      if (t.isEmpty) continue;
+      if (seen.add(t.toLowerCase())) out.add(t);
+      if (out.length >= 30) break;
+    }
+    return out;
   }
 
   static Map<String, dynamic> _mergeHistory(Map a, Map b) {

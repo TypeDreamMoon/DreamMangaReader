@@ -175,6 +175,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
 
   void _search(String q) {
     q = q.trim();
+    if (q.isNotEmpty) LibraryScope.read(context).addSearchHistory(q);
     if (q == _query) return;
     _query = q;
     _reset();
@@ -338,6 +339,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             _animExpand(_showSearch
                 ? _searchField(p)
                 : const SizedBox(width: double.infinity)),
+            // 搜索历史:仅在搜索框展开且未在搜索时显示,点击回填并重搜。
+            _animExpand((_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
+                ? _recentSearches(p, store)
+                : const SizedBox(width: double.infinity)),
             _animExpand(
               (_mixed && _showFilters && _query.isEmpty)
                   ? _mixedFilterBar(p)
@@ -492,6 +497,83 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide: BorderSide(color: p.accent)),
+          ),
+        ),
+      );
+
+  // 搜索历史面板:标题 + 清空 + 可横向换行的历史词条(词条自带 × 单删)。
+  Widget _recentSearches(AppPalette p, LibraryStore store) {
+    final items = store.searchHistory;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.history_rounded, size: 14, color: p.textMuted),
+              const SizedBox(width: 6),
+              Text('最近搜索',
+                  style: TextStyle(
+                      color: p.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Pressable(
+                onTap: store.clearSearchHistory,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text('清空',
+                      style: TextStyle(color: p.textMuted, fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [for (final q in items) _historyChip(p, store, q)],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _historyChip(AppPalette p, LibraryStore store, String q) => Pressable(
+        onTap: () {
+          _searchCtrl.text = q;
+          _searchCtrl.selection = TextSelection.collapsed(offset: q.length);
+          _search(q);
+        },
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 5, 5, 5),
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(context.radius * 0.7),
+            border: Border.all(color: p.line),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 160),
+                child: Text(q,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: p.textPrimary, fontSize: 12.5)),
+              ),
+              const SizedBox(width: 3),
+              // 单删按钮:独立点区,不触发整条重搜。
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => store.removeSearchHistory(q),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(Icons.close_rounded, size: 13, color: p.textMuted),
+                ),
+              ),
+            ],
           ),
         ),
       );

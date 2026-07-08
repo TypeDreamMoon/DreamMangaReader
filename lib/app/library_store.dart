@@ -173,6 +173,8 @@ class LibraryStore extends ChangeNotifier {
   static const _kZoomMode = 'lib.zoomMode'; // 单页缩放/适配模式
   static const _kAutoScrollSpeed = 'lib.autoScrollSpeed'; // 条漫自动滚动速度 px/s
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
+  static const _kSearchHistory = 'lib.searchHistory'; // 漫画搜索历史(可随设置同步)
+  static const _maxSearchHistory = 30; // 搜索历史上限(超出丢最旧)
 
   final Map<String, FavoriteEntry> _favorites = {};
   final Map<String, ReadState> _history = {};
@@ -220,6 +222,7 @@ class LibraryStore extends ChangeNotifier {
   ZoomMode _zoomMode = ZoomMode.fitScreen; // 单页缩放/适配模式
   double _autoScrollSpeed = 40; // 条漫自动滚动速度 px/s(10~200)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
+  final List<String> _searchHistory = []; // 漫画搜索历史(最近在前)
 
   /// 全局动画开关的**同步镜像**:动画组件常在 initState/字段初始化处拿不到 context,
   /// 直接读这个静态量。只由 load()/setter/importData 写。
@@ -276,6 +279,39 @@ class LibraryStore extends ChangeNotifier {
   ZoomMode get zoomMode => _zoomMode;
   double get autoScrollSpeed => _autoScrollSpeed;
   int? bangumiBindingFor(String key) => _bangumiBindings[key];
+
+  /// 漫画搜索历史(最近搜的在前)。
+  List<String> get searchHistory => List.unmodifiable(_searchHistory);
+
+  /// 记一条搜索历史:去空白、大小写不敏感去重后置顶,超上限丢最旧。
+  void addSearchHistory(String query) {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    _searchHistory.removeWhere((e) => e.toLowerCase() == q.toLowerCase());
+    _searchHistory.insert(0, q);
+    if (_searchHistory.length > _maxSearchHistory) {
+      _searchHistory.removeRange(_maxSearchHistory, _searchHistory.length);
+    }
+    _persistSearchHistory();
+    notifyListeners();
+  }
+
+  void removeSearchHistory(String query) {
+    if (_searchHistory.remove(query)) {
+      _persistSearchHistory();
+      notifyListeners();
+    }
+  }
+
+  void clearSearchHistory() {
+    if (_searchHistory.isEmpty) return;
+    _searchHistory.clear();
+    _persistSearchHistory();
+    notifyListeners();
+  }
+
+  void _persistSearchHistory() =>
+      _prefs?.setStringList(_kSearchHistory, _searchHistory);
 
   bool isSourceEnabled(String id) => !_disabledSources.contains(id);
 
@@ -411,6 +447,10 @@ class LibraryStore extends ChangeNotifier {
       }
       _disabledSources
           .addAll(prefs.getStringList(_kDisabledSources) ?? const []);
+      final sh = prefs.getStringList(_kSearchHistory);
+      if (sh != null) {
+        _searchHistory.addAll(sh.take(_maxSearchHistory));
+      }
     } catch (_) {
       // 损坏的存档不致命:当作空的继续。
     }
@@ -847,6 +887,7 @@ class LibraryStore extends ChangeNotifier {
         'autoScrollSpeed': _autoScrollSpeed,
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
+        'searchHistory': _searchHistory.toList(),
         'disabledSources': _disabledSources.toList(),
       };
 
@@ -945,6 +986,16 @@ class LibraryStore extends ChangeNotifier {
         final id = (v as num?)?.toInt();
         if (id != null) _bangumiBindings[k as String] = id;
       });
+    }
+    final sh = j['searchHistory'] as List?;
+    if (sh != null) {
+      _searchHistory
+        ..clear()
+        ..addAll(sh.map((e) => e.toString()).where((e) => e.isNotEmpty));
+      if (_searchHistory.length > _maxSearchHistory) {
+        _searchHistory.removeRange(_maxSearchHistory, _searchHistory.length);
+      }
+      _persistSearchHistory();
     }
     if (replaceFavorites) _persistFavorites();
     if (replaceHistory) _persistHistoryNow();
