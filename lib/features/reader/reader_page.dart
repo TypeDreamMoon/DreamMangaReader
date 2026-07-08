@@ -833,7 +833,8 @@ class _ReaderPageState extends State<ReaderPage> {
         itemBuilder: (_, p) => _PageTurn(
           // 内容稳定 key:缩放状态绑到「逻辑页」而非 PageView 槽位,
           // 双页/模式切换时不会把旧页的放大态套到别的页上。
-          key: ValueKey(_pageKey(p)),
+          key: ValueKey(
+              '${_pageKey(p)}|${(_store?.zoomMode ?? ZoomMode.fitScreen).name}'),
           controller: _ctrl,
           index: p,
           enabled: turn,
@@ -844,7 +845,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Widget _pagedItem(int p) {
-    if (!_dualActive) return Center(child: _image(_flat[p].img, BoxFit.contain));
+    if (!_dualActive) return _singlePaged(_flat[p].img);
     // 双页并排:靠中缝对齐,阅读顺序 LTR 左=靠前页,RTL 右=靠前页。
     final firstImg = _flat[2 * p].img;
     final secondImg =
@@ -857,6 +858,23 @@ class _ReaderPageState extends State<ReaderPage> {
         _half(right, Alignment.centerLeft),
       ],
     );
+  }
+
+  // 单页按缩放模式渲染:适屏(居中 contain)/ 适宽(限宽,高图纵向可滚)/
+  // 适高(限高,宽图横向可滚)/ 原始(原始像素)。非 fitScreen 走 constrained:false,
+  // InteractiveViewer 默认零边距把平移夹在图片边缘内(纵/横向滚动、无漂移)。
+  Widget _singlePaged(PageImage img) {
+    final size = MediaQuery.of(context).size;
+    switch (_store?.zoomMode ?? ZoomMode.fitScreen) {
+      case ZoomMode.fitScreen:
+        return Center(child: _image(img, BoxFit.contain));
+      case ZoomMode.fitWidth:
+        return _image(img, BoxFit.contain, width: size.width);
+      case ZoomMode.fitHeight:
+        return _image(img, BoxFit.contain, height: size.height);
+      case ZoomMode.original:
+        return _image(img, BoxFit.none);
+    }
   }
 
   Widget _half(PageImage? img, Alignment align) => Expanded(
@@ -879,16 +897,23 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 缩放:双指恒可缩放;双击缩放按设置开关(仅中间带,不与两侧翻页手势抢)。
   // active=false(非当前页)时会复位缩放,翻回来不再停在放大态。
-  Widget _zoomable(Widget child, {bool active = true}) => _ZoomableView(
-        doubleTap: _dtZoom,
-        active: active,
-        centerBandOnly: _store?.readerGestures ?? true,
-        onZoomChanged: (z) {
-          if (!active) return;
-          if (z != _pageZoomed) setState(() => _pageZoomed = z);
-        },
-        child: child,
-      );
+  Widget _zoomable(Widget child, {bool active = true}) {
+    final zm = _store?.zoomMode ?? ZoomMode.fitScreen;
+    // 双页恒适屏(约束到视口);单页非 fitScreen 走 constrained:false + 常开平移。
+    final constrained = _dualActive || zm == ZoomMode.fitScreen;
+    return _ZoomableView(
+      doubleTap: _dtZoom,
+      active: active,
+      centerBandOnly: _store?.readerGestures ?? true,
+      constrained: constrained,
+      panAlways: !constrained,
+      onZoomChanged: (z) {
+        if (!active) return;
+        if (z != _pageZoomed) setState(() => _pageZoomed = z);
+      },
+      child: child,
+    );
+  }
 
   Widget _webtoon() {
     final size = MediaQuery.of(context).size;
@@ -917,13 +942,16 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  Widget _image(PageImage img, BoxFit fit, {bool fullWidth = false}) {
+  Widget _image(PageImage img, BoxFit fit,
+      {bool fullWidth = false, double? width, double? height}) {
+    final w = width ?? (fullWidth ? double.infinity : null);
     // 本地下载的页:直接读文件(url 非 http)。
     if (!img.url.startsWith('http')) {
       return Image.file(
         File(img.url),
         fit: fit,
-        width: fullWidth ? double.infinity : null,
+        width: w,
+        height: height,
         errorBuilder: (_, __, ___) => _broken(fullWidth),
       );
     }
@@ -932,7 +960,8 @@ class _ReaderPageState extends State<ReaderPage> {
       imageUrl: img.url,
       httpHeaders: _headers(img),
       fit: fit,
-      width: fullWidth ? double.infinity : null,
+      width: w,
+      height: height,
       fadeInDuration: const Duration(milliseconds: 120),
       progressIndicatorBuilder: (ctx, url, p) => _loading(p, fullWidth),
       errorWidget: (_, __, ___) => _broken(fullWidth),
@@ -1285,6 +1314,27 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
               subtitleSize: 11,
             ),
+            if (_mode != ReaderMode.webtoon) ...[
+              const SizedBox(height: 2),
+              Text('缩放模式', style: label(p.textMuted)),
+              const SizedBox(height: 6),
+              SegmentedButton<ZoomMode>(
+                segments: const [
+                  ButtonSegment(value: ZoomMode.fitScreen, label: Text('适屏')),
+                  ButtonSegment(value: ZoomMode.fitWidth, label: Text('适宽')),
+                  ButtonSegment(value: ZoomMode.fitHeight, label: Text('适高')),
+                  ButtonSegment(value: ZoomMode.original, label: Text('原始')),
+                ],
+                selected: {_store?.zoomMode ?? ZoomMode.fitScreen},
+                showSelectedIcon: false,
+                onSelectionChanged: (sel) => apply(() {
+                  _store?.zoomMode = sel.first;
+                  setState(() {});
+                }),
+              ),
+              Text('适宽/适高/原始:拖动滚动查看,点两侧或按键翻页',
+                  style: TextStyle(color: p.textMuted, fontSize: 11)),
+            ],
             if (_mode == ReaderMode.webtoon) ...[
               const SizedBox(height: 8),
               AppSliderRow(
@@ -1651,6 +1701,8 @@ class _ZoomableView extends StatefulWidget {
     this.doubleTap = true,
     this.active = true,
     this.centerBandOnly = false,
+    this.constrained = true,
+    this.panAlways = false,
     this.onZoomChanged,
   });
   final Widget child;
@@ -1662,6 +1714,12 @@ class _ZoomableView extends StatefulWidget {
   /// 双击缩放只在中间带(30%~70%)触发,两侧让给外层翻页手势:
   /// 侧边快速点击不会被并成双击而误放大,也没有 300ms 等待。
   final bool centerBandOnly;
+
+  /// 适配模式:false=不把子约束到视口(适宽/适高/原始),子可超出、拖动查看。
+  final bool constrained;
+
+  /// 平移常开(适宽/适高/原始即使未放大也能拖动滚动;fitScreen 仅放大后)。
+  final bool panAlways;
 
   /// 放大态变化回调(外层据此在放大时禁用点击翻页)。
   final ValueChanged<bool>? onZoomChanged;
@@ -1732,8 +1790,12 @@ class _ZoomableViewState extends State<_ZoomableView> {
   Widget build(BuildContext context) {
     final viewer = InteractiveViewer(
       transformationController: _tc,
+      constrained: widget.constrained,
+      minScale: widget.constrained ? 0.8 : 0.5,
       maxScale: 5,
-      panEnabled: _zoomed, // 未放大不吃横拖 → PageView 能滑动翻页
+      // 适配模式常开平移(默认零边距把平移夹在图片边缘 → 纵/横向滚动、无漂移);
+      // fitScreen 未放大不吃横拖 → PageView 能滑动翻页。
+      panEnabled: widget.panAlways || _zoomed,
       child: widget.child,
     );
     if (!widget.doubleTap) return viewer;

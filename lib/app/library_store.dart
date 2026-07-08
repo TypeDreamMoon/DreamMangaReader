@@ -14,6 +14,11 @@ enum ReaderBackground { dark, black, white, sepia }
 /// 阅读器屏幕方向锁(仅移动端生效)。
 enum ReaderOrientation { auto, portrait, landscape }
 
+/// 单页缩放/适配模式(翻页模式;条漫恒为适宽)。
+/// fitScreen=适应屏幕(默认),fitWidth=适应宽度(高图纵向滚动),
+/// fitHeight=适应高度,original=原始像素。
+enum ZoomMode { fitScreen, fitWidth, fitHeight, original }
+
 /// 一本收藏。存足够渲染书架封面的信息(不依赖再次联网)。
 class FavoriteEntry {
   FavoriteEntry({
@@ -165,6 +170,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kCfInvert = 'lib.cfInvert'; // 滤镜:反色
   static const _kCfSepia = 'lib.cfSepia'; // 滤镜:护眼纸色
   static const _kCfContrast = 'lib.cfContrast'; // 滤镜:对比度
+  static const _kZoomMode = 'lib.zoomMode'; // 单页缩放/适配模式
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
 
   final Map<String, FavoriteEntry> _favorites = {};
@@ -210,6 +216,7 @@ class LibraryStore extends ChangeNotifier {
   bool _cfInvert = false; // 滤镜:反色(暗色漫 / 夜读)
   bool _cfSepia = false; // 滤镜:护眼纸色
   double _cfContrast = 1.0; // 滤镜:对比度(0.5~1.5,1=正常)
+  ZoomMode _zoomMode = ZoomMode.fitScreen; // 单页缩放/适配模式
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
 
   /// 全局动画开关的**同步镜像**:动画组件常在 initState/字段初始化处拿不到 context,
@@ -264,6 +271,7 @@ class LibraryStore extends ChangeNotifier {
   bool get cfInvert => _cfInvert;
   bool get cfSepia => _cfSepia;
   double get cfContrast => _cfContrast;
+  ZoomMode get zoomMode => _zoomMode;
   int? bangumiBindingFor(String key) => _bangumiBindings[key];
 
   bool isSourceEnabled(String id) => !_disabledSources.contains(id);
@@ -369,6 +377,9 @@ class LibraryStore extends ChangeNotifier {
       _cfInvert = prefs.getBool(_kCfInvert) ?? false;
       _cfSepia = prefs.getBool(_kCfSepia) ?? false;
       _cfContrast = (prefs.getDouble(_kCfContrast) ?? 1.0).clamp(0.5, 1.5);
+      _zoomMode = ZoomMode.values.firstWhere(
+          (z) => z.name == prefs.getString(_kZoomMode),
+          orElse: () => ZoomMode.fitScreen);
       // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
       final bgmRaw = prefs.getString(_kBangumiBindings);
       if (bgmRaw != null) {
@@ -653,6 +664,13 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  set zoomMode(ZoomMode v) {
+    if (v == _zoomMode) return;
+    _zoomMode = v;
+    _prefs?.setString(_kZoomMode, v.name);
+    notifyListeners();
+  }
+
   /// 覆盖某本漫画的阅读模式(null=清除覆盖,回退全局默认)。
   void setMangaMode(String key, ReaderMode? mode) {
     final name = mode?.name;
@@ -812,6 +830,7 @@ class LibraryStore extends ChangeNotifier {
         'cfInvert': _cfInvert,
         'cfSepia': _cfSepia,
         'cfContrast': _cfContrast,
+        'zoomMode': _zoomMode.name,
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
         'disabledSources': _disabledSources.toList(),
@@ -886,6 +905,8 @@ class LibraryStore extends ChangeNotifier {
     _cfSepia = j['cfSepia'] as bool? ?? _cfSepia;
     _cfContrast =
         ((j['cfContrast'] as num?)?.toDouble() ?? _cfContrast).clamp(0.5, 1.5);
+    _zoomMode = ZoomMode.values
+        .firstWhere((z) => z.name == j['zoomMode'], orElse: () => _zoomMode);
     final mm = j['mangaModes'] as Map?;
     if (mm != null) {
       _mangaModes.clear();
@@ -950,6 +971,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kCfInvert, _cfInvert);
     _prefs?.setBool(_kCfSepia, _cfSepia);
     _prefs?.setDouble(_kCfContrast, _cfContrast);
+    _prefs?.setString(_kZoomMode, _zoomMode.name);
     _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
     notifyListeners();
