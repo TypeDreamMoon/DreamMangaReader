@@ -98,6 +98,12 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _wakeOn = false; // 本页是否已激活常亮(与 _wakeCount 配对)
   Timer? _autoScrollTimer; // 条漫自动滚动定时器
   bool _autoScrolling = false;
+  // 拖动进度条时的预览页(章内 0 基);非 null=正在拖动,此时**不**逐页跳转,
+  // 只在松手(onChangeEnd)时跳一次 —— 避免拖 1→50 时从第 1 页一路翻到第 50 页。
+  int? _scrubLocal;
+  // 磁盘预取代际:每次跳转/翻页自增。旧代的串行预取见到代际变化即自行停下,
+  // 即“图片断点续传”——换锚点后不再续旧方向,而是从当前页接着往后下。
+  int _prefetchGen = 0;
   late final String _mangaKey; // 'sid:mid':每本漫画模式覆盖 / 自动判断的键
   final FocusNode _focus = FocusNode();
 
@@ -260,19 +266,35 @@ class _ReaderPageState extends State<ReaderPage> {
   void _preload() {
     final n = _store?.preload ?? 0;
     if (n <= 0 || _flat.isEmpty || !mounted) return;
+    // 新一代预取:任何跳转/翻页都会再调 _preload,自增代际让上一代的串行磁盘
+    // 预取自行终止(见 _prefetchDiskAhead),这样锚点始终跟着当前页走。
+    final gen = ++_prefetchGen;
     final end = (_curFlat + n).clamp(0, _flat.length - 1);
-    // 近处几页**解码到内存**(precacheImage),翻到时零加载、无 % 占位;
-    // 更远的只**下到磁盘**(省内存,翻到时最多一次解码)。
+    // 近处几页**解码到内存**(precacheImage,并发),翻到时零加载、无 % 占位;
     // 双页模式一次跨两页,多解一页盖住下一对开页。
     final decodeAhead = _dualActive ? 4 : 3;
-    for (var j = _curFlat + 1; j <= end; j++) {
+    final near = (_curFlat + decodeAhead).clamp(0, _flat.length - 1);
+    for (var j = _curFlat + 1; j <= near; j++) {
+      precacheImage(_providerFor(_flat[j].img), context, onError: (_, __) {});
+    }
+    // 更远的只**下到磁盘**(省内存),且**串行 + 可取消**:从当前页向后逐张下,
+    // 一旦跳转/翻页(代际变化)立即停下 —— 用户要的“图片断点续传”:续的是图片,
+    // 锚点随当前页移动,不会再从第 1 页一路往当前页爬。
+    if (near < end) unawaited(_prefetchDiskAhead(gen, near + 1, end));
+  }
+
+  /// 从 [from] 到 [to] 逐张下到磁盘缓存(串行)。每张之间比对代际:期间一旦
+  /// 发生跳转/翻页([_prefetchGen] 变化)即中止,避免旧锚点的预取与新位置抢带宽。
+  Future<void> _prefetchDiskAhead(int gen, int from, int to) async {
+    for (var j = from; j <= to; j++) {
+      if (gen != _prefetchGen || !mounted) return; // 已换锚点 → 放弃旧方向
+      if (j < 0 || j >= _flat.length) return;
       final img = _flat[j].img;
-      if (j - _curFlat <= decodeAhead) {
-        precacheImage(_providerFor(img), context, onError: (_, __) {});
-      } else if (img.url.startsWith('http')) {
-        unawaited(appImageCache
-            .getSingleFile(img.url, headers: _headers(img))
-            .then((_) {}, onError: (_) {}));
+      if (!img.url.startsWith('http')) continue; // 本地/已下载文件无需预取
+      try {
+        await appImageCache.getSingleFile(img.url, headers: _headers(img));
+      } catch (_) {
+        // 单张失败不阻断后续预取
       }
     }
   }
@@ -435,6 +457,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 if (_showPageNum && !_overlay) _pageIndicator(),
                 // 横屏:进度条竖排到左侧;竖屏:横排在底部。
                 landscape ? _sideBar() : _bottomBar(),
+                if (_scrubLocal != null) _scrubPreview(),
                 _topBar(), // 放最上层:返回键不被左侧竖排进度条盖住
                 // 条漫自动滚动 播放/暂停(控制条显示时,右下角)。
                 if (_mode == ReaderMode.webtoon && _overlay)
@@ -1200,20 +1223,28 @@ class _ReaderPageState extends State<ReaderPage> {
           children: [
             _chapBtn(Icons.skip_previous_rounded,
                 _hasPrevChapter ? () => _jumpChapter(-1) : null),
-            Text('${fp.localPage + 1}',
+            Text('${(_scrubLocal ?? fp.localPage) + 1}',
                 style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
                     fontFeatures: [FontFeature.tabularFigures()])),
             Expanded(
               child: Slider(
-                value: fp.localPage.toDouble().clamp(0, (total - 1).toDouble()),
+                // 拖动时显示预览页 _scrubLocal(不跳);松手才真正跳一次。
+                value: (_scrubLocal ?? fp.localPage)
+                    .toDouble()
+                    .clamp(0, (total - 1).toDouble()),
                 min: 0,
                 max: (total - 1).toDouble().clamp(0, double.infinity),
                 onChanged: total > 1
-                    ? (v) => _jumpTo(fp.chapterStartFlat + v.round())
+                    ? (v) => setState(() => _scrubLocal = v.round())
                     : null,
-                onChangeEnd: (_) => _focus.requestFocus(),
+                onChangeEnd: (v) {
+                  final loc = v.round();
+                  setState(() => _scrubLocal = null);
+                  _jumpTo(fp.chapterStartFlat + loc);
+                  _focus.requestFocus();
+                },
               ),
             ),
             Text('$total',
@@ -1224,6 +1255,34 @@ class _ReaderPageState extends State<ReaderPage> {
             _chapBtn(Icons.skip_next_rounded,
                 _hasNextChapter ? () => _jumpChapter(1) : null),
           ],
+        ),
+      ),
+    );
+  }
+
+  // 拖动进度条时居中放大显示「目标页 / 总页」,松手前不翻页,提示将跳到哪。
+  Widget _scrubPreview() {
+    final fp = _cur;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                '${(_scrubLocal ?? fp.localPage) + 1} / ${fp.localTotal}',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: [FontFeature.tabularFigures()]),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1253,7 +1312,7 @@ class _ReaderPageState extends State<ReaderPage> {
           children: [
             _chapBtn(Icons.skip_previous_rounded,
                 _hasPrevChapter ? () => _jumpChapter(-1) : null),
-            Text('${fp.localPage + 1}',
+            Text('${(_scrubLocal ?? fp.localPage) + 1}',
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -1265,15 +1324,21 @@ class _ReaderPageState extends State<ReaderPage> {
                 child: RotatedBox(
                   quarterTurns: 1, // 竖向:第1页在上
                   child: Slider(
-                    value: fp.localPage
+                    // 拖动时显示预览页(不跳);松手才真正跳一次。
+                    value: (_scrubLocal ?? fp.localPage)
                         .toDouble()
                         .clamp(0, (total - 1).toDouble()),
                     min: 0,
                     max: (total - 1).toDouble().clamp(0, double.infinity),
                     onChanged: total > 1
-                        ? (v) => _jumpTo(fp.chapterStartFlat + v.round())
+                        ? (v) => setState(() => _scrubLocal = v.round())
                         : null,
-                    onChangeEnd: (_) => _focus.requestFocus(),
+                    onChangeEnd: (v) {
+                      final loc = v.round();
+                      setState(() => _scrubLocal = null);
+                      _jumpTo(fp.chapterStartFlat + loc);
+                      _focus.requestFocus();
+                    },
                   ),
                 ),
               ),
