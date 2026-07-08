@@ -68,16 +68,15 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
 
   void _run() {
     final q = _c.text.trim();
-    if (q.isEmpty || _sources.isEmpty) {
-      setState(() => _searched = true);
-      return;
-    }
+    // 先自增代际:作废任何在途旧搜索(尤其清空查询后重搜,别让旧结果继续追加)。
     final gen = ++_gen;
+    final active = q.isNotEmpty && _sources.isNotEmpty;
     setState(() {
       _results.clear();
       _searched = true;
-      _pending = _sources.length;
+      _pending = active ? _sources.length : 0;
     });
+    if (!active) return;
     for (final s in _sources) {
       _searchOne(gen, s.meta, s.source, q);
     }

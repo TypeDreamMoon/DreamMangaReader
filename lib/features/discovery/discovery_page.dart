@@ -65,8 +65,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   // 同名只显示一次(保留最先到达的源为代表),其余源只累加到源集合 → 「N源」角标。
   final Map<String, int> _titlePos = {};
   final Map<String, Set<String>> _titleSrcIds = {};
-  // 混合会话代际:每次 _reset 自增,在途的旧请求回来后据此丢弃,避免污染新结果。
-  int _mixedGen = 0;
+  // 加载会话代际:每次 _reset 自增。单源与混合的在途旧请求回来后都据此丢弃
+  // (切筛选/搜索/换源期间旧的 getSearch/getDiscovery 完成时不再 append,避免污染新结果、
+  // 跳页、以及切到无源态后 _meta! 空断言崩溃)。
+  int _loadGen = 0;
 
   final List<_Result> _results = [];
   int _page = 1;
@@ -147,8 +149,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   }
 
   void _reset() {
-    // 混合:作废在途请求、复位每源游标与去重表(单源忽略这些)。
-    _mixedGen++;
+    // 作废在途请求(单源+混合共用代际),复位每源游标与去重表。
+    _loadGen++;
     for (final c in _mixedSources) {
       c.page = 1;
       c.hasNext = true;
@@ -189,20 +191,22 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
     if (_loading || !_hasNext) return;
     if (_source == null) return;
+    final gen = _loadGen; // 期间若 _reset(切筛选/搜索/换源)则本次结果作废
+    final meta = _meta;
     setState(() => _loading = true);
     try {
       final page = _query.isNotEmpty
           ? await _source!.getSearch(_query, _page)
           : await _source!.getDiscovery(_page, filters: _activeFilters());
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return; // 已被新一轮取代:丢弃陈旧结果
       setState(() {
-        _results.addAll(page.items.map((m) => (manga: m, meta: _meta!)));
+        _results.addAll(page.items.map((m) => (manga: m, meta: meta!)));
         _hasNext = page.hasNext && page.items.isNotEmpty;
         _page++;
         _loading = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           _error = '$e';
           _loading = false;
@@ -215,7 +219,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   /// 单源报错(限流等)只停掉该源,不影响别的源;结果按到达顺序落盘,同名去重。
   Future<void> _pumpCursor(_MixedCursor c) async {
     if (c.loading || !c.hasNext) return;
-    final gen = _mixedGen;
+    final gen = _loadGen;
     final page = c.page;
     final q = _query;
     c.loading = true;
@@ -224,14 +228,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final r = q.isNotEmpty
           ? await c.source.getSearch(q, page)
           : await c.source.getDiscovery(page, filters: _mixedFiltersFor(c.source));
-      if (!mounted || gen != _mixedGen) return; // 已 reset:丢弃这批陈旧结果
+      if (!mounted || gen != _loadGen) return; // 已 reset:丢弃这批陈旧结果
       _ingestMixed(c.meta, r.items);
       c.page++;
       c.hasNext = r.hasNext && r.items.isNotEmpty;
     } catch (_) {
-      if (gen == _mixedGen) c.hasNext = false; // 某源失败:停掉它
+      if (gen == _loadGen) c.hasNext = false; // 某源失败:停掉它
     } finally {
-      if (gen == _mixedGen) {
+      if (gen == _loadGen) {
         c.loading = false;
         if (mounted) setState(_recomputeMixedFlags);
       }

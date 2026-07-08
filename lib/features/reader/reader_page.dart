@@ -101,6 +101,7 @@ class _ReaderPageState extends State<ReaderPage> {
   // 拖动进度条时的预览页(章内 0 基);非 null=正在拖动,此时**不**逐页跳转,
   // 只在松手(onChangeEnd)时跳一次 —— 避免拖 1→50 时从第 1 页一路翻到第 50 页。
   int? _scrubLocal;
+  bool? _builtLandscape; // 上一帧是否横屏:转屏时复位卡住的 _scrubLocal
   // 磁盘预取代际:每次跳转/翻页自增。旧代的串行预取见到代际变化即自行停下,
   // 即“图片断点续传”——换锚点后不再续旧方向,而是从当前页接着往后下。
   int _prefetchGen = 0;
@@ -272,8 +273,9 @@ class _ReaderPageState extends State<ReaderPage> {
     final end = (_curFlat + n).clamp(0, _flat.length - 1);
     // 近处几页**解码到内存**(precacheImage,并发),翻到时零加载、无 % 占位;
     // 双页模式一次跨两页,多解一页盖住下一对开页。
+    // 近解页数 = min(decodeAhead, 用户设的 preload):preload 调到 1/2 时别硬解 3 页。
     final decodeAhead = _dualActive ? 4 : 3;
-    final near = (_curFlat + decodeAhead).clamp(0, _flat.length - 1);
+    final near = (_curFlat + decodeAhead).clamp(0, end);
     for (var j = _curFlat + 1; j <= near; j++) {
       precacheImage(_providerFor(_flat[j].img), context, onError: (_, __) {});
     }
@@ -427,6 +429,12 @@ class _ReaderPageState extends State<ReaderPage> {
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final landscape = size.width > size.height; // 横屏
+    // 拖动进度条中途转屏:底部条↔侧边条整棵子树被替换,滑块被 dispose 不会触发
+    // onChangeEnd,_scrubLocal 会卡住(预览蒙层不消、滑块停在旧值)。检测到转屏就复位。
+    if (_builtLandscape != null && _builtLandscape != landscape) {
+      _scrubLocal = null;
+    }
+    _builtLandscape = landscape;
     return Scaffold(
       // 「阅读器显示背景」开启 → 透明,露出全局背景;否则用近黑纯色。
       backgroundColor: (_store?.readerBackground ?? false)
