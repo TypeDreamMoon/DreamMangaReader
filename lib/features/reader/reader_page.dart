@@ -1026,6 +1026,11 @@ class _ReaderPageState extends State<ReaderPage> {
                 ),
               ),
               IconButton(
+                onPressed: _openPagesSheet,
+                icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
+                tooltip: '页面',
+              ),
+              IconButton(
                 onPressed: _openSettings,
                 icon: const Icon(Icons.tune_rounded, color: Colors.white),
               ),
@@ -1152,6 +1157,88 @@ class _ReaderPageState extends State<ReaderPage> {
           ],
         ),
       ),
+    );
+  }
+
+  // 页面缩略图跳转:本章各页缩略图网格,点一下跳到该页(高亮当前页)。
+  void _openPagesSheet() {
+    final ch = _cur;
+    final total = ch.localTotal;
+    final startFlat = ch.chapterStartFlat;
+    showAppSheet<void>(
+      context,
+      title: '跳转页面',
+      trailingText: ch.chapter.name,
+      heightFactor: 0.7,
+      bodyPadding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      body: (ctx, setSheet) {
+        final p = ctx.palette;
+        return GridView.builder(
+          padding: const EdgeInsets.only(bottom: 8),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 4,
+            childAspectRatio: 0.66,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+          ),
+          itemCount: total,
+          itemBuilder: (_, i) {
+            final flat = startFlat + i;
+            final isCur = flat == _curFlat;
+            return GestureDetector(
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _jumpTo(flat);
+              },
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: isCur ? p.accent : p.line,
+                          width: isCur ? 2 : 1,
+                        ),
+                        color: p.background,
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: _thumb(_flat[flat].img),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('${i + 1}',
+                      style: TextStyle(
+                          color: isCur ? p.accent : p.textMuted,
+                          fontSize: 11,
+                          fontWeight:
+                              isCur ? FontWeight.w700 : FontWeight.w500)),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // 缩略图:限宽解码省内存;失败留空。
+  Widget _thumb(PageImage img) {
+    if (!img.url.startsWith('http')) {
+      return Image.file(File(img.url),
+          fit: BoxFit.cover,
+          cacheWidth: 240,
+          errorBuilder: (_, __, ___) => const SizedBox());
+    }
+    return CachedNetworkImage(
+      cacheManager: appImageCache,
+      imageUrl: img.url,
+      httpHeaders: _headers(img),
+      fit: BoxFit.cover,
+      memCacheWidth: 240,
+      fadeInDuration: const Duration(milliseconds: 80),
+      placeholder: (_, __) => const SizedBox(),
+      errorWidget: (_, __, ___) => const SizedBox(),
     );
   }
 
