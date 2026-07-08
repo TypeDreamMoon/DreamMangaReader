@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/content_kind.dart';
@@ -7,6 +9,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/source/title_match.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_browser.dart';
 import '../common/animations.dart';
@@ -19,6 +22,16 @@ import '../library/masonry_feed.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 typedef _Result = ({Manga manga, SourceMeta meta});
+
+/// 混合模式:每个源一份独立游标 —— 各自异步翻页、先到先显示,慢源不拖累快源。
+class _MixedCursor {
+  _MixedCursor(this.meta, this.source);
+  final SourceMeta meta;
+  final MangaSource source;
+  int page = 1;
+  bool hasNext = true;
+  bool loading = false;
+}
 
 /// 「混合(全部源)」占位源。
 const _mixedMetaId = '__all__';
@@ -43,10 +56,17 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   final ScrollController _scroll = ScrollController();
 
   bool _mixed = false; // 混合模式:并发查全部启用源
-  final List<({SourceMeta meta, MangaSource source})> _mixedSources = [];
+  final List<_MixedCursor> _mixedSources = [];
   // 混合模式的通用筛选(翻译到各源的原生筛选,见 _mixedFiltersFor)。
   String _mixedSort = 'latest'; // latest | popular
   String _mixedStatus = ''; // '' | ongoing | completed
+
+  // 混合去重:归一化标题 → 该书在 _results 中的下标 / 已贡献它的源 id 集合。
+  // 同名只显示一次(保留最先到达的源为代表),其余源只累加到源集合 → 「N源」角标。
+  final Map<String, int> _titlePos = {};
+  final Map<String, Set<String>> _titleSrcIds = {};
+  // 混合会话代际:每次 _reset 自增,在途的旧请求回来后据此丢弃,避免污染新结果。
+  int _mixedGen = 0;
 
   final List<_Result> _results = [];
   int _page = 1;
@@ -100,7 +120,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final store = LibraryScope.read(context);
       for (final s in registeredSources) {
         if (store.isSourceEnabled(s.id)) {
-          _mixedSources.add((meta: s, source: buildSource(s)));
+          _mixedSources.add(_MixedCursor(s, buildSource(s)));
         }
       }
       _reset();
@@ -127,11 +147,21 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   }
 
   void _reset() {
+    // 混合:作废在途请求、复位每源游标与去重表(单源忽略这些)。
+    _mixedGen++;
+    for (final c in _mixedSources) {
+      c.page = 1;
+      c.hasNext = true;
+      c.loading = false;
+    }
+    _titlePos.clear();
+    _titleSrcIds.clear();
     setState(() {
       _results.clear();
       _page = 1;
       _hasNext = true;
       _error = null;
+      _loading = false;
     });
     _loadMore();
   }
@@ -149,14 +179,18 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   }
 
   Future<void> _loadMore() async {
+    if (_mixed) {
+      // 混合:各源独立判断/翻页(不受全局 _loading 门限),快源立即出结果。
+      if (_mixedSources.isEmpty) return;
+      for (final c in _mixedSources) {
+        unawaited(_pumpCursor(c));
+      }
+      return;
+    }
     if (_loading || !_hasNext) return;
-    if (_mixed ? _mixedSources.isEmpty : _source == null) return;
+    if (_source == null) return;
     setState(() => _loading = true);
     try {
-      if (_mixed) {
-        await _loadMoreMixed();
-        return;
-      }
       final page = _query.isNotEmpty
           ? await _source!.getSearch(_query, _page)
           : await _source!.getDiscovery(_page, filters: _activeFilters());
@@ -177,41 +211,57 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
   }
 
-  /// 混合:并发查每个启用源的第 [_page] 页,轮转交错合并(各源结果交替出现)。
-  /// 单源报错(限流等)不影响其它源;全部为空才停止翻页。
-  Future<void> _loadMoreMixed() async {
-    final page = _page;
+  /// 混合:拉某个源的下一页并**就地追加**(异步、独立)。慢源不阻塞其它源;
+  /// 单源报错(限流等)只停掉该源,不影响别的源;结果按到达顺序落盘,同名去重。
+  Future<void> _pumpCursor(_MixedCursor c) async {
+    if (c.loading || !c.hasNext) return;
+    final gen = _mixedGen;
+    final page = c.page;
     final q = _query;
-    final lists = await Future.wait(_mixedSources.map((ms) async {
-      try {
-        final r = q.isNotEmpty
-            ? await ms.source.getSearch(q, page)
-            : await ms.source.getDiscovery(page,
-                filters: _mixedFiltersFor(ms.source));
-        return r.items.map<_Result>((m) => (manga: m, meta: ms.meta)).toList();
-      } catch (_) {
-        return <_Result>[]; // 某源失败就跳过它
-      }
-    }));
-    if (!mounted) return;
-    // 轮转交错:第 i 轮从每个源各取一个,避免某个源霸屏。
-    final merged = <_Result>[];
-    var more = true;
-    for (var i = 0; more; i++) {
-      more = false;
-      for (final l in lists) {
-        if (i < l.length) {
-          merged.add(l[i]);
-          more = true;
-        }
+    c.loading = true;
+    if (mounted) setState(_recomputeMixedFlags);
+    try {
+      final r = q.isNotEmpty
+          ? await c.source.getSearch(q, page)
+          : await c.source.getDiscovery(page, filters: _mixedFiltersFor(c.source));
+      if (!mounted || gen != _mixedGen) return; // 已 reset:丢弃这批陈旧结果
+      _ingestMixed(c.meta, r.items);
+      c.page++;
+      c.hasNext = r.hasNext && r.items.isNotEmpty;
+    } catch (_) {
+      if (gen == _mixedGen) c.hasNext = false; // 某源失败:停掉它
+    } finally {
+      if (gen == _mixedGen) {
+        c.loading = false;
+        if (mounted) setState(_recomputeMixedFlags);
       }
     }
-    setState(() {
-      _results.addAll(merged);
-      _hasNext = merged.isNotEmpty;
-      _page++;
-      _loading = false;
-    });
+  }
+
+  /// 把一批结果按「归一化标题」去重后并入 _results:新标题追加成卡片(记源为代表),
+  /// 已存在的标题只把源 id 累加到集合(驱动「N源」角标),不再重复出卡。
+  void _ingestMixed(SourceMeta meta, List<Manga> items) {
+    for (final m in items) {
+      final key = normalizeTitle(m.title);
+      if (key.isEmpty) {
+        _results.add((manga: m, meta: meta)); // 无法归一(纯符号名)→ 不去重
+        continue;
+      }
+      final pos = _titlePos[key];
+      if (pos == null) {
+        _titlePos[key] = _results.length;
+        _titleSrcIds[key] = {meta.id};
+        _results.add((manga: m, meta: meta));
+      } else {
+        (_titleSrcIds[key] ??= {}).add(meta.id);
+      }
+    }
+  }
+
+  // 混合总体标志:任一源在加载 = 转圈;任一源还有下一页 = 可继续翻。
+  void _recomputeMixedFlags() {
+    _loading = _mixedSources.any((c) => c.loading);
+    _hasNext = _mixedSources.any((c) => c.hasNext);
   }
 
   void _onScroll() {
@@ -679,6 +729,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       itemBuilder: (context, i) {
         final m = _results[i].manga;
         final meta = _results[i].meta;
+        // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
+        final srcCount = _mixed
+            ? (_titleSrcIds[normalizeTitle(m.title)]?.length ?? 1)
+            : 1;
         // 带下标:搜索/发现结果可能重复同一本,避免 Hero tag 撞车。
         final tag = 'disc:${meta.id}:${m.id}:$i';
         return FlyInUp(
@@ -690,6 +744,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 manga: m,
                 headers: imageHeadersOf(meta),
                 sourceLabel: meta.name,
+                sourceCount: srcCount,
                 aspect: aspectForId(m.id), // 高低错落
                 heroTag: tag,
                 onTap: () => Navigator.of(context).push(

@@ -35,6 +35,7 @@ class MangaCover extends StatelessWidget {
     this.onTap,
     this.showTitle = false,
     this.badge = 0,
+    this.sourceCount = 1,
     this.updated = false,
     this.radius, // 空=跟随设置里的「封面圆角」
     this.heroTag,
@@ -47,6 +48,10 @@ class MangaCover extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showTitle;
   final int badge;
+
+  /// >1 时在右上角显示「N源」角标:多源同名去重后,该书可用的源数量。
+  final int sourceCount;
+
   final bool updated;
   final double? radius;
 
@@ -159,7 +164,27 @@ class MangaCover extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (badge > 0)
+              // 多源同名去重角标(右上):该书在几个源里都有。用强调色与来源角标区分。
+              if (sourceCount > 1)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: p.accent.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text('$sourceCount源',
+                        style: TextStyle(
+                            color: p.onAccent,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            height: 1.0)),
+                  ),
+                )
+              else if (badge > 0)
                 Positioned(
                   top: 6,
                   right: 6,
