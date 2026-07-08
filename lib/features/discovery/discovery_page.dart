@@ -10,6 +10,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/title_match.dart';
+import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_browser.dart';
 import '../common/animations.dart';
@@ -80,6 +81,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   bool _showSearch = false;
   String _query = ''; // 非空 = 搜索模式
+  bool _translating = false; // 正在翻译搜索词
 
   @override
   void initState() {
@@ -467,7 +469,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
 
   Widget _searchField(AppPalette p) => Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-        child: TextField(
+        child: Row(
+          children: [
+            Expanded(child: _searchInput(p)),
+            const SizedBox(width: 6),
+            _translateButton(p),
+          ],
+        ),
+      );
+
+  Widget _searchInput(AppPalette p) => TextField(
           controller: _searchCtrl,
           autofocus: true,
           textInputAction: TextInputAction.search,
@@ -498,8 +509,57 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 borderRadius: BorderRadius.circular(10),
                 borderSide: BorderSide(color: p.accent)),
           ),
+        );
+
+  // 搜索词翻译按钮:点开选目标语言(简/繁/EN),翻好后回填并重搜。
+  Widget _translateButton(AppPalette p) {
+    if (_translating) {
+      return const SizedBox(
+        width: 44,
+        height: 44,
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: CircularProgressIndicator(strokeWidth: 2.2),
         ),
       );
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: p.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: p.line),
+      ),
+      child: PopupMenuButton<TranslateLang>(
+        tooltip: '翻译搜索词',
+        icon: Icon(Icons.translate_rounded, size: 20, color: p.accent),
+        onSelected: _translateQuery,
+        itemBuilder: (_) => [
+          for (final l in TranslateLang.values)
+            PopupMenuItem(value: l, child: Text('译为 ${l.label}')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _translateQuery(TranslateLang target) async {
+    final text = _searchCtrl.text.trim();
+    if (text.isEmpty || _translating) return;
+    final store = LibraryScope.read(context);
+    setState(() => _translating = true);
+    try {
+      final tr =
+          Translator.create(store.translateProvider, llm: store.translateLlm);
+      final out = await tr.translate(text, target);
+      if (!mounted) return;
+      _searchCtrl.text = out;
+      _searchCtrl.selection = TextSelection.collapsed(offset: out.length);
+      _search(out); // 翻好即用译文搜(方便换语种源)
+    } catch (e) {
+      if (mounted) showAppNotify(context, '$e', kind: AppNotifyKind.error);
+    } finally {
+      if (mounted) setState(() => _translating = false);
+    }
+  }
 
   // 搜索历史面板:标题 + 清空 + 可横向换行的历史词条(词条自带 × 单删)。
   Widget _recentSearches(AppPalette p, LibraryStore store) {

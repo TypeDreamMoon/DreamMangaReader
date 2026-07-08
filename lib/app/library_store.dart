@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/translate/translator.dart' show TranslateProvider, LlmConfig;
+
 /// 阅读模式:paged=横向翻页(默认),webtoon=纵向连续滚动(条漫)。
 /// 阅读模式:paged=普通横翻(左→右),pagedRtl=日漫横翻(右→左),webtoon=滚动竖读。
 enum ReaderMode { paged, pagedRtl, vertical, webtoon }
@@ -175,6 +177,10 @@ class LibraryStore extends ChangeNotifier {
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
   static const _kSearchHistory = 'lib.searchHistory'; // 漫画搜索历史(可随设置同步)
   static const _maxSearchHistory = 30; // 搜索历史上限(超出丢最旧)
+  static const _kTranslateProvider = 'lib.translateProvider'; // 搜索翻译服务商
+  static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
+  static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
+  static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
 
   final Map<String, FavoriteEntry> _favorites = {};
   final Map<String, ReadState> _history = {};
@@ -223,6 +229,10 @@ class LibraryStore extends ChangeNotifier {
   double _autoScrollSpeed = 40; // 条漫自动滚动速度 px/s(10~200)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
   final List<String> _searchHistory = []; // 漫画搜索历史(最近在前)
+  TranslateProvider _translateProvider = TranslateProvider.google; // 搜索翻译服务商
+  String _translateLlmBase = ''; // 大模型 API 地址(OpenAI 兼容)
+  String _translateLlmKey = ''; // 大模型 API 密钥(仅本机)
+  String _translateLlmModel = ''; // 大模型模型名
 
   /// 全局动画开关的**同步镜像**:动画组件常在 initState/字段初始化处拿不到 context,
   /// 直接读这个静态量。只由 load()/setter/importData 写。
@@ -312,6 +322,47 @@ class LibraryStore extends ChangeNotifier {
 
   void _persistSearchHistory() =>
       _prefs?.setStringList(_kSearchHistory, _searchHistory);
+
+  // ---- 搜索翻译 ----
+  TranslateProvider get translateProvider => _translateProvider;
+  String get translateLlmBase => _translateLlmBase;
+  String get translateLlmKey => _translateLlmKey;
+  String get translateLlmModel => _translateLlmModel;
+
+  /// 大模型翻译配置(供 Translator.create 用)。
+  LlmConfig get translateLlm => LlmConfig(
+        baseUrl: _translateLlmBase,
+        apiKey: _translateLlmKey,
+        model: _translateLlmModel,
+      );
+
+  set translateProvider(TranslateProvider v) {
+    if (v == _translateProvider) return;
+    _translateProvider = v;
+    _prefs?.setString(_kTranslateProvider, v.name);
+    notifyListeners();
+  }
+
+  set translateLlmBase(String v) {
+    if (v == _translateLlmBase) return;
+    _translateLlmBase = v;
+    _prefs?.setString(_kTranslateLlmBase, v);
+    notifyListeners();
+  }
+
+  set translateLlmKey(String v) {
+    if (v == _translateLlmKey) return;
+    _translateLlmKey = v;
+    _prefs?.setString(_kTranslateLlmKey, v);
+    notifyListeners();
+  }
+
+  set translateLlmModel(String v) {
+    if (v == _translateLlmModel) return;
+    _translateLlmModel = v;
+    _prefs?.setString(_kTranslateLlmModel, v);
+    notifyListeners();
+  }
 
   bool isSourceEnabled(String id) => !_disabledSources.contains(id);
 
@@ -451,6 +502,12 @@ class LibraryStore extends ChangeNotifier {
       if (sh != null) {
         _searchHistory.addAll(sh.take(_maxSearchHistory));
       }
+      _translateProvider = TranslateProvider.values.firstWhere(
+          (e) => e.name == prefs.getString(_kTranslateProvider),
+          orElse: () => TranslateProvider.google);
+      _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
+      _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
+      _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
     } catch (_) {
       // 损坏的存档不致命:当作空的继续。
     }
@@ -888,6 +945,10 @@ class LibraryStore extends ChangeNotifier {
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
         'searchHistory': _searchHistory.toList(),
+        'translateProvider': _translateProvider.name,
+        'translateLlmBase': _translateLlmBase,
+        'translateLlmModel': _translateLlmModel,
+        // 大模型 API 密钥属敏感数据,仅存本机,不导出/不同步(同源登录 token 同策略)。
         'disabledSources': _disabledSources.toList(),
       };
 
@@ -989,14 +1050,23 @@ class LibraryStore extends ChangeNotifier {
     }
     final sh = j['searchHistory'] as List?;
     if (sh != null) {
-      _searchHistory
-        ..clear()
-        ..addAll(sh.map((e) => e.toString()).where((e) => e.isNotEmpty));
-      if (_searchHistory.length > _maxSearchHistory) {
-        _searchHistory.removeRange(_maxSearchHistory, _searchHistory.length);
+      // 外部/远程 blob 可能含空白或大小写重复项 → 按与 addSearchHistory 相同的
+      // 不变式清洗(去空白、大小写不敏感去重、截断),别把脏数据渲染成重复/空白词条。
+      _searchHistory.clear();
+      final seen = <String>{};
+      for (final e in sh) {
+        final t = e.toString().trim();
+        if (t.isEmpty || !seen.add(t.toLowerCase())) continue;
+        _searchHistory.add(t);
+        if (_searchHistory.length >= _maxSearchHistory) break;
       }
       _persistSearchHistory();
     }
+    _translateProvider = TranslateProvider.values.firstWhere(
+        (e) => e.name == j['translateProvider'],
+        orElse: () => _translateProvider);
+    _translateLlmBase = j['translateLlmBase'] as String? ?? _translateLlmBase;
+    _translateLlmModel = j['translateLlmModel'] as String? ?? _translateLlmModel;
     if (replaceFavorites) _persistFavorites();
     if (replaceHistory) _persistHistoryNow();
     _prefs?.setString(_kReaderMode, switch (_readerMode) {
@@ -1043,6 +1113,9 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setDouble(_kAutoScrollSpeed, _autoScrollSpeed);
     _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
+    _prefs?.setString(_kTranslateProvider, _translateProvider.name);
+    _prefs?.setString(_kTranslateLlmBase, _translateLlmBase);
+    _prefs?.setString(_kTranslateLlmModel, _translateLlmModel);
     notifyListeners();
   }
 

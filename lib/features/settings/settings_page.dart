@@ -22,6 +22,7 @@ import 'font_picker_sheet.dart';
 import 'proxy_settings_page.dart';
 import 'source_management_page.dart';
 import 'sync_page.dart';
+import 'translate_settings_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -197,6 +198,13 @@ class SettingsPage extends StatelessWidget {
               '当前:${AppProxy.current ?? '直连'} · ${AppProxy.sourceLabel}',
               () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ProxySettingsPage())),
+            ),
+            _tile(
+              Icons.translate_rounded,
+              '翻译',
+              '搜索栏翻译 · 当前:${lib.translateProvider.label}',
+              () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const TranslateSettingsPage())),
             ),
           ]),
           _group('数据', [
