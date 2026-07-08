@@ -40,6 +40,26 @@ class SyncData {
     return false;
   }
 
+  /// 导出当前已加载的某类源的完整定义(含脚本正文 'code'),让源本身也能被同步。
+  static List<Map<String, dynamic>> _exportSources(bool anime) => [
+        for (final m in registeredSources)
+          if (m.isAnime == anime)
+            {
+              'id': m.id,
+              'name': m.name,
+              'kind': m.kind,
+              'experimental': m.experimental,
+              'useWebView': m.useWebView,
+              'imageReferer': m.imageReferer,
+              'needsLogin': m.needsLogin,
+              'code': m.script,
+            },
+      ];
+
+  static List<Map<String, dynamic>> _entryList(Object? v) => (v is List)
+      ? v.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
+      : const <Map<String, dynamic>>[];
+
   /// 从本地各 store 组装当前 blob——只包含 [categories] 所选类别。
   static Map<String, dynamic> build(
     LibraryStore lib,
@@ -63,10 +83,11 @@ class SyncData {
     if (categories.contains(SyncCategory.mangaSources)) {
       outLib['disabledSourcesManga'] =
           allDisabled.where((id) => !_isAnimeId(id)).toList();
+      outLib['localSourcesManga'] = _exportSources(false); // 源脚本本身
     }
     if (categories.contains(SyncCategory.animeSources)) {
-      outLib['disabledSourcesAnime'] =
-          allDisabled.where(_isAnimeId).toList();
+      outLib['disabledSourcesAnime'] = allDisabled.where(_isAnimeId).toList();
+      outLib['localSourcesAnime'] = _exportSources(true);
     }
     final blob = <String, dynamic>{
       'v': 1,
@@ -185,6 +206,20 @@ class SyncData {
     required Map<SyncCategory, bool> modes,
   }) async {
     final blib = _map(blob['library']);
+    final mangaMode = modes[SyncCategory.mangaSources];
+    final animeMode = modes[SyncCategory.animeSources];
+
+    // 源脚本:先导入(importLocalSources 会 reload 刷新 registeredSources),后面 toggle 的
+    // kind 判断才准。覆盖(false)= 替换该类本地源;追加(true)= 合并保留。
+    if (mangaMode != null && blib['localSourcesManga'] is List) {
+      await repo.importLocalSources(_entryList(blib['localSourcesManga']),
+          restrictKind: 'manga', replace: mangaMode == false);
+    }
+    if (animeMode != null && blib['localSourcesAnime'] is List) {
+      await repo.importLocalSources(_entryList(blib['localSourcesAnime']),
+          restrictKind: 'anime', replace: animeMode == false);
+    }
+
     final full = lib.exportData(); // 当前本地态:供追加合并 + 源开关重建
     final toImport = <String, dynamic>{'v': 1};
 
@@ -209,8 +244,6 @@ class SyncData {
       }
     }
     // 源开关:按 kind 分别重建整份 disabledSources 交给 importData。
-    final mangaMode = modes[SyncCategory.mangaSources];
-    final animeMode = modes[SyncCategory.animeSources];
     final wantManga =
         mangaMode != null && blib.containsKey('disabledSourcesManga');
     final wantAnime =

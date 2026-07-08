@@ -369,6 +369,56 @@ class SourceRepository {
     await load();
   }
 
+  /// 从云同步导入源脚本(每条 [entries] 含 `code`=脚本正文)。写进本地源目录、合并清单、重载,
+  /// 使它们在本机成为「本地源」。[restrictKind] 只处理该 kind;[replace]=true 先删掉(该 kind 的)
+  /// 现有本地源(覆盖语义)。返回导入数量。
+  Future<int> importLocalSources(List<Map<String, dynamic>> entries,
+      {String? restrictKind, bool replace = false}) async {
+    final dir = await _localSourcesDir();
+    final idxFile = File('${dir.path}/index.json');
+    var list = await idxFile.exists()
+        ? _entries(await idxFile.readAsString())
+        : <Map<String, dynamic>>[];
+    bool sameKind(Map<String, dynamic> e) =>
+        restrictKind == null ||
+        ((e['kind'] as String?) ?? 'manga') == restrictKind;
+    if (replace) {
+      for (final e in list.where(sameKind)) {
+        try {
+          final js = File('${dir.path}/${e['script']}');
+          if (await js.exists()) await js.delete();
+        } catch (_) {}
+      }
+      list = list.where((e) => !sameKind(e)).toList();
+    }
+    var n = 0;
+    for (final e in entries) {
+      final id = (e['id'] as String?)?.trim();
+      final code = e['code'] as String?;
+      if (id == null || id.isEmpty || code == null) continue;
+      if (restrictKind != null &&
+          ((e['kind'] as String?) ?? 'manga') != restrictKind) {
+        continue;
+      }
+      await File('${dir.path}/$id.js').writeAsString(code);
+      list.removeWhere((x) => x['id'] == id); // 同 id 覆盖
+      list.add(<String, dynamic>{
+        'id': id,
+        'name': e['name'] ?? id,
+        'kind': e['kind'] ?? 'manga',
+        'experimental': e['experimental'] ?? true,
+        'useWebView': e['useWebView'] ?? false,
+        'imageReferer': e['imageReferer'],
+        'needsLogin': e['needsLogin'] ?? false,
+        'script': '$id.js',
+      });
+      n++;
+    }
+    await idxFile.writeAsString(jsonEncode({'schema': 1, 'sources': list}));
+    await load();
+    return n;
+  }
+
   /// 设置里改仓库 URL 后调用:持久化并重新加载。
   Future<void> setRepoUrl(String? url) async {
     final prefs = await SharedPreferences.getInstance();

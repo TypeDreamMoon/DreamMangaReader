@@ -211,7 +211,7 @@ class _SyncPageState extends State<SyncPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
-              '把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源开关 / 源仓库配置 跨设备同步。'
+              '把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源(源脚本+开关) / 源仓库配置 跨设备同步。'
               '上传=本地推到服务器,下载=服务器拉到本地(可选覆盖或追加)。不含每源登录态与下载文件。',
               style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.55),
             ),
@@ -612,7 +612,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                 ),
               const SizedBox(height: 10),
               Text(
-                '覆盖=服务器替换本地;追加=收藏/进度/源开关取并集(不丢本地)。'
+                '覆盖=服务器替换本地;追加=收藏/进度/源取并集(不丢本地)。'
                 '设置/源仓库无「追加」,只能覆盖。',
                 style:
                     TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.45),
