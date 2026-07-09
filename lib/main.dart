@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'app/app.dart';
+import 'app/app_info.dart';
+import 'core/log/app_log.dart';
 import 'core/net/app_proxy.dart';
 import 'core/platform/system_fonts.dart';
 import 'core/source/source_repository.dart';
@@ -11,6 +13,9 @@ import 'core/sync/sync_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 运行日志随每次启动清空(内存缓冲本就为空,这里显式重置并记一条启动)。
+  AppLog.i.clear();
+  AppLog.i.success(LogCat.app, '应用启动 · v${AppInfo.version}');
   // 番剧播放器后端(libmpv)初始化;必须在 runApp 前。
   MediaKit.ensureInitialized();
   // 漫画整页解码后很大(单页常 6~14MB);默认 100MB 图片缓存装不下「预载几页 + 在建几页」。

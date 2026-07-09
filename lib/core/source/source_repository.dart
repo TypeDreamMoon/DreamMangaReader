@@ -9,6 +9,7 @@ import '../net/image_cache.dart' show dirSizeBytes;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../log/app_log.dart';
 import '../script/script_source.dart' show ScriptSource;
 import 'source_registry.dart';
 
@@ -86,6 +87,11 @@ class SourceRepository {
       await _resolve();
     } finally {
       debugPrint('[sources] $status · ${registeredSources.length} 个');
+      final n = registeredSources.length;
+      final lvl = status.contains('失败')
+          ? LogLevel.error
+          : (n == 0 ? LogLevel.warning : LogLevel.success);
+      AppLog.i.log(LogCat.source, '加载源 · $n 个 · $status', level: lvl);
     }
   }
 

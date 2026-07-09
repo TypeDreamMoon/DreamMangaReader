@@ -13,6 +13,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../app/download_store.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/platform/reader_keys.dart';
 import '../../core/source/models.dart';
@@ -181,10 +182,12 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _loadInitial() async {
+    final label = '《${widget.manga.title}》${_startChapter.name}';
     try {
       final pages = await _fetch(widget.index);
       if (!mounted) return;
       if (pages.isEmpty) {
+        AppLog.i.warn(LogCat.reader, '$label:本章暂无图片,已返回');
         // 空章节 —— 退回并提示(延到帧后,getPages 可能极快返回时树处于锁定期)。
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
@@ -193,6 +196,7 @@ class _ReaderPageState extends State<ReaderPage> {
         });
         return;
       }
+      AppLog.i.info(LogCat.reader, '打开 $label · ${pages.length} 页');
       _segments.add(_Seg(widget.index, _startChapter, pages));
       _rebuildFlat();
       // 首次进入 + 开着手势 → 显示一次分区手势提示。
@@ -210,6 +214,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _maybeLoadNext(); // 若起始就接近末尾(短章/续读到尾),提前接上下一章
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
+      AppLog.i.err(LogCat.reader, '打开 $label 失败:$e');
     }
   }
 

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/log/app_log.dart';
 import '../core/net/image_cache.dart';
 import '../core/source/models.dart';
 import '../core/source/source_registry.dart';
@@ -146,10 +147,13 @@ class DownloadStore extends ChangeNotifier {
 
   Future<void> _run(_Job job) async {
     final key = job.key;
+    final label = '《${job.manga.title}》${job.chapter.name}';
     final source = buildSource(job.meta);
+    AppLog.i.info(LogCat.download, '开始下载 $label');
     try {
       final pages = await source.getPages(job.manga.id, job.chapter.id);
       if (pages.isEmpty) {
+        AppLog.i.warn(LogCat.download, '$label:没有页面,跳过');
         _progress.remove(key);
         notifyListeners();
         return;
@@ -165,6 +169,7 @@ class DownloadStore extends ChangeNotifier {
           await f.copy('${dir.path}/$i.img');
         } catch (_) {
           // 单页失败不整章中断,但记为不完整:直接放弃本章。
+          AppLog.i.err(LogCat.download, '$label 第 ${i + 1} 页下载失败,已放弃本章');
           _progress.remove(key);
           notifyListeners();
           try {
@@ -189,7 +194,9 @@ class DownloadStore extends ChangeNotifier {
       _progress.remove(key);
       _persist();
       notifyListeners();
-    } catch (_) {
+      AppLog.i.success(LogCat.download, '下载完成 $label · ${pages.length} 页');
+    } catch (e) {
+      AppLog.i.err(LogCat.download, '$label 下载出错:$e');
       _progress.remove(key);
       notifyListeners();
     } finally {

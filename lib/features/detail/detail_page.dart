@@ -14,6 +14,7 @@ import '../../core/net/image_cache.dart';
 import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
 import '../../core/source/title_match.dart';
+import '../../core/log/app_log.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
@@ -591,8 +592,11 @@ class _DetailPageState extends State<DetailPage> {
     try {
       final page = await _source.getChapters(widget.manga.id);
       if (mounted) setState(() => _chapters = page.items);
+      AppLog.i.info(LogCat.manga,
+          '加载章节《${widget.manga.title}》· ${page.items.length} 话 · ${widget.meta.name}');
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
+      AppLog.i.err(LogCat.manga, '加载章节《${widget.manga.title}》失败:$e');
     }
   }
 

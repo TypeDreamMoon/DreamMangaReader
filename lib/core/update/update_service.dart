@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_info.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../log/app_log.dart';
 import 'update_installer.dart';
 
 /// 一个可更新的版本。
@@ -49,6 +50,7 @@ class UpdateService {
   /// **当前若本身是预发布,自动包含预发布**——beta 用户就该收到 beta 更新。
   /// 返回严格比当前版本高(含 -beta.N 逐级比较)的最高版本;已是最新 / 失败返回 null。
   static Future<UpdateInfo?> check({bool includeBeta = false}) async {
+    AppLog.i.info(LogCat.update, '检查更新…${includeBeta ? '(含测试版)' : ''}');
     try {
       final r = await _dio.get<dynamic>(
         'https://api.github.com/repos/$_owner/$_repo/releases',
@@ -88,8 +90,14 @@ class UpdateService {
           assets: assets,
         );
       }
+      if (best != null) {
+        AppLog.i.success(LogCat.update, '发现新版本 ${best.tag}(当前 v${AppInfo.version})');
+      } else {
+        AppLog.i.info(LogCat.update, '已是最新版 · v${AppInfo.version}');
+      }
       return best;
-    } catch (_) {
+    } catch (e) {
+      AppLog.i.err(LogCat.update, '检查更新失败:$e');
       return null;
     }
   }

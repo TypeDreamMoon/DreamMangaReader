@@ -9,6 +9,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/log/app_log.dart';
 import '../../core/source/title_match.dart';
 import '../../core/translate/translated_search.dart';
 import '../../core/translate/translator.dart';
@@ -191,7 +192,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
 
   void _search(String q) {
     q = q.trim();
-    if (q.isNotEmpty) LibraryScope.read(context).addSearchHistory(q);
+    if (q.isNotEmpty) {
+      LibraryScope.read(context).addSearchHistory(q);
+      AppLog.i.info(LogCat.search, '搜索「$q」· ${_mixed ? '混合源' : (_meta?.name ?? '')}');
+    }
     if (q == _query && q == _origQuery) return;
     _query = q;
     _origQuery = q; // 新查询:翻译回退以它为基准

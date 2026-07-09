@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/library_store.dart';
+import '../log/app_log.dart';
 import '../net/iam_auth.dart';
 import '../source/source_repository.dart';
 import 'hertz_backend.dart';
@@ -49,7 +50,7 @@ class SyncController extends ChangeNotifier {
   String hertzClientId = 'dreamreader';
 
   /// 账号服务预设:'custom'(手填) | 'hertz'(官方 64hz 服务,地址锁定)。
-  String hertzPreset = 'custom';
+  String hertzPreset = 'hertz';
 
   /// 官方 Hertz Service 预设值(选中后三项锁定为此)。
   static const hzPresetSyncUrl = 'https://api.mr.64hz.cn';
@@ -202,6 +203,7 @@ class SyncController extends ChangeNotifier {
     _syncing = true;
     status = '同步中…';
     notifyListeners();
+    AppLog.i.info(LogCat.sync, '开始同步 · ${_catLabel(syncCategories)}');
     try {
       final sel = syncCategories;
       final applyModes = {for (final c in sel) c: false}; // 自动同步:合并后整份覆盖本地
@@ -233,7 +235,11 @@ class SyncController extends ChangeNotifier {
       final favN = ((merged['library'] as Map)['favorites'] as List?)?.length ?? 0;
       final hisN = ((merged['library'] as Map)['history'] as Map?)?.length ?? 0;
       status = '已同步 · 收藏 $favN · 进度 $hisN';
+      AppLog.i.success(LogCat.sync, status);
       return status;
+    } catch (e) {
+      AppLog.i.err(LogCat.sync, '同步失败:$e');
+      rethrow;
     } finally {
       _syncing = false;
       notifyListeners();
@@ -250,6 +256,7 @@ class SyncController extends ChangeNotifier {
     _syncing = true;
     status = '上传中…';
     notifyListeners();
+    AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(syncCategories)}');
     try {
       final backend = _backend();
       final local = SyncData.build(lib, repo, categories: syncCategories);
@@ -267,7 +274,11 @@ class SyncController extends ChangeNotifier {
       }
       await _stampSynced();
       status = '已上传 · ${_catLabel(syncCategories)}';
+      AppLog.i.success(LogCat.sync, status);
       return status;
+    } catch (e) {
+      AppLog.i.err(LogCat.sync, '上传失败:$e');
+      rethrow;
     } finally {
       _syncing = false;
       notifyListeners();
@@ -288,17 +299,23 @@ class SyncController extends ChangeNotifier {
     _syncing = true;
     status = '下载中…';
     notifyListeners();
+    AppLog.i.info(LogCat.sync, '开始从云端下载 · ${modes.length} 项');
     try {
       final backend = _backend();
       final remote = await backend.pull();
       if (remote == null) {
         status = '服务器暂无数据';
+        AppLog.i.warn(LogCat.sync, '云端下载:$status');
         return status;
       }
       await SyncData.apply(remote, lib, repo, modes: modes);
       await _stampSynced();
       status = '已下载 · ${modes.length} 项';
+      AppLog.i.success(LogCat.sync, '云端$status');
       return status;
+    } catch (e) {
+      AppLog.i.err(LogCat.sync, '云端下载失败:$e');
+      rethrow;
     } finally {
       _syncing = false;
       notifyListeners();

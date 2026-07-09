@@ -19,6 +19,7 @@ import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
 import 'about_page.dart';
 import 'font_picker_sheet.dart';
+import 'log_page.dart';
 import 'proxy_settings_page.dart';
 import 'source_management_page.dart';
 import 'sync_page.dart';
@@ -256,6 +257,12 @@ class SettingsPage extends StatelessWidget {
                 '当前 v${AppInfo.version}', () => _checkUpdate(context, lib)),
           ]),
           _group('其它', [
+            _tile(
+              Icons.receipt_long_rounded,
+              '运行日志',
+              '本次启动的动作记录 · 源 / 下载 / 同步…',
+              () => Navigator.of(context).push(appRoute(const LogPage())),
+            ),
             _tile(
               Icons.info_outline_rounded,
               '关于',
