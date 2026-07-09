@@ -41,6 +41,29 @@ void main() {
     expect(favs.firstWhere((e) => e['m'] == '1')['a'], 20);
   });
 
+  test('作品共享进度:续读点取时间较新、已读章并集', () {
+    final local = blob(1, {
+      'workProgress': {
+        're0': {'n': 20, 'l': '第20话', 'u': 100, 's': 'a', 'r': [18, 19, 20]}
+      }
+    });
+    final remote = blob(1, {
+      'workProgress': {
+        're0': {'n': 22, 'l': '第22话', 'u': 200, 's': 'b', 'r': [20, 21, 22]},
+        'only': {'n': 3, 'l': '第3话', 'u': 5, 's': 'c', 'r': [3]}
+      }
+    });
+    final wp = (SyncData.merge(local, remote)['library'] as Map)['workProgress']
+        as Map;
+    // 续读点:remote 更新时间更新(200>100)→ 取 remote。
+    expect((wp['re0'] as Map)['n'], 22);
+    expect((wp['re0'] as Map)['s'], 'b');
+    // 已读章:两端并集 {18,19,20,21,22}。
+    expect(((wp['re0'] as Map)['r'] as List).toSet(), {18, 19, 20, 21, 22});
+    // 仅一端有的作品保留。
+    expect(wp.containsKey('only'), true);
+  });
+
   test('历史:逐条取 updatedAt 较新', () {
     final local = blob(1, {
       'history': {

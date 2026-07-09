@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/source/chapter_number.dart';
+import '../core/source/title_match.dart';
 import '../core/translate/translator.dart' show TranslateProvider, LlmConfig;
 
 /// 阅读模式:paged=横向翻页(默认),webtoon=纵向连续滚动(条漫)。
@@ -126,6 +128,43 @@ class ReadState {
   }
 }
 
+/// 「作品」级共享进度:同名书(跨源)共用一份续读点 + 已读章集合,按**话数**对齐。
+/// key = normalizeTitle(标题)。只到章节级(页码不跨源共享);续读点 = 最后读到的位置。
+class WorkProgress {
+  WorkProgress({
+    required this.chapterNumber,
+    required this.chapterLabel,
+    required this.updatedAt,
+    required this.lastSourceId,
+    Set<double>? readChapters,
+  }) : readChapters = readChapters ?? <double>{};
+
+  double chapterNumber; // 续读点话数(最后读到的那话)
+  String chapterLabel; // 该话章名(展示用)
+  int updatedAt; // epoch ms
+  String lastSourceId; // 最后在哪个源读的
+  final Set<double> readChapters; // 已读章的话数集合(跨源打勾 / 合并表)
+
+  Map<String, dynamic> toJson() => {
+        'n': chapterNumber,
+        'l': chapterLabel,
+        'u': updatedAt,
+        's': lastSourceId,
+        'r': readChapters.toList(),
+      };
+
+  static WorkProgress fromJson(Map<String, dynamic> j) => WorkProgress(
+        chapterNumber: (j['n'] as num?)?.toDouble() ?? 0,
+        chapterLabel: (j['l'] as String?) ?? '',
+        updatedAt: (j['u'] as num?)?.toInt() ?? 0,
+        lastSourceId: (j['s'] as String?) ?? '',
+        readChapters: {
+          for (final x in (j['r'] as List? ?? const []))
+            if (x is num) x.toDouble()
+        },
+      );
+}
+
 /// 书架的本地持久层:收藏、阅读进度/历史、阅读模式。
 ///
 /// 沿用 App 既有的 ChangeNotifier + InheritedNotifier(ThemeScope/SourceScope)模式:
@@ -181,9 +220,12 @@ class LibraryStore extends ChangeNotifier {
   static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
   static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
   static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
+  static const _kWorkProgress = 'lib.workProgress'; // 作品级共享进度(跨源同名)
 
   final Map<String, FavoriteEntry> _favorites = {};
   final Map<String, ReadState> _history = {};
+  // 作品级共享进度:key = normalizeTitle(标题)。同名书跨源共用续读点 + 已读章集合。
+  final Map<String, WorkProgress> _workProgress = {};
   final Set<String> _disabledSources = {};
   ReaderMode _readerMode = ReaderMode.paged;
   int _gridColumns = 0; // 0 = 自适应
@@ -508,6 +550,20 @@ class LibraryStore extends ChangeNotifier {
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
       _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
+      final wpRaw = prefs.getString(_kWorkProgress);
+      if (wpRaw != null) {
+        try {
+          final m = jsonDecode(wpRaw);
+          if (m is Map) {
+            m.forEach((k, v) {
+              if (v is Map) {
+                _workProgress[k as String] =
+                    WorkProgress.fromJson(v.cast<String, dynamic>());
+              }
+            });
+          }
+        } catch (_) {}
+      }
     } catch (_) {
       // 损坏的存档不致命:当作空的继续。
     }
@@ -900,11 +956,59 @@ class LibraryStore extends ChangeNotifier {
     }
   }
 
+  // ---- 作品级共享进度(跨源同名) ----
+
+  /// 取某作品的共享进度(按归一标题);无则 null。
+  WorkProgress? workProgressFor(String title) =>
+      _workProgress[normalizeTitle(title)];
+
+  /// 某作品所有已读章的话数集合(跨源打勾用);无则空集。
+  Set<double> readChaptersFor(String title) =>
+      _workProgress[normalizeTitle(title)]?.readChapters ?? const {};
+
+  /// 记录/推进作品共享进度:[chapterName] 解析出话数 → 更新续读点(最后读到的那话)
+  /// 并把该话计入已读集合。解析不出话数(番外/序章等)则忽略,不参与跨源对齐。
+  void recordWork({
+    required String title,
+    required String chapterName,
+    required String sourceId,
+    required int nowMs,
+  }) {
+    final key = normalizeTitle(title);
+    if (key.isEmpty) return;
+    final num = parseChapterNumber(chapterName);
+    if (num == null) return;
+    final wp = _workProgress[key];
+    if (wp == null) {
+      _workProgress[key] = WorkProgress(
+        chapterNumber: num,
+        chapterLabel: chapterName,
+        updatedAt: nowMs,
+        lastSourceId: sourceId,
+        readChapters: {num},
+      );
+    } else {
+      wp.readChapters.add(num);
+      // 续读点 = 最后读到的位置(与单源「继续阅读」语义一致),不取最远。
+      wp.chapterNumber = num;
+      wp.chapterLabel = chapterName;
+      wp.updatedAt = nowMs;
+      wp.lastSourceId = sourceId;
+    }
+    _persistWorkProgress();
+  }
+
+  void _persistWorkProgress() => _prefs?.setString(_kWorkProgress,
+      jsonEncode({for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+
   // ---- 备份 / 恢复 ----
   Map<String, dynamic> exportData() => {
         'v': 1,
         'favorites': [for (final e in _favorites.values) e.toJson()],
         'history': {for (final e in _history.entries) e.key: e.value.toJson()},
+        'workProgress': {
+          for (final e in _workProgress.entries) e.key: e.value.toJson()
+        },
         'readerMode': _readerMode.name,
         'gridColumns': _gridColumns,
         'preload': _preload,
@@ -973,6 +1077,16 @@ class LibraryStore extends ChangeNotifier {
       ((j['history'] as Map?) ?? const {}).forEach((k, v) {
         _history[k as String] =
             ReadState.fromJson((v as Map).cast<String, dynamic>());
+      });
+    }
+    // 作品级共享进度随「历史/进度」类别走。只有 j 里带了才动(旧备份没有 → 不误清)。
+    if (replaceHistory && j.containsKey('workProgress')) {
+      _workProgress.clear();
+      ((j['workProgress'] as Map?) ?? const {}).forEach((k, v) {
+        if (v is Map) {
+          _workProgress[k as String] =
+              WorkProgress.fromJson(v.cast<String, dynamic>());
+        }
       });
     }
     _readerMode = ReaderMode.values.firstWhere(
@@ -1069,6 +1183,7 @@ class LibraryStore extends ChangeNotifier {
     _translateLlmModel = j['translateLlmModel'] as String? ?? _translateLlmModel;
     if (replaceFavorites) _persistFavorites();
     if (replaceHistory) _persistHistoryNow();
+    if (replaceHistory && j.containsKey('workProgress')) _persistWorkProgress();
     _prefs?.setString(_kReaderMode, switch (_readerMode) {
       ReaderMode.webtoon => 'webtoon',
       ReaderMode.pagedRtl => 'rtl',

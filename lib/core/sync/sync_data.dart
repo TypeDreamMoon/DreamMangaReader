@@ -38,6 +38,7 @@ class SyncData {
       k != 'v' &&
       k != 'favorites' &&
       k != 'history' &&
+      k != 'workProgress' && // 作品级共享进度归「进度」类别,不算设置
       k != 'disabledSources' &&
       k != 'bgImageData' &&
       k != 'bgImageExt';
@@ -119,6 +120,7 @@ class SyncData {
     }
     if (categories.contains(SyncCategory.history)) {
       outLib['history'] = full['history'];
+      outLib['workProgress'] = full['workProgress']; // 作品级共享进度随进度一起走
     }
     if (categories.contains(SyncCategory.settings)) {
       for (final e in full.entries) {
@@ -166,6 +168,8 @@ class SyncData {
         outLib[k] = _mergeFavorites(_list(lLib[k]), _list(rLib[k]));
       } else if (k == 'history') {
         outLib[k] = _mergeHistory(_map(lLib[k]), _map(rLib[k]));
+      } else if (k == 'workProgress') {
+        outLib[k] = _mergeWorkProgress(_map(lLib[k]), _map(rLib[k]));
       } else if (k == 'searchHistory') {
         // 搜索历史随「设置」类别走,但不作 LWW 整份覆盖:两端取并集,
         // 较新的一方在前,大小写不敏感去重,截断上限(免一端清掉另一端的历史)。
@@ -247,6 +251,38 @@ class SyncData {
     return out;
   }
 
+  /// 作品级共享进度并集:续读点(话数/章名/时间/源)取**更新时间较新**的一方;
+  /// 已读章话数集合取并集。两端(设备)按各自"最后读到哪"汇合,不丢已读记录。
+  static Map<String, dynamic> _mergeWorkProgress(Map a, Map b) {
+    final keys = {...a.keys, ...b.keys};
+    final out = <String, dynamic>{};
+    for (final k in keys) {
+      final x = a[k] is Map ? a[k] as Map : null;
+      final y = b[k] is Map ? b[k] as Map : null;
+      if (x == null) {
+        out[k.toString()] = y;
+        continue;
+      }
+      if (y == null) {
+        out[k.toString()] = x;
+        continue;
+      }
+      final recent = _int(x['u']) >= _int(y['u']) ? x : y;
+      final reads = <double>{
+        ...(x['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
+        ...(y['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
+      };
+      out[k.toString()] = {
+        'n': recent['n'],
+        'l': recent['l'],
+        'u': recent['u'],
+        's': recent['s'],
+        'r': reads.toList(),
+      };
+    }
+    return out;
+  }
+
   static Map<String, dynamic> _mergeHistory(Map a, Map b) {
     final out = <String, dynamic>{};
     void add(Map xs) {
@@ -304,6 +340,14 @@ class SyncData {
       toImport['history'] = histMode == true
           ? _mergeHistory(_map(full['history']), _map(blib['history']))
           : blib['history'];
+    }
+    // 作品级共享进度随「进度」类别:追加=并集,覆盖=用服务器的。importData 按
+    // replaceHistory 落它,故这里只在 importHist 时放进 toImport。
+    if (histMode != null && blib.containsKey('workProgress')) {
+      toImport['workProgress'] = histMode == true
+          ? _mergeWorkProgress(
+              _map(full['workProgress']), _map(blib['workProgress']))
+          : blib['workProgress'];
     }
     // 设置:只有覆盖(false)才应用;追加/不选保持本地。
     if (modes[SyncCategory.settings] == false) {
