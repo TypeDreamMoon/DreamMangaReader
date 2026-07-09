@@ -102,16 +102,21 @@ class UpdateInstaller {
     final exe = Platform.resolvedExecutable;
     final appDir = File(exe).parent.path;
     final installed = File('$appDir\\unins000.exe').existsSync();
+
+    // 便携版:静默覆盖没意义(安装器会另装到程序目录、不是当前便携文件夹)。
+    // 直接起安装器让用户自己选目录,App 继续运行(调用方随后显示「安装器已打开」)。
+    if (!installed) {
+      await Process.start(setupPath, const [], mode: ProcessStartMode.detached);
+      return;
+    }
+
+    // 安装版:临时脚本 —— 等 2s(本进程退出、文件解锁)→ 静默覆盖 → 重启 App → 自删。
     final tmp = await getTemporaryDirectory();
     final bat = File('${tmp.path}\\dmr_update.bat');
-    final runInstaller = installed
-        ? '"$setupPath" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
-        : '"$setupPath"'; // 便携版:正常安装器,用户自己选目录
-    // 脚本:等 2s(本进程退出、文件解锁)→ 运行安装器 → 重启 App → 自删。
     await bat.writeAsString(
       '@echo off\r\n'
       'timeout /t 2 /nobreak >NUL\r\n'
-      '$runInstaller\r\n'
+      '"$setupPath" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
       'start "" "$exe"\r\n'
       'del "%~f0"\r\n',
     );
