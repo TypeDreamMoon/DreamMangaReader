@@ -85,15 +85,23 @@ class _LibraryPageState extends State<LibraryPage> {
         appRoute(DetailPage(manga: m, meta: meta, heroTag: heroTag)),
       );
 
-  // ---- 多源同名去重(书架把同一作品的多源副本合成一张卡)----
+  // ---- 多源同名去重(书架把同一作品的多源副本合成一张卡;容繁简 + 副标题)----
 
-  /// 归一标题 → 拥有该作品的源集合(收藏 ∪ 历史),驱动「N源」角标 + 分组。
+  /// 把标题解析成「作品分组 key」:优先复用已出现的同作品 key(sameCoreKey 容繁简/副标题)。
+  String _canonKey(String core, Iterable<String> existing) {
+    for (final k in existing) {
+      if (k == core || sameCoreKey(core, k)) return k;
+    }
+    return core;
+  }
+
+  /// 作品分组 key → 拥有该作品的源集合(收藏 ∪ 历史)。是分组的**权威 key 来源**。
   Map<String, Set<String>> _sourcesByWork(LibraryStore store) {
     final m = <String, Set<String>>{};
     void add(String title, String sid) {
-      final k = normalizeTitle(title);
-      if (k.isEmpty) return;
-      (m[k] ??= <String>{}).add(sid);
+      final core = coreTitle(title);
+      if (core.isEmpty) return;
+      (m[_canonKey(core, m.keys)] ??= <String>{}).add(sid);
     }
 
     for (final f in store.favorites) {
@@ -105,13 +113,13 @@ class _LibraryPageState extends State<LibraryPage> {
     return m;
   }
 
-  /// 收藏去重:同名合成一组,代表优先「最后阅读的源」的那条(没有则最近收藏的)。
+  /// 收藏去重:同作品合成一组,代表优先「最后阅读的源」的那条(没有则最近收藏的)。
   List<({FavoriteEntry rep, int sources})> _dedupFavs(LibraryStore store) {
-    final srcMap = _sourcesByWork(store);
+    final srcMap = _sourcesByWork(store); // 权威分组 key
     final groups = <String, List<FavoriteEntry>>{}; // 插入序 = 收藏序(最近在前)
     for (final f in store.favorites) {
-      final nk = normalizeTitle(f.title);
-      final key = nk.isEmpty ? 'raw:${f.key}' : nk; // 无法归一 → 每条独立
+      final core = coreTitle(f.title);
+      final key = core.isEmpty ? 'raw:${f.key}' : _canonKey(core, srcMap.keys);
       (groups[key] ??= []).add(f);
     }
     final out = <({FavoriteEntry rep, int sources})>[];
@@ -126,22 +134,21 @@ class _LibraryPageState extends State<LibraryPage> {
           }
         }
       }
-      final nk = normalizeTitle(rep.title);
-      out.add((rep: rep, sources: nk.isEmpty ? 1 : (srcMap[nk]?.length ?? 1)));
+      out.add((rep: rep, sources: srcMap[key]?.length ?? 1));
     });
     return out;
   }
 
-  /// 继续阅读去重:同名只留最近读的那条。
+  /// 继续阅读去重:同作品只留最近读的那条。
   List<({ReadState rep, int sources})> _dedupHistory(LibraryStore store) {
     final srcMap = _sourcesByWork(store);
     final seen = <String>{};
     final out = <({ReadState rep, int sources})>[];
     for (final h in store.history) {
-      final nk = normalizeTitle(h.title);
-      final key = nk.isEmpty ? 'raw:${h.key}' : nk;
+      final core = coreTitle(h.title);
+      final key = core.isEmpty ? 'raw:${h.key}' : _canonKey(core, srcMap.keys);
       if (!seen.add(key)) continue; // 保留第一条(history 已按最近排序)
-      out.add((rep: h, sources: nk.isEmpty ? 1 : (srcMap[nk]?.length ?? 1)));
+      out.add((rep: h, sources: srcMap[key]?.length ?? 1));
     }
     return out;
   }

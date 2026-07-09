@@ -965,13 +965,25 @@ class LibraryStore extends ChangeNotifier {
 
   // ---- 作品级共享进度(跨源同名) ----
 
-  /// 取某作品的共享进度(按归一标题);无则 null。
+  /// 解析作品共享进度 key:优先复用「同作品」已有条目的 key(容繁简/副标题),
+  /// 否则用 coreTitle。这样繁简 / 带副标题的同一本书共用一份进度。
+  String _workKeyFor(String title) {
+    final core = coreTitle(title);
+    if (core.isEmpty) return '';
+    if (_workProgress.containsKey(core)) return core;
+    for (final k in _workProgress.keys) {
+      if (sameCoreKey(core, k)) return k;
+    }
+    return core;
+  }
+
+  /// 取某作品的共享进度(容繁简/副标题);无则 null。
   WorkProgress? workProgressFor(String title) =>
-      _workProgress[normalizeTitle(title)];
+      _workProgress[_workKeyFor(title)];
 
   /// 某作品所有已读章的话数集合(跨源打勾用);无则空集。
   Set<double> readChaptersFor(String title) =>
-      _workProgress[normalizeTitle(title)]?.readChapters ?? const {};
+      _workProgress[_workKeyFor(title)]?.readChapters ?? const {};
 
   /// 记录/推进作品共享进度:[chapterName] 解析出话数 → 更新续读点(最后读到的那话)
   /// 并把该话计入已读集合。解析不出话数(番外/序章等)则忽略,不参与跨源对齐。
@@ -981,7 +993,7 @@ class LibraryStore extends ChangeNotifier {
     required String sourceId,
     required int nowMs,
   }) {
-    final key = normalizeTitle(title);
+    final key = _workKeyFor(title);
     if (key.isEmpty) return;
     final num = parseChapterNumber(chapterName);
     if (num == null) return;

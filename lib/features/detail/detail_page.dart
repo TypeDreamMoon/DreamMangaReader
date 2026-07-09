@@ -44,6 +44,7 @@ class _DetailPageState extends State<DetailPage> {
   List<Chapter>? _chapters;
   // 库里同名书的其它源章节表:用于把跨源章节合并成一张列表(含各话由哪些源提供)。
   final List<_SrcChapters> _otherSources = [];
+  bool _mergeLoading = false; // 正在找/拉其它源(主动搜索期间)
   String? _error;
   Manga? _detail; // 完整详情(简介/分级/作者),异步补,失败则退回列表级信息
   bool _descExpanded = false;
@@ -86,19 +87,26 @@ class _DetailPageState extends State<DetailPage> {
     _loadOtherSources();
   }
 
-  /// 拉库里同名书**其它源**的章节表,供合并跨源章节列表(A 源多出来的话混进 B 源)。
-  /// 只认库里(收藏∪历史)已知 mangaId 的源;每源取一个 mangaId。失败/单源静默跳过。
+  SourceMeta? _metaById(String id) {
+    for (final s in registeredSources) {
+      if (s.id == id) return s;
+    }
+    return null;
+  }
+
+  /// 拉**其它源**的同名书章节表,合并成跨源章节列表(A 源多出来的话混进 B 源)。
+  /// 两路来源:① 库里(收藏∪历史)已知 mangaId 的源(免搜);② 其它已启用源**主动搜**
+  /// 书名、按「同作品(容繁简/副标题)」匹配。各源失败/无匹配静默跳过;dispose 释放引擎。
   Future<void> _loadOtherSources() async {
     final store = LibraryScope.read(context);
-    final myTitle = normalizeTitle(widget.manga.title);
-    if (myTitle.isEmpty) return;
-    // 收集别的源里同名书的 (mangaId + 它自己的 标题/封面)(每源取第一个命中的)。
-    // 记它自己的标题/封面:从他源打开阅读时进度记在它名下,元数据要用它的,别串成当前源的。
-    final bySource = <String, ({String mangaId, String title, String? cover})>{};
+    if (coreTitle(widget.manga.title).isEmpty) return;
+
+    // ① 库里同名书(已知 mangaId,记它自己的标题/封面以免打开时串成当前源的元数据)。
+    final lib = <String, ({String mangaId, String title, String? cover})>{};
     void consider(String title, String sid, String mid, String? cover) {
-      if (sid == widget.meta.id || bySource.containsKey(sid)) return;
-      if (normalizeTitle(title) == myTitle) {
-        bySource[sid] = (mangaId: mid, title: title, cover: cover);
+      if (sid == widget.meta.id || lib.containsKey(sid)) return;
+      if (sameWork(title, widget.manga.title)) {
+        lib[sid] = (mangaId: mid, title: title, cover: cover);
       }
     }
 
@@ -108,38 +116,72 @@ class _DetailPageState extends State<DetailPage> {
     for (final h in store.history) {
       consider(h.title, h.sourceId, h.mangaId, h.cover);
     }
-    if (bySource.isEmpty) return;
 
+    // ② 其它已启用、未覆盖的漫画源 → 主动搜书名找同作品。
+    final covered = {widget.meta.id, ...lib.keys};
+    final toSearch = [
+      for (final s in registeredSources)
+        if (s.kind == 'manga' &&
+            store.isSourceEnabled(s.id) &&
+            !covered.contains(s.id))
+          s,
+    ];
+    if (lib.isEmpty && toSearch.isEmpty) return;
+
+    setState(() => _mergeLoading = true);
     final loaded = <_SrcChapters>[];
-    await Future.wait(bySource.entries.map((e) async {
-      final sid = e.key;
-      final t = e.value;
-      SourceMeta? meta;
-      for (final s in registeredSources) {
-        if (s.id == sid) {
-          meta = s;
-          break;
-        }
-      }
-      if (meta == null || !store.isSourceEnabled(meta.id)) return;
-      final src = buildSource(meta);
-      try {
-        final page = await src.getChapters(t.mangaId);
-        loaded.add(
-            _SrcChapters(meta, src, t.mangaId, t.title, t.cover, page.items));
-      } catch (_) {
-        src.dispose();
-      }
-    }));
+    await Future.wait([
+      // 库里源:mangaId 已知,直接取章节。
+      for (final e in lib.entries)
+        () async {
+          final meta = _metaById(e.key);
+          if (meta == null) return;
+          final src = buildSource(meta);
+          try {
+            final page = await src.getChapters(e.value.mangaId);
+            loaded.add(_SrcChapters(meta, src, e.value.mangaId, e.value.title,
+                e.value.cover, page.items));
+          } catch (_) {
+            src.dispose();
+          }
+        }(),
+      // 主动搜索源:先搜、匹配同作品、再取章节。
+      for (final meta in toSearch)
+        () async {
+          final src = buildSource(meta);
+          try {
+            final r = await src.getSearch(widget.manga.title, 1);
+            Manga? match;
+            for (final m in r.items) {
+              if (sameWork(m.title, widget.manga.title)) {
+                match = m;
+                break;
+              }
+            }
+            if (match == null) {
+              src.dispose();
+              return;
+            }
+            final page = await src.getChapters(match.id);
+            loaded.add(_SrcChapters(
+                meta, src, match.id, match.title, match.cover, page.items));
+          } catch (_) {
+            src.dispose();
+          }
+        }(),
+    ]);
     if (!mounted) {
       for (final l in loaded) {
         l.source.dispose();
       }
       return;
     }
-    setState(() => _otherSources
-      ..clear()
-      ..addAll(loaded));
+    setState(() {
+      _mergeLoading = false;
+      _otherSources
+        ..clear()
+        ..addAll(loaded);
+    });
   }
 
   /// 把当前源 + 其它源的章节按话数合并成一张列表。
@@ -1267,7 +1309,9 @@ class _DetailPageState extends State<DetailPage> {
         child: Text(
           _chapters == null
               ? '章节'
-              : '章节 · 共 ${merged.length}${extra > 0 ? '(+$extra 他源)' : ''}',
+              : '章节 · 共 ${merged.length}'
+                  '${extra > 0 ? '(+$extra 他源)' : ''}'
+                  '${_mergeLoading ? ' · 找其它源中…' : ''}',
           style: TextStyle(
               color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
               fontWeight: FontWeight.w700,

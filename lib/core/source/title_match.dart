@@ -31,3 +31,35 @@ bool sameTitle(String a, String b) {
   final na = normalizeTitle(a);
   return na.isNotEmpty && na == normalizeTitle(b);
 }
+
+// 成对括号(含全角/书名号/引号)——用于剥掉 [连载]【全彩】(完结) 之类装饰副标题。
+final RegExp _bracketRe =
+    RegExp(r'[\[\(（【「『][^\]\)）】」』]*[\]\)）】」』]');
+
+/// 作品核心标题:先剥掉成对括号内的装饰副标题([连载] 等),再归一。
+/// 剥没了(整标题都在括号里)就退回整标题归一。跨源把同一作品归到一起用。
+String coreTitle(String s) {
+  final core = normalizeTitle(s.replaceAll(_bracketRe, ' '));
+  return core.isEmpty ? normalizeTitle(s) : core;
+}
+
+/// 两个 coreTitle 归一 key 是否**同一作品**——容繁简 + 残留副标题。
+/// 规则:短串/长串长度比 ≥0.7,且短串去重字符命中长串比例 ≥0.7。
+/// 繁简变体多数字相同(高命中)→ 归一;续作/外传(长度差大或重叠低)→ 不归。
+bool sameCoreKey(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return false;
+  if (a == b) return true;
+  final shorter = a.length <= b.length ? a : b;
+  final longer = a.length <= b.length ? b : a;
+  if (shorter.length / longer.length < 0.7) return false; // 长度差太多 → 不同作
+  final longSet = longer.split('').toSet();
+  final shortDistinct = shorter.split('').toSet();
+  var hit = 0;
+  for (final ch in shortDistinct) {
+    if (longSet.contains(ch)) hit++;
+  }
+  return hit / shortDistinct.length >= 0.7;
+}
+
+/// 两个标题是否同一作品(容繁简 + 副标题)。
+bool sameWork(String a, String b) => sameCoreKey(coreTitle(a), coreTitle(b));
