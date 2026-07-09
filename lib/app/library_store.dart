@@ -928,6 +928,13 @@ class LibraryStore extends ChangeNotifier {
       st.chapters[chapterId] = ChapterMark(page, total);
     }
     _history[key] = st;
+    // 同步推进作品级共享进度(跨源同名共用续读点/已读章;解析不出话数的章自动忽略)。
+    recordWork(
+      title: title,
+      chapterName: chapterName,
+      sourceId: sourceId,
+      nowMs: nowMs,
+    );
     _schedulePersistHistory();
     // 逐页推进高频:内存已即时更新,**通知防抖**——把滚动风暴合并成每 ~400ms 一次,
     // 停手/退出后自然刷新一次。避免每翻一页就全量重建后台书架/详情(LibraryScope.of 依赖者),
@@ -987,15 +994,18 @@ class LibraryStore extends ChangeNotifier {
         lastSourceId: sourceId,
         readChapters: {num},
       );
-    } else {
-      wp.readChapters.add(num);
-      // 续读点 = 最后读到的位置(与单源「继续阅读」语义一致),不取最远。
-      wp.chapterNumber = num;
-      wp.chapterLabel = chapterName;
-      wp.updatedAt = nowMs;
-      wp.lastSourceId = sourceId;
+      _persistWorkProgress();
+      return;
     }
-    _persistWorkProgress();
+    // 换章(续读点变了 / 新读到一章)才落盘;同章翻页(高频)只更新内存,不反复写盘。
+    final changed = wp.chapterNumber != num || !wp.readChapters.contains(num);
+    wp.readChapters.add(num);
+    // 续读点 = 最后读到的位置(与单源「继续阅读」语义一致),不取最远。
+    wp.chapterNumber = num;
+    wp.chapterLabel = chapterName;
+    wp.updatedAt = nowMs;
+    wp.lastSourceId = sourceId;
+    if (changed) _persistWorkProgress();
   }
 
   void _persistWorkProgress() => _prefs?.setString(_kWorkProgress,
