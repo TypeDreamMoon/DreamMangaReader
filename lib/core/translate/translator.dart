@@ -13,7 +13,8 @@ import 'package:dio/dio.dart';
 enum TranslateLang {
   zhHans('简体中文', '简'),
   zhHant('繁體中文', '繁'),
-  en('English', 'EN');
+  en('English', 'EN'),
+  ja('日本語', '日');
 
   const TranslateLang(this.label, this.short);
   final String label;
@@ -99,6 +100,7 @@ class _GoogleTranslator implements Translator {
     TranslateLang.zhHans: 'zh-CN',
     TranslateLang.zhHant: 'zh-TW',
     TranslateLang.en: 'en',
+    TranslateLang.ja: 'ja',
   };
 
   @override
@@ -144,6 +146,7 @@ class _MicrosoftTranslator implements Translator {
     TranslateLang.zhHans: 'zh-Hans',
     TranslateLang.zhHant: 'zh-Hant',
     TranslateLang.en: 'en',
+    TranslateLang.ja: 'ja',
   };
 
   // 令牌进程内缓存(所有实例共享),提前 2 分钟视为过期。
@@ -214,6 +217,7 @@ class _LlmTranslator implements Translator {
     TranslateLang.zhHans: 'Simplified Chinese',
     TranslateLang.zhHant: 'Traditional Chinese',
     TranslateLang.en: 'English',
+    TranslateLang.ja: 'Japanese',
   };
 
   @override
