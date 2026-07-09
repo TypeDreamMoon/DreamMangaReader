@@ -10,6 +10,7 @@ export 'app_dialog.dart';
 export 'app_error_view.dart';
 export 'app_filter_chip.dart';
 export 'app_icon_button.dart';
+export 'app_link_row.dart';
 export 'app_list_row.dart';
 export 'app_notify.dart';
 export 'app_pill.dart';

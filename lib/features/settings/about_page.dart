@@ -88,12 +88,11 @@ class _AboutPageState extends State<AboutPage> {
           const SizedBox(height: 24),
           _section(p, '链接'),
           const SizedBox(height: 8),
-          _linkTile(
-            p,
-            Icons.code_rounded,
-            '开源仓库',
-            AppInfo.repoUrl.replaceFirst('https://', ''),
-            () => _open(context, AppInfo.repoUrl),
+          AppLinkRow(
+            icon: Icons.code_rounded,
+            title: '开源仓库',
+            url: AppInfo.repoUrl.replaceFirst('https://', ''),
+            onTap: () => _open(context, AppInfo.repoUrl),
           ),
           const SizedBox(height: 24),
           _section(p, '技术'),
@@ -219,15 +218,4 @@ class _AboutPageState extends State<AboutPage> {
     );
   }
 
-  Widget _linkTile(AppPalette p, IconData icon, String title, String subtitle,
-          VoidCallback onTap) =>
-      AppListRow.card(
-        icon: icon,
-        title: title,
-        subtitle: subtitle,
-        subtitleMaxLines: 1,
-        trailing:
-            Icon(Icons.open_in_new_rounded, size: 18, color: p.textMuted),
-        onTap: onTap,
-      );
 }
