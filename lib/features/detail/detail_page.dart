@@ -1049,7 +1049,13 @@ class _DetailPageState extends State<DetailPage> {
 
   /// 简介卡:完整详情拿到后显示,长文可展开/收起。
   Widget _synopsis(AppPalette p) {
-    final desc = (_manga.description ?? '').trim();
+    // 源没给简介 → 退回 Bangumi 的简介(有匹配到条目时)。
+    var desc = (_manga.description ?? '').trim();
+    var fromBangumi = false;
+    if (desc.isEmpty) {
+      desc = (_bgm?.summary ?? '').trim();
+      fromBangumi = desc.isNotEmpty;
+    }
     if (desc.isEmpty) return const SizedBox.shrink();
     final acc = _cover?.primary ?? p.accent;
     return Padding(
@@ -1065,12 +1071,23 @@ class _DetailPageState extends State<DetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('简介',
-                style: TextStyle(
-                    color: acc,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text('简介',
+                    style: TextStyle(
+                        color: acc,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.0)),
+                if (fromBangumi) ...[
+                  const SizedBox(width: 6),
+                  Text('· 来自 Bangumi',
+                      style: TextStyle(color: p.textMuted, fontSize: 10.5)),
+                ],
+              ],
+            ),
             const SizedBox(height: 8),
             AnimatedSize(
               duration: const Duration(milliseconds: 180),
