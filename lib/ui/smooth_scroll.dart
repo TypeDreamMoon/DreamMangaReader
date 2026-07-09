@@ -16,12 +16,16 @@ class SmoothScroll extends StatefulWidget {
   const SmoothScroll({
     super.key,
     required this.builder,
+    this.controller,
     this.duration = const Duration(milliseconds: 220),
     this.curve = Curves.easeOutCubic,
   });
 
   /// 用传入的 controller 构建可滚组件(务必把它设到 controller: 上)。
   final Widget Function(ScrollController controller) builder;
+
+  /// 外部控制器(如无限滚动 / 位置监听的页面自带)。为空则内部自建并负责释放。
+  final ScrollController? controller;
   final Duration duration;
   final Curve curve;
 
@@ -30,12 +34,31 @@ class SmoothScroll extends StatefulWidget {
 }
 
 class _SmoothScrollState extends State<SmoothScroll> {
-  final ScrollController _c = ScrollController();
+  ScrollController? _own; // 仅当没传外部 controller 时自建
+  ScrollController get _c => widget.controller ?? _own!;
   double? _target;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.controller == null) _own = ScrollController();
+  }
+
+  @override
+  void didUpdateWidget(SmoothScroll old) {
+    super.didUpdateWidget(old);
+    // 外部 controller 的有无发生切换:相应地建/释放自建控制器。
+    if (widget.controller == null && _own == null) {
+      _own = ScrollController();
+    } else if (widget.controller != null && _own != null) {
+      _own!.dispose();
+      _own = null;
+    }
+  }
+
+  @override
   void dispose() {
-    _c.dispose();
+    _own?.dispose();
     super.dispose();
   }
 

@@ -47,8 +47,8 @@ class _AboutPageState extends State<AboutPage> {
         begin: const Offset(0, 0.06),
         child: Padding(
           padding: EdgeInsets.only(top: topInset),
-          child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+          child: AppScrollView(
+        padding: const EdgeInsets.fromLTRB(30, 50, 30, 50),
         children: [
           _hero(p),
           const SizedBox(height: 28),

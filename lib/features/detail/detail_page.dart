@@ -440,7 +440,7 @@ class _DetailPageState extends State<DetailPage> {
         ),
         SizedBox(
           height: 168,
-          child: ListView.separated(
+          child: AppScrollView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _recommend.length,

@@ -9,6 +9,7 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/title_match.dart';
 import '../../core/translate/translator.dart';
+import '../../ui/ui.dart';
 
 /// 跨源搜索同名漫画(详情页「换源」用):在**其它**已启用的漫画源里搜当前书名。
 ///
@@ -228,7 +229,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
       return _empty(p, Icons.search_off_rounded, '其它源没搜到同名漫画',
           '换个关键词再试试(或到设置换个翻译服务商)');
     }
-    return ListView.separated(
+    return AppScrollView.separated(
       // 底部一行细进度:还在搜/翻译时提示。
       itemCount: _results.length + (_busy ? 1 : 0),
       separatorBuilder: (_, __) => Divider(height: 1, color: p.line),

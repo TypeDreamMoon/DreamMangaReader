@@ -208,13 +208,14 @@ class _LibraryPageState extends State<LibraryPage> {
               Expanded(
                 child: _shelfQuery.isNotEmpty
                     ? _shelfResults(p, store)
-                    : ListView(
+                    : AppScrollView(
                         padding: const EdgeInsets.only(bottom: 24),
                         children: [
                           if (store.history.isNotEmpty) _continueStrip(p, store),
                           if (store.favorites.isNotEmpty)
                             _favoritesSection(p, store),
                           if (meta != null) ...[
+                           _sectionHeader(p, "推荐"),
                             if (store.showSourcePicker)
                               _sourcePicker(p, meta, store),
                             _browse(p, meta, store),
@@ -276,12 +277,8 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Widget _sectionHeader(AppPalette p, String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
-        child: Text(text,
-            style: TextStyle(
-                color: p.textPrimary,
-                fontWeight: FontWeight.w800,
-                fontSize: 15)),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
+        child: AppSectionHeading(text),
       );
 
   // 未配置漫画源(引擎不内置源,需在设置里添加源仓库)的空态。
@@ -341,7 +338,7 @@ class _LibraryPageState extends State<LibraryPage> {
                 },
                 scrollbars: false,
               ),
-              child: ListView.separated(
+              child: AppScrollView.separated(
             controller: _continueScroll,
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),

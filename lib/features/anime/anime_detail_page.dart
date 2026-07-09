@@ -90,7 +90,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
       ),
       body: _error != null
           ? _errorView(p)
-          : ListView(
+          : AppScrollView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
                 _header(p, title),

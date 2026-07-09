@@ -95,7 +95,7 @@ class _LogPageState extends State<LogPage> {
 
   Widget _filterBar(AppPalette p) => SizedBox(
         height: 44,
-        child: ListView(
+        child: AppScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           children: [
@@ -154,7 +154,7 @@ class _LogPageState extends State<LogPage> {
             all.isEmpty ? '各类动作(源 / 漫画 / 下载 / 同步…)会记录在这里' : null,
       );
     }
-    return ListView.separated(
+    return AppScrollView.separated(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 40),
       itemCount: items.length,
       separatorBuilder: (_, __) =>

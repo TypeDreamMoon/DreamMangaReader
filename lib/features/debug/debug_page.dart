@@ -286,7 +286,7 @@ class _DebugPageState extends State<DebugPage> {
     final p = context.palette;
     return Scaffold(
       appBar: AppBar(title: const Text('调试工具')),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
           _sectionLabel(p, '环境'),

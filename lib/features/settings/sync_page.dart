@@ -205,7 +205,7 @@ class _SyncPageState extends State<SyncPage> {
         title: const Text('云同步',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           Padding(
@@ -295,8 +295,10 @@ class _SyncPageState extends State<SyncPage> {
           const SizedBox(height: 20),
           Text(
             isHertz
-                ? '提示:账号数据存自建的 dreamreader-sync 服务。Hertz Service=官方服务(浏览器登录);'
-                    'Custom=自建 IAM,用账号密码登录(该 client 需允许密码授权)。'
+                ? '提示:\n'
+                  '账号数据存自建的 dreamreader-sync 服务。\n'
+                  '使用云存储(64hz.cn) 我们承诺不会共享您的账号数据。'
+
                 : '提示:坚果云等需在网页端「安全选项 → 添加应用」生成专用密码,别用登录密码。',
             style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.5),
           ),

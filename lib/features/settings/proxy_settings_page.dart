@@ -73,7 +73,7 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
         title: const Text('网络代理',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
           AppCard(

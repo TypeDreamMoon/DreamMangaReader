@@ -117,7 +117,7 @@ class _BrowsePageState extends State<BrowsePage> {
 
   Widget _tabs() => SizedBox(
         height: 48,
-        child: ListView.separated(
+        child: AppScrollView.separated(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           itemCount: _sections.length,

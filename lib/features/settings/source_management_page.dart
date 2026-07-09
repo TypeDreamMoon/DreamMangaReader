@@ -314,7 +314,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           ),
         ],
       ),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           _repoCard(p, sc),

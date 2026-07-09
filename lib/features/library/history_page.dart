@@ -41,7 +41,7 @@ class HistoryPage extends StatelessWidget {
       ),
       body: history.isEmpty
           ? const EmptyState(title: '还没有阅读记录')
-          : ListView.builder(
+          : AppScrollView.builder(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
               itemCount: history.length,
               itemBuilder: (context, i) => _row(context, p, store, history[i]),

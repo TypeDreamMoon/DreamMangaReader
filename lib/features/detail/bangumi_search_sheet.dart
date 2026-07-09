@@ -6,6 +6,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/translate/translated_search.dart';
+import '../../ui/ui.dart';
 
 /// 手动搜索 Bangumi 条目并选择。返回选中的 [BangumiCandidate](取消返回 null)。
 /// 自动匹配不准/没匹配到时用;搜不到会给出提示。
@@ -132,7 +133,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
             ),
           ),
         Expanded(
-          child: ListView.separated(
+          child: AppScrollView.separated(
             itemCount: _results.length,
             separatorBuilder: (_, __) => Divider(height: 1, color: p.line),
             itemBuilder: (_, i) => _row(p, _results[i]),

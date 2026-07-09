@@ -57,9 +57,7 @@ class SettingsPage extends StatelessWidget {
         begin: const Offset(0, 0.06),
         child: Padding(
           padding: EdgeInsets.only(top: topInset),
-          child: SmoothScroll(
-        builder: (sc) => ListView(
-        controller: sc,
+          child: AppScrollView(
         padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
         children: [
           _group('外观', [
@@ -273,7 +271,6 @@ class SettingsPage extends StatelessWidget {
           ]),
         ],
         ),
-      ),
         ),
       ),
     );

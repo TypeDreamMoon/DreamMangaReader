@@ -52,7 +52,7 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: ListView.builder(
+          child: AppScrollView.builder(
             itemCount: _filtered.length + 1,
             itemBuilder: (_, i) {
               // 首行固定「系统默认」(空字符串)。

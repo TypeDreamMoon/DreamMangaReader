@@ -65,7 +65,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
         title: Text('$_sourceName 账号',
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
       ),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
         children: [
           AppCard(

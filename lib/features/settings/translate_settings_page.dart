@@ -162,7 +162,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
         title: const Text('翻译',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
-      body: ListView(
+      body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
           AppCard(
