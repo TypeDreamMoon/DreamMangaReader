@@ -222,7 +222,8 @@ class LibraryStore extends ChangeNotifier {
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
   static const _kSearchHistory = 'lib.searchHistory'; // 漫画搜索历史(可随设置同步)
   static const _maxSearchHistory = 30; // 搜索历史上限(超出丢最旧)
-  static const _kTranslateProvider = 'lib.translateProvider'; // 搜索翻译服务商
+  static const _kTranslateProvider = 'lib.translateProvider'; // 旧:单选服务商(迁移用)
+  static const _kTranslateOrder = 'lib.translateOrder'; // 服务商优先级(逗号分隔 name)
   static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
   static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
   static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
@@ -280,7 +281,9 @@ class LibraryStore extends ChangeNotifier {
   double _autoScrollSpeed = 40; // 条漫自动滚动速度 px/s(10~200)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
   final List<String> _searchHistory = []; // 漫画搜索历史(最近在前)
-  TranslateProvider _translateProvider = TranslateProvider.google; // 搜索翻译服务商
+  // 搜索翻译服务商**优先级**:从前到后依次尝试,失败降级到下一个。默认 谷歌→微软→大模型。
+  List<TranslateProvider> _translateProviderOrder =
+      List.of(TranslateProvider.values);
   String _translateLlmBase = ''; // 大模型 API 地址(OpenAI 兼容)
   String _translateLlmKey = ''; // 大模型 API 密钥(仅本机)
   String _translateLlmModel = ''; // 大模型模型名
@@ -378,7 +381,12 @@ class LibraryStore extends ChangeNotifier {
       _prefs?.setStringList(_kSearchHistory, _searchHistory);
 
   // ---- 搜索翻译 ----
-  TranslateProvider get translateProvider => _translateProvider;
+  /// 服务商优先级(从前到后依次尝试)。恒为 3 个服务商的一个排列。
+  List<TranslateProvider> get translateProviderOrder =>
+      List.unmodifiable(_translateProviderOrder);
+
+  /// 主服务商(= 优先级第一个);展示 / 测试用。
+  TranslateProvider get translateProvider => _translateProviderOrder.first;
   String get translateLlmBase => _translateLlmBase;
   String get translateLlmKey => _translateLlmKey;
   String get translateLlmModel => _translateLlmModel;
@@ -390,11 +398,55 @@ class LibraryStore extends ChangeNotifier {
         model: _translateLlmModel,
       );
 
-  set translateProvider(TranslateProvider v) {
-    if (v == _translateProvider) return;
-    _translateProvider = v;
-    _prefs?.setString(_kTranslateProvider, v.name);
+  /// 设置服务商优先级(传入 3 个服务商的排列;会补全缺项、去重、剔除非法项)。
+  set translateProviderOrder(List<TranslateProvider> v) {
+    final next = _normalizeOrder(v);
+    if (_sameOrder(next, _translateProviderOrder)) return;
+    _translateProviderOrder = next;
+    _prefs?.setString(_kTranslateOrder, next.map((e) => e.name).join(','));
     notifyListeners();
+  }
+
+  // 解析持久化的优先级串;没有则从旧版单选服务商 [legacy] 迁移(它排第一)。
+  static List<TranslateProvider> _parseOrder(String? raw, {String? legacy}) {
+    TranslateProvider? byName(String? name) {
+      for (final p in TranslateProvider.values) {
+        if (p.name == name) return p;
+      }
+      return null;
+    }
+
+    if (raw != null && raw.isNotEmpty) {
+      final parsed = <TranslateProvider>[];
+      for (final name in raw.split(',')) {
+        final p = byName(name.trim());
+        if (p != null) parsed.add(p);
+      }
+      return _normalizeOrder(parsed);
+    }
+    final first = byName(legacy);
+    return _normalizeOrder(first != null ? [first] : const []);
+  }
+
+  // 补全缺失的服务商(按默认序补到末尾)+ 去重,保证恒为完整排列。
+  static List<TranslateProvider> _normalizeOrder(List<TranslateProvider> v) {
+    final out = <TranslateProvider>[];
+    for (final p in v) {
+      if (!out.contains(p)) out.add(p);
+    }
+    for (final p in TranslateProvider.values) {
+      if (!out.contains(p)) out.add(p);
+    }
+    return out;
+  }
+
+  static bool _sameOrder(
+      List<TranslateProvider> a, List<TranslateProvider> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   set translateLlmBase(String v) {
@@ -561,9 +613,10 @@ class LibraryStore extends ChangeNotifier {
       if (sh != null) {
         _searchHistory.addAll(sh.take(_maxSearchHistory));
       }
-      _translateProvider = TranslateProvider.values.firstWhere(
-          (e) => e.name == prefs.getString(_kTranslateProvider),
-          orElse: () => TranslateProvider.google);
+      _translateProviderOrder = _parseOrder(
+        prefs.getString(_kTranslateOrder),
+        legacy: prefs.getString(_kTranslateProvider), // 旧版单选:迁移成「它排第一」
+      );
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
       _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
@@ -1124,7 +1177,8 @@ class LibraryStore extends ChangeNotifier {
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
         'searchHistory': _searchHistory.toList(),
-        'translateProvider': _translateProvider.name,
+        'translateProviderOrder':
+            _translateProviderOrder.map((e) => e.name).toList(),
         'translateLlmBase': _translateLlmBase,
         'translateLlmModel': _translateLlmModel,
         // 大模型 API 密钥属敏感数据,仅存本机,不导出/不同步(同源登录 token 同策略)。
@@ -1255,9 +1309,15 @@ class LibraryStore extends ChangeNotifier {
       }
       _persistSearchHistory();
     }
-    _translateProvider = TranslateProvider.values.firstWhere(
-        (e) => e.name == j['translateProvider'],
-        orElse: () => _translateProvider);
+    final ord = j['translateProviderOrder'];
+    if (ord is List && ord.isNotEmpty) {
+      _translateProviderOrder =
+          _parseOrder(ord.whereType<String>().join(','));
+    } else if (j['translateProvider'] is String) {
+      // 兼容旧导出(单选服务商)。
+      _translateProviderOrder =
+          _parseOrder(null, legacy: j['translateProvider'] as String);
+    }
     _translateLlmBase = j['translateLlmBase'] as String? ?? _translateLlmBase;
     _translateLlmModel = j['translateLlmModel'] as String? ?? _translateLlmModel;
     if (replaceFavorites) _persistFavorites();
@@ -1310,7 +1370,8 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setDouble(_kAutoScrollSpeed, _autoScrollSpeed);
     _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
-    _prefs?.setString(_kTranslateProvider, _translateProvider.name);
+    _prefs?.setString(
+        _kTranslateOrder, _translateProviderOrder.map((e) => e.name).join(','));
     _prefs?.setString(_kTranslateLlmBase, _translateLlmBase);
     _prefs?.setString(_kTranslateLlmModel, _translateLlmModel);
     notifyListeners();

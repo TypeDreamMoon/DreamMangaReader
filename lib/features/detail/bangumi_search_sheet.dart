@@ -51,7 +51,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
     final res = await TranslatedSearch.run<BangumiCandidate>(
       q,
       enabled: store.translateSearch,
-      provider: store.translateProvider,
+      providers: store.translateProviderOrder,
       llm: store.translateLlm,
       search: BangumiApi.search,
     );

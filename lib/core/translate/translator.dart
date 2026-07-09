@@ -93,6 +93,42 @@ abstract class Translator {
         return _LlmTranslator(llm);
     }
   }
+
+  /// 按**优先级** [order] 依次尝试:前一个失败(抛错/无结果)就降级到下一个;
+  /// 全失败才抛最后一个错。未配置好的服务商(如大模型缺参数)自动跳过。
+  /// [order] 为空时退回谷歌。
+  factory Translator.chain(List<TranslateProvider> order, {LlmConfig? llm}) =>
+      _ChainTranslator(
+          order.isEmpty ? const [TranslateProvider.google] : order, llm);
+}
+
+/// 优先级链式翻译:见 [Translator.chain]。
+class _ChainTranslator implements Translator {
+  _ChainTranslator(this._order, this._llm);
+  final List<TranslateProvider> _order;
+  final LlmConfig? _llm;
+
+  @override
+  Future<String> translate(String text, TranslateLang target) async {
+    Exception? lastErr;
+    var tried = 0;
+    for (final p in _order) {
+      final Translator tr;
+      try {
+        tr = Translator.create(p, llm: _llm);
+      } catch (_) {
+        continue; // 该服务商没配好 → 跳过,试下一个
+      }
+      tried++;
+      try {
+        return await tr.translate(text, target);
+      } on Exception catch (e) {
+        lastErr = e; // 记下,降级到下一个服务商
+      }
+    }
+    if (tried == 0) throw Exception('没有可用的翻译服务商(到设置 · 翻译里配置)');
+    throw lastErr ?? Exception('翻译失败');
+  }
 }
 
 /// 谷歌免费端点(translate_a/single),无需 key。

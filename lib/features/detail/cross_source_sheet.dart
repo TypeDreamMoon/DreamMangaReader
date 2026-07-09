@@ -122,12 +122,9 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
   /// 把书名翻成简/繁/英,每翻好一个就拿去补搜一轮。翻译不可用时静默(只留原文结果)。
   Future<void> _translateAndSearch(int gen, String q) async {
     final store = LibraryScope.read(context);
-    final Translator tr;
-    try {
-      tr = Translator.create(store.translateProvider, llm: store.translateLlm);
-    } catch (_) {
-      return; // 服务商未配置(如大模型没填)→ 只用原文搜,不打扰用户
-    }
+    // 按用户设的服务商优先级链式翻译(失败自动降级下一个)。
+    final tr =
+        Translator.chain(store.translateProviderOrder, llm: store.translateLlm);
     setState(() => _translating = true);
     try {
       await Future.wait(TranslateLang.values.map((lang) async {

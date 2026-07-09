@@ -174,7 +174,7 @@ class _DetailPageState extends State<DetailPage> {
     Future<List<String>>? variantsFuture;
     Future<List<String>> variants() => variantsFuture ??= store.translateSearch
         ? TranslatedSearch.variants(widget.manga.title,
-            provider: store.translateProvider, llm: store.translateLlm)
+            providers: store.translateProviderOrder, llm: store.translateLlm)
         : Future<List<String>>.value(const []);
     // 主动搜索源:先搜、匹配同作品、再取章节。
     for (final meta in toSearch) {
@@ -367,7 +367,7 @@ class _DetailPageState extends State<DetailPage> {
     var found = r.match;
     if (found == null && !r.allErrored && store.translateSearch) {
       for (final v in await TranslatedSearch.variants(title,
-          provider: store.translateProvider, llm: store.translateLlm)) {
+          providers: store.translateProviderOrder, llm: store.translateLlm)) {
         r = await _findInSources(metas, v);
         if (r.match != null) {
           found = r.match;

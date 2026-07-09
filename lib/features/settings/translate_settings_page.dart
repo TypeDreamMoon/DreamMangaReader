@@ -22,11 +22,11 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
   String? _testResult;
   bool _testOk = false;
 
-  static const _short = {
-    TranslateProvider.google: '谷歌',
-    TranslateProvider.microsoft: '微软',
-    TranslateProvider.llm: '大模型',
-  };
+  static String _desc(TranslateProvider v) => switch (v) {
+        TranslateProvider.google => '免费端点,开箱即用(可能需代理)',
+        TranslateProvider.microsoft => '免费端点,自动取临时令牌',
+        TranslateProvider.llm => '你自己的大模型 · 需在下方配置',
+      };
 
   @override
   void initState() {
@@ -51,8 +51,10 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
       _testResult = '测试中…(联网)';
     });
     try {
-      final tr = Translator.create(lib.translateProvider, llm: lib.translateLlm);
-      // 用一句固定文本试翻成英文,能出结果即视为该服务商可用。
+      // 按优先级链式翻译:验证「按当前排序实际会用到的」服务商可用。
+      final tr =
+          Translator.chain(lib.translateProviderOrder, llm: lib.translateLlm);
+      // 用一句固定文本试翻成英文,能出结果即视为可用。
       final out = await tr.translate('你好,世界', TranslateLang.en);
       if (!mounted) return;
       setState(() {
@@ -70,11 +72,90 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
     }
   }
 
+  // 优先级列表里的一行:序号徽标 + 服务商名(第一位标「主用」)+ 简介 + 拖拽把手。
+  Widget _providerRow(AppPalette p, TranslateProvider v, int index) {
+    final primary = index == 0;
+    return Padding(
+      key: ValueKey(v),
+      padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+      child: Row(
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: primary ? p.accent.withValues(alpha: 0.16) : p.elevated,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                  color: primary ? p.accent.withValues(alpha: 0.5) : p.line),
+            ),
+            child: Text('${index + 1}',
+                style: TextStyle(
+                    color: primary ? p.accent : p.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(v.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: p.textPrimary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                    if (primary) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                            color: p.accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(5)),
+                        child: Text('主用',
+                            style: TextStyle(
+                                color: p.accent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(_desc(v),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child:
+                  Icon(Icons.drag_handle_rounded, size: 20, color: p.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
     final lib = LibraryScope.of(context);
-    final isLlm = lib.translateProvider == TranslateProvider.llm;
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
@@ -93,8 +174,8 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '在发现页搜索栏点「译」按钮,可把搜索词翻成简体 / 繁体 / 英文再搜 '
-                    '—— 换语种源(如日漫、MangaDex)时很有用。',
+                    '把搜索词翻成 简 / 繁 / 英 / 日 / 韩 再搜(换语种源、搜不到时自动回退)。'
+                    '可拖动下方服务商调整优先级 —— 从上到下依次尝试,失败自动降级。',
                     style: TextStyle(color: p.textPrimary, fontSize: 12.5),
                   ),
                 ),
@@ -102,41 +183,44 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
             ),
           ),
           const SizedBox(height: 18),
-          AppSectionHeading('服务商'),
+          AppSectionHeading('服务商优先级'),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text('从上到下依次尝试,前一个失败(未配置 / 报错)就自动降级到下一个。拖右侧 ☰ 排序。',
+                style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
+          ),
           const SizedBox(height: 10),
           AppCard(
             width: double.infinity,
-            child: AppSegmentedRow<TranslateProvider>(
-              icon: Icons.cloud_rounded,
-              title: '翻译引擎',
-              segments: [
-                for (final v in TranslateProvider.values)
-                  ButtonSegment(value: v, label: Text(_short[v]!)),
-              ],
-              selected: {lib.translateProvider},
-              onSelectionChanged: (s) {
-                lib.translateProvider = s.first;
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: ReorderableListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              onReorderItem: (oldIndex, newIndex) {
+                // onReorderItem 已按「移除 oldIndex 后」调整好 newIndex,直接用。
+                final order = List.of(lib.translateProviderOrder);
+                order.insert(newIndex, order.removeAt(oldIndex));
+                lib.translateProviderOrder = order;
                 setState(() => _testResult = null);
               },
+              children: [
+                for (var i = 0; i < lib.translateProviderOrder.length; i++)
+                  _providerRow(p, lib.translateProviderOrder[i], i),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 18),
+          AppSectionHeading('大模型参数'),
+          const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text(
-              switch (lib.translateProvider) {
-                TranslateProvider.google => '谷歌翻译免费端点,无需配置,开箱即用(可能需要代理)。',
-                TranslateProvider.microsoft => '微软翻译免费端点,自动获取临时令牌,无需配置。',
-                TranslateProvider.llm =>
-                  '用你自己的大模型(OpenAI 兼容 /chat/completions)翻译。密钥仅存本机、不随云同步。',
-              },
-              style: TextStyle(color: p.textMuted, fontSize: 12),
-            ),
+            child: Text('排到「大模型」时才会用。OpenAI 兼容 /chat/completions;密钥仅存本机、不随云同步。',
+                style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
           ),
-          if (isLlm) ...[
-            const SizedBox(height: 18),
-            AppSectionHeading('大模型参数'),
-            const SizedBox(height: 10),
+          const SizedBox(height: 10),
+          ...[
             AppTextField(
               controller: _base,
               label: 'API 地址',

@@ -14,7 +14,7 @@ class TranslatedSearch {
   static Future<({List<T> results, String? via})> run<T>(
     String query, {
     required bool enabled,
-    required TranslateProvider provider,
+    required List<TranslateProvider> providers,
     required LlmConfig llm,
     required Future<List<T>> Function(String q) search,
   }) async {
@@ -22,12 +22,8 @@ class TranslatedSearch {
     if (first.isNotEmpty || !enabled || query.trim().isEmpty) {
       return (results: first, via: null);
     }
-    final Translator tr;
-    try {
-      tr = Translator.create(provider, llm: llm);
-    } catch (_) {
-      return (results: first, via: null); // 翻译没配好 → 保持原文(空)
-    }
+    // 按用户设的服务商优先级依次尝试(失败降级下一个)。
+    final tr = Translator.chain(providers, llm: llm);
     // 译名与原文(或已试过的)归一相同则跳过,不白搜。
     final tried = <String>{normalizeTitle(query)};
     for (final lang in TranslateLang.values) {
@@ -49,16 +45,11 @@ class TranslatedSearch {
   /// 只翻一次、各处共享,原文命中的地方就不必再搜译名。翻译没配好 / 失败 → 返回空列表。
   static Future<List<String>> variants(
     String query, {
-    required TranslateProvider provider,
+    required List<TranslateProvider> providers,
     required LlmConfig llm,
   }) async {
     if (query.trim().isEmpty) return const [];
-    final Translator tr;
-    try {
-      tr = Translator.create(provider, llm: llm);
-    } catch (_) {
-      return const [];
-    }
+    final tr = Translator.chain(providers, llm: llm);
     final tried = <String>{normalizeTitle(query)};
     final out = <String>[];
     for (final lang in TranslateLang.values) {

@@ -141,7 +141,7 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
     if (orig.isEmpty) return;
     final store = LibraryScope.read(context);
     final queue = await TranslatedSearch.variants(orig,
-        provider: store.translateProvider, llm: store.translateLlm);
+        providers: store.translateProviderOrder, llm: store.translateLlm);
     if (!mounted || _origQuery != orig) return; // 用户中途换了查询 → 放弃
     _fallbackQueue = List.of(queue);
     if (_fallbackQueue!.isNotEmpty) {
