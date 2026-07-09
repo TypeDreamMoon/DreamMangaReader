@@ -203,7 +203,8 @@ class MangaCover extends StatelessWidget {
   }
 }
 
-/// 列表布局的一行:小封面(带「N源」角标)+ 标题。发现页 / 书架列表布局共用。
+/// 列表布局的一行:封面卡(带「N源」角标)+ 书名 + 作者 / 状态 / 题材。
+/// 描边卡 + 悬停微亮,信息分层,发现页 / 书架列表布局共用。
 Widget coverListTile(
   AppPalette p,
   BuildContext context, {
@@ -212,16 +213,29 @@ Widget coverListTile(
   int sourceCount = 1,
   Object? heroTag,
   required VoidCallback onTap,
-}) =>
-    Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Pressable(
-        onTap: onTap,
-        hoverElevate: true,
+}) {
+  final authors =
+      manga.authors.where((a) => a.trim().isNotEmpty).toList(growable: false);
+  final genres =
+      manga.genres.where((g) => g.trim().isNotEmpty).take(3).toList();
+  final st = _listStatus(p, manga.status);
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Pressable(
+      onTap: onTap,
+      hoverElevate: true,
+      child: Container(
+        decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(context.radius),
+          border: Border.all(color: p.line),
+        ),
+        padding: const EdgeInsets.all(9),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
-              width: 48,
+              width: 56,
               child: MangaCover(
                 manga: manga,
                 headers: headers,
@@ -232,19 +246,101 @@ Widget coverListTile(
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(manga.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: p.textPrimary,
-                      fontSize: 13,
-                      height: 1.25,
-                      fontWeight: FontWeight.w700)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(manga.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 14,
+                          height: 1.25,
+                          fontWeight: FontWeight.w800)),
+                  if (st != null || authors.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        if (st != null) ...[
+                          _statusPill(p, st),
+                          const SizedBox(width: 8),
+                        ],
+                        if (authors.isNotEmpty)
+                          Expanded(
+                            child: Text(authors.join(' / '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: p.textMuted, fontSize: 11.5)),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (genres.isNotEmpty) ...[
+                    const SizedBox(height: 7),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [for (final g in genres) _genreTag(p, g)],
+                    ),
+                  ],
+                ],
+              ),
             ),
-            Icon(Icons.chevron_right_rounded, size: 18, color: p.textMuted),
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child:
+                  Icon(Icons.chevron_right_rounded, size: 18, color: p.textMuted),
+            ),
           ],
         ),
       ),
+    ),
+  );
+}
+
+/// 状态药丸(圆点 + 文字,状态色),unknown 返回 null(不显示)。
+({String text, Color color})? _listStatus(AppPalette p, MangaStatus s) =>
+    switch (s) {
+      MangaStatus.ongoing => (text: '连载中', color: p.statusOk),
+      MangaStatus.completed => (text: '完结', color: p.accent),
+      MangaStatus.hiatus => (text: '休刊', color: p.statusWarn),
+      MangaStatus.cancelled => (text: '停载', color: p.statusFail),
+      MangaStatus.unknown => null,
+    };
+
+Widget _statusPill(AppPalette p, ({String text, Color color}) st) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: st.color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(color: st.color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 4),
+          Text(st.text,
+              style: TextStyle(
+                  color: st.color, fontSize: 10.5, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+
+Widget _genreTag(AppPalette p, String g) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: p.elevated,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: p.line),
+      ),
+      child: Text(g,
+          style: TextStyle(color: p.textMuted, fontSize: 10.5, height: 1.1)),
     );
 
 class _HalftonePainter extends CustomPainter {
