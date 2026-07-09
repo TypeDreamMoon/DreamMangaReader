@@ -1011,6 +1011,18 @@ class LibraryStore extends ChangeNotifier {
   void _persistWorkProgress() => _prefs?.setString(_kWorkProgress,
       jsonEncode({for (final e in _workProgress.entries) e.key: e.value.toJson()}));
 
+  /// 退出前(如 Windows 自更新的 exit(0))把还在防抖队列里的进度**立刻并等待**落盘,
+  /// 避免硬退出丢掉最近的阅读进度 / 共享进度。
+  Future<void> flushPending() async {
+    _persistHistoryTimer?.cancel();
+    final p = _prefs;
+    if (p == null) return;
+    await p.setString(_kHistory,
+        jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    await p.setString(_kWorkProgress, jsonEncode(
+        {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+  }
+
   // ---- 备份 / 恢复 ----
   Map<String, dynamic> exportData() => {
         'v': 1,

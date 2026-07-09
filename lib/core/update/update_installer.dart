@@ -27,6 +27,9 @@ class UpdateInstaller {
   static final Dio _dio = Dio(BaseOptions(
     headers: {'User-Agent': 'DreamMangaReader-Updater'},
     connectTimeout: const Duration(seconds: 20),
+    // 分片空闲超时:连接中途卡死(收不到新数据)60s 即报错,不至于无限挂着。
+    // 不是整体超时,持续下载的大文件不会误杀。
+    receiveTimeout: const Duration(seconds: 60),
     followRedirects: true, // GitHub 附件直链会 302 到 CDN
     maxRedirects: 6,
     validateStatus: (_) => true,
@@ -55,10 +58,13 @@ class UpdateInstaller {
   }
 
   /// 下载 [asset] 并唤起安装。[onProgress] 回传 0~1(总大小未知时回传 -1)。
-  /// Android:装完由系统安装器接手;Windows:静默装好后自动重启,本进程随即退出。
+  /// [cancelToken] 供调用方取消下载;[onBeforeExit] 在 Windows 静默安装 exit(0) 前调用
+  /// (落盘未保存状态)。Android:装完由系统安装器接手;Windows:见 [_installWindows]。
   static Future<void> downloadAndInstall(
     UpdateAsset asset, {
     required void Function(double progress) onProgress,
+    CancelToken? cancelToken,
+    Future<void> Function()? onBeforeExit,
   }) async {
     final dir = await getTemporaryDirectory();
     final safeName = asset.name.replaceAll(RegExp(r'[^\w.\-]'), '_');
@@ -74,6 +80,7 @@ class UpdateInstaller {
     final resp = await _dio.download(
       asset.url,
       path,
+      cancelToken: cancelToken,
       onReceiveProgress: (recv, total) =>
           onProgress(total > 0 ? recv / total : -1),
     );
@@ -92,25 +99,33 @@ class UpdateInstaller {
       return;
     }
     if (Platform.isWindows) {
-      await _installWindows(path);
+      await _installWindows(path, onBeforeExit);
       return;
     }
     throw Exception('该平台不支持应用内更新');
   }
 
-  static Future<void> _installWindows(String setupPath) async {
+  static Future<void> _installWindows(
+      String setupPath, Future<void> Function()? onBeforeExit) async {
     final exe = Platform.resolvedExecutable;
     final appDir = File(exe).parent.path;
     final installed = File('$appDir\\unins000.exe').existsSync();
+    final writable = _canWrite(appDir);
 
-    // 便携版:静默覆盖没意义(安装器会另装到程序目录、不是当前便携文件夹)。
-    // 直接起安装器让用户自己选目录,App 继续运行(调用方随后显示「安装器已打开」)。
-    if (!installed) {
-      await Process.start(setupPath, const [], mode: ProcessStartMode.detached);
+    // 走「静默覆盖 + 自杀重启」的前提:是安装版**且**装目录免提权可写(= per-user 安装)。
+    // 便携版(装器会另装)/ 系统级安装(装 Program Files 需 UAC 提权,静默会弹 UAC 或失败,
+    // 而此时 App 已 exit 无法收场)→ 都不自杀:直接起安装器,交给 Inno 自己处理
+    // (系统装时它会 UAC 提权 + 用重启管理器关掉/重开 App),App 继续运行。
+    if (!installed || !writable) {
+      await Process.start(
+        setupPath,
+        installed ? ['/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'] : const [],
+        mode: ProcessStartMode.detached,
+      );
       return;
     }
 
-    // 安装版:临时脚本 —— 等 2s(本进程退出、文件解锁)→ 静默覆盖 → 重启 App → 自删。
+    // per-user 安装:临时脚本 —— 等 2s(本进程退出、文件解锁)→ 静默覆盖 → 重启 App → 自删。
     final tmp = await getTemporaryDirectory();
     final bat = File('${tmp.path}\\dmr_update.bat');
     await bat.writeAsString(
@@ -125,7 +140,20 @@ class UpdateInstaller {
       ['/c', bat.path],
       mode: ProcessStartMode.detached,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await onBeforeExit?.call(); // 退出前落盘,别丢最近的进度/设置
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     exit(0); // 退出让安装器替换文件
+  }
+
+  /// 目录是否免提权可写(区分 per-user 安装 vs 需 UAC 的系统级安装)。
+  static bool _canWrite(String dir) {
+    try {
+      final probe = File('$dir\\.dmr_write_probe');
+      probe.writeAsStringSync('x');
+      probe.deleteSync();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }

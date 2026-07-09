@@ -1,8 +1,11 @@
+import 'dart:io' show Platform;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_info.dart';
+import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import 'update_installer.dart';
 
@@ -150,6 +153,7 @@ class UpdateService {
 Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) {
   return showDialog<void>(
     context: context,
+    barrierDismissible: false, // 下载/安装中别被点外面误关(尤其 Windows 会自杀重启)
     builder: (ctx) => _UpdateDialog(info: info),
   );
 }
@@ -167,6 +171,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   bool _busy = false; // 正在下载/安装
   bool _launched = false; // Android:安装器已打开
   String? _error;
+  CancelToken? _cancel; // 下载取消令牌
 
   UpdateAsset? get _asset => UpdateInstaller.pickAsset(widget.info.assets);
   bool get _canInApp => UpdateInstaller.supported && _asset != null;
@@ -174,16 +179,22 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   Future<void> _startUpdate() async {
     final asset = _asset;
     if (asset == null) return;
+    final store = LibraryScope.read(context); // Windows exit(0) 前用它落盘
+    final cancel = _cancel = CancelToken();
     setState(() {
       _busy = true;
       _error = null;
       _progress = 0;
     });
     try {
-      await UpdateInstaller.downloadAndInstall(asset,
-          onProgress: (p) {
-        if (mounted) setState(() => _progress = p);
-      });
+      await UpdateInstaller.downloadAndInstall(
+        asset,
+        cancelToken: cancel,
+        onBeforeExit: () => store.flushPending(),
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
       // Android:到这 = 安装器已打开;Windows:静默安装前进程已退出,一般到不了这里。
       if (mounted) {
         setState(() {
@@ -191,6 +202,12 @@ class _UpdateDialogState extends State<_UpdateDialog> {
           _busy = false;
         });
       }
+    } on DioException catch (e) {
+      // 用户主动取消:不当错误,复位即可。
+      if (e.type != DioExceptionType.cancel && mounted) {
+        setState(() => _error = '$e');
+      }
+      if (mounted) setState(() => _busy = false);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -267,11 +284,18 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   List<Widget> _actions() {
     if (_busy) {
+      // Windows 装好会自杀重启,没法「后台边用边更」→ 给「取消」(停下载、留在原版);
+      // Android 装完只是弹系统安装器、不动本进程 → 可「后台」继续下载。
       return [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(), // 后台继续下载
-          child: const Text('后台'),
-        ),
+        Platform.isWindows
+            ? TextButton(
+                onPressed: () => _cancel?.cancel('user'),
+                child: const Text('取消'),
+              )
+            : TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('后台'),
+              ),
       ];
     }
     if (_launched) {
