@@ -92,29 +92,31 @@ class _DetailPageState extends State<DetailPage> {
     final store = LibraryScope.read(context);
     final myTitle = normalizeTitle(widget.manga.title);
     if (myTitle.isEmpty) return;
-    // 收集别的源里同名书的 mangaId(每源取第一个命中的)。
-    final bySource = <String, String>{}; // sourceId -> mangaId
-    void consider(String title, String sid, String mid) {
+    // 收集别的源里同名书的 (mangaId + 它自己的 标题/封面)(每源取第一个命中的)。
+    // 记它自己的标题/封面:从他源打开阅读时进度记在它名下,元数据要用它的,别串成当前源的。
+    final bySource = <String, ({String mangaId, String title, String? cover})>{};
+    void consider(String title, String sid, String mid, String? cover) {
       if (sid == widget.meta.id || bySource.containsKey(sid)) return;
-      if (normalizeTitle(title) == myTitle) bySource[sid] = mid;
+      if (normalizeTitle(title) == myTitle) {
+        bySource[sid] = (mangaId: mid, title: title, cover: cover);
+      }
     }
 
     for (final f in store.favorites) {
-      consider(f.title, f.sourceId, f.mangaId);
+      consider(f.title, f.sourceId, f.mangaId, f.cover);
     }
     for (final h in store.history) {
-      consider(h.title, h.sourceId, h.mangaId);
+      consider(h.title, h.sourceId, h.mangaId, h.cover);
     }
     if (bySource.isEmpty) return;
-    final targets = [
-      for (final e in bySource.entries) (sourceId: e.key, mangaId: e.value)
-    ];
 
     final loaded = <_SrcChapters>[];
-    await Future.wait(targets.map((t) async {
+    await Future.wait(bySource.entries.map((e) async {
+      final sid = e.key;
+      final t = e.value;
       SourceMeta? meta;
       for (final s in registeredSources) {
-        if (s.id == t.sourceId) {
+        if (s.id == sid) {
           meta = s;
           break;
         }
@@ -123,7 +125,8 @@ class _DetailPageState extends State<DetailPage> {
       final src = buildSource(meta);
       try {
         final page = await src.getChapters(t.mangaId);
-        loaded.add(_SrcChapters(meta, src, t.mangaId, page.items));
+        loaded.add(
+            _SrcChapters(meta, src, t.mangaId, t.title, t.cover, page.items));
       } catch (_) {
         src.dispose();
       }
@@ -211,8 +214,8 @@ class _DetailPageState extends State<DetailPage> {
     if (idx < 0) idx = 0;
     Navigator.of(context).push(appRoute(ReaderPage(
       source: os.source,
-      manga: Manga(
-          id: os.mangaId, title: widget.manga.title, cover: widget.manga.cover),
+      // 用他源自己的书名/封面(进度记在它 sid:mid 下,元数据别串成当前源的)。
+      manga: Manga(id: os.mangaId, title: os.title, cover: os.cover),
       chapters: os.chapters,
       index: idx,
       imageHeaders: imageHeadersOf(os.meta),
@@ -663,9 +666,13 @@ class _DetailPageState extends State<DetailPage> {
       }
     }
 
-    // 作品级共享续读点(话数):比本地更靠后时,映射到本源对应章。
+    // 作品级共享续读点(话数):仅在「本地没读过」或「本地那章能解析话数且作品更靠后」时,
+    // 才映射到本源对应章。本地最后读的是**无号章**(番外/特别篇,localNum=-inf)时**尊重它**,
+    // 别被作品话数顶回更早的编号章(否则会把用户弹回旧位置)。
     final workNum = store.workProgressFor(widget.manga.title)?.chapterNumber;
-    if (workNum != null && workNum > localNum) {
+    final useWork = workNum != null &&
+        (localCh == null || (localNum.isFinite && workNum > localNum));
+    if (useWork) {
       final target = _chapterForNumber(chapters, workNum);
       if (target != null) {
         // 命中的正好是本地那章 → 保留页码;否则从头(他源的页码不通用)。
@@ -1287,7 +1294,8 @@ class _DetailPageState extends State<DetailPage> {
             child: Center(child: CircularProgressIndicator()))),
       ];
     }
-    if (_chapters!.isEmpty) {
+    // 当前源没解析到章节,但他源合并进来了 → 照样渲染合并列表(别把他源章节丢了)。
+    if (merged.isEmpty) {
       return [
         header,
         stateBox(Column(
@@ -1338,10 +1346,13 @@ class _DetailPageState extends State<DetailPage> {
 
 /// 库里同名书某个「他源」的章节表(合并跨源章节列表用)。
 class _SrcChapters {
-  _SrcChapters(this.meta, this.source, this.mangaId, this.chapters);
+  _SrcChapters(
+      this.meta, this.source, this.mangaId, this.title, this.cover, this.chapters);
   final SourceMeta meta;
   final MangaSource source;
   final String mangaId;
+  final String title; // 该源自己的书名(打开时进度用它的元数据)
+  final String? cover; // 该源自己的封面
   final List<Chapter> chapters;
 }
 
