@@ -5,8 +5,7 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/net/image_cache.dart';
-import '../../core/source/title_match.dart';
-import '../../core/translate/translator.dart';
+import '../../core/translate/translated_search.dart';
 
 /// 手动搜索 Bangumi 条目并选择。返回选中的 [BangumiCandidate](取消返回 null)。
 /// 自动匹配不准/没匹配到时用;搜不到会给出提示。
@@ -24,7 +23,6 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
       TextEditingController(text: widget.initialQuery);
   bool _loading = false;
   bool _searched = false;
-  bool _translating = false; // 原文搜不到 → 翻译后重搜阶段
   String? _viaTranslate; // 用哪个译名搜到的(展示提示);null=原文
   List<BangumiCandidate> _results = const [];
 
@@ -46,58 +44,23 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
     setState(() {
       _loading = true;
       _searched = true;
-      _translating = false;
       _viaTranslate = null;
     });
-    final r = await BangumiApi.search(q);
-    if (!mounted) return;
-    if (r.isNotEmpty) {
-      setState(() {
-        _results = r;
-        _loading = false;
-      });
-      return;
-    }
-    // 原文搜不到 → 翻译一下再搜(简/繁/英),都没有才显示搜不到。
-    setState(() => _translating = true);
-    final t = await _searchViaTranslation(q);
+    // 原文搜不到 → 翻成 简/繁/英/日 再搜(受设置「搜索翻译回退」开关控制),都没有才空。
+    final store = LibraryScope.read(context);
+    final res = await TranslatedSearch.run<BangumiCandidate>(
+      q,
+      enabled: store.translateSearch,
+      provider: store.translateProvider,
+      llm: store.translateLlm,
+      search: BangumiApi.search,
+    );
     if (!mounted) return;
     setState(() {
-      _results = t.results;
-      _viaTranslate = t.query;
+      _results = res.results;
+      _viaTranslate = res.via;
       _loading = false;
-      _translating = false;
     });
-  }
-
-  /// 把 [q] 翻成简/繁/英逐个去 Bangumi 搜,返回**第一个有结果**的(附所用译名)。
-  /// 翻译未配置/都没搜到 → 返回空。译名与原文(或已试过的)归一相同则跳过,不白搜。
-  Future<({List<BangumiCandidate> results, String? query})> _searchViaTranslation(
-      String q) async {
-    const empty = (results: <BangumiCandidate>[], query: null);
-    final Translator tr;
-    try {
-      final store = LibraryScope.read(context);
-      tr = Translator.create(store.translateProvider, llm: store.translateLlm);
-    } catch (_) {
-      return empty; // 翻译没配好 → 保持搜不到
-    }
-    final tried = <String>{normalizeTitle(q)};
-    for (final lang in TranslateLang.values) {
-      String t;
-      try {
-        t = (await tr.translate(q, lang)).trim();
-      } catch (_) {
-        continue;
-      }
-      if (!mounted) return empty;
-      if (t.isEmpty || !tried.add(normalizeTitle(t))) continue;
-      try {
-        final rr = await BangumiApi.search(t);
-        if (rr.isNotEmpty) return (results: rr, query: t);
-      } catch (_) {}
-    }
-    return empty;
   }
 
   @override
@@ -131,19 +94,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
 
   Widget _body(AppPalette p) {
     if (_loading) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            if (_translating) ...[
-              const SizedBox(height: 12),
-              Text('原文没搜到,翻译后再搜…',
-                  style: TextStyle(color: p.textMuted, fontSize: 12)),
-            ],
-          ],
-        ),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
     if (_searched && _results.isEmpty) {
       return Center(

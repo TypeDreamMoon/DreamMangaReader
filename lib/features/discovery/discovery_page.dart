@@ -10,6 +10,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/title_match.dart';
+import '../../core/translate/translated_search.dart';
 import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_browser.dart';
@@ -32,6 +33,7 @@ class _MixedCursor {
   int page = 1;
   bool hasNext = true;
   bool loading = false;
+  bool errored = false; // 最近一次拉取是「抛错」(而非成功返回空页)—— 区分失败与真没结果
 }
 
 /// 「混合(全部源)」占位源。
@@ -61,6 +63,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   // 混合模式的通用筛选(翻译到各源的原生筛选,见 _mixedFiltersFor)。
   String _mixedSort = 'latest'; // latest | popular
   String _mixedStatus = ''; // '' | ongoing | completed
+  String? _mixedError; // 混合模式最近一次源报错的消息(用于全源失败时的错误视图)
 
   // 混合去重:归一化标题 → 该书在 _results 中的下标 / 已贡献它的源 id 集合。
   // 同名只显示一次(保留最先到达的源为代表),其余源只累加到源集合 → 「N源」角标。
@@ -80,8 +83,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
 
   final TextEditingController _searchCtrl = TextEditingController();
   bool _showSearch = false;
-  String _query = ''; // 非空 = 搜索模式
+  String _query = ''; // 非空 = 搜索模式(可能是 _origQuery 的译名)
   bool _translating = false; // 正在翻译搜索词
+  String _origQuery = ''; // 翻译回退:用户输入的原查询
+  List<String>? _fallbackQueue; // 待试译名队列;null=本轮还没翻译过
 
   @override
   void initState() {
@@ -164,9 +169,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       c.page = 1;
       c.hasNext = true;
       c.loading = false;
+      c.errored = false;
     }
     _titlePos.clear();
     _titleSrcIds.clear();
+    _mixedError = null;
     setState(() {
       _results.clear();
       _page = 1;
@@ -185,8 +192,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   void _search(String q) {
     q = q.trim();
     if (q.isNotEmpty) LibraryScope.read(context).addSearchHistory(q);
-    if (q == _query) return;
+    if (q == _query && q == _origQuery) return;
     _query = q;
+    _origQuery = q; // 新查询:翻译回退以它为基准
+    _fallbackQueue = null; // 复位翻译回退状态
     _reset();
   }
 
@@ -215,6 +224,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _page++;
         _loading = false;
       });
+      _maybeFallback(); // 首页零结果 → 尝试译名回退
     } catch (e) {
       if (mounted && gen == _loadGen) {
         setState(() {
@@ -242,12 +252,18 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _ingestMixed(c.meta, r.items);
       c.page++;
       c.hasNext = r.hasNext && r.items.isNotEmpty;
-    } catch (_) {
-      if (gen == _loadGen) c.hasNext = false; // 某源失败:停掉它
+      c.errored = false; // 成功返回(哪怕空页)—— 不是失败
+    } catch (e) {
+      if (gen == _loadGen) {
+        c.hasNext = false; // 某源失败:停掉它
+        c.errored = true;
+        _mixedError = '$e';
+      }
     } finally {
       if (gen == _loadGen) {
         c.loading = false;
         if (mounted) setState(_recomputeMixedFlags);
+        _maybeFallback(); // 所有源都落定且零结果 → 尝试译名回退
       }
     }
   }
@@ -276,6 +292,49 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   void _recomputeMixedFlags() {
     _loading = _mixedSources.any((c) => c.loading);
     _hasNext = _mixedSources.any((c) => c.hasNext);
+    // 本轮结束、无结果、且所有源都是「报错」(而非返回空页)→ 记为错误态:
+    // 展示错误视图(而非「没拿到数据」空态),并借 _error 守卫抑制翻译回退——
+    // 否则全源限流/断网时会被当成「真没结果」,白翻译一轮、再对已挂的源狂搜 4 遍。
+    if (!_loading &&
+        _results.isEmpty &&
+        _mixedSources.isNotEmpty &&
+        _mixedSources.every((c) => c.errored)) {
+      _error = _mixedError ?? '所有源都加载失败了';
+    }
+  }
+
+  /// 搜索翻译回退:一轮搜索**彻底结束且零结果**时,把原查询翻成 简/繁/英/日,逐个译名
+  /// 重搜,直到某个译名有结果、或所有译名都试完为止。默认开(设置「搜索翻译回退」可关)。
+  /// 在每个「本轮加载结束」的落点调用(单源 _loadMore 成功后 / 混合每源 finally 后)。
+  void _maybeFallback() {
+    if (!mounted) return;
+    if (_query.isEmpty || _results.isNotEmpty || _error != null) return;
+    // 本轮还没搜完:等所有在途请求落定再判断是否真的零结果。
+    final busy = _mixed ? _mixedSources.any((c) => c.loading) : _loading;
+    if (busy) return;
+    if (!LibraryScope.read(context).translateSearch) return;
+    if (_fallbackQueue == null) {
+      _prepareFallback(); // 首次:异步翻译,拿到队列后自动试第一个译名
+    } else if (_fallbackQueue!.isNotEmpty) {
+      _query = _fallbackQueue!.removeAt(0); // 试下一个译名(settled 仍空则再取下一个)
+      _reset();
+    }
+  }
+
+  /// 把 [_origQuery] 翻成各语言,归一去重后填入 [_fallbackQueue],并立即用第一个译名重搜。
+  Future<void> _prepareFallback() async {
+    _fallbackQueue = const []; // 占位:翻译在途期间不再重入
+    final orig = _origQuery;
+    if (orig.isEmpty) return;
+    final store = LibraryScope.read(context);
+    final queue = await TranslatedSearch.variants(orig,
+        provider: store.translateProvider, llm: store.translateLlm);
+    if (!mounted || _origQuery != orig) return; // 用户中途换了查询 → 放弃这批译名
+    _fallbackQueue = List.of(queue); // 可变副本(下面会逐个 removeAt)
+    if (_fallbackQueue!.isNotEmpty) {
+      _query = _fallbackQueue!.removeAt(0);
+      _reset(); // 用第一个译名重搜;若仍空,settled 落点会取下一个
+    }
   }
 
   void _onScroll() {
@@ -297,6 +356,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     final store = LibraryScope.of(context);
     final columns = store.gridColumns;
     final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
+    // 翻译回退命中:当前在用译名(≠原文)且有结果 → 提示用了哪个译名。
+    final fallbackVia =
+        (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)
+            ? _query
+            : null;
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: GlassTitleBar(
@@ -352,6 +416,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             // 搜索历史:仅在搜索框展开且未在搜索时显示,点击回填并重搜。
             _animExpand((_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
                 ? _recentSearches(p, store)
+                : const SizedBox(width: double.infinity)),
+            // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
+            _animExpand((_showSearch && fallbackVia != null)
+                ? _fallbackHint(p, fallbackVia)
                 : const SizedBox(width: double.infinity)),
             _animExpand(
               (_mixed && _showFilters && _query.isEmpty)
@@ -568,6 +636,23 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       if (mounted) setState(() => _translating = false);
     }
   }
+
+  // 翻译回退提示条:「原文」没搜到,已改用「译名」搜索。
+  Widget _fallbackHint(AppPalette p, String via) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+        child: Row(
+          children: [
+            Icon(Icons.translate_rounded, size: 13, color: p.textMuted),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('「$_origQuery」没搜到,已用译名「$via」',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+            ),
+          ],
+        ),
+      );
 
   // 搜索历史面板:标题 + 清空 + 可横向换行的历史词条(词条自带 × 单删)。
   Widget _recentSearches(AppPalette p, LibraryStore store) {

@@ -224,6 +224,12 @@ class SettingsPage extends StatelessWidget {
               () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => const TranslateSettingsPage())),
             ),
+            _switch(
+                Icons.manage_search_rounded,
+                '搜索翻译回退',
+                '搜不到时自动把关键词翻成 简 / 繁 / 英 / 日 再搜(默认开)',
+                lib.translateSearch,
+                (v) => lib.translateSearch = v),
           ]),
           _group('数据', [
             _tile(

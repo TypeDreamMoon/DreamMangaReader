@@ -97,7 +97,10 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
     });
     if (!active) return;
     _searchVariant(gen, q); // 原文立即搜
-    _translateAndSearch(gen, q); // 并发翻成简/繁/英,到一个补搜一轮
+    // 翻译补搜(找跨语言的同名版本)受设置「搜索翻译回退」开关控制,默认开。
+    if (LibraryScope.read(context).translateSearch) {
+      _translateAndSearch(gen, q); // 并发翻成简/繁/英/日,到一个补搜一轮
+    }
   }
 
   /// 用一个查询词 [query] 把所有候选源各搜一轮(同一归一查询只搜一次)。

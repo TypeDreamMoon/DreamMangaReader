@@ -5,6 +5,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
@@ -32,7 +33,9 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
   final ScrollController _scroll = ScrollController();
   final TextEditingController _searchCtrl = TextEditingController();
   bool _showSearch = false;
-  String _query = '';
+  String _query = ''; // 可能是 _origQuery 的译名
+  String _origQuery = ''; // 翻译回退:用户输入的原查询
+  List<String>? _fallbackQueue; // 待试译名队列;null=本轮还没翻译过
 
   @override
   void initState() {
@@ -108,12 +111,42 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
         _page++;
         _loading = false;
       });
+      _maybeFallback(); // 搜索首页零结果 → 尝试译名回退
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _error = '$e';
       });
+    }
+  }
+
+  /// 搜索翻译回退:一轮搜索结束且零结果时,把原查询翻成 简/繁/英/日 逐个重搜,直到有
+  /// 结果或全试完。默认开(设置「搜索翻译回退」可关)。番剧单源、顺序加载,无需代际守卫。
+  void _maybeFallback() {
+    if (!mounted || _loading) return;
+    if (_query.isEmpty || _results.isNotEmpty || _error != null) return;
+    if (!LibraryScope.read(context).translateSearch) return;
+    if (_fallbackQueue == null) {
+      _prepareFallback();
+    } else if (_fallbackQueue!.isNotEmpty) {
+      _query = _fallbackQueue!.removeAt(0);
+      _reset();
+    }
+  }
+
+  Future<void> _prepareFallback() async {
+    _fallbackQueue = const []; // 占位:翻译在途期间不再重入
+    final orig = _origQuery;
+    if (orig.isEmpty) return;
+    final store = LibraryScope.read(context);
+    final queue = await TranslatedSearch.variants(orig,
+        provider: store.translateProvider, llm: store.translateLlm);
+    if (!mounted || _origQuery != orig) return; // 用户中途换了查询 → 放弃
+    _fallbackQueue = List.of(queue);
+    if (_fallbackQueue!.isNotEmpty) {
+      _query = _fallbackQueue!.removeAt(0);
+      _reset();
     }
   }
 
@@ -132,6 +165,8 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
 
   void _search(String q) {
     _query = q.trim();
+    _origQuery = _query; // 翻译回退以它为基准
+    _fallbackQueue = null; // 复位翻译回退状态
     _reset();
   }
 
@@ -201,6 +236,26 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide(color: p.accent)),
               ),
+            ),
+          ),
+        // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
+        if (_showSearch &&
+            _query.isNotEmpty &&
+            _query != _origQuery &&
+            _results.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Icon(Icons.translate_rounded, size: 13, color: p.textMuted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text('「$_origQuery」没搜到,已用译名「$_query」',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.textMuted, fontSize: 11.5)),
+                ),
+              ],
             ),
           ),
         Expanded(child: _grid(p)),

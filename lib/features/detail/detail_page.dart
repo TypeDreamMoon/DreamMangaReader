@@ -16,6 +16,7 @@ import '../../core/source/models.dart';
 import '../../core/source/title_match.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/transitions.dart';
@@ -167,20 +168,20 @@ class _DetailPageState extends State<DetailPage> {
         }
       }();
     }
+    // 逐源搜书名时的翻译回退:原名没命中就试译名(简/繁/英/日),补齐跨语言的源。
+    // 懒触发:只有某源真的没命中原名时才翻译一次,各源共享;全命中/设置关则永不翻译。
+    Future<List<String>>? variantsFuture;
+    Future<List<String>> variants() => variantsFuture ??= store.translateSearch
+        ? TranslatedSearch.variants(widget.manga.title,
+            provider: store.translateProvider, llm: store.translateLlm)
+        : Future<List<String>>.value(const []);
     // 主动搜索源:先搜、匹配同作品、再取章节。
     for (final meta in toSearch) {
       () async {
         MangaSource? src;
         try {
           src = buildSource(meta);
-          final r = await src.getSearch(widget.manga.title, 1);
-          Manga? match;
-          for (final m in r.items) {
-            if (sameWork(m.title, widget.manga.title)) {
-              match = m;
-              break;
-            }
-          }
+          final match = await _searchWork(src, variants);
           if (match != null) {
             final page = await src.getChapters(match.id);
             addOne(_SrcChapters(
@@ -194,6 +195,24 @@ class _DetailPageState extends State<DetailPage> {
         }
       }();
     }
+  }
+
+  /// 在 [src] 里按当前书名找同作品:先搜原名,没命中再逐个试 [variants] 译名
+  /// (译名列表懒求值:只有原名没命中才会触发翻译)。
+  Future<Manga?> _searchWork(
+      MangaSource src, Future<List<String>> Function() variants) async {
+    final title = widget.manga.title;
+    final orig = await src.getSearch(title, 1);
+    for (final m in orig.items) {
+      if (sameWork(m.title, title)) return m;
+    }
+    for (final v in await variants()) {
+      final r = await src.getSearch(v, 1);
+      for (final m in r.items) {
+        if (sameWork(m.title, v)) return m;
+      }
+    }
+    return null;
   }
 
   /// 把当前源 + 其它源的章节按话数合并成一张列表。
@@ -341,14 +360,45 @@ class _DetailPageState extends State<DetailPage> {
     if (metas.isEmpty) return;
     setState(() => _recOpening = true);
     showAppNotify(context, '在源里找《$title》…', kind: AppNotifyKind.info);
+    // 先搜原名;没命中、且不是「全源都报错」(断网/全限流时翻译再搜无意义)→ 翻成
+    // 简/繁/英/日 逐个再搜(受设置「搜索翻译回退」开关控制),中途若全源报错则停。
+    var r = await _findInSources(metas, title);
+    var found = r.match;
+    if (found == null && !r.allErrored && store.translateSearch) {
+      for (final v in await TranslatedSearch.variants(title,
+          provider: store.translateProvider, llm: store.translateLlm)) {
+        r = await _findInSources(metas, v);
+        if (r.match != null) {
+          found = r.match;
+          break;
+        }
+        if (r.allErrored) break; // 全源挂了:别再对着已挂的源试下一个译名
+      }
+    }
+    if (!mounted) return;
+    setState(() => _recOpening = false);
+    if (found == null) {
+      showAppNotify(context, '源里没找到《$title》', kind: AppNotifyKind.info);
+      return;
+    }
+    Navigator.of(context).push(
+        appRoute(DetailPage(manga: found.manga, meta: found.meta)));
+  }
+
+  /// 在给定源里并发搜 [query],返回第一个 [sameWork] 命中;[allErrored]=所有源都抛错
+  /// (区分「真没搜到」与「全源失败」——后者不该触发翻译回退)。
+  Future<({({SourceMeta meta, Manga manga})? match, bool allErrored})>
+      _findInSources(List<SourceMeta> metas, String query) async {
     ({SourceMeta meta, Manga manga})? found;
+    var okCount = 0; // 成功返回(未抛错)的源数
     await Future.wait(metas.map((meta) async {
       if (found != null) return;
       final src = buildSource(meta);
       try {
-        final r = await src.getSearch(title, 1);
+        final r = await src.getSearch(query, 1);
+        okCount++;
         for (final m in r.items) {
-          if (sameWork(m.title, title)) {
+          if (sameWork(m.title, query)) {
             found ??= (meta: meta, manga: m);
             break;
           }
@@ -358,14 +408,7 @@ class _DetailPageState extends State<DetailPage> {
         src.dispose();
       }
     }));
-    if (!mounted) return;
-    setState(() => _recOpening = false);
-    if (found == null) {
-      showAppNotify(context, '源里没找到《$title》', kind: AppNotifyKind.info);
-      return;
-    }
-    Navigator.of(context).push(
-        appRoute(DetailPage(manga: found!.manga, meta: found!.meta)));
+    return (match: found, allErrored: okCount == 0 && metas.isNotEmpty);
   }
 
   /// 相关推荐:横向封面条(Bangumi 相关条目 + 题材同类)。点击去源里找并打开。
