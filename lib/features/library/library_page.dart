@@ -278,7 +278,6 @@ class _LibraryPageState extends State<LibraryPage> {
             Flexible(
               child: MangaCover(
                 manga: m,
-                sourceLabel: meta?.name,
                 sourceCount: favs[i].sources,
                 headers: meta != null ? imageHeadersOf(meta) : const {},
                 heroTag: tag,
@@ -403,7 +402,6 @@ class _LibraryPageState extends State<LibraryPage> {
                     Flexible(
                       child: MangaCover(
                         manga: m,
-                        sourceLabel: meta?.name,
                         sourceCount: items[i].sources,
                         headers: meta != null ? imageHeadersOf(meta) : const {},
                         heroTag: tag,
@@ -467,7 +465,6 @@ class _LibraryPageState extends State<LibraryPage> {
                 Flexible(
                   child: MangaCover(
                     manga: m,
-                    sourceLabel: meta?.name,
                     sourceCount: favs[i].sources,
                     headers: meta != null ? imageHeadersOf(meta) : const {},
                     heroTag: tag,
@@ -543,7 +540,6 @@ class _LibraryPageState extends State<LibraryPage> {
                       // MangaCover 自带 AspectRatio,直接放,高度自然算出。
                       MangaCover(
                         manga: m,
-                        sourceLabel: meta.name,
                         headers: imageHeadersOf(meta),
                         updated: m.status == MangaStatus.ongoing,
                         aspect: aspectForId(m.id),

@@ -252,7 +252,6 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
             Flexible(
               child: MangaCover(
                 manga: m,
-                sourceLabel: _meta?.name,
                 headers: _meta == null ? const {} : imageHeadersOf(_meta!),
                 onTap: () => _open(m),
               ),

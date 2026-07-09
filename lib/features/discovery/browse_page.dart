@@ -186,7 +186,6 @@ class _BrowsePageState extends State<BrowsePage> {
             child: MangaCover(
               manga: m,
               headers: imageHeadersOf(widget.meta),
-              sourceLabel: widget.meta.name,
               heroTag: tag,
               onTap: () => Navigator.of(context).push(appRoute(
                   DetailPage(manga: m, meta: widget.meta, heroTag: tag))),

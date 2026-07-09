@@ -889,7 +889,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               MangaCover(
                 manga: m,
                 headers: imageHeadersOf(meta),
-                sourceLabel: meta.name,
                 sourceCount: srcCount,
                 aspect: aspectForId(m.id), // 高低错落
                 heroTag: tag,

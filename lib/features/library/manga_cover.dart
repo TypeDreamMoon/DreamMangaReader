@@ -39,7 +39,6 @@ class MangaCover extends StatelessWidget {
     this.updated = false,
     this.radius, // 空=跟随设置里的「封面圆角」
     this.heroTag,
-    this.sourceLabel,
     this.aspect = 3 / 4,
   });
 
@@ -57,9 +56,6 @@ class MangaCover extends StatelessWidget {
 
   /// 封面纵横比(宽:高)。默认 3:4;瀑布流传入按 id 派生的随机比例做高低错落。
   final double aspect;
-
-  /// 非空时在封面左上角显示来源角标(源的展示名)。
-  final String? sourceLabel;
 
   /// 非空时启用 Hero 飞入动画(封面在列表→详情间过渡)。同屏内须唯一。
   final Object? heroTag;
@@ -139,32 +135,7 @@ class MangaCover extends StatelessWidget {
                     ),
                   ),
                 ),
-              // 来源角标(左上)。半透明底,始终压在封面之上。
-              if (sourceLabel != null && sourceLabel!.isNotEmpty)
-                Positioned(
-                  left: 6,
-                  top: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    constraints: const BoxConstraints(maxWidth: 96),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.62),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      sourceLabel!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        height: 1.0,
-                      ),
-                    ),
-                  ),
-                ),
-              // 多源同名去重角标(右上):该书在几个源里都有。用强调色与来源角标区分。
+              // 多源同名去重角标(右上):该书在几个源里都有。用强调色标出。
               if (sourceCount > 1)
                 Positioned(
                   top: 6,
