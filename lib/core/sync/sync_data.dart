@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../app/library_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
+import '../source/title_match.dart' show sameCoreKey;
 
 /// 可选择同步的内容类别。源开关按内容类型拆成漫画源 / 番剧源两档。
 enum SyncCategory {
@@ -251,34 +252,55 @@ class SyncData {
     return out;
   }
 
-  /// 作品级共享进度并集:续读点(话数/章名/时间/源)取**更新时间较新**的一方;
-  /// 已读章话数集合取并集。两端(设备)按各自"最后读到哪"汇合,不丢已读记录。
+  /// 合并两条作品进度:续读点(话数/章名/时间/源)取**更新时间较新**的一方;
+  /// 已读章话数集合取并集。
+  static Map<String, dynamic> _mergeWorkEntry(Map x, Map y) {
+    final recent = _int(x['u']) >= _int(y['u']) ? x : y;
+    final reads = <double>{
+      ...(x['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
+      ...(y['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
+    };
+    return {
+      'n': recent['n'],
+      'l': recent['l'],
+      'u': recent['u'],
+      's': recent['s'],
+      'r': reads.toList(),
+    };
+  }
+
+  /// 作品级共享进度并集:两端(设备)按各自"最后读到哪"汇合,不丢已读记录。
+  /// ①按精确 key 并集;②**模糊合并同作品的不同 key**(繁简/异体字变体跨设备各自
+  /// 建了不同 key)—— key 排序后字典序小者存活,两端产出同一份结果,不留一半分裂。
   static Map<String, dynamic> _mergeWorkProgress(Map a, Map b) {
-    final keys = {...a.keys, ...b.keys};
+    final union = <String, Map>{};
+    void addAll(Map m) {
+      m.forEach((k, v) {
+        if (v is! Map) return;
+        final ks = k.toString();
+        final prev = union[ks];
+        union[ks] = prev == null ? v : _mergeWorkEntry(prev, v);
+      });
+    }
+
+    addAll(a);
+    addAll(b);
+
+    final keys = union.keys.toList()..sort();
     final out = <String, dynamic>{};
     for (final k in keys) {
-      final x = a[k] is Map ? a[k] as Map : null;
-      final y = b[k] is Map ? b[k] as Map : null;
-      if (x == null) {
-        out[k.toString()] = y;
-        continue;
+      String? target;
+      for (final ok in out.keys) {
+        if (sameCoreKey(k, ok)) {
+          target = ok;
+          break;
+        }
       }
-      if (y == null) {
-        out[k.toString()] = x;
-        continue;
+      if (target == null) {
+        out[k] = union[k];
+      } else {
+        out[target] = _mergeWorkEntry(out[target] as Map, union[k]!);
       }
-      final recent = _int(x['u']) >= _int(y['u']) ? x : y;
-      final reads = <double>{
-        ...(x['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
-        ...(y['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
-      };
-      out[k.toString()] = {
-        'n': recent['n'],
-        'l': recent['l'],
-        'u': recent['u'],
-        's': recent['s'],
-        'r': reads.toList(),
-      };
     }
     return out;
   }

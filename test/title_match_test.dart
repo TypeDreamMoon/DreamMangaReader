@@ -23,10 +23,13 @@ void main() {
     expect(sameWork('Ｌｖ.９９９', 'Lv.999'), true);
   });
 
-  test('续作 / 外传不误合', () {
+  test('续作 / 外传 / 卷号后缀不误合(含长基名短后缀)', () {
     expect(sameWork('斗罗大陆', '斗罗大陆2绝世唐门'), false);
     expect(sameWork('刀剑神域', '刀剑神域外传'), false);
     expect(sameWork('进击的巨人', '进击的巨人最终季'), false);
+    expect(sameWork('进击的巨人', '进击的巨人外传'), false); // 5 基名 + 2 后缀
+    expect(sameWork('穿越者的幸运礼', '穿越者的幸运礼外传'), false); // 7 基名 + 2 后缀
+    expect(sameWork('某某某某某某某某某某', '某某某某某某某某某某2'), false); // 10 基名 + 1 后缀
   });
 
   test('不同作品不误合', () {

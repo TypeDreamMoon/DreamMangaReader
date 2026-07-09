@@ -43,22 +43,22 @@ String coreTitle(String s) {
   return core.isEmpty ? normalizeTitle(s) : core;
 }
 
-/// 两个 coreTitle 归一 key 是否**同一作品**——容繁简 + 残留副标题。
-/// 规则:短串/长串长度比 ≥0.7,且短串去重字符命中长串比例 ≥0.7。
-/// 繁简变体多数字相同(高命中)→ 归一;续作/外传(长度差大或重叠低)→ 不归。
+/// 两个 coreTitle 归一 key 是否**同一作品**——容繁简/异体字。
+///
+/// 关键:繁简/异体字是**逐字 1:1**替换,变体**长度相同**;而续作/外传/卷号是**加后缀**
+/// (长度变了)。故:等长 → 按字符重叠(≥0.7)判(接住繁简);不等长 → 判为不同作
+/// (挡掉「XX外传」「XX2」被并进「XX」)。带括号的副标题已由 [coreTitle] 剥掉,不走这里。
 bool sameCoreKey(String a, String b) {
   if (a.isEmpty || b.isEmpty) return false;
   if (a == b) return true;
-  final shorter = a.length <= b.length ? a : b;
-  final longer = a.length <= b.length ? b : a;
-  if (shorter.length / longer.length < 0.7) return false; // 长度差太多 → 不同作
-  final longSet = longer.split('').toSet();
-  final shortDistinct = shorter.split('').toSet();
+  if (a.length != b.length) return false; // 长度不同 = 加了后缀 → 不同作
+  final bSet = b.split('').toSet();
+  final aDistinct = a.split('').toSet();
   var hit = 0;
-  for (final ch in shortDistinct) {
-    if (longSet.contains(ch)) hit++;
+  for (final ch in aDistinct) {
+    if (bSet.contains(ch)) hit++;
   }
-  return hit / shortDistinct.length >= 0.7;
+  return hit / aDistinct.length >= 0.7; // 同长且多数字相同(繁简变体)→ 同作
 }
 
 /// 两个标题是否同一作品(容繁简 + 副标题)。

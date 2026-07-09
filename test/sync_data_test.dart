@@ -64,6 +64,26 @@ void main() {
     expect(wp.containsKey('only'), true);
   });
 
+  test('作品共享进度:繁简变体的不同 key 跨设备模糊合并成一份(不留分裂)', () {
+    // 设备 A 在简体源读、key=简体核心;设备 B 在繁体源读、key=繁体核心(同长、同作品)。
+    final local = blob(1, {
+      'workProgress': {
+        '我的英雄学院': {'n': 10, 'l': '第10话', 'u': 100, 's': 'a', 'r': [9, 10]}
+      }
+    });
+    final remote = blob(1, {
+      'workProgress': {
+        '我的英雄學院': {'n': 22, 'l': '第22话', 'u': 200, 's': 'b', 'r': [21, 22]}
+      }
+    });
+    final wp = (SyncData.merge(local, remote)['library'] as Map)['workProgress']
+        as Map;
+    expect(wp.length, 1); // 两个繁简 key 合成一份,不再分裂
+    final only = wp.values.first as Map;
+    expect(only['n'], 22); // 续读点取时间新的一方(remote)
+    expect((only['r'] as List).toSet(), {9, 10, 21, 22}); // 已读章并集
+  });
+
   test('历史:逐条取 updatedAt 较新', () {
     final local = blob(1, {
       'history': {

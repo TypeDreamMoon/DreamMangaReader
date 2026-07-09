@@ -132,25 +132,28 @@ class _DetailPageState extends State<DetailPage> {
     _mergeLoading = true;
     final loaded = <_SrcChapters>[];
     await Future.wait([
-      // 库里源:mangaId 已知,直接取章节。
+      // 库里源:mangaId 已知,直接取章节。buildSource 放进 try —— 脚本损坏时
+      // 只跳过该源,别让异常抛出 Future.wait(否则 _mergeLoading 卡死 + 兄弟源引擎泄漏)。
       for (final e in lib.entries)
         () async {
           final meta = _metaById(e.key);
           if (meta == null) return;
-          final src = buildSource(meta);
+          MangaSource? src;
           try {
+            src = buildSource(meta);
             final page = await src.getChapters(e.value.mangaId);
             loaded.add(_SrcChapters(meta, src, e.value.mangaId, e.value.title,
                 e.value.cover, page.items));
           } catch (_) {
-            src.dispose();
+            src?.dispose();
           }
         }(),
       // 主动搜索源:先搜、匹配同作品、再取章节。
       for (final meta in toSearch)
         () async {
-          final src = buildSource(meta);
+          MangaSource? src;
           try {
+            src = buildSource(meta);
             final r = await src.getSearch(widget.manga.title, 1);
             Manga? match;
             for (final m in r.items) {
@@ -167,7 +170,7 @@ class _DetailPageState extends State<DetailPage> {
             loaded.add(_SrcChapters(
                 meta, src, match.id, match.title, match.cover, page.items));
           } catch (_) {
-            src.dispose();
+            src?.dispose();
           }
         }(),
     ]);
