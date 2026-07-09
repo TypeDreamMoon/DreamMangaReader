@@ -53,6 +53,8 @@ class _DetailPageState extends State<DetailPage> {
   BangumiInfo? _bgm; // Bangumi 评分(置信匹配到才有,否则 null)
   bool _bgmLoading = true; // Bangumi 匹配中(区分「加载中」和「没匹配到」)
   bool _bgmSummaryExpanded = false; // Bangumi 简介是否展开
+  List<BangumiCandidate> _recommend = const []; // Bangumi 相关推荐
+  bool _recOpening = false; // 正在为某条推荐找可读的源
   late Object _tintToken; // 全局背景封面色的栈 token(本页在栈,离开出栈)
   Color? _coverTint; // 算好的封面色(取消返回时用它重新压栈)
   bool _tintPushed = true; // 封面色当前是否在栈里
@@ -318,6 +320,162 @@ class _DetailPageState extends State<DetailPage> {
       _bgm = info;
       _bgmLoading = false;
     });
+    if (info != null) _loadRecommend(info);
+  }
+
+  /// 拉 Bangumi 相关推荐(相关条目 + 题材同类)。失败静默。
+  Future<void> _loadRecommend(BangumiInfo info) async {
+    final recs = await BangumiApi.recommend(info);
+    if (mounted) setState(() => _recommend = recs);
+  }
+
+  /// 点某条推荐 → 在已启用源里并发搜同名,找到就打开它的详情页;没有则提示。
+  Future<void> _openRecommend(BangumiCandidate rec) async {
+    if (_recOpening) return;
+    final title = rec.display;
+    final store = LibraryScope.read(context);
+    final metas = [
+      for (final s in registeredSources)
+        if (s.kind == 'manga' && store.isSourceEnabled(s.id)) s,
+    ];
+    if (metas.isEmpty) return;
+    setState(() => _recOpening = true);
+    showAppNotify(context, '在源里找《$title》…', kind: AppNotifyKind.info);
+    ({SourceMeta meta, Manga manga})? found;
+    await Future.wait(metas.map((meta) async {
+      if (found != null) return;
+      final src = buildSource(meta);
+      try {
+        final r = await src.getSearch(title, 1);
+        for (final m in r.items) {
+          if (sameWork(m.title, title)) {
+            found ??= (meta: meta, manga: m);
+            break;
+          }
+        }
+      } catch (_) {
+      } finally {
+        src.dispose();
+      }
+    }));
+    if (!mounted) return;
+    setState(() => _recOpening = false);
+    if (found == null) {
+      showAppNotify(context, '源里没找到《$title》', kind: AppNotifyKind.info);
+      return;
+    }
+    Navigator.of(context).push(
+        appRoute(DetailPage(manga: found!.manga, meta: found!.meta)));
+  }
+
+  /// 相关推荐:横向封面条(Bangumi 相关条目 + 题材同类)。点击去源里找并打开。
+  Widget _recommendSection(AppPalette p) {
+    if (_recommend.isEmpty) return const SizedBox.shrink();
+    final acc = _cover?.primary ?? p.accent;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              Text('相关推荐',
+                  style: TextStyle(
+                      color: Color.lerp(p.textPrimary, acc, 0.4),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13)),
+              const SizedBox(width: 6),
+              if (_recOpening)
+                SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: p.textMuted)),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 168,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _recommend.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, i) => _recCard(p, _recommend[i]),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+    );
+  }
+
+  Widget _recCard(AppPalette p, BangumiCandidate rec) {
+    final grad = coverGradient('${rec.id}');
+    return SizedBox(
+      width: 88,
+      child: Pressable(
+        onTap: () => _openRecommend(rec),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 3 / 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(context.radius),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: grad),
+                      ),
+                    ),
+                    if (rec.image.isNotEmpty)
+                      CachedNetworkImage(
+                        cacheManager: appImageCache,
+                        imageUrl: rec.image,
+                        fit: BoxFit.cover,
+                        fadeInDuration: const Duration(milliseconds: 180),
+                        errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    if (rec.score > 0)
+                      Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.66),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(rec.score.toStringAsFixed(1),
+                              style: TextStyle(
+                                  color: p.bangumi,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800)),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(rec.display,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: p.textPrimary,
+                    fontSize: 11,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 手动搜索 Bangumi 并绑定(自动匹配不准/没匹配到时用)。绑定会持久化。
@@ -348,6 +506,7 @@ class _DetailPageState extends State<DetailPage> {
       _bgm = info;
       _bgmLoading = false;
     });
+    _loadRecommend(info);
   }
 
   /// 换源:在其它已启用源里搜同名漫画,选中后用该源重开详情页(替换当前页,
@@ -500,6 +659,7 @@ class _DetailPageState extends State<DetailPage> {
               SliverToBoxAdapter(child: _cta(p, store, dl)),
               SliverToBoxAdapter(child: _bangumiCard(p)),
               SliverToBoxAdapter(child: _synopsis(p)),
+              SliverToBoxAdapter(child: _recommendSection(p)),
               ..._chapterSlivers(p, store, dl),
             ],
           ),
@@ -525,6 +685,7 @@ class _DetailPageState extends State<DetailPage> {
                     _cta(p, store, dl),
                     _bangumiCard(p),
                     _synopsis(p),
+                    _recommendSection(p),
                   ],
                 ),
               ),

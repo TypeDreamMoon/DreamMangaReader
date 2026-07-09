@@ -270,4 +270,90 @@ class BangumiApi {
     if (info == null || info.score <= 0) return null; // 没评分不显示
     return info;
   }
+
+  /// 相关推荐:① Bangumi「相关条目」里的**书籍**(同系列/番外等,最相关,排前);
+  /// ② 再按一个「题材 tag」搜同类补齐(按评分)。合并去重、排除自身,截断 [limit]。
+  static Future<List<BangumiCandidate>> recommend(BangumiInfo bgm,
+      {int limit = 12}) async {
+    final seen = <int>{bgm.id};
+    final out = <BangumiCandidate>[];
+
+    // ① 相关条目(只要书籍 type=1)。
+    try {
+      final r = await _dio
+          .get<dynamic>('https://api.bgm.tv/v0/subjects/${bgm.id}/subjects');
+      if (r.data is List) {
+        for (final raw in r.data as List) {
+          if (raw is! Map || (raw['type'] as num?)?.toInt() != 1) continue;
+          final c = _candidateFromV0(raw);
+          if (c != null && c.display.isNotEmpty && seen.add(c.id)) out.add(c);
+        }
+      }
+    } catch (_) {}
+
+    // ② 题材 tag 搜同类补齐(按评分)。
+    final tag = _genreTag(bgm);
+    if (tag != null && out.length < limit) {
+      try {
+        final r = await _dio.post<dynamic>(
+          'https://api.bgm.tv/v0/search/subjects',
+          queryParameters: {'limit': 20},
+          data: {
+            'keyword': '',
+            'sort': 'rank',
+            'filter': {
+              'type': [1],
+              'tag': [tag],
+            },
+          },
+        );
+        final d = r.data;
+        final tagged = <BangumiCandidate>[];
+        if (d is Map && d['data'] is List) {
+          for (final raw in d['data'] as List) {
+            if (raw is! Map) continue;
+            final c = _candidateFromV0(raw);
+            if (c != null && c.display.isNotEmpty && seen.add(c.id)) {
+              tagged.add(c);
+            }
+          }
+        }
+        tagged.sort((a, b) => b.score.compareTo(a.score));
+        out.addAll(tagged);
+      } catch (_) {}
+    }
+    return out.take(limit).toList();
+  }
+
+  static BangumiCandidate? _candidateFromV0(Map raw) {
+    final id = (raw['id'] as num?)?.toInt();
+    if (id == null) return null;
+    final rating = (raw['rating'] as Map?) ?? const {};
+    return BangumiCandidate(
+      id: id,
+      name: (raw['name'] ?? '').toString(),
+      nameCn: (raw['name_cn'] ?? '').toString(),
+      date: (raw['date'] ?? raw['air_date'] ?? '').toString(),
+      score: (rating['score'] as num?)?.toDouble() ?? 0,
+      votes: (rating['total'] as num?)?.toInt() ?? 0,
+      image: _img(raw['images']),
+    );
+  }
+
+  /// 从 tag 里挑一个「题材」tag:跳过太泛(漫画/日本…)、作者名、书名本身、单字。
+  static String? _genreTag(BangumiInfo bgm) {
+    const skip = {
+      '漫画', '漫畫', '小说', '小說', '轻小说', '輕小說', '日本', '中国', '中國',
+      '韩国', '韓國', '美国', '美國', '欧美', '连载', '完结', '連載', '完結',
+      'tv', 'ova', 'oad', '剧场版', '劇場版', '短片', '港台'
+    };
+    for (final t in bgm.tags) {
+      if (t.length < 2) continue;
+      if (skip.contains(t.toLowerCase())) continue;
+      if (bgm.name.contains(t) || bgm.nameOrig.contains(t)) continue; // 书名
+      if (bgm.infobox.any((e) => e.$2.contains(t))) continue; // 作者/出版社等
+      return t;
+    }
+    return null;
+  }
 }
