@@ -7,6 +7,7 @@ import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/source/title_match.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/source_picker.dart';
@@ -83,6 +84,67 @@ class _LibraryPageState extends State<LibraryPage> {
       Navigator.of(context).push(
         appRoute(DetailPage(manga: m, meta: meta, heroTag: heroTag)),
       );
+
+  // ---- 多源同名去重(书架把同一作品的多源副本合成一张卡)----
+
+  /// 归一标题 → 拥有该作品的源集合(收藏 ∪ 历史),驱动「N源」角标 + 分组。
+  Map<String, Set<String>> _sourcesByWork(LibraryStore store) {
+    final m = <String, Set<String>>{};
+    void add(String title, String sid) {
+      final k = normalizeTitle(title);
+      if (k.isEmpty) return;
+      (m[k] ??= <String>{}).add(sid);
+    }
+
+    for (final f in store.favorites) {
+      add(f.title, f.sourceId);
+    }
+    for (final h in store.history) {
+      add(h.title, h.sourceId);
+    }
+    return m;
+  }
+
+  /// 收藏去重:同名合成一组,代表优先「最后阅读的源」的那条(没有则最近收藏的)。
+  List<({FavoriteEntry rep, int sources})> _dedupFavs(LibraryStore store) {
+    final srcMap = _sourcesByWork(store);
+    final groups = <String, List<FavoriteEntry>>{}; // 插入序 = 收藏序(最近在前)
+    for (final f in store.favorites) {
+      final nk = normalizeTitle(f.title);
+      final key = nk.isEmpty ? 'raw:${f.key}' : nk; // 无法归一 → 每条独立
+      (groups[key] ??= []).add(f);
+    }
+    final out = <({FavoriteEntry rep, int sources})>[];
+    groups.forEach((key, group) {
+      final lastSrc = store.workProgressFor(group.first.title)?.lastSourceId;
+      var rep = group.first;
+      if (lastSrc != null) {
+        for (final f in group) {
+          if (f.sourceId == lastSrc) {
+            rep = f;
+            break;
+          }
+        }
+      }
+      final nk = normalizeTitle(rep.title);
+      out.add((rep: rep, sources: nk.isEmpty ? 1 : (srcMap[nk]?.length ?? 1)));
+    });
+    return out;
+  }
+
+  /// 继续阅读去重:同名只留最近读的那条。
+  List<({ReadState rep, int sources})> _dedupHistory(LibraryStore store) {
+    final srcMap = _sourcesByWork(store);
+    final seen = <String>{};
+    final out = <({ReadState rep, int sources})>[];
+    for (final h in store.history) {
+      final nk = normalizeTitle(h.title);
+      final key = nk.isEmpty ? 'raw:${h.key}' : nk;
+      if (!seen.add(key)) continue; // 保留第一条(history 已按最近排序)
+      out.add((rep: h, sources: nk.isEmpty ? 1 : (srcMap[nk]?.length ?? 1)));
+    }
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -188,8 +250,9 @@ class _LibraryPageState extends State<LibraryPage> {
 
   Widget _shelfResults(AppPalette p, LibraryStore store) {
     final q = _shelfQuery.toLowerCase();
-    final favs =
-        store.favorites.where((f) => f.title.toLowerCase().contains(q)).toList();
+    final favs = _dedupFavs(store)
+        .where((e) => e.rep.title.toLowerCase().contains(q))
+        .toList();
     if (favs.isEmpty) {
       return EmptyState(title: '收藏里没有匹配「$_shelfQuery」的');
     }
@@ -198,7 +261,7 @@ class _LibraryPageState extends State<LibraryPage> {
       gridDelegate: _coverGrid(store.gridColumns),
       itemCount: favs.length,
       itemBuilder: (context, i) {
-        final f = favs[i];
+        final f = favs[i].rep;
         final meta = _metaById(f.sourceId);
         final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
         final tag = meta != null ? 'search:${meta.id}:${m.id}' : null;
@@ -209,6 +272,7 @@ class _LibraryPageState extends State<LibraryPage> {
               child: MangaCover(
                 manga: m,
                 sourceLabel: meta?.name,
+                sourceCount: favs[i].sources,
                 headers: meta != null ? imageHeadersOf(meta) : const {},
                 heroTag: tag,
                 onTap: meta != null
@@ -283,9 +347,9 @@ class _LibraryPageState extends State<LibraryPage> {
     return h.lastChapterName;
   }
 
-  // 继续阅读:横向卡片条。
+  // 继续阅读:横向卡片条(同名书跨源去重为一张,带「N源」角标)。
   Widget _continueStrip(AppPalette p, LibraryStore store) {
-    final items = store.history.take(12).toList();
+    final items = _dedupHistory(store).take(12).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -318,7 +382,7 @@ class _LibraryPageState extends State<LibraryPage> {
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (context, i) {
-              final h = items[i];
+              final h = items[i].rep;
               final meta = _metaById(h.sourceId);
               final m = Manga(id: h.mangaId, title: h.title, cover: h.cover);
               final tag = meta != null ? 'cont:${meta.id}:${m.id}' : null;
@@ -333,6 +397,7 @@ class _LibraryPageState extends State<LibraryPage> {
                       child: MangaCover(
                         manga: m,
                         sourceLabel: meta?.name,
+                        sourceCount: items[i].sources,
                         headers: meta != null ? imageHeadersOf(meta) : const {},
                         heroTag: tag,
                         onTap: meta != null
@@ -373,7 +438,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   // 收藏网格。
   Widget _favoritesSection(AppPalette p, LibraryStore store) {
-    final favs = store.favorites;
+    final favs = _dedupFavs(store); // 同名书跨源去重为一张卡(带「N源」角标)
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -385,7 +450,7 @@ class _LibraryPageState extends State<LibraryPage> {
           gridDelegate: _coverGrid(store.gridColumns),
           itemCount: favs.length,
           itemBuilder: (context, i) {
-            final f = favs[i];
+            final f = favs[i].rep;
             final meta = _metaById(f.sourceId);
             final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
             final tag = meta != null ? 'fav:${meta.id}:${m.id}' : null;
@@ -396,6 +461,7 @@ class _LibraryPageState extends State<LibraryPage> {
                   child: MangaCover(
                     manga: m,
                     sourceLabel: meta?.name,
+                    sourceCount: favs[i].sources,
                     headers: meta != null ? imageHeadersOf(meta) : const {},
                     heroTag: tag,
                     onTap: meta != null
