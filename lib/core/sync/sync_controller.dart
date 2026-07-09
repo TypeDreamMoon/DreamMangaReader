@@ -209,21 +209,33 @@ class SyncController extends ChangeNotifier {
       final sel = syncCategories;
       final applyModes = {for (final c in sel) c: false}; // 自动同步:合并后整份覆盖本地
       final backend = _backend();
+      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 类别 ${_catLabel(sel)}',
+          detail: '类别:${sel.map((c) => c.name).join(', ')}');
       final local = SyncData.build(lib, repo, categories: sel);
+      AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
+      AppLog.i.debug(LogCat.sync,
+          remote == null ? '拉取远端 · 无数据(首次同步)' : '拉取远端 · ${_dataSummary(remote)}');
       var merged = remote == null ? local : SyncData.merge(local, remote);
+      if (remote != null) {
+        AppLog.i.debug(LogCat.sync, '合并本地+远端 · ${_dataSummary(merged)}');
+      }
       await SyncData.apply(merged, lib, repo, modes: applyModes);
+      AppLog.i.debug(LogCat.sync, '已应用合并结果到本地');
 
       // 推回;账号后端可能因并发写入抛 SyncConflict → 与服务端最新态重合并后重试。
       var attempt = 0;
       while (true) {
         try {
           await backend.push(merged);
+          AppLog.i.debug(LogCat.sync,
+              attempt == 0 ? '已推送到远端' : '重试推送成功(第 ${attempt + 1} 次)');
           break;
         } on SyncConflict catch (c) {
           if (++attempt > 3) {
             throw Exception('同步冲突,多次重试仍失败,请稍后再试');
           }
+          AppLog.i.warn(LogCat.sync, '推送遇并发冲突,重合并后重试(第 $attempt 次)');
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
             await SyncData.apply(merged, lib, repo, modes: applyModes);
@@ -261,16 +273,24 @@ class SyncController extends ChangeNotifier {
     final sw = Stopwatch()..start();
     try {
       final backend = _backend();
+      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(syncCategories)}',
+          detail: '类别:${syncCategories.map((c) => c.name).join(', ')}');
       final local = SyncData.build(lib, repo, categories: syncCategories);
+      AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
+      AppLog.i.debug(LogCat.sync,
+          remote == null ? '拉取远端 · 无数据' : '拉取远端(保留未选类别)· ${_dataSummary(remote)}');
       var toPush = remote == null ? local : SyncData.overlay(remote, local);
       var attempt = 0;
       while (true) {
         try {
           await backend.push(toPush);
+          AppLog.i.debug(LogCat.sync,
+              attempt == 0 ? '已覆盖上传到远端' : '重试上传成功(第 ${attempt + 1} 次)');
           break;
         } on SyncConflict catch (c) {
           if (++attempt > 3) throw Exception('上传冲突,多次重试仍失败,请稍后再试');
+          AppLog.i.warn(LogCat.sync, '上传遇并发冲突,重叠加后重试(第 $attempt 次)');
           toPush = c.remote == null ? local : SyncData.overlay(c.remote!, local);
         }
       }
@@ -305,13 +325,20 @@ class SyncController extends ChangeNotifier {
     final sw = Stopwatch()..start();
     try {
       final backend = _backend();
+      final modeText = modes.entries
+          .map((e) => '${e.key.name}(${e.value ? '追加' : '覆盖'})')
+          .join(', ');
+      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 下载 ${modes.length} 项',
+          detail: modeText);
       final remote = await backend.pull();
       if (remote == null) {
         status = '服务器暂无数据';
         AppLog.i.warn(LogCat.sync, '云端下载:$status');
         return status;
       }
+      AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
       await SyncData.apply(remote, lib, repo, modes: modes);
+      AppLog.i.debug(LogCat.sync, '已写入本地(${modes.length} 项)');
       await _stampSynced();
       status = '已下载 · ${modes.length} 项';
       AppLog.i.success(LogCat.sync, '云端$status · ${sw.elapsedMilliseconds}ms');
@@ -332,6 +359,23 @@ class SyncController extends ChangeNotifier {
 
   static String _catLabel(Set<SyncCategory> c) =>
       '${c.length} 项';
+
+  // 日志用:后端名 + 快照内容摘要(收藏/历史条数、是否含源仓库配置)。
+  String get _backendLabel => isHertz ? '账号(Hertz)' : 'WebDAV';
+
+  static String _dataSummary(Map<String, dynamic> d) {
+    int cnt(dynamic x) => x is List ? x.length : (x is Map ? x.length : 0);
+    final lib = d['library'];
+    final parts = <String>[];
+    if (lib is Map) {
+      if (lib['favorites'] != null) parts.add('收藏 ${cnt(lib['favorites'])}');
+      if (lib['history'] != null) parts.add('历史 ${cnt(lib['history'])}');
+      if (lib['mangaSources'] != null) parts.add('漫画源脚本');
+      if (lib['animeSources'] != null) parts.add('番剧源脚本');
+    }
+    if (d['sourceRepo'] != null) parts.add('源仓库配置');
+    return parts.isEmpty ? '空' : parts.join(' · ');
+  }
 
   /// 启动时自动同步(开了自动 + 当前后端已就绪才跑);best-effort,失败只记状态不抛。
   Future<void> autoSyncOnStart(LibraryStore lib, SourceRepository repo) async {
