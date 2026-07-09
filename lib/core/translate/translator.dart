@@ -22,6 +22,39 @@ enum TranslateLang {
   final String short;
 }
 
+/// 粗判文本语言(给自动翻译回退按**源语言**选目标顺序用):按 Unicode 脚本判——
+/// 谚文→韩、假名→日、汉字→中(含繁体粗判)、拉丁→英;都判不出则默认简体中文。
+/// 不追求精确,只要能把常见漫画名分到对的「源语言」桶即可。
+TranslateLang detectLang(String text) {
+  var hangul = 0, kana = 0, han = 0, latin = 0;
+  var trad = false;
+  for (final r in text.runes) {
+    if ((r >= 0xAC00 && r <= 0xD7A3) || (r >= 0x1100 && r <= 0x11FF)) {
+      hangul++;
+    } else if ((r >= 0x3040 && r <= 0x30FF) || (r >= 0x31F0 && r <= 0x31FF)) {
+      kana++;
+    } else if ((r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF)) {
+      han++;
+      if (_tradChars.contains(r)) trad = true;
+    } else if ((r >= 0x41 && r <= 0x5A) || (r >= 0x61 && r <= 0x7A)) {
+      latin++;
+    }
+  }
+  if (hangul > 0) return TranslateLang.ko;
+  if (kana > 0) return TranslateLang.ja;
+  if (han > 0) return trad ? TranslateLang.zhHant : TranslateLang.zhHans;
+  if (latin > 0) return TranslateLang.en;
+  return TranslateLang.zhHans;
+}
+
+// 常见「繁体专用字」(简体已并写成别的字形):出现任一即判为繁体。仅作粗判——
+// 判不准也没关系,translateTargetsFor 会兜底追加源语言把繁/简折过来(见其注释)。
+final Set<int> _tradChars =
+    '體國漢愛觀點無與這來時書單擊過還機關們區將車東說話語讀寫龍鳳學會廣開樂傳網陽隊誰對應屬靈藝萬億導壓陰陣齊'
+    '滅賊戰廻呪術戀節種積稱醫藥蟲豐亂麗龜鐵廳灣舊兒黨圖團續戀濟燈為憂麼際隨險陸階級細紅約結給經統絕綠續獨屬懷懶總聯膽臉'
+        .runes
+        .toSet();
+
 /// 翻译服务商。
 enum TranslateProvider {
   google('谷歌翻译 · 免费'),

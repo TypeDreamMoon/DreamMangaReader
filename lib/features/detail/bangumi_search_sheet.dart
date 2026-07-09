@@ -53,6 +53,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
       q,
       enabled: store.translateSearch,
       providers: store.translateProviderOrder,
+      targets: store.translateTargetsFor(q),
       llm: store.translateLlm,
       search: BangumiApi.search,
     );

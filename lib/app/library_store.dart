@@ -6,7 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
-import '../core/translate/translator.dart' show TranslateProvider, LlmConfig;
+import '../core/translate/translator.dart'
+    show TranslateProvider, TranslateLang, LlmConfig, detectLang;
 
 /// 阅读模式:paged=横向翻页(默认),webtoon=纵向连续滚动(条漫)。
 /// 阅读模式:paged=普通横翻(左→右),pagedRtl=日漫横翻(右→左),webtoon=滚动竖读。
@@ -224,6 +225,7 @@ class LibraryStore extends ChangeNotifier {
   static const _maxSearchHistory = 30; // 搜索历史上限(超出丢最旧)
   static const _kTranslateProvider = 'lib.translateProvider'; // 旧:单选服务商(迁移用)
   static const _kTranslateOrder = 'lib.translateOrder'; // 服务商优先级(逗号分隔 name)
+  static const _kTranslateTargets = 'lib.translateTargets'; // 各源语言的目标顺序(JSON)
   static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
   static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
   static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
@@ -284,6 +286,8 @@ class LibraryStore extends ChangeNotifier {
   // 搜索翻译服务商**优先级**:从前到后依次尝试,失败降级到下一个。默认 谷歌→微软→大模型。
   List<TranslateProvider> _translateProviderOrder =
       List.of(TranslateProvider.values);
+  // 自动翻译回退:**每个源语言**一条目标语言优先级(搜不到时按序翻译再搜)。
+  Map<TranslateLang, List<TranslateLang>> _translateTargets = _defaultTargets();
   String _translateLlmBase = ''; // 大模型 API 地址(OpenAI 兼容)
   String _translateLlmKey = ''; // 大模型 API 密钥(仅本机)
   String _translateLlmModel = ''; // 大模型模型名
@@ -387,6 +391,104 @@ class LibraryStore extends ChangeNotifier {
 
   /// 主服务商(= 优先级第一个);展示 / 测试用。
   TranslateProvider get translateProvider => _translateProviderOrder.first;
+
+  /// 各源语言的目标翻译顺序(设置页展示/编辑)。每个 value 恒为「其它 4 种语言」的排列。
+  Map<TranslateLang, List<TranslateLang>> get translateTargets => {
+        for (final e in _translateTargets.entries)
+          e.key: List.unmodifiable(e.value),
+      };
+
+  /// 给某条 [query]:先粗判它的源语言,再返回该源语言配置的目标翻译顺序(自动回退用)。
+  /// 末尾兜底追加**源语言本身**:源语言粗判是启发式,可能判错(如繁体没被识别→当成简体);
+  /// 判错时靠「翻成源语言」这一步把繁→简 / 日文汉字→中文折过来,恢复该译名的搜索召回;
+  /// 判对时它翻出来≈原文、会被归一去重跳过,无副作用(等价旧版「全语言」回退但省掉重复)。
+  List<TranslateLang> translateTargetsFor(String query) {
+    final src = detectLang(query);
+    final targets = List.of(_translateTargets[src] ?? _normTargets(src, const []));
+    targets.add(src);
+    return targets;
+  }
+
+  /// 设置某个源语言的目标翻译顺序(会剔除源语言本身、去重、补全其它语言)。
+  void setTranslateTargets(TranslateLang source, List<TranslateLang> order) {
+    final next = _normTargets(source, order);
+    final cur = _translateTargets[source];
+    if (cur != null && _sameLangs(cur, next)) return;
+    _translateTargets[source] = next;
+    _prefs?.setString(_kTranslateTargets, _targetsJson());
+    notifyListeners();
+  }
+
+  // 默认目标顺序:中文系互为首选,再日/韩/繁,英文垫底(源语言除外)。
+  static Map<TranslateLang, List<TranslateLang>> _defaultTargets() => {
+        TranslateLang.zhHans: const [
+          TranslateLang.ja, TranslateLang.ko, TranslateLang.zhHant, TranslateLang.en],
+        TranslateLang.zhHant: const [
+          TranslateLang.zhHans, TranslateLang.ja, TranslateLang.ko, TranslateLang.en],
+        TranslateLang.ja: const [
+          TranslateLang.zhHans, TranslateLang.zhHant, TranslateLang.ko, TranslateLang.en],
+        TranslateLang.ko: const [
+          TranslateLang.zhHans, TranslateLang.zhHant, TranslateLang.ja, TranslateLang.en],
+        TranslateLang.en: const [
+          TranslateLang.zhHans, TranslateLang.ja, TranslateLang.ko, TranslateLang.zhHant],
+      };
+
+  // 规整:剔除源语言本身 + 去重 + 按默认序补全缺的语言,保证恒为「其它 4 种」的排列。
+  static List<TranslateLang> _normTargets(
+      TranslateLang source, List<TranslateLang> v) {
+    final out = <TranslateLang>[];
+    for (final t in v) {
+      if (t != source && !out.contains(t)) out.add(t);
+    }
+    for (final t in TranslateLang.values) {
+      if (t != source && !out.contains(t)) out.add(t);
+    }
+    return out;
+  }
+
+  static bool _sameLangs(List<TranslateLang> a, List<TranslateLang> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  String _targetsJson() => jsonEncode({
+        for (final e in _translateTargets.entries)
+          e.key.name: e.value.map((t) => t.name).toList(),
+      });
+
+  // 解析持久化的目标顺序 JSON;缺的源语言用默认。
+  static Map<TranslateLang, List<TranslateLang>> _parseTargets(String? raw) {
+    final out = _defaultTargets();
+    if (raw == null || raw.isEmpty) return out;
+    try {
+      final m = jsonDecode(raw);
+      if (m is Map) {
+        TranslateLang? byName(Object? n) {
+          for (final l in TranslateLang.values) {
+            if (l.name == n) return l;
+          }
+          return null;
+        }
+
+        m.forEach((k, v) {
+          final src = byName(k);
+          if (src != null && v is List) {
+            final list = <TranslateLang>[];
+            for (final t in v) {
+              final l = byName(t);
+              if (l != null) list.add(l);
+            }
+            out[src] = _normTargets(src, list);
+          }
+        });
+      }
+    } catch (_) {/* 坏数据 → 用默认 */}
+    return out;
+  }
+
   String get translateLlmBase => _translateLlmBase;
   String get translateLlmKey => _translateLlmKey;
   String get translateLlmModel => _translateLlmModel;
@@ -617,6 +719,7 @@ class LibraryStore extends ChangeNotifier {
         prefs.getString(_kTranslateOrder),
         legacy: prefs.getString(_kTranslateProvider), // 旧版单选:迁移成「它排第一」
       );
+      _translateTargets = _parseTargets(prefs.getString(_kTranslateTargets));
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
       _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
@@ -1179,6 +1282,10 @@ class LibraryStore extends ChangeNotifier {
         'searchHistory': _searchHistory.toList(),
         'translateProviderOrder':
             _translateProviderOrder.map((e) => e.name).toList(),
+        'translateTargets': {
+          for (final e in _translateTargets.entries)
+            e.key.name: e.value.map((t) => t.name).toList(),
+        },
         'translateLlmBase': _translateLlmBase,
         'translateLlmModel': _translateLlmModel,
         // 大模型 API 密钥属敏感数据,仅存本机,不导出/不同步(同源登录 token 同策略)。
@@ -1318,6 +1425,8 @@ class LibraryStore extends ChangeNotifier {
       _translateProviderOrder =
           _parseOrder(null, legacy: j['translateProvider'] as String);
     }
+    final tgts = j['translateTargets'];
+    if (tgts != null) _translateTargets = _parseTargets(jsonEncode(tgts));
     _translateLlmBase = j['translateLlmBase'] as String? ?? _translateLlmBase;
     _translateLlmModel = j['translateLlmModel'] as String? ?? _translateLlmModel;
     if (replaceFavorites) _persistFavorites();
@@ -1372,6 +1481,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
     _prefs?.setString(
         _kTranslateOrder, _translateProviderOrder.map((e) => e.name).join(','));
+    _prefs?.setString(_kTranslateTargets, _targetsJson());
     _prefs?.setString(_kTranslateLlmBase, _translateLlmBase);
     _prefs?.setString(_kTranslateLlmModel, _translateLlmModel);
     notifyListeners();

@@ -332,7 +332,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     if (orig.isEmpty) return;
     final store = LibraryScope.read(context);
     final queue = await TranslatedSearch.variants(orig,
-        providers: store.translateProviderOrder, llm: store.translateLlm);
+        providers: store.translateProviderOrder,
+        targets: store.translateTargetsFor(orig),
+        llm: store.translateLlm);
     if (!mounted || _origQuery != orig) return; // 用户中途换了查询 → 放弃这批译名
     _fallbackQueue = List.of(queue); // 可变副本(下面会逐个 removeAt)
     if (_fallbackQueue!.isNotEmpty) {

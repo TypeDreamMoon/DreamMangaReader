@@ -1,10 +1,11 @@
 import '../source/title_match.dart' show normalizeTitle;
 import 'translator.dart';
 
-/// 带**翻译回退**的通用搜索:先用原文搜,搜不到就依次翻成 简 / 繁 / 英 / 日 再搜,
+/// 带**翻译回退**的通用搜索:先用原文搜,搜不到就按 [targets] 里的目标语言顺序逐个翻译再搜,
 /// 取**第一个有结果**的(并附上所用译名);都搜不到才返回空。全 App 各处搜索共用这一套。
 ///
-/// [enabled]=false(用户在设置里关掉)时只搜原文,不翻译。翻译服务商未配置 / 翻译失败
+/// [targets] 通常来自 `store.translateTargetsFor(query)` —— 按**源语言**定好的目标顺序
+/// (如中文→日/韩/繁/英)。[enabled]=false(设置里关掉)时只搜原文。服务商未配置 / 翻译失败
 /// 都静默降级为原文结果。
 class TranslatedSearch {
   TranslatedSearch._();
@@ -15,6 +16,7 @@ class TranslatedSearch {
     String query, {
     required bool enabled,
     required List<TranslateProvider> providers,
+    required List<TranslateLang> targets,
     required LlmConfig llm,
     required Future<List<T>> Function(String q) search,
   }) async {
@@ -26,7 +28,7 @@ class TranslatedSearch {
     final tr = Translator.chain(providers, llm: llm);
     // 译名与原文(或已试过的)归一相同则跳过,不白搜。
     final tried = <String>{normalizeTitle(query)};
-    for (final lang in TranslateLang.values) {
+    for (final lang in targets) {
       String t;
       try {
         t = (await tr.translate(query, lang)).trim();
@@ -40,19 +42,20 @@ class TranslatedSearch {
     return (results: first, via: null); // 都没搜到
   }
 
-  /// 把 [query] 翻成 简 / 繁 / 英 / 日,与原文归一去重后返回**译名列表**(不含原文)。
+  /// 把 [query] 按 [targets] 顺序逐个翻译,与原文归一去重后返回**译名列表**(不含原文)。
   /// 给需要「先搜原文、后逐个译名」的自定义增量流程复用(如详情页逐源章节合并):
   /// 只翻一次、各处共享,原文命中的地方就不必再搜译名。翻译没配好 / 失败 → 返回空列表。
   static Future<List<String>> variants(
     String query, {
     required List<TranslateProvider> providers,
+    required List<TranslateLang> targets,
     required LlmConfig llm,
   }) async {
     if (query.trim().isEmpty) return const [];
     final tr = Translator.chain(providers, llm: llm);
     final tried = <String>{normalizeTitle(query)};
     final out = <String>[];
-    for (final lang in TranslateLang.values) {
+    for (final lang in targets) {
       try {
         final t = (await tr.translate(query, lang)).trim();
         if (t.isNotEmpty && tried.add(normalizeTitle(t))) out.add(t);

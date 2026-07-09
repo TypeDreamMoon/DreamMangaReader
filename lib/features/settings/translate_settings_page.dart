@@ -21,6 +21,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
   bool _testing = false;
   String? _testResult;
   bool _testOk = false;
+  TranslateLang _targetSource = TranslateLang.zhHans; // 正在编辑目标顺序的源语言
 
   static String _desc(TranslateProvider v) => switch (v) {
         TranslateProvider.google => '免费端点,开箱即用(可能需代理)',
@@ -152,6 +153,97 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
     );
   }
 
+  // 源语言选择芯片。
+  Widget _srcChip(AppPalette p, TranslateLang s) {
+    final sel = _targetSource == s;
+    return GestureDetector(
+      onTap: () => setState(() => _targetSource = s),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: sel ? p.accent.withValues(alpha: 0.16) : p.surface,
+          borderRadius: BorderRadius.circular(context.radius),
+          border: Border.all(color: sel ? p.accent : p.line, width: sel ? 1.5 : 1),
+        ),
+        child: Text('源:${s.label}',
+            style: TextStyle(
+                color: sel ? p.accent : p.textMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+
+  // 目标语言优先级列表里的一行:序号 + 语言名(第一位标「首选」)+ 拖拽把手。
+  Widget _targetRow(AppPalette p, TranslateLang t, int index) {
+    final primary = index == 0;
+    return Padding(
+      key: ValueKey(t),
+      padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+      child: Row(
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: primary ? p.accent.withValues(alpha: 0.16) : p.elevated,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                  color: primary ? p.accent.withValues(alpha: 0.5) : p.line),
+            ),
+            child: Text('${index + 1}',
+                style: TextStyle(
+                    color: primary ? p.accent : p.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(t.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700)),
+                ),
+                if (primary) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: p.accent.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(5)),
+                    child: Text('首选',
+                        style: TextStyle(
+                            color: p.accent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child:
+                  Icon(Icons.drag_handle_rounded, size: 20, color: p.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
@@ -248,6 +340,44 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
               onChanged: (v) => lib.translateLlmModel = v.trim(),
             ),
           ],
+          const SizedBox(height: 18),
+          AppSectionHeading('自动翻译目标语言'),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+                '搜不到时,按「原文的源语言」对应的目标顺序依次翻译再搜(取第一个有结果的)。'
+                '选一个源语言,拖动它的目标语言优先级。',
+                style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
+          ),
+          const SizedBox(height: 10),
+          // 源语言选择:选哪个源语言就编辑它的目标顺序。
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final s in TranslateLang.values) _srcChip(p, s)],
+          ),
+          const SizedBox(height: 10),
+          AppCard(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: ReorderableListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              onReorderItem: (oldIndex, newIndex) {
+                final list = List.of(lib.translateTargets[_targetSource]!);
+                list.insert(newIndex, list.removeAt(oldIndex));
+                lib.setTranslateTargets(_targetSource, list);
+              },
+              children: [
+                for (var i = 0;
+                    i < lib.translateTargets[_targetSource]!.length;
+                    i++)
+                  _targetRow(p, lib.translateTargets[_targetSource]![i], i),
+              ],
+            ),
+          ),
           const SizedBox(height: 18),
           Row(
             children: [
