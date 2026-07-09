@@ -11,6 +11,7 @@ import '../../app/ui_signals.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/color/cover_palette.dart';
 import '../../core/net/image_cache.dart';
+import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -502,15 +503,57 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  /// 继续阅读目标:有阅读进度且能在当前章节表里定位到那一章 → (章节, 上次读到第几页)。
+  /// 继续阅读目标:取「本源本地进度」与「跨源作品共享进度」里更靠后的一个 → (章节, 页)。
+  /// 作品进度(他源读到的)更靠后时,映射到本源话数相同(或最接近且 ≤)的那章,从头读起
+  /// (页码不跨源共享)。都没有则 null。
   ({Chapter chapter, int page})? _resume(LibraryStore store) {
-    final st = store.readState(widget.meta.id, widget.manga.id);
     final chapters = _chapters;
-    if (st == null || st.lastChapterId.isEmpty || chapters == null) return null;
-    for (final c in chapters) {
-      if (c.id == st.lastChapterId) return (chapter: c, page: st.lastPage);
+    if (chapters == null || chapters.isEmpty) return null;
+
+    // 本源本地续读点。
+    Chapter? localCh;
+    var localPage = 0;
+    var localNum = double.negativeInfinity;
+    final st = store.readState(widget.meta.id, widget.manga.id);
+    if (st != null && st.lastChapterId.isNotEmpty) {
+      for (final c in chapters) {
+        if (c.id == st.lastChapterId) {
+          localCh = c;
+          localPage = st.lastPage;
+          localNum = parseChapterNumber(c.name) ?? double.negativeInfinity;
+          break;
+        }
+      }
     }
+
+    // 作品级共享续读点(话数):比本地更靠后时,映射到本源对应章。
+    final workNum = store.workProgressFor(widget.manga.title)?.chapterNumber;
+    if (workNum != null && workNum > localNum) {
+      final target = _chapterForNumber(chapters, workNum);
+      if (target != null) {
+        // 命中的正好是本地那章 → 保留页码;否则从头(他源的页码不通用)。
+        final page = target.id == localCh?.id ? localPage : 0;
+        return (chapter: target, page: page);
+      }
+    }
+    if (localCh != null) return (chapter: localCh, page: localPage);
     return null;
+  }
+
+  /// 在章节表里找话数 == [target] 的章;没有则取话数 ≤ target 的最大那章(尽力对齐)。
+  Chapter? _chapterForNumber(List<Chapter> chapters, double target) {
+    Chapter? floor;
+    var floorNum = double.negativeInfinity;
+    for (final c in chapters) {
+      final n = parseChapterNumber(c.name);
+      if (n == null) continue;
+      if (n == target) return c;
+      if (n < target && n > floorNum) {
+        floorNum = n;
+        floor = c;
+      }
+    }
+    return floor;
   }
 
   Widget _cta(AppPalette p, LibraryStore store, DownloadStore dl) {
