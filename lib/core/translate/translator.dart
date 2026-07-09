@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
-/// 搜索词翻译:简体 / 繁体 / 英文互译。服务商可选谷歌(免费)/ 微软(免费)/ 大模型 API。
+/// 搜索词翻译:简体 / 繁体 / 英 / 日 / 韩 互译。服务商可选谷歌(免费)/ 微软(免费)/ 大模型 API。
 ///
 /// - 谷歌、微软走各自的**免费**网页端点(无需 key,微软自取临时令牌)。
 /// - 大模型走 OpenAI 兼容的 chat/completions(用户在设置里填 地址 / 密钥 / 模型)。
@@ -14,7 +14,8 @@ enum TranslateLang {
   zhHans('简体中文', '简'),
   zhHant('繁體中文', '繁'),
   en('English', 'EN'),
-  ja('日本語', '日');
+  ja('日本語', '日'),
+  ko('한국어', '韩');
 
   const TranslateLang(this.label, this.short);
   final String label;
@@ -101,6 +102,7 @@ class _GoogleTranslator implements Translator {
     TranslateLang.zhHant: 'zh-TW',
     TranslateLang.en: 'en',
     TranslateLang.ja: 'ja',
+    TranslateLang.ko: 'ko',
   };
 
   @override
@@ -147,6 +149,7 @@ class _MicrosoftTranslator implements Translator {
     TranslateLang.zhHant: 'zh-Hant',
     TranslateLang.en: 'en',
     TranslateLang.ja: 'ja',
+    TranslateLang.ko: 'ko',
   };
 
   // 令牌进程内缓存(所有实例共享),提前 2 分钟视为过期。
@@ -218,6 +221,7 @@ class _LlmTranslator implements Translator {
     TranslateLang.zhHant: 'Traditional Chinese',
     TranslateLang.en: 'English',
     TranslateLang.ja: 'Japanese',
+    TranslateLang.ko: 'Korean',
   };
 
   @override
