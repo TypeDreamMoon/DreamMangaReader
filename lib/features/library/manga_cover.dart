@@ -203,6 +203,50 @@ class MangaCover extends StatelessWidget {
   }
 }
 
+/// 列表布局的一行:小封面(带「N源」角标)+ 标题。发现页 / 书架列表布局共用。
+Widget coverListTile(
+  AppPalette p,
+  BuildContext context, {
+  required Manga manga,
+  Map<String, String>? headers,
+  int sourceCount = 1,
+  Object? heroTag,
+  required VoidCallback onTap,
+}) =>
+    Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Pressable(
+        onTap: onTap,
+        hoverElevate: true,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 48,
+              child: MangaCover(
+                manga: manga,
+                headers: headers,
+                sourceCount: sourceCount,
+                heroTag: heroTag,
+                radius: 8,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(manga.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: p.textPrimary,
+                      fontSize: 13,
+                      height: 1.25,
+                      fontWeight: FontWeight.w700)),
+            ),
+            Icon(Icons.chevron_right_rounded, size: 18, color: p.textMuted),
+          ],
+        ),
+      ),
+    );
+
 class _HalftonePainter extends CustomPainter {
   _HalftonePainter(this.color);
   final Color color;

@@ -140,6 +140,18 @@ class SettingsPage extends StatelessWidget {
             )),
             _sliderRow(Icons.rounded_corner_rounded, '封面圆角', lib.coverRadius,
                 0, 24, 12, (v) => lib.coverRadius = v),
+            _rowCard(AppSegmentedRow<FeedLayout>(
+              icon: Icons.dashboard_customize_rounded,
+              title: '封面布局',
+              subtitle: '发现页 / 书架封面容器的排布',
+              segments: const [
+                ButtonSegment(value: FeedLayout.masonry, label: Text('瀑布流')),
+                ButtonSegment(value: FeedLayout.grid, label: Text('网格')),
+                ButtonSegment(value: FeedLayout.list, label: Text('列表')),
+              ],
+              selected: {lib.feedLayout},
+              onSelectionChanged: (s) => lib.feedLayout = s.first,
+            )),
             _switch(
                 Icons.source_rounded,
                 '显示源选择器',

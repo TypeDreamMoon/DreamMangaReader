@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
+import '../../app/library_store.dart' show FeedLayout;
+
 /// 从 seed(用 manga.id)派生一个**稳定**的封面纵横比,做出瀑布流的高低错落。
 /// 同一个 id 永远得到同一个比例 —— 翻页追加 / 重建 / 滚动都不会跳动。
 /// 封面源图是 3/4,这里给卡片一个 [min,max] 的比例,图仍 BoxFit.cover 填满,
@@ -23,49 +25,82 @@ int columnsFor(double width, int columns) {
   return n < 2 ? 2 : n;
 }
 
-/// 瀑布流信息流:接管一个 [CustomScrollView],复用外部 [controller] 做无限滚动,
-/// 底部挂 [footer]。[itemBuilder] 返回整张卡(封面用 [aspectForId] 决定的比例)。
-/// 纯 Dart 布局,Windows 安全。
-class MasonryFeed extends StatelessWidget {
-  const MasonryFeed({
+/// 可切布局的封面信息流:瀑布流 / 网格 / 列表。
+/// - [cardBuilder]:封面+标题卡(瀑布流 / 网格用);[tileBuilder]:横排行(列表用)。
+/// - [controller]/[footer] 给独立滚动的场景(发现页无限滚动);[shrinkWrap]=true 供
+///   嵌进外层 ListView(书架收藏区)时用,自身不滚。纯 Dart 布局,Windows 安全。
+class FeedView extends StatelessWidget {
+  const FeedView({
     super.key,
+    required this.layout,
     required this.itemCount,
-    required this.itemBuilder,
-    required this.controller,
-    required this.footer,
+    required this.cardBuilder,
+    required this.tileBuilder,
+    this.controller,
+    this.footer,
     this.columns = 0,
+    this.shrinkWrap = false,
     this.padding = const EdgeInsets.fromLTRB(14, 10, 14, 6),
-    this.crossAxisSpacing = 12,
-    this.mainAxisSpacing = 14,
   });
 
+  final FeedLayout layout;
   final int itemCount;
-  final Widget Function(BuildContext, int) itemBuilder;
-  final ScrollController controller;
-  final Widget footer;
+  final Widget Function(BuildContext, int) cardBuilder; // 瀑布流/网格
+  final Widget Function(BuildContext, int) tileBuilder; // 列表
+  final ScrollController? controller;
+  final Widget? footer;
   final int columns;
+  final bool shrinkWrap;
   final EdgeInsets padding;
-  final double crossAxisSpacing;
-  final double mainAxisSpacing;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, c) {
           final cols = columnsFor(c.maxWidth, columns);
-          return CustomScrollView(
-            controller: controller,
-            slivers: [
-              SliverPadding(
+          final Widget body;
+          switch (layout) {
+            case FeedLayout.masonry:
+              body = SliverPadding(
                 padding: padding,
                 sliver: SliverMasonryGrid.count(
                   crossAxisCount: cols,
-                  crossAxisSpacing: crossAxisSpacing,
-                  mainAxisSpacing: mainAxisSpacing,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 14,
                   childCount: itemCount,
-                  itemBuilder: itemBuilder,
+                  itemBuilder: cardBuilder,
                 ),
-              ),
-              SliverToBoxAdapter(child: footer),
+              );
+            case FeedLayout.grid:
+              body = SliverPadding(
+                padding: padding,
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 14,
+                    childAspectRatio: 0.60, // 封面 3:4 + 两行标题
+                  ),
+                  delegate: SliverChildBuilderDelegate(cardBuilder,
+                      childCount: itemCount),
+                ),
+              );
+            case FeedLayout.list:
+              body = SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                    padding.left, padding.top, padding.right, padding.bottom),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(tileBuilder,
+                      childCount: itemCount),
+                ),
+              );
+          }
+          return CustomScrollView(
+            controller: controller,
+            shrinkWrap: shrinkWrap,
+            physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+            slivers: [
+              body,
+              if (footer != null) SliverToBoxAdapter(child: footer!),
             ],
           );
         },

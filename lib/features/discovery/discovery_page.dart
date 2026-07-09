@@ -360,7 +360,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       ? _filterBar(p)
                       : const SizedBox(width: double.infinity),
             ),
-            Expanded(child: _grid(p, columns)),
+            Expanded(child: _grid(p, store, columns)),
           ] else if (_kind == ContentKind.anime)
             const Expanded(child: AnimeBrowser())
           else
@@ -866,7 +866,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ],
       );
 
-  Widget _grid(AppPalette p, int columns) {
+  Widget _grid(AppPalette p, LibraryStore store, int columns) {
     if (_results.isEmpty) {
       if (_loading) return const Center(child: CircularProgressIndicator());
       if (_error != null) return _errorView(p);
@@ -875,35 +875,40 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             style: TextStyle(color: p.textMuted, fontSize: 13)),
       );
     }
-    return MasonryFeed(
+    final layout = store.feedLayout;
+    // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
+    int srcCountOf(Manga m) =>
+        _mixed ? (_titleSrcIds[normalizeTitle(m.title)]?.length ?? 1) : 1;
+    void open(Manga m, SourceMeta meta, String tag) => Navigator.of(context)
+        .push(appRoute(DetailPage(manga: m, meta: meta, heroTag: tag)));
+
+    return FeedView(
+      layout: layout,
       controller: _scroll,
       columns: columns,
       itemCount: _results.length,
       footer: _footer(p),
-      itemBuilder: (context, i) {
+      cardBuilder: (context, i) {
         final m = _results[i].manga;
         final meta = _results[i].meta;
-        // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
-        final srcCount = _mixed
-            ? (_titleSrcIds[normalizeTitle(m.title)]?.length ?? 1)
-            : 1;
         // 带下标:搜索/发现结果可能重复同一本,避免 Hero tag 撞车。
         final tag = 'disc:${meta.id}:${m.id}:$i';
+        final cover = MangaCover(
+          manga: m,
+          headers: imageHeadersOf(meta),
+          sourceCount: srcCountOf(m),
+          // 瀑布流:高低错落;网格:统一 3:4。
+          aspect: layout == FeedLayout.masonry ? aspectForId(m.id) : 3 / 4,
+          heroTag: tag,
+          onTap: () => open(m, meta, tag),
+        );
         return FlyInUp(
           seed: m.id, // 稳定:同一张卡飞入距离/延迟不变,翻页不跳
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              MangaCover(
-                manga: m,
-                headers: imageHeadersOf(meta),
-                sourceCount: srcCount,
-                aspect: aspectForId(m.id), // 高低错落
-                heroTag: tag,
-                onTap: () => Navigator.of(context).push(
-                  appRoute(DetailPage(manga: m, meta: meta, heroTag: tag)),
-                ),
-              ),
+              // 网格是固定高单元格 → Flexible 防溢出;瀑布流取自然高。
+              layout == FeedLayout.grid ? Flexible(child: cover) : cover,
               const SizedBox(height: 6),
               Text(m.title,
                   maxLines: 1,
@@ -914,6 +919,20 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       color: p.textPrimary)),
             ],
           ),
+        );
+      },
+      tileBuilder: (context, i) {
+        final m = _results[i].manga;
+        final meta = _results[i].meta;
+        final tag = 'disc:${meta.id}:${m.id}:$i';
+        return FlyInUp(
+          seed: m.id,
+          child: coverListTile(p, context,
+              manga: m,
+              headers: imageHeadersOf(meta),
+              sourceCount: srcCountOf(m),
+              heroTag: tag,
+              onTap: () => open(m, meta, tag)),
         );
       },
     );

@@ -264,57 +264,16 @@ class _LibraryPageState extends State<LibraryPage> {
     if (favs.isEmpty) {
       return EmptyState(title: '收藏里没有匹配「$_shelfQuery」的');
     }
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
-      gridDelegate: _coverGrid(store.gridColumns),
+    final layout = store.feedLayout;
+    return FeedView(
+      layout: layout,
+      columns: store.gridColumns,
       itemCount: favs.length,
-      itemBuilder: (context, i) {
-        final f = favs[i].rep;
-        final meta = _metaById(f.sourceId);
-        final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
-        final tag = meta != null ? 'search:${meta.id}:${m.id}' : null;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Flexible(
-              child: MangaCover(
-                manga: m,
-                sourceCount: favs[i].sources,
-                headers: meta != null ? imageHeadersOf(meta) : const {},
-                heroTag: tag,
-                onTap: meta != null
-                    ? () => _openManga(m, meta, heroTag: tag)
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(f.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: p.textPrimary)),
-          ],
-        );
-      },
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
+      cardBuilder: (context, i) => _favCard(p, favs[i], layout, 'search'),
+      tileBuilder: (context, i) => _favTile(p, favs[i], 'searchl'),
     );
   }
-
-  // 封面网格代理:列数=0 时按窗宽自适应,否则固定列数(设置里可选)。
-  SliverGridDelegate _coverGrid(int columns) => columns <= 0
-      ? const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 168,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 14,
-          childAspectRatio: 0.60,
-        )
-      : SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: columns,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 14,
-          childAspectRatio: 0.60,
-        );
 
   Widget _sectionHeader(AppPalette p, String text) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
@@ -445,50 +404,68 @@ class _LibraryPageState extends State<LibraryPage> {
   // 收藏网格。
   Widget _favoritesSection(AppPalette p, LibraryStore store) {
     final favs = _dedupFavs(store); // 同名书跨源去重为一张卡(带「N源」角标)
+    final layout = store.feedLayout;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _sectionHeader(p, '收藏 · ${favs.length}'),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-          gridDelegate: _coverGrid(store.gridColumns),
+        FeedView(
+          layout: layout,
+          shrinkWrap: true, // 嵌在书架外层 ListView 里,自身不滚
+          columns: store.gridColumns,
           itemCount: favs.length,
-          itemBuilder: (context, i) {
-            final f = favs[i].rep;
-            final meta = _metaById(f.sourceId);
-            final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
-            final tag = meta != null ? 'fav:${meta.id}:${m.id}' : null;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Flexible(
-                  child: MangaCover(
-                    manga: m,
-                    sourceCount: favs[i].sources,
-                    headers: meta != null ? imageHeadersOf(meta) : const {},
-                    heroTag: tag,
-                    onTap: meta != null
-                        ? () => _openManga(m, meta, heroTag: tag)
-                        : null,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(f.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: p.textPrimary)),
-              ],
-            );
-          },
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          cardBuilder: (context, i) => _favCard(p, favs[i], layout, 'fav'),
+          tileBuilder: (context, i) => _favTile(p, favs[i], 'favl'),
         ),
         const SizedBox(height: 14),
       ],
     );
+  }
+
+  // 收藏卡(瀑布流/网格):封面 + 标题。网格用 Flexible 防固定高单元格溢出;瀑布流取自然高。
+  Widget _favCard(AppPalette p, ({FavoriteEntry rep, int sources}) item,
+      FeedLayout layout, String tagPrefix) {
+    final f = item.rep;
+    final meta = _metaById(f.sourceId);
+    final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
+    final tag = meta != null ? '$tagPrefix:${meta.id}:${m.id}' : null;
+    final cover = MangaCover(
+      manga: m,
+      sourceCount: item.sources,
+      headers: meta != null ? imageHeadersOf(meta) : const {},
+      aspect: layout == FeedLayout.masonry ? aspectForId(m.id) : 3 / 4,
+      heroTag: tag,
+      onTap: meta != null ? () => _openManga(m, meta, heroTag: tag) : null,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        layout == FeedLayout.grid ? Flexible(child: cover) : cover,
+        const SizedBox(height: 6),
+        Text(f.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: p.textPrimary)),
+      ],
+    );
+  }
+
+  Widget _favTile(AppPalette p, ({FavoriteEntry rep, int sources}) item,
+      String tagPrefix) {
+    final f = item.rep;
+    final meta = _metaById(f.sourceId);
+    final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
+    final tag = meta != null ? '$tagPrefix:${meta.id}:${m.id}' : null;
+    return coverListTile(p, context,
+        manga: m,
+        headers: meta != null ? imageHeadersOf(meta) : const {},
+        sourceCount: item.sources,
+        heroTag: tag,
+        onTap: meta != null ? () => _openManga(m, meta, heroTag: tag) : () {});
   }
 
   Future<void> _pickSource(SourceMeta current) async {

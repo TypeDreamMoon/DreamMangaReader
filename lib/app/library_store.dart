@@ -23,6 +23,9 @@ enum ReaderOrientation { auto, portrait, landscape }
 /// fitHeight=适应高度,original=原始像素。
 enum ZoomMode { fitScreen, fitWidth, fitHeight, original }
 
+/// 发现页 / 书架封面容器的布局:瀑布流(高低错落)/ 网格(等高)/ 列表(横排行)。
+enum FeedLayout { masonry, grid, list }
+
 /// 一本收藏。存足够渲染书架封面的信息(不依赖再次联网)。
 class FavoriteEntry {
   FavoriteEntry({
@@ -213,6 +216,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kCfSepia = 'lib.cfSepia'; // 滤镜:护眼纸色
   static const _kCfContrast = 'lib.cfContrast'; // 滤镜:对比度
   static const _kZoomMode = 'lib.zoomMode'; // 单页缩放/适配模式
+  static const _kFeedLayout = 'lib.feedLayout'; // 发现/书架封面布局
   static const _kAutoScrollSpeed = 'lib.autoScrollSpeed'; // 条漫自动滚动速度 px/s
   static const _kBangumiBindings = 'lib.bangumiBindings'; // 手动绑定的 bgm 条目
   static const _kSearchHistory = 'lib.searchHistory'; // 漫画搜索历史(可随设置同步)
@@ -270,6 +274,7 @@ class LibraryStore extends ChangeNotifier {
   bool _cfSepia = false; // 滤镜:护眼纸色
   double _cfContrast = 1.0; // 滤镜:对比度(0.5~1.5,1=正常)
   ZoomMode _zoomMode = ZoomMode.fitScreen; // 单页缩放/适配模式
+  FeedLayout _feedLayout = FeedLayout.masonry; // 发现/书架封面布局(默认瀑布流)
   double _autoScrollSpeed = 40; // 条漫自动滚动速度 px/s(10~200)
   final Map<String, int> _bangumiBindings = {}; // 'sid:mid' -> bgm subject id
   final List<String> _searchHistory = []; // 漫画搜索历史(最近在前)
@@ -332,6 +337,7 @@ class LibraryStore extends ChangeNotifier {
   bool get cfSepia => _cfSepia;
   double get cfContrast => _cfContrast;
   ZoomMode get zoomMode => _zoomMode;
+  FeedLayout get feedLayout => _feedLayout;
   double get autoScrollSpeed => _autoScrollSpeed;
   int? bangumiBindingFor(String key) => _bangumiBindings[key];
 
@@ -516,6 +522,9 @@ class LibraryStore extends ChangeNotifier {
       _zoomMode = ZoomMode.values.firstWhere(
           (z) => z.name == prefs.getString(_kZoomMode),
           orElse: () => ZoomMode.fitScreen);
+      _feedLayout = FeedLayout.values.firstWhere(
+          (f) => f.name == prefs.getString(_kFeedLayout),
+          orElse: () => FeedLayout.masonry);
       _autoScrollSpeed =
           (prefs.getDouble(_kAutoScrollSpeed) ?? 40).clamp(10, 200);
       // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
@@ -833,6 +842,13 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  set feedLayout(FeedLayout v) {
+    if (v == _feedLayout) return;
+    _feedLayout = v;
+    _prefs?.setString(_kFeedLayout, v.name);
+    notifyListeners();
+  }
+
   set zoomMode(ZoomMode v) {
     if (v == _zoomMode) return;
     _zoomMode = v;
@@ -1091,6 +1107,7 @@ class LibraryStore extends ChangeNotifier {
         'cfSepia': _cfSepia,
         'cfContrast': _cfContrast,
         'zoomMode': _zoomMode.name,
+        'feedLayout': _feedLayout.name,
         'autoScrollSpeed': _autoScrollSpeed,
         'mangaModes': _mangaModes,
         'bangumiBindings': _bangumiBindings,
@@ -1184,6 +1201,8 @@ class LibraryStore extends ChangeNotifier {
         ((j['cfContrast'] as num?)?.toDouble() ?? _cfContrast).clamp(0.5, 1.5);
     _zoomMode = ZoomMode.values
         .firstWhere((z) => z.name == j['zoomMode'], orElse: () => _zoomMode);
+    _feedLayout = FeedLayout.values
+        .firstWhere((f) => f.name == j['feedLayout'], orElse: () => _feedLayout);
     _autoScrollSpeed =
         ((j['autoScrollSpeed'] as num?)?.toDouble() ?? _autoScrollSpeed)
             .clamp(10, 200);
@@ -1273,6 +1292,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kCfSepia, _cfSepia);
     _prefs?.setDouble(_kCfContrast, _cfContrast);
     _prefs?.setString(_kZoomMode, _zoomMode.name);
+    _prefs?.setString(_kFeedLayout, _feedLayout.name);
     _prefs?.setDouble(_kAutoScrollSpeed, _autoScrollSpeed);
     _prefs?.setString(_kMangaModes, jsonEncode(_mangaModes));
     _prefs?.setString(_kBangumiBindings, jsonEncode(_bangumiBindings));
