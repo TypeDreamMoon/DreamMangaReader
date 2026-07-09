@@ -13,6 +13,7 @@ import '../../core/color/cover_palette.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
+import '../../core/source/title_match.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
@@ -41,6 +42,8 @@ class _DetailPageState extends State<DetailPage> {
   late final MangaSource _source = buildSource(widget.meta);
   Map<String, String> get _imgHeaders => imageHeadersOf(widget.meta);
   List<Chapter>? _chapters;
+  // 库里同名书的其它源章节表:用于把跨源章节合并成一张列表(含各话由哪些源提供)。
+  final List<_SrcChapters> _otherSources = [];
   String? _error;
   Manga? _detail; // 完整详情(简介/分级/作者),异步补,失败则退回列表级信息
   bool _descExpanded = false;
@@ -80,6 +83,140 @@ class _DetailPageState extends State<DetailPage> {
     _loadDetail();
     _extractPalette();
     _loadBangumi();
+    _loadOtherSources();
+  }
+
+  /// 拉库里同名书**其它源**的章节表,供合并跨源章节列表(A 源多出来的话混进 B 源)。
+  /// 只认库里(收藏∪历史)已知 mangaId 的源;每源取一个 mangaId。失败/单源静默跳过。
+  Future<void> _loadOtherSources() async {
+    final store = LibraryScope.read(context);
+    final myTitle = normalizeTitle(widget.manga.title);
+    if (myTitle.isEmpty) return;
+    // 收集别的源里同名书的 mangaId(每源取第一个命中的)。
+    final bySource = <String, String>{}; // sourceId -> mangaId
+    void consider(String title, String sid, String mid) {
+      if (sid == widget.meta.id || bySource.containsKey(sid)) return;
+      if (normalizeTitle(title) == myTitle) bySource[sid] = mid;
+    }
+
+    for (final f in store.favorites) {
+      consider(f.title, f.sourceId, f.mangaId);
+    }
+    for (final h in store.history) {
+      consider(h.title, h.sourceId, h.mangaId);
+    }
+    if (bySource.isEmpty) return;
+    final targets = [
+      for (final e in bySource.entries) (sourceId: e.key, mangaId: e.value)
+    ];
+
+    final loaded = <_SrcChapters>[];
+    await Future.wait(targets.map((t) async {
+      SourceMeta? meta;
+      for (final s in registeredSources) {
+        if (s.id == t.sourceId) {
+          meta = s;
+          break;
+        }
+      }
+      if (meta == null || !store.isSourceEnabled(meta.id)) return;
+      final src = buildSource(meta);
+      try {
+        final page = await src.getChapters(t.mangaId);
+        loaded.add(_SrcChapters(meta, src, t.mangaId, page.items));
+      } catch (_) {
+        src.dispose();
+      }
+    }));
+    if (!mounted) {
+      for (final l in loaded) {
+        l.source.dispose();
+      }
+      return;
+    }
+    setState(() => _otherSources
+      ..clear()
+      ..addAll(loaded));
+  }
+
+  /// 把当前源 + 其它源的章节按话数合并成一张列表。
+  /// - 当前源章节**全保留**(含 上/下 拆章、无号章),不因同话数被折叠;
+  /// - 他源命中已有话数 → 记为该话的「提供源」;他源独有的话数 → 作为补充章加入;
+  /// - 按话数稳定升序(等号保原序,上/下 不乱;无号章沉底)。
+  List<_MergedChapter> _mergedChapters() {
+    final current = _chapters ?? const <Chapter>[];
+    final rows = <_MergedChapter>[];
+    final currentByNumber = <double, List<_MergedChapter>>{}; // 挂他源 provider 用
+    final extraByNumber = <double, _MergedChapter>{}; // 他源独有话数
+
+    for (final c in current) {
+      final n = parseChapterNumber(c.name);
+      final row = _MergedChapter(
+          n, c.name, [_ChapterProvider(widget.meta, _source, c, widget.manga.id)]);
+      rows.add(row);
+      if (n != null) (currentByNumber[n] ??= []).add(row);
+    }
+    for (final os in _otherSources) {
+      for (final c in os.chapters) {
+        final n = parseChapterNumber(c.name);
+        if (n == null) continue; // 他源无号章无法对齐,忽略
+        final prov = _ChapterProvider(os.meta, os.source, c, os.mangaId);
+        final curRows = currentByNumber[n];
+        if (curRows != null) {
+          // 当前源已有该话(可能上/下多行)→ 只挂到第一行,避免重复挂。
+          final r = curRows.first;
+          if (!r.providers.any((pv) => pv.meta.id == os.meta.id)) {
+            r.providers.add(prov);
+          }
+        } else {
+          final er = extraByNumber[n];
+          if (er == null) {
+            final row = _MergedChapter(n, c.name, [prov]);
+            extraByNumber[n] = row;
+            rows.add(row);
+          } else if (!er.providers.any((pv) => pv.meta.id == os.meta.id)) {
+            er.providers.add(prov);
+          }
+        }
+      }
+    }
+    // 稳定升序:等话数按原序(上/下不乱),无号章(null)沉底。
+    final indexed = [for (var i = 0; i < rows.length; i++) (i, rows[i])];
+    indexed.sort((a, b) {
+      final an = a.$2.number ?? double.infinity;
+      final bn = b.$2.number ?? double.infinity;
+      final c = an.compareTo(bn);
+      return c != 0 ? c : a.$1.compareTo(b.$1);
+    });
+    return [for (final e in indexed) e.$2];
+  }
+
+  /// 打开合并列表里的一话:优先用当前源打开(老路径),否则用提供它的他源引擎打开。
+  void _openMerged(_MergedChapter row, {int initialPage = 0}) {
+    _ChapterProvider? cur;
+    for (final pv in row.providers) {
+      if (pv.meta.id == widget.meta.id) {
+        cur = pv;
+        break;
+      }
+    }
+    final prov = cur ?? row.providers.first;
+    if (prov.meta.id == widget.meta.id) {
+      _openChapter(prov.chapter, initialPage: initialPage);
+      return;
+    }
+    // 他源:用它的引擎 + 它的章节表打开(进度记在它自己的 sid:mid 下,共享进度仍按标题汇合)。
+    final os = _otherSources.firstWhere((o) => o.meta.id == prov.meta.id);
+    var idx = os.chapters.indexWhere((x) => x.id == prov.chapter.id);
+    if (idx < 0) idx = 0;
+    Navigator.of(context).push(appRoute(ReaderPage(
+      source: os.source,
+      manga: Manga(
+          id: os.mangaId, title: widget.manga.title, cover: widget.manga.cover),
+      chapters: os.chapters,
+      index: idx,
+      imageHeaders: imageHeadersOf(os.meta),
+    )));
   }
 
   @override
@@ -978,16 +1115,69 @@ class _DetailPageState extends State<DetailPage> {
     ));
   }
 
+  // 单个源的供给角标(章节行下方):当前源用强调色,他源用弱底色。
+  Widget _srcChip(AppPalette p, String name, bool current) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: current ? p.accent.withValues(alpha: 0.16) : p.background,
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(
+              color: current ? p.accent.withValues(alpha: 0.4) : p.line),
+        ),
+        child: Text(name,
+            style: TextStyle(
+                color: current ? p.accent : p.textMuted,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                height: 1.1)),
+      );
+
   Widget _chapterRow(
-      AppPalette p, Chapter c, ChapterMark? mark, DownloadStore dl) {
-    final read = mark != null;
+      AppPalette p, LibraryStore store, _MergedChapter row, DownloadStore dl) {
+    final multi = _otherSources.isNotEmpty; // 有他源才展示「哪些源提供」的角标
+    // 当前源是否提供本话 → 用它的本地标记算 finished/页码/下载。
+    _ChapterProvider? cur;
+    for (final pv in row.providers) {
+      if (pv.meta.id == widget.meta.id) {
+        cur = pv;
+        break;
+      }
+    }
+    final mark = cur != null
+        ? store.chapterMark(widget.meta.id, widget.manga.id, cur.chapter.id)
+        : null;
     final finished = mark?.finished ?? false;
-    final downloaded = dl.isDownloaded(widget.meta.id, widget.manga.id, c.id);
-    final prog = dl.progressOf(widget.meta.id, widget.manga.id, c.id);
+    // 跨源已读:话数在共享已读集合里,或当前源有标记。
+    final workRead = row.number != null &&
+        store.readChaptersFor(widget.manga.title).contains(row.number);
+    final read = workRead || mark != null;
+    // 下载仅当前源提供时可用(他源专属话不在本详情页下载范围)。
+    final downloaded = cur != null &&
+        dl.isDownloaded(widget.meta.id, widget.manga.id, cur.chapter.id);
+    final prog = cur != null
+        ? dl.progressOf(widget.meta.id, widget.manga.id, cur.chapter.id)
+        : null;
+
+    Widget status;
+    if (finished) {
+      status = Icon(Icons.check_circle_rounded, size: 16, color: p.accent);
+    } else if (cur != null && mark != null) {
+      status = Text(
+          '读到 ${mark.page + 1}${mark.total > 0 ? '/${mark.total}' : ''}',
+          style: TextStyle(
+              color: p.accentSoft, fontSize: 10.5, fontWeight: FontWeight.w700));
+    } else if (read) {
+      // 他源读过(本源无页码明细)→ 空心勾。
+      status =
+          Icon(Icons.check_circle_outline_rounded, size: 15, color: p.accentSoft);
+    } else {
+      status = const SizedBox.shrink();
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: GestureDetector(
-        onTap: () => _openChapter(c,
+        onTap: () => _openMerged(row,
             initialPage: (mark != null && !mark.finished) ? mark.page : 0),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1000,44 +1190,56 @@ class _DetailPageState extends State<DetailPage> {
           child: Row(
             children: [
               Expanded(
-                child: Text(c.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: read ? p.textMuted : p.textPrimary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5)),
-              ),
-              if (finished)
-                Icon(Icons.check_circle_rounded, size: 16, color: p.accent)
-              else if (read)
-                Text(
-                    '读到 ${mark.page + 1}${mark.total > 0 ? '/${mark.total}' : ''}',
-                    style: TextStyle(
-                        color: p.accentSoft,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700)),
-              const SizedBox(width: 10),
-              // 下载状态/按钮
-              GestureDetector(
-                onTap: (downloaded || prog != null)
-                    ? null
-                    : () => dl.enqueue(
-                        widget.meta, widget.manga, c, _imgHeaders),
-                child: downloaded
-                    ? Icon(Icons.download_done_rounded, size: 17, color: p.accent)
-                    : prog != null
-                        ? SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: CircularProgressIndicator(
-                                value: prog > 0 ? prog : null,
-                                strokeWidth: 2,
-                                color: p.accent))
-                        : Icon(Icons.download_rounded,
-                            size: 17, color: p.textMuted),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(row.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: read ? p.textMuted : p.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5)),
+                    if (multi) ...[
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          for (final pv in row.providers)
+                            _srcChip(p, pv.meta.name,
+                                pv.meta.id == widget.meta.id),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
               ),
               const SizedBox(width: 8),
+              status,
+              const SizedBox(width: 10),
+              // 下载状态/按钮(仅当前源提供本话时显示)。
+              if (cur != null)
+                GestureDetector(
+                  onTap: (downloaded || prog != null)
+                      ? null
+                      : () => dl.enqueue(
+                          widget.meta, widget.manga, cur!.chapter, _imgHeaders),
+                  child: downloaded
+                      ? Icon(Icons.download_done_rounded,
+                          size: 17, color: p.accent)
+                      : prog != null
+                          ? SizedBox(
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(
+                                  value: prog > 0 ? prog : null,
+                                  strokeWidth: 2,
+                                  color: p.accent))
+                          : Icon(Icons.download_rounded,
+                              size: 17, color: p.textMuted),
+                ),
+              if (cur != null) const SizedBox(width: 8),
               Icon(Icons.chevron_right_rounded, size: 18, color: p.textMuted),
             ],
           ),
@@ -1049,11 +1251,16 @@ class _DetailPageState extends State<DetailPage> {
   List<Widget> _chapterSlivers(
       AppPalette p, LibraryStore store, DownloadStore dl) {
     final acc = _cover?.primary ?? p.accent;
+    // 合并跨源章节(当前源 + 库里同名书的他源;无他源时 = 当前源本身)。
+    final merged = _chapters == null ? const <_MergedChapter>[] : _mergedChapters();
+    final extra = merged.length - (_chapters?.length ?? 0); // 他源补进来的话数
     final header = SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
         child: Text(
-          _chapters == null ? '章节' : '章节 · 共 ${_chapters!.length}',
+          _chapters == null
+              ? '章节'
+              : '章节 · 共 ${merged.length}${extra > 0 ? '(+$extra 他源)' : ''}',
           style: TextStyle(
               color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
               fontWeight: FontWeight.w700,
@@ -1099,23 +1306,18 @@ class _DetailPageState extends State<DetailPage> {
         )),
       ];
     }
-    final list = _chapters!;
     return [
       header,
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
         sliver: SliverList.builder(
-          itemCount: list.length,
+          itemCount: merged.length,
           // 每行从右侧滑入 + 淡入,首屏按下标错落(滚动时也「滚到哪滑到哪」)。
           itemBuilder: (ctx, i) => FadeSlideIn(
             dx: 32,
             offset: 0,
             delayMs: (i < 8 ? i : 8) * 22,
-            child: _chapterRow(
-                p,
-                list[i],
-                store.chapterMark(widget.meta.id, widget.manga.id, list[i].id),
-                dl),
+            child: _chapterRow(p, store, merged[i], dl),
           ),
         ),
       ),
@@ -1127,6 +1329,35 @@ class _DetailPageState extends State<DetailPage> {
     _route?.animation?.removeStatusListener(_onRouteAnim);
     if (_tintPushed) DetailTint.pop(_tintToken); // 兜底:还在栈里就出栈
     _source.dispose();
+    for (final o in _otherSources) {
+      o.source.dispose();
+    }
     super.dispose();
   }
+}
+
+/// 库里同名书某个「他源」的章节表(合并跨源章节列表用)。
+class _SrcChapters {
+  _SrcChapters(this.meta, this.source, this.mangaId, this.chapters);
+  final SourceMeta meta;
+  final MangaSource source;
+  final String mangaId;
+  final List<Chapter> chapters;
+}
+
+/// 一个源对某话的供给:从哪个源、哪个引擎、打开哪一章。
+class _ChapterProvider {
+  _ChapterProvider(this.meta, this.source, this.chapter, this.mangaId);
+  final SourceMeta meta;
+  final MangaSource source;
+  final Chapter chapter;
+  final String mangaId;
+}
+
+/// 合并后的一话:跨源按话数对齐,记录该话由哪些源提供。
+class _MergedChapter {
+  _MergedChapter(this.number, this.label, this.providers);
+  final double? number; // 话数;null = 解析不出(番外等),按当前源原样保留
+  final String label; // 展示章名(取首个 provider 的)
+  final List<_ChapterProvider> providers; // 提供该话的源(当前源优先在前)
 }
