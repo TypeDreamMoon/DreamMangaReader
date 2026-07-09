@@ -128,7 +128,8 @@ class _DetailPageState extends State<DetailPage> {
     ];
     if (lib.isEmpty && toSearch.isEmpty) return;
 
-    setState(() => _mergeLoading = true);
+    // initState 同步段直接赋值(首帧构建会读到);await 后再走真正的 setState。
+    _mergeLoading = true;
     final loaded = <_SrcChapters>[];
     await Future.wait([
       // 库里源:mangaId 已知,直接取章节。
