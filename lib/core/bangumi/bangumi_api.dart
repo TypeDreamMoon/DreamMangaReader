@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../source/title_match.dart' show normalizeTitle, sameCoreKey;
+
 /// Bangumi(番组计划 bgm.tv)条目详情。评分 + 元数据(制作信息、发售、卷话数、简介)。
 class BangumiInfo {
   const BangumiInfo({
@@ -271,14 +273,145 @@ class BangumiApi {
     return info;
   }
 
-  /// 相关推荐:① Bangumi「相关条目」里的**书籍**(同系列/番外等,最相关,排前);
-  /// ② 再按一个「题材 tag」搜同类补齐(按评分)。合并去重、排除自身,截断 [limit]。
+  /// 相关推荐(**基于题材 tag 的内容相似度**,而非 Bangumi 的「相关条目」——后者多是
+  /// 同系列番外/资料集,不算"相似作")。步骤:
+  ///   ① 抽取本作的题材 tag(剔除 漫画/作者/书名/连载状态 等无区分度的);
+  ///   ② 用这些 tag 做几组「与」搜索凑候选池(各结果自带 tags/评分,免逐条再请求);
+  ///   ③ 打分 = 与本作**题材 tag 的加权重叠**(泛 tag 权重低)为主 + 评分微调破平;
+  ///   ④ **排除同系列/衍生**(Bangumi 相关条目 id + 同名/含书名者)与自身。
+  /// 题材 tag 不足时退回「相关条目」兜底。截断 [limit]。
   static Future<List<BangumiCandidate>> recommend(BangumiInfo bgm,
       {int limit = 12}) async {
+    final genre = _genreTags(bgm);
+    if (genre.isEmpty) return _relatedFallback(bgm, limit);
+    final sourceSet = genre.toSet();
+    final nameNorm = normalizeTitle(bgm.name);
+    final origNorm = normalizeTitle(bgm.nameOrig);
+
+    // 同系列/衍生排除集(番外/资料集等 → Bangumi「相关条目」的 id)。
+    final exclude = <int>{bgm.id};
+    try {
+      final r = await _dio
+          .get<dynamic>('https://api.bgm.tv/v0/subjects/${bgm.id}/subjects');
+      if (r.data is List) {
+        for (final x in r.data as List) {
+          final id = x is Map ? (x['id'] as num?)?.toInt() : null;
+          if (id != null) exclude.add(id);
+        }
+      }
+    } catch (_) {}
+
+    // 候选池:多 tag「与」搜索(精准)+ 单 tag(广)。结果自带 tags 用于打分。
+    final pool = <int, ({BangumiCandidate cand, List<String> tags})>{};
+    Future<void> searchTags(List<String> tags) async {
+      if (tags.isEmpty) return;
+      try {
+        final r = await _dio.post<dynamic>(
+          'https://api.bgm.tv/v0/search/subjects',
+          queryParameters: {'limit': 25},
+          data: {
+            'keyword': '',
+            'sort': 'rank',
+            'filter': {
+              'type': [1],
+              'tag': tags,
+            },
+          },
+        );
+        final d = r.data;
+        if (d is Map && d['data'] is List) {
+          for (final raw in d['data'] as List) {
+            if (raw is! Map) continue;
+            final c = _candidateFromV0(raw);
+            if (c == null || c.display.isEmpty) continue;
+            final ctags = ((raw['tags'] as List?) ?? const [])
+                .map((t) => t is Map ? (t['name'] ?? '').toString() : '')
+                .where((s) => s.isNotEmpty)
+                .toList();
+            pool[c.id] = (cand: c, tags: ctags);
+          }
+        }
+      } catch (_) {}
+    }
+
+    await searchTags(genre.take(2).toList()); // 前两题材「与」→ 最相似
+    if (genre.length >= 3) await searchTags([genre[0], genre[2]]); // 换个组合
+    await searchTags([genre.first]); // 广一点
+
+    // 打分 + 过滤同系列/同名。
+    final scored = <({BangumiCandidate cand, double score})>[];
+    for (final e in pool.values) {
+      if (exclude.contains(e.cand.id)) continue;
+      // 同名/衍生(名字互相包含)→ 同一作品的番外,剔掉。
+      final cn = normalizeTitle(e.cand.display);
+      if (cn.isEmpty) continue;
+      if (nameNorm.isNotEmpty && (cn.contains(nameNorm) || nameNorm.contains(cn))) {
+        continue;
+      }
+      if (origNorm.isNotEmpty && (cn.contains(origNorm) || origNorm.contains(cn))) {
+        continue;
+      }
+      var overlap = 0.0;
+      for (final t in e.tags) {
+        if (sourceSet.contains(t)) {
+          overlap += _commonGenre.contains(t) ? 0.5 : 1.0; // 泛 tag 权重低
+        }
+      }
+      if (overlap < 1.0) continue; // 至少 1 个有区分度的题材,或 2 个泛题材
+      scored.add((cand: e.cand, score: overlap * 10 + e.cand.score));
+    }
+    scored.sort((a, b) => b.score.compareTo(a.score));
+    // 去重:同一作品的不同卷 / 版本(如「阿波連さん (2)(3)」)只留评分最高的一个;
+    // 展示名也剥掉卷号 / 版本后缀(卡片更干净,点开去源里搜也更容易命中正作)。
+    final keptKeys = <String>[];
+    final out = <BangumiCandidate>[];
+    for (final e in scored) {
+      final k = normalizeTitle(_stripVolEd(e.cand.display));
+      // 繁简 / 异体 / 语种版本(如「狼与香辛料」vs「狼と香辛料」)也算同作 → 去掉。
+      if (k.isEmpty || keptKeys.any((kk) => kk == k || sameCoreKey(k, kk))) {
+        continue;
+      }
+      keptKeys.add(k);
+      out.add(_cleanRec(e.cand));
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  static final _editionRe = RegExp(
+      r'\s*(愛蔵版|愛藏版|爱藏版|完全版|新装版|新裝版|文库版|文庫版|典藏版|收藏版|珍藏版|合本|豪华版|豪華版|复刻版|復刻版)\s*$');
+
+  /// 剥掉卷号 / 版本后缀:「爆漫王。 (18) 副标题」→「爆漫王。」、「… 愛蔵版」→「…」。
+  static String _stripVolEd(String s) {
+    var x = s.trim();
+    // 括号卷号(及其后的卷标题)到结尾:「 (18) 余裕与赶稿地狱」。
+    x = x
+        .replaceAll(
+            RegExp(r'\s*[(（\[【]\s*(?:vol\.?\s*)?\d+\s*(?:卷|巻|册|冊)?\s*[)）\]】].*$',
+                caseSensitive: false),
+            '')
+        .trim();
+    x = x.replaceAll(RegExp(r'\s*第\s*\d+\s*[卷巻册冊].*$'), '').trim(); // 第N卷→尾
+    x = x.replaceAll(_editionRe, '').trim();
+    return x.isEmpty ? s.trim() : x;
+  }
+
+  /// 展示用:把候选的名字剥掉卷号 / 版本(id/评分/封面不动)。
+  static BangumiCandidate _cleanRec(BangumiCandidate c) => BangumiCandidate(
+        id: c.id,
+        name: _stripVolEd(c.name),
+        nameCn: _stripVolEd(c.nameCn),
+        date: c.date,
+        score: c.score,
+        votes: c.votes,
+        image: c.image,
+      );
+
+  /// 无题材 tag 时的兜底:Bangumi「相关条目」里的书籍。
+  static Future<List<BangumiCandidate>> _relatedFallback(
+      BangumiInfo bgm, int limit) async {
     final seen = <int>{bgm.id};
     final out = <BangumiCandidate>[];
-
-    // ① 相关条目(只要书籍 type=1)。
     try {
       final r = await _dio
           .get<dynamic>('https://api.bgm.tv/v0/subjects/${bgm.id}/subjects');
@@ -290,38 +423,6 @@ class BangumiApi {
         }
       }
     } catch (_) {}
-
-    // ② 题材 tag 搜同类补齐(按评分)。
-    final tag = _genreTag(bgm);
-    if (tag != null && out.length < limit) {
-      try {
-        final r = await _dio.post<dynamic>(
-          'https://api.bgm.tv/v0/search/subjects',
-          queryParameters: {'limit': 20},
-          data: {
-            'keyword': '',
-            'sort': 'rank',
-            'filter': {
-              'type': [1],
-              'tag': [tag],
-            },
-          },
-        );
-        final d = r.data;
-        final tagged = <BangumiCandidate>[];
-        if (d is Map && d['data'] is List) {
-          for (final raw in d['data'] as List) {
-            if (raw is! Map) continue;
-            final c = _candidateFromV0(raw);
-            if (c != null && c.display.isNotEmpty && seen.add(c.id)) {
-              tagged.add(c);
-            }
-          }
-        }
-        tagged.sort((a, b) => b.score.compareTo(a.score));
-        out.addAll(tagged);
-      } catch (_) {}
-    }
     return out.take(limit).toList();
   }
 
@@ -340,20 +441,42 @@ class BangumiApi {
     );
   }
 
-  /// 从 tag 里挑一个「题材」tag:跳过太泛(漫画/日本…)、作者名、书名本身、单字。
-  static String? _genreTag(BangumiInfo bgm) {
-    const skip = {
-      '漫画', '漫畫', '小说', '小說', '轻小说', '輕小說', '日本', '中国', '中國',
-      '韩国', '韓國', '美国', '美國', '欧美', '连载', '完结', '連載', '完結',
-      'tv', 'ova', 'oad', '剧场版', '劇場版', '短片', '港台'
-    };
+  // 无区分度的 tag(载体/地区/连载状态/媒介):不作题材相似依据。
+  static const _tagSkip = {
+    '漫画', '漫畫', '小说', '小說', '轻小说', '輕小說', 'web漫画', '网络漫画', '连载漫画',
+    '单行本', '轻小说分卷', 'web小说', '日本', '中国', '中國', '韩国', '韓國', '美国',
+    '美國', '欧美', '港台', '台湾', '香港', '连载', '完结', '連載', '完結', '连载中',
+    'tv', 'ova', 'oad', '剧场版', '劇場版', '短片', 'comic', 'manga',
+  };
+
+  // 太泛的题材:算相似时权重减半(避免只共一个「奇幻」就当很像)。
+  static const _commonGenre = {
+    '奇幻', '冒险', '冒險', '热血', '熱血', '战斗', '戰鬥', '恋爱', '戀愛', '爱情',
+    '愛情', '搞笑', '喜剧', '喜劇', '日常', '校园', '校園', '治愈', '治癒', '后宫',
+    '後宮', '科幻', '悬疑', '懸疑', '少年', '少女', '青年',
+  };
+
+  /// 抽取本作的「题材」tag(用于相似度):剔除载体/地区/连载状态、作者名、书名类、单字。
+  /// 保序(Bangumi 按 tag 计数降序,越靠前越主流),取前若干。
+  static List<String> _genreTags(BangumiInfo bgm) {
+    final out = <String>[];
+    final nameNorm = normalizeTitle(bgm.name);
+    final origNorm = normalizeTitle(bgm.nameOrig);
     for (final t in bgm.tags) {
       if (t.length < 2) continue;
-      if (skip.contains(t.toLowerCase())) continue;
-      if (bgm.name.contains(t) || bgm.nameOrig.contains(t)) continue; // 书名
-      if (bgm.infobox.any((e) => e.$2.contains(t))) continue; // 作者/出版社等
-      return t;
+      if (_tagSkip.contains(t.toLowerCase())) continue;
+      final tn = normalizeTitle(t);
+      if (tn.isEmpty) continue;
+      if (nameNorm.isNotEmpty && (nameNorm.contains(tn) || tn.contains(nameNorm))) {
+        continue; // 书名/含书名的 tag
+      }
+      if (origNorm.isNotEmpty && (origNorm.contains(tn) || tn.contains(origNorm))) {
+        continue;
+      }
+      if (bgm.infobox.any((e) => e.$2.contains(t))) continue; // 作者/出版社/杂志等
+      out.add(t);
+      if (out.length >= 8) break;
     }
-    return null;
+    return out;
   }
 }
