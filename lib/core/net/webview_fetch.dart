@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../log/app_log.dart';
 import '../source/source.dart';
 
 /// 判断当前 HTML 是否仍是「拦截门页」而非真内容 —— 用于**越门轮询**。
@@ -207,24 +208,37 @@ class WebViewHttpService implements HttpService {
 
   @override
   Future<HostResponse> fetch(HostRequest request) async {
-    // pageJs:加载页面后在其上下文执行脚本,返回值即响应体(需同源 fetch/读页面密钥的源用)。
-    if (request.pageJs != null) {
-      final out = await WebViewFetcher.evalInPage(
+    final sw = Stopwatch()..start();
+    final mode = request.pageJs != null ? 'WebView·JS' : 'WebView';
+    try {
+      // pageJs:加载页面后在其上下文执行脚本,返回值即响应体(需同源 fetch/读页面密钥的源用)。
+      if (request.pageJs != null) {
+        final out = await WebViewFetcher.evalInPage(
+          request.url,
+          request.pageJs!,
+          userAgent: userAgent ?? request.headers['User-Agent'],
+          timeout: request.timeout < const Duration(seconds: 20)
+              ? const Duration(seconds: 30)
+              : request.timeout,
+        );
+        sw.stop();
+        final body = '${out ?? ''}';
+        logHttp(mode, request.url, 200, body.length, sw.elapsedMilliseconds);
+        return HostResponse(status: 200, headers: const {}, body: body);
+      }
+      final html = await WebViewFetcher.fetchHtml(
         request.url,
-        request.pageJs!,
         userAgent: userAgent ?? request.headers['User-Agent'],
-        timeout: request.timeout < const Duration(seconds: 20)
-            ? const Duration(seconds: 30)
-            : request.timeout,
+        raw: request.rawHtml,
+        headers: request.headers,
       );
-      return HostResponse(status: 200, headers: const {}, body: '${out ?? ''}');
+      sw.stop();
+      logHttp(mode, request.url, 200, html.length, sw.elapsedMilliseconds);
+      return HostResponse(status: 200, headers: const {}, body: html);
+    } catch (e) {
+      sw.stop();
+      logHttpError(mode, request.url, sw.elapsedMilliseconds, e);
+      rethrow;
     }
-    final html = await WebViewFetcher.fetchHtml(
-      request.url,
-      userAgent: userAgent ?? request.headers['User-Agent'],
-      raw: request.rawHtml,
-      headers: request.headers,
-    );
-    return HostResponse(status: 200, headers: const {}, body: html);
   }
 }

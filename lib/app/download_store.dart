@@ -148,8 +148,9 @@ class DownloadStore extends ChangeNotifier {
   Future<void> _run(_Job job) async {
     final key = job.key;
     final label = '《${job.manga.title}》${job.chapter.name}';
+    final sw = Stopwatch()..start();
     final source = buildSource(job.meta);
-    AppLog.i.info(LogCat.download, '开始下载 $label');
+    AppLog.i.info(LogCat.download, '开始下载 $label', detail: '源:${job.meta.name}');
     try {
       final pages = await source.getPages(job.manga.id, job.chapter.id);
       if (pages.isEmpty) {
@@ -194,9 +195,10 @@ class DownloadStore extends ChangeNotifier {
       _progress.remove(key);
       _persist();
       notifyListeners();
-      AppLog.i.success(LogCat.download, '下载完成 $label · ${pages.length} 页');
+      AppLog.i.success(LogCat.download,
+          '下载完成 $label · ${pages.length} 页 · ${sw.elapsedMilliseconds}ms');
     } catch (e) {
-      AppLog.i.err(LogCat.download, '$label 下载出错:$e');
+      AppLog.i.err(LogCat.download, '$label 下载出错', detail: '$e');
       _progress.remove(key);
       notifyListeners();
     } finally {

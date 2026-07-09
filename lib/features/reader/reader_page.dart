@@ -183,6 +183,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _loadInitial() async {
     final label = '《${widget.manga.title}》${_startChapter.name}';
+    final sw = Stopwatch()..start();
     try {
       final pages = await _fetch(widget.index);
       if (!mounted) return;
@@ -196,7 +197,8 @@ class _ReaderPageState extends State<ReaderPage> {
         });
         return;
       }
-      AppLog.i.info(LogCat.reader, '打开 $label · ${pages.length} 页');
+      AppLog.i.info(LogCat.reader,
+          '打开 $label · ${pages.length} 页 · ${sw.elapsedMilliseconds}ms');
       _segments.add(_Seg(widget.index, _startChapter, pages));
       _rebuildFlat();
       // 首次进入 + 开着手势 → 显示一次分区手势提示。
@@ -214,7 +216,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _maybeLoadNext(); // 若起始就接近末尾(短章/续读到尾),提前接上下一章
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
-      AppLog.i.err(LogCat.reader, '打开 $label 失败:$e');
+      AppLog.i.err(LogCat.reader, '打开 $label 失败', detail: '$e');
     }
   }
 

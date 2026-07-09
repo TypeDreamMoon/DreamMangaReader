@@ -204,6 +204,7 @@ class SyncController extends ChangeNotifier {
     status = '同步中…';
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始同步 · ${_catLabel(syncCategories)}');
+    final sw = Stopwatch()..start();
     try {
       final sel = syncCategories;
       final applyModes = {for (final c in sel) c: false}; // 自动同步:合并后整份覆盖本地
@@ -235,10 +236,10 @@ class SyncController extends ChangeNotifier {
       final favN = ((merged['library'] as Map)['favorites'] as List?)?.length ?? 0;
       final hisN = ((merged['library'] as Map)['history'] as Map?)?.length ?? 0;
       status = '已同步 · 收藏 $favN · 进度 $hisN';
-      AppLog.i.success(LogCat.sync, status);
+      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
       return status;
     } catch (e) {
-      AppLog.i.err(LogCat.sync, '同步失败:$e');
+      AppLog.i.err(LogCat.sync, '同步失败', detail: '$e');
       rethrow;
     } finally {
       _syncing = false;
@@ -257,6 +258,7 @@ class SyncController extends ChangeNotifier {
     status = '上传中…';
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(syncCategories)}');
+    final sw = Stopwatch()..start();
     try {
       final backend = _backend();
       final local = SyncData.build(lib, repo, categories: syncCategories);
@@ -274,10 +276,10 @@ class SyncController extends ChangeNotifier {
       }
       await _stampSynced();
       status = '已上传 · ${_catLabel(syncCategories)}';
-      AppLog.i.success(LogCat.sync, status);
+      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
       return status;
     } catch (e) {
-      AppLog.i.err(LogCat.sync, '上传失败:$e');
+      AppLog.i.err(LogCat.sync, '上传失败', detail: '$e');
       rethrow;
     } finally {
       _syncing = false;
@@ -300,6 +302,7 @@ class SyncController extends ChangeNotifier {
     status = '下载中…';
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始从云端下载 · ${modes.length} 项');
+    final sw = Stopwatch()..start();
     try {
       final backend = _backend();
       final remote = await backend.pull();
@@ -311,10 +314,10 @@ class SyncController extends ChangeNotifier {
       await SyncData.apply(remote, lib, repo, modes: modes);
       await _stampSynced();
       status = '已下载 · ${modes.length} 项';
-      AppLog.i.success(LogCat.sync, '云端$status');
+      AppLog.i.success(LogCat.sync, '云端$status · ${sw.elapsedMilliseconds}ms');
       return status;
     } catch (e) {
-      AppLog.i.err(LogCat.sync, '云端下载失败:$e');
+      AppLog.i.err(LogCat.sync, '云端下载失败', detail: '$e');
       rethrow;
     } finally {
       _syncing = false;

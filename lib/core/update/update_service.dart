@@ -97,7 +97,7 @@ class UpdateService {
       }
       return best;
     } catch (e) {
-      AppLog.i.err(LogCat.update, '检查更新失败:$e');
+      AppLog.i.err(LogCat.update, '检查更新失败', detail: '$e');
       return null;
     }
   }

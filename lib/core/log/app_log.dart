@@ -23,13 +23,15 @@ enum LogCat {
   final Color color;
 }
 
-/// 一条日志。
+/// 一条日志。[detail] 是可选的次要长文本(完整 URL / 错误堆栈 / 参数),
+/// 展示时折叠在第二行、点开可见,便于「详细」但不刷屏。
 class LogEntry {
-  LogEntry(this.time, this.cat, this.level, this.message);
+  LogEntry(this.time, this.cat, this.level, this.message, [this.detail]);
   final DateTime time;
   final LogCat cat;
   final LogLevel level;
   final String message;
+  final String? detail;
 
   /// `HH:mm:ss.mmm`
   String get timeText {
@@ -56,8 +58,9 @@ class AppLog extends ChangeNotifier {
   List<LogEntry> get entries => List.unmodifiable(_entries);
   int get length => _entries.length;
 
-  void log(LogCat cat, String message, {LogLevel level = LogLevel.info}) {
-    _entries.add(LogEntry(DateTime.now(), cat, level, message));
+  void log(LogCat cat, String message,
+      {LogLevel level = LogLevel.info, String? detail}) {
+    _entries.add(LogEntry(DateTime.now(), cat, level, message, detail));
     if (_entries.length > _max) {
       _entries.removeRange(0, _entries.length - _max);
     }
@@ -65,20 +68,26 @@ class AppLog extends ChangeNotifier {
   }
 
   // 便捷入口(级别 = 颜色)。注意单例是 [i],故信息级方法叫 [info](别用 i)。
-  void debug(LogCat c, String m) => log(c, m, level: LogLevel.debug);
-  void info(LogCat c, String m) => log(c, m, level: LogLevel.info);
-  void success(LogCat c, String m) => log(c, m, level: LogLevel.success);
-  void warn(LogCat c, String m) => log(c, m, level: LogLevel.warning);
-  void err(LogCat c, String m) => log(c, m, level: LogLevel.error);
+  void debug(LogCat c, String m, {String? detail}) =>
+      log(c, m, level: LogLevel.debug, detail: detail);
+  void info(LogCat c, String m, {String? detail}) =>
+      log(c, m, level: LogLevel.info, detail: detail);
+  void success(LogCat c, String m, {String? detail}) =>
+      log(c, m, level: LogLevel.success, detail: detail);
+  void warn(LogCat c, String m, {String? detail}) =>
+      log(c, m, level: LogLevel.warning, detail: detail);
+  void err(LogCat c, String m, {String? detail}) =>
+      log(c, m, level: LogLevel.error, detail: detail);
 
   void clear() {
     _entries.clear();
     _notifySafe();
   }
 
-  /// 导出为纯文本(复制/分享用)。
+  /// 导出为纯文本(复制/分享用)。detail 折到缩进的次行。
   String asText() => _entries
-      .map((e) => '${e.timeText}  [${e.cat.label}] ${e.message}')
+      .map((e) => '${e.timeText}  [${e.cat.label}] ${e.message}'
+          '${e.detail != null && e.detail!.isNotEmpty ? '\n              ${e.detail}' : ''}')
       .join('\n');
 
   // 记录点可能落在 build 期间(某些 widget 构建里触发动作)——那时 notify 会抛
@@ -101,3 +110,29 @@ Color logLevelColor(LogLevel l, AppPalette p) => switch (l) {
       LogLevel.warning => p.statusWarn,
       LogLevel.error => p.statusFail,
     };
+
+/// 一条网络请求日志(dio / webview 共用格式)。正常 2xx/3xx 记 debug(灰,可筛掉),
+/// 4xx 记警告、5xx/0 记错误;完整 URL 折进 detail。
+void logHttp(String method, String url, int status, int bytes, int ms) {
+  final size = bytes >= 1024 ? '${(bytes / 1024).round()}KB' : '${bytes}B';
+  final level = (status >= 500 || status == 0)
+      ? LogLevel.error
+      : (status >= 400 ? LogLevel.warning : LogLevel.debug);
+  AppLog.i.log(LogCat.network,
+      '$method ${shortUrl(url)} · $status · $size · ${ms}ms',
+      level: level, detail: url);
+}
+
+/// 网络请求异常(连不上 / 超时 / 握手失败等)。
+void logHttpError(String method, String url, int ms, Object err) {
+  AppLog.i.err(LogCat.network, '$method ${shortUrl(url)} · 失败 · ${ms}ms',
+      detail: '$url\n$err');
+}
+
+/// 去掉 scheme 与 query、超长截断,给日志主行用(完整地址进 detail)。
+String shortUrl(String url) {
+  var s = url.replaceFirst(RegExp(r'^https?://'), '');
+  final q = s.indexOf('?');
+  if (q >= 0) s = s.substring(0, q);
+  return s.length > 56 ? '${s.substring(0, 55)}…' : s;
+}

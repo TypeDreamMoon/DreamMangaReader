@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../log/app_log.dart';
 import '../source/source.dart';
 
 /// [HttpService] 的 dio 实现。P0 为基础版;后续接:
@@ -14,22 +15,32 @@ class DioHttpService implements HttpService {
 
   @override
   Future<HostResponse> fetch(HostRequest request) async {
-    final resp = await _dio.request<String>(
-      request.url,
-      data: request.body,
-      options: Options(
-        method: request.method,
-        headers: request.headers,
-        responseType: ResponseType.plain,
-        sendTimeout: request.timeout,
-        receiveTimeout: request.timeout,
-        validateStatus: (_) => true, // 由源自行判定状态
-      ),
-    );
-    return HostResponse(
-      status: resp.statusCode ?? 0,
-      headers: resp.headers.map.map((k, v) => MapEntry(k, v.join(', '))),
-      body: resp.data ?? '',
-    );
+    final sw = Stopwatch()..start();
+    try {
+      final resp = await _dio.request<String>(
+        request.url,
+        data: request.body,
+        options: Options(
+          method: request.method,
+          headers: request.headers,
+          responseType: ResponseType.plain,
+          sendTimeout: request.timeout,
+          receiveTimeout: request.timeout,
+          validateStatus: (_) => true, // 由源自行判定状态
+        ),
+      );
+      sw.stop();
+      logHttp(request.method, request.url, resp.statusCode ?? 0,
+          (resp.data ?? '').length, sw.elapsedMilliseconds);
+      return HostResponse(
+        status: resp.statusCode ?? 0,
+        headers: resp.headers.map.map((k, v) => MapEntry(k, v.join(', '))),
+        body: resp.data ?? '',
+      );
+    } catch (e) {
+      sw.stop();
+      logHttpError(request.method, request.url, sw.elapsedMilliseconds, e);
+      rethrow;
+    }
   }
 }

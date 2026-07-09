@@ -589,14 +589,17 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _load() async {
+    final sw = Stopwatch()..start();
     try {
       final page = await _source.getChapters(widget.manga.id);
       if (mounted) setState(() => _chapters = page.items);
       AppLog.i.info(LogCat.manga,
-          '加载章节《${widget.manga.title}》· ${page.items.length} 话 · ${widget.meta.name}');
+          '加载章节《${widget.manga.title}》· ${page.items.length} 话 · ${sw.elapsedMilliseconds}ms',
+          detail: '源:${widget.meta.name} · id=${widget.manga.id}');
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
-      AppLog.i.err(LogCat.manga, '加载章节《${widget.manga.title}》失败:$e');
+      AppLog.i.err(LogCat.manga, '加载章节《${widget.manga.title}》失败',
+          detail: '源:${widget.meta.name}\n$e');
     }
   }
 
