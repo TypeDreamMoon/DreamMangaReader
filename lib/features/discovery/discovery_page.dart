@@ -93,9 +93,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final sc = SourceScope.of(context);
-    if (sc != _sc) {
+    final scChanged = sc != _sc;
+    if (scChanged) {
       _sc?.removeListener(_onSourceChanged);
       _sc = sc..addListener(_onSourceChanged);
+    }
+    // 关掉「显示源选择器」→ 强制混合源;开着则保持当前(用户可切)。
+    // 设置在运行时切换也在这里生效(本页依赖 LibraryScope,notify 会触发本回调)。
+    final wantMixed = LibraryScope.of(context).showSourcePicker ? _mixed : true;
+    if (scChanged || wantMixed != _mixed) {
+      _mixed = wantMixed;
       _rebuildSource();
     }
   }
@@ -336,7 +343,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         children: [
           _kindSwitcher(p),
           if (_kind == ContentKind.manga) ...[
-            _sourcePicker(p, store),
+            // 源选择器默认隐藏(直接用混合源);设置里打开才显示。
+            if (store.showSourcePicker) _sourcePicker(p, store),
             // 搜索框 / 筛选条:用 AnimatedSize 展开收起,避免整页内容硬跳。
             _animExpand(_showSearch
                 ? _searchField(p)

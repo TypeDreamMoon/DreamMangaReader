@@ -140,6 +140,12 @@ class SettingsPage extends StatelessWidget {
             )),
             _sliderRow(Icons.rounded_corner_rounded, '封面圆角', lib.coverRadius,
                 0, 24, 12, (v) => lib.coverRadius = v),
+            _switch(
+                Icons.source_rounded,
+                '显示源选择器',
+                '关掉(默认)→ 发现页 / 书架直接用「混合 · 全部源」,不显示源选择器',
+                lib.showSourcePicker,
+                (v) => lib.showSourcePicker = v),
           ]),
           _group('背景', [
             _tile(

@@ -207,6 +207,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kMangaModes = 'lib.mangaModes'; // 每本漫画的阅读模式覆盖
   static const _kWebtoonGap = 'lib.webtoonGap'; // 条漫页间距
   static const _kChapterToast = 'lib.chapterToast'; // 跨章提示新章名
+  static const _kShowSourcePicker = 'lib.showSourcePicker'; // 显示源选择器(否则默认混合源)
   static const _kCfGrayscale = 'lib.cfGrayscale'; // 滤镜:黑白
   static const _kCfInvert = 'lib.cfInvert'; // 滤镜:反色
   static const _kCfSepia = 'lib.cfSepia'; // 滤镜:护眼纸色
@@ -263,6 +264,7 @@ class LibraryStore extends ChangeNotifier {
   final Map<String, String> _mangaModes = {}; // 'sid:mid' -> ReaderMode.name
   double _webtoonGap = 0; // 条漫页间距 px(0~40)
   bool _chapterToast = true; // 跨章时提示新章名
+  bool _showSourcePicker = false; // 显示源选择器;关(默认)= 发现页直接用混合源
   bool _cfGrayscale = false; // 滤镜:黑白
   bool _cfInvert = false; // 滤镜:反色(暗色漫 / 夜读)
   bool _cfSepia = false; // 滤镜:护眼纸色
@@ -324,6 +326,7 @@ class LibraryStore extends ChangeNotifier {
   String? mangaMode(String key) => _mangaModes[key];
   double get webtoonGap => _webtoonGap;
   bool get chapterToast => _chapterToast;
+  bool get showSourcePicker => _showSourcePicker;
   bool get cfGrayscale => _cfGrayscale;
   bool get cfInvert => _cfInvert;
   bool get cfSepia => _cfSepia;
@@ -505,6 +508,7 @@ class LibraryStore extends ChangeNotifier {
       _autoDetectMode = prefs.getBool(_kAutoDetectMode) ?? true;
       _webtoonGap = (prefs.getDouble(_kWebtoonGap) ?? 0).clamp(0, 40);
       _chapterToast = prefs.getBool(_kChapterToast) ?? true;
+      _showSourcePicker = prefs.getBool(_kShowSourcePicker) ?? false;
       _cfGrayscale = prefs.getBool(_kCfGrayscale) ?? false;
       _cfInvert = prefs.getBool(_kCfInvert) ?? false;
       _cfSepia = prefs.getBool(_kCfSepia) ?? false;
@@ -793,6 +797,13 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  set showSourcePicker(bool v) {
+    if (v == _showSourcePicker) return;
+    _showSourcePicker = v;
+    _prefs?.setBool(_kShowSourcePicker, v);
+    notifyListeners();
+  }
+
   set cfGrayscale(bool v) {
     if (v == _cfGrayscale) return;
     _cfGrayscale = v;
@@ -1074,6 +1085,7 @@ class LibraryStore extends ChangeNotifier {
         'autoDetectMode': _autoDetectMode,
         'webtoonGap': _webtoonGap,
         'chapterToast': _chapterToast,
+        'showSourcePicker': _showSourcePicker,
         'cfGrayscale': _cfGrayscale,
         'cfInvert': _cfInvert,
         'cfSepia': _cfSepia,
@@ -1164,6 +1176,7 @@ class LibraryStore extends ChangeNotifier {
     _webtoonGap =
         ((j['webtoonGap'] as num?)?.toDouble() ?? _webtoonGap).clamp(0, 40);
     _chapterToast = j['chapterToast'] as bool? ?? _chapterToast;
+    _showSourcePicker = j['showSourcePicker'] as bool? ?? _showSourcePicker;
     _cfGrayscale = j['cfGrayscale'] as bool? ?? _cfGrayscale;
     _cfInvert = j['cfInvert'] as bool? ?? _cfInvert;
     _cfSepia = j['cfSepia'] as bool? ?? _cfSepia;
@@ -1254,6 +1267,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kAutoDetectMode, _autoDetectMode);
     _prefs?.setDouble(_kWebtoonGap, _webtoonGap);
     _prefs?.setBool(_kChapterToast, _chapterToast);
+    _prefs?.setBool(_kShowSourcePicker, _showSourcePicker);
     _prefs?.setBool(_kCfGrayscale, _cfGrayscale);
     _prefs?.setBool(_kCfInvert, _cfInvert);
     _prefs?.setBool(_kCfSepia, _cfSepia);

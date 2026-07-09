@@ -215,7 +215,8 @@ class _LibraryPageState extends State<LibraryPage> {
                           if (store.favorites.isNotEmpty)
                             _favoritesSection(p, store),
                           if (meta != null) ...[
-                            _sourcePicker(p, meta, store),
+                            if (store.showSourcePicker)
+                              _sourcePicker(p, meta, store),
                             _browse(p, meta, store),
                           ] else
                             _noSourceHint(p),
