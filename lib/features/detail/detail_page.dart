@@ -553,6 +553,15 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
+  /// 重新加载当前源章节(章节加载失败时的「重新加载」按钮)。清错 + 回加载态再拉一次。
+  void _reloadChapters() {
+    setState(() {
+      _error = null;
+      _chapters = null;
+    });
+    _load();
+  }
+
   Future<void> _loadDetail() async {
     try {
       final d = await _source.getMangaDetail(widget.manga.id);
@@ -1515,7 +1524,12 @@ class _DetailPageState extends State<DetailPage> {
     if (_error != null) {
       return [
         header,
-        stateBox(AppErrorView(title: '章节加载失败', message: '$_error')),
+        stateBox(AppErrorView(
+          title: '章节加载失败',
+          message: '$_error',
+          onRetry: _reloadChapters,
+          retryLabel: '重新加载章节',
+        )),
       ];
     }
     if (_chapters == null) {
