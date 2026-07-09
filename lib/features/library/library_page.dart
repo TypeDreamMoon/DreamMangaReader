@@ -274,6 +274,15 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
 
+  // 卡片进度文案:优先「作品级共享进度」的章(话数)—— 同名书跨源共用、各副本一致;
+  // 无共享进度(话数解析不出)时退回本源页码/章名。
+  String _progressText(LibraryStore store, ReadState h) {
+    final wp = store.workProgressFor(h.title);
+    if (wp != null && wp.chapterLabel.isNotEmpty) return '读到 ${wp.chapterLabel}';
+    if (h.lastTotal > 0) return '读到 ${h.lastPage + 1}/${h.lastTotal}';
+    return h.lastChapterName;
+  }
+
   // 继续阅读:横向卡片条。
   Widget _continueStrip(AppPalette p, LibraryStore store) {
     final items = store.history.take(12).toList();
@@ -343,9 +352,7 @@ class _LibraryPageState extends State<LibraryPage> {
                             fontWeight: FontWeight.w700,
                             color: p.textPrimary)),
                     Text(
-                      h.lastTotal > 0
-                          ? '读到 ${h.lastPage + 1}/${h.lastTotal}'
-                          : h.lastChapterName,
+                      _progressText(store, h),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style:
