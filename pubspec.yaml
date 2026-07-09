@@ -57,6 +57,8 @@ dependencies:
   file_picker: ^11.0.2
   # 保存/分享当前页:移动端走系统分享面板(含保存到相册/文件),桌面走 file_picker 另存为。
   share_plus: ^10.0.0
+  # 应用内更新:下载新版 APK 后用系统安装器打开(Android)。桌面自更新走自写的静默安装器脚本。
+  open_filex: ^4.5.0
   # 桌面(Windows)枚举系统字体:GDI EnumFontFamiliesEx,无子进程/无控制台闪窗。
   # 仅在 Platform.isWindows 时调用;win32 的 DLL 句柄惰性加载,Android 不受影响。
   win32: ^5.5.3

@@ -30,11 +30,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        // 固定发布签名:随仓库入库的 keystore(dmr-release.jks),CI 与本地构建**共用同一签名**。
+        // 这样每次 release 的 APK 签名一致 → 能覆盖安装(应用内一键更新)。
+        // 注:此 keystore 为「公开凭据」(密码随仓库,与原 debug 签名同安全级别),
+        // 目的只是稳定签名以支持覆盖更新;要更强安全再换成 CI secrets 注入的正式密钥。
+        release {
+            storeFile = file("dmr-release.jks")
+            storePassword = "dreammangareader"
+            keyAlias = "dmr"
+            keyPassword = "dreammangareader"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.debug
+            signingConfig = signingConfigs.release
         }
     }
 }

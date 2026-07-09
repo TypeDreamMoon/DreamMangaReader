@@ -11,3 +11,5 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# 例外:固定发布签名 keystore 有意入库(公开凭据,只为稳定签名支持覆盖更新)。
+!app/dmr-release.jks

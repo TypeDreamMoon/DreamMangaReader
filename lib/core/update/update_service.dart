@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_info.dart';
 import '../../app/theme/app_colors.dart';
+import 'update_installer.dart';
 
 /// 一个可更新的版本。
 class UpdateInfo {
@@ -13,6 +14,7 @@ class UpdateInfo {
     required this.url,
     required this.notes,
     required this.prerelease,
+    this.assets = const [],
   });
 
   final String tag; // v1.2.0
@@ -20,6 +22,7 @@ class UpdateInfo {
   final String url; // release 页面
   final String notes; // 更新说明(release body)
   final bool prerelease; // 是否测试版
+  final List<UpdateAsset> assets; // release 附件(APK / setup.exe),应用内更新用
 }
 
 /// 检查 GitHub Releases 有没有比当前更新的版本。
@@ -63,6 +66,14 @@ class UpdateService {
         final tag = (rel['tag_name'] ?? '').toString();
         if (compareVersions(tag, AppInfo.version) <= 0) continue; // 不比当前新
         if (best != null && compareVersions(tag, best.tag) <= 0) continue;
+        final assets = <UpdateAsset>[
+          for (final a in (rel['assets'] as List? ?? const []))
+            if (a is Map &&
+                a['name'] != null &&
+                a['browser_download_url'] != null)
+              UpdateAsset(
+                  a['name'].toString(), a['browser_download_url'].toString()),
+        ];
         best = UpdateInfo(
           tag: tag,
           version: tag.replaceFirst(RegExp(r'^v'), ''),
@@ -71,6 +82,7 @@ class UpdateService {
               .toString(),
           notes: (rel['body'] ?? '').toString().trim(),
           prerelease: pre,
+          assets: assets,
         );
       }
       return best;
@@ -133,41 +145,154 @@ class UpdateService {
   }
 }
 
-/// 弹出「发现新版本」对话框:显示版本 + 更新说明,可去 Release 页下载。
+/// 弹出「发现新版本」对话框:版本 + 更新说明 + **应用内一键更新**(下载进度),
+/// 不支持自更新的平台 / 缺少对应附件时退回浏览器下载页。
 Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) {
-  final p = context.palette;
   return showDialog<void>(
     context: context,
-    builder: (ctx) => AlertDialog(
+    builder: (ctx) => _UpdateDialog(info: info),
+  );
+}
+
+class _UpdateDialog extends StatefulWidget {
+  const _UpdateDialog({required this.info});
+  final UpdateInfo info;
+
+  @override
+  State<_UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<_UpdateDialog> {
+  double _progress = 0; // 0~1;-1 = 总量未知
+  bool _busy = false; // 正在下载/安装
+  bool _launched = false; // Android:安装器已打开
+  String? _error;
+
+  UpdateAsset? get _asset => UpdateInstaller.pickAsset(widget.info.assets);
+  bool get _canInApp => UpdateInstaller.supported && _asset != null;
+
+  Future<void> _startUpdate() async {
+    final asset = _asset;
+    if (asset == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _progress = 0;
+    });
+    try {
+      await UpdateInstaller.downloadAndInstall(asset,
+          onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      });
+      // Android:到这 = 安装器已打开;Windows:静默安装前进程已退出,一般到不了这里。
+      if (mounted) {
+        setState(() {
+          _launched = true;
+          _busy = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  void _openPage() {
+    launchUrl(Uri.parse(widget.info.url), mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return AlertDialog(
       backgroundColor: p.surface,
       title: Text(
-        '发现新版本 ${info.tag}${info.prerelease ? ' · 测试版' : ''}',
+        '发现新版本 ${widget.info.tag}${widget.info.prerelease ? ' · 测试版' : ''}',
         style: TextStyle(
             color: p.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
       ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 320),
-        child: SingleChildScrollView(
-          child: Text(
-            info.notes.isEmpty ? '暂无更新说明。' : info.notes,
-            style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.5),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Flexible(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260),
+              child: SingleChildScrollView(
+                child: Text(
+                  widget.info.notes.isEmpty ? '暂无更新说明。' : widget.info.notes,
+                  style: TextStyle(
+                      color: p.textMuted, fontSize: 12.5, height: 1.5),
+                ),
+              ),
+            ),
           ),
-        ),
+          if (_busy) ...[
+            const SizedBox(height: 16),
+            LinearProgressIndicator(
+              value: _progress >= 0 ? _progress : null,
+              backgroundColor: p.line,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _progress >= 1.0
+                  ? (Theme.of(context).platform == TargetPlatform.windows
+                      ? '下载完成 · 正在安装并重启…'
+                      : '下载完成 · 正在打开安装器…')
+                  : _progress >= 0
+                      ? '下载中 ${(_progress * 100).round()}%'
+                      : '下载中…',
+              style: TextStyle(color: p.textMuted, fontSize: 12),
+            ),
+          ],
+          if (_launched) ...[
+            const SizedBox(height: 12),
+            Text('安装器已打开,按提示完成安装即可',
+                style: TextStyle(color: p.textPrimary, fontSize: 12.5)),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text('更新失败:$_error',
+                style: TextStyle(color: p.statusFail, fontSize: 12)),
+          ],
+        ],
       ),
-      actions: [
+      actions: _actions(),
+    );
+  }
+
+  List<Widget> _actions() {
+    if (_busy) {
+      return [
         TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('稍后'),
+          onPressed: () => Navigator.of(context).pop(), // 后台继续下载
+          child: const Text('后台'),
         ),
+      ];
+    }
+    if (_launched) {
+      return [
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('完成')),
+      ];
+    }
+    return [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('稍后'),
+      ),
+      if (_error != null || !_canInApp)
+        TextButton(onPressed: _openPage, child: const Text('去下载页')),
+      if (_canInApp)
         FilledButton(
-          onPressed: () {
-            Navigator.of(ctx).pop();
-            launchUrl(Uri.parse(info.url),
-                mode: LaunchMode.externalApplication);
-          },
-          child: const Text('去下载'),
+          onPressed: _startUpdate,
+          child: Text(_error != null ? '重试' : '一键更新'),
         ),
-      ],
-    ),
-  );
+    ];
+  }
 }

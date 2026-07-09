@@ -2,6 +2,9 @@
     <!-- Release 版必须显式声明:Flutter 只给 debug/profile 自动加 INTERNET,
          release 不加。缺了它 release 版所有网络请求都会 "Failed host lookup … errno 7"。 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 应用内更新:下载新版 APK 后用系统安装器打开(Android 8+ 需用户在系统里授予
+         「安装未知应用」权限,首次会引导过去;之后一键更新)。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:label="Dream Manga Reader"
         android:name="${applicationName}"
