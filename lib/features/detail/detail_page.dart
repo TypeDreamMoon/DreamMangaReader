@@ -128,64 +128,70 @@ class _DetailPageState extends State<DetailPage> {
     ];
     if (lib.isEmpty && toSearch.isEmpty) return;
 
-    // initState 同步段直接赋值(首帧构建会读到);await 后再走真正的 setState。
+    // 增量:每个源各自拉、拉好一个就并进来一个(不等全部),慢源不拖住已到的。
+    // initState 同步段直接赋值(首帧构建会读到);await 后才走真正的 setState。
     _mergeLoading = true;
-    final loaded = <_SrcChapters>[];
-    await Future.wait([
-      // 库里源:mangaId 已知,直接取章节。buildSource 放进 try —— 脚本损坏时
-      // 只跳过该源,别让异常抛出 Future.wait(否则 _mergeLoading 卡死 + 兄弟源引擎泄漏)。
-      for (final e in lib.entries)
-        () async {
+    var pending = lib.length + toSearch.length;
+    void addOne(_SrcChapters sc) {
+      if (!mounted) {
+        sc.source.dispose(); // 页已销毁:别加,直接释放引擎
+        return;
+      }
+      setState(() => _otherSources.add(sc));
+    }
+
+    void done() {
+      pending--;
+      if (pending <= 0 && mounted) setState(() => _mergeLoading = false);
+    }
+
+    // 库里源:mangaId 已知,直接取章节。buildSource 放进 try —— 脚本损坏只跳过该源。
+    for (final e in lib.entries) {
+      () async {
+        MangaSource? src;
+        try {
           final meta = _metaById(e.key);
-          if (meta == null) return;
-          MangaSource? src;
-          try {
+          if (meta != null) {
             src = buildSource(meta);
             final page = await src.getChapters(e.value.mangaId);
-            loaded.add(_SrcChapters(meta, src, e.value.mangaId, e.value.title,
+            addOne(_SrcChapters(meta, src, e.value.mangaId, e.value.title,
                 e.value.cover, page.items));
-          } catch (_) {
-            src?.dispose();
+            src = null; // 已交给 addOne(成功则进 _otherSources,失败则它已 dispose)
           }
-        }(),
-      // 主动搜索源:先搜、匹配同作品、再取章节。
-      for (final meta in toSearch)
-        () async {
-          MangaSource? src;
-          try {
-            src = buildSource(meta);
-            final r = await src.getSearch(widget.manga.title, 1);
-            Manga? match;
-            for (final m in r.items) {
-              if (sameWork(m.title, widget.manga.title)) {
-                match = m;
-                break;
-              }
-            }
-            if (match == null) {
-              src.dispose();
-              return;
-            }
-            final page = await src.getChapters(match.id);
-            loaded.add(_SrcChapters(
-                meta, src, match.id, match.title, match.cover, page.items));
-          } catch (_) {
-            src?.dispose();
-          }
-        }(),
-    ]);
-    if (!mounted) {
-      for (final l in loaded) {
-        l.source.dispose();
-      }
-      return;
+        } catch (_) {
+          src?.dispose();
+        } finally {
+          done();
+        }
+      }();
     }
-    setState(() {
-      _mergeLoading = false;
-      _otherSources
-        ..clear()
-        ..addAll(loaded);
-    });
+    // 主动搜索源:先搜、匹配同作品、再取章节。
+    for (final meta in toSearch) {
+      () async {
+        MangaSource? src;
+        try {
+          src = buildSource(meta);
+          final r = await src.getSearch(widget.manga.title, 1);
+          Manga? match;
+          for (final m in r.items) {
+            if (sameWork(m.title, widget.manga.title)) {
+              match = m;
+              break;
+            }
+          }
+          if (match != null) {
+            final page = await src.getChapters(match.id);
+            addOne(_SrcChapters(
+                meta, src, match.id, match.title, match.cover, page.items));
+            src = null;
+          }
+        } catch (_) {
+        } finally {
+          src?.dispose(); // 无匹配/异常:释放;成功已置 null 不重复释放
+          done();
+        }
+      }();
+    }
   }
 
   /// 把当前源 + 其它源的章节按话数合并成一张列表。
