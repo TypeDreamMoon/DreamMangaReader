@@ -224,7 +224,13 @@ class ScriptSource implements MangaSource {
         'handleChapter',
         (j) => [
           for (final m in (j as List).cast<Map<String, dynamic>>())
-            PageImage(index: m['index'] as int, url: m['url'] as String),
+            PageImage(
+              index: m['index'] as int,
+              url: m['url'] as String,
+              // 每图可带 Referer/UA(防盗链);与 VideoTrack 一致,源脚本可选返回。
+              headers: (m['headers'] as Map?)
+                  ?.map((k, v) => MapEntry(k.toString(), v.toString())),
+            ),
         ],
       );
 
