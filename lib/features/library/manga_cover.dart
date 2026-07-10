@@ -3,9 +3,23 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
 import '../common/animations.dart';
+
+/// 已记过加载失败的封面 url:失败组件会随重建反复触发,同一张只记一次。
+final Set<String> _loggedCoverFails = <String>{};
+
+/// 封面加载失败 → 运行日志(书名 + 完整 URL + Referer + 错误;
+/// 传输层非 2xx/超时另有 IMG 日志,这里补的是「哪本书的封面」和解码类失败)。
+void _logCoverFail(
+    String title, String url, Map<String, String>? headers, Object err) {
+  if (_loggedCoverFails.length > 300) _loggedCoverFails.clear(); // 防无限涨
+  if (!_loggedCoverFails.add(url)) return;
+  AppLog.i.warn(LogCat.manga, '封面加载失败 《$title》',
+      detail: '$url\nReferer: ${headers?['Referer'] ?? '(无)'}\n$err');
+}
 
 /// 从 id 派生一个稳定的封面渐变,用作占位 / 网络封面加载失败时的兜底。
 List<Color> coverGradient(String seed) {
@@ -107,6 +121,8 @@ class MangaCover extends StatelessWidget {
                   fadeInDuration: const Duration(milliseconds: 180),
                   placeholder: (_, __) => const SizedBox.shrink(),
                   errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  errorListener: (e) =>
+                      _logCoverFail(manga.title, cover, headers, e),
                 ),
               if (showTitle)
                 Positioned(
