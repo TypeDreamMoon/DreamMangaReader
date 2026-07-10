@@ -17,6 +17,7 @@ import '../../core/source/title_match.dart';
 import '../../core/log/app_log.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/source/source_search.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
@@ -365,14 +366,14 @@ class _DetailPageState extends State<DetailPage> {
     showAppNotify(context, '在源里找《$title》…', kind: AppNotifyKind.info);
     // 先搜原名;没命中、且不是「全源都报错」(断网/全限流时翻译再搜无意义)→ 翻成
     // 简/繁/英/日 逐个再搜(受设置「搜索翻译回退」开关控制),中途若全源报错则停。
-    var r = await _findInSources(metas, title);
+    var r = await findFirstWork(metas, title);
     var found = r.match;
     if (found == null && !r.allErrored && store.translateSearch) {
       for (final v in await TranslatedSearch.variants(title,
           providers: store.translateProviderOrder,
           targets: store.translateTargetsFor(title),
           llm: store.translateLlm)) {
-        r = await _findInSources(metas, v);
+        r = await findFirstWork(metas, v);
         if (r.match != null) {
           found = r.match;
           break;
@@ -388,32 +389,6 @@ class _DetailPageState extends State<DetailPage> {
     }
     Navigator.of(context).push(
         appRoute(DetailPage(manga: found.manga, meta: found.meta)));
-  }
-
-  /// 在给定源里并发搜 [query],返回第一个 [sameWork] 命中;[allErrored]=所有源都抛错
-  /// (区分「真没搜到」与「全源失败」——后者不该触发翻译回退)。
-  Future<({({SourceMeta meta, Manga manga})? match, bool allErrored})>
-      _findInSources(List<SourceMeta> metas, String query) async {
-    ({SourceMeta meta, Manga manga})? found;
-    var okCount = 0; // 成功返回(未抛错)的源数
-    await Future.wait(metas.map((meta) async {
-      if (found != null) return;
-      final src = buildSource(meta);
-      try {
-        final r = await src.getSearch(query, 1);
-        okCount++;
-        for (final m in r.items) {
-          if (sameWork(m.title, query)) {
-            found ??= (meta: meta, manga: m);
-            break;
-          }
-        }
-      } catch (_) {
-      } finally {
-        src.dispose();
-      }
-    }));
-    return (match: found, allErrored: okCount == 0 && metas.isNotEmpty);
   }
 
   /// 相关推荐:横向封面条(Bangumi 相关条目 + 题材同类)。点击去源里找并打开。

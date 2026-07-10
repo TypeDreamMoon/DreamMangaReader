@@ -378,6 +378,106 @@ class BangumiApi {
     return out;
   }
 
+  /// **书架级推荐**:把多本「种子」(收藏 / 在读书匹配到的 Bangumi 条目)的题材 tag
+  /// 汇总成口味画像,再按画像做几组 tag「与」搜索凑候选,按**画像加权重叠**打分。
+  ///   - [excludeNorm]:书架里已有的书(归一化标题),不再推荐;
+  ///   - 排除种子自身 id 与和种子同名 / 衍生的;去重卷号 / 繁简同作。截断 [limit]。
+  /// 种子没有可用题材 tag(画像为空)时返回空。
+  static Future<List<BangumiCandidate>> recommendForLibrary(
+    List<BangumiInfo> seeds, {
+    required Set<String> excludeNorm,
+    int limit = 12,
+  }) async {
+    // ① 口味画像:各种子题材 tag 加权计数(有区分度的权重高、泛 tag 减半)。
+    final profile = <String, double>{};
+    for (final s in seeds) {
+      for (final t in _genreTags(s)) {
+        profile[t] = (profile[t] ?? 0) + (_commonGenre.contains(t) ? 0.5 : 1.0);
+      }
+    }
+    if (profile.isEmpty) return const [];
+    final topTags = profile.keys.toList()
+      ..sort((a, b) => profile[b]!.compareTo(profile[a]!));
+
+    final excludeIds = <int>{for (final s in seeds) s.id};
+    final seedNames = <String>[
+      for (final s in seeds) ...[
+        normalizeTitle(s.name),
+        normalizeTitle(s.nameOrig),
+      ],
+    ].where((e) => e.isNotEmpty).toList();
+
+    // ② 候选池:画像里最靠前的 tag 做几组「与」搜索(精准 + 广撒)。
+    final pool = <int, ({BangumiCandidate cand, List<String> tags})>{};
+    Future<void> searchTags(List<String> tags) async {
+      tags = tags.where((t) => t.isNotEmpty).toList();
+      if (tags.isEmpty) return;
+      try {
+        final r = await _dio.post<dynamic>(
+          'https://api.bgm.tv/v0/search/subjects',
+          queryParameters: {'limit': 25},
+          data: {
+            'keyword': '',
+            'sort': 'rank',
+            'filter': {
+              'type': [1],
+              'tag': tags,
+            },
+          },
+        );
+        final d = r.data;
+        if (d is Map && d['data'] is List) {
+          for (final raw in d['data'] as List) {
+            if (raw is! Map) continue;
+            final c = _candidateFromV0(raw);
+            if (c == null || c.display.isEmpty) continue;
+            final ctags = ((raw['tags'] as List?) ?? const [])
+                .map((t) => t is Map ? (t['name'] ?? '').toString() : '')
+                .where((s) => s.isNotEmpty)
+                .toList();
+            pool[c.id] = (cand: c, tags: ctags);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (topTags.length >= 2) await searchTags([topTags[0], topTags[1]]);
+    if (topTags.length >= 3) await searchTags([topTags[0], topTags[2]]);
+    if (topTags.length >= 4) await searchTags([topTags[1], topTags[3]]);
+    await searchTags([topTags[0]]);
+    if (topTags.length >= 2) await searchTags([topTags[1]]);
+
+    // ③ 打分 + 过滤(库里已有、种子同名、衍生)。
+    final scored = <({BangumiCandidate cand, double score})>[];
+    for (final e in pool.values) {
+      if (excludeIds.contains(e.cand.id)) continue;
+      final cn = normalizeTitle(e.cand.display);
+      if (cn.isEmpty || excludeNorm.contains(cn)) continue;
+      if (seedNames.any((n) => cn.contains(n) || n.contains(cn))) continue;
+      var overlap = 0.0;
+      for (final t in e.tags) {
+        final w = profile[t];
+        if (w != null) overlap += w; // 命中口味 tag → 按画像权重累加
+      }
+      if (overlap < 1.0) continue; // 至少一个有区分度的题材命中
+      scored.add((cand: e.cand, score: overlap * 5 + e.cand.score));
+    }
+    scored.sort((a, b) => b.score.compareTo(a.score));
+
+    // ④ 去重(卷号 / 繁简同作)+ 再挡一次库里已有(用剥卷号后的归一)。
+    final keptKeys = <String>[];
+    final out = <BangumiCandidate>[];
+    for (final e in scored) {
+      final k = normalizeTitle(_stripVolEd(e.cand.display));
+      if (k.isEmpty || excludeNorm.contains(k)) continue;
+      if (keptKeys.any((kk) => kk == k || sameCoreKey(k, kk))) continue;
+      keptKeys.add(k);
+      out.add(_cleanRec(e.cand));
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   static final _editionRe = RegExp(
       r'\s*(愛蔵版|愛藏版|爱藏版|完全版|新装版|新裝版|文库版|文庫版|典藏版|收藏版|珍藏版|合本|豪华版|豪華版|复刻版|復刻版)\s*$');
 

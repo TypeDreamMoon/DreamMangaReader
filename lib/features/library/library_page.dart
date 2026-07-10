@@ -16,6 +16,7 @@ import '../detail/detail_page.dart';
 import 'history_page.dart';
 import 'manga_cover.dart';
 import 'masonry_feed.dart';
+import 'recommend_controller.dart';
 
 /// 书架:置顶「继续阅读」+「收藏」(本地持久化),下面是**当前源**的最新更新;顶部可切换源。
 class LibraryPage extends StatefulWidget {
@@ -32,12 +33,17 @@ class _LibraryPageState extends State<LibraryPage> {
   bool _showShelfSearch = false;
   String _shelfQuery = ''; // 非空 = 在收藏里筛选
   final ScrollController _continueScroll = ScrollController();
+  final ScrollController _recScroll = ScrollController();
+  final RecommendController _recs = RecommendController();
+  String _lastRecSig = ''; // 上次触发推荐刷新时的书架签名(变了才重触发)
 
   @override
   void dispose() {
     _sc?.removeListener(_onSourceChanged);
     _shelfCtrl.dispose();
     _continueScroll.dispose();
+    _recScroll.dispose();
+    _recs.dispose();
     super.dispose();
   }
 
@@ -158,6 +164,14 @@ class _LibraryPageState extends State<LibraryPage> {
     final p = context.palette;
     final store = LibraryScope.of(context); // 依赖:收藏/进度变了自动重建
     final meta = _sc?.current; // 可能未配置源 → null
+    // 书架内容变了(签名变)才后台重算「为你推荐」;post-frame 触发,避免 build 期改 controller。
+    final recSig = RecommendController.signatureOf(store);
+    if (recSig != _lastRecSig) {
+      _lastRecSig = recSig;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _recs.ensure(store);
+      });
+    }
     // 内容延伸到毛玻璃标题栏之后 → 标题栏能糊到身后背景图;body 手动留出顶部内边距。
     final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
@@ -214,6 +228,7 @@ class _LibraryPageState extends State<LibraryPage> {
                           if (store.history.isNotEmpty) _continueStrip(p, store),
                           if (store.favorites.isNotEmpty)
                             _favoritesSection(p, store),
+                          _recommendStrip(p, store),
                           if (meta != null) ...[
                            _sectionHeader(p, "推荐"),
                             if (store.showSourcePicker)
@@ -280,6 +295,134 @@ class _LibraryPageState extends State<LibraryPage> {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 25),
         child: AppSectionHeading(text),
       );
+
+  // 「为你推荐」:据收藏 + 在读的口味算、混合源解析出的可读漫画横向条。无结果则不占位。
+  Widget _recommendStrip(AppPalette p, LibraryStore store) => AnimatedBuilder(
+        animation: _recs,
+        builder: (_, __) {
+          final recs = _recs.recs;
+          final note = _recs.note;
+          // 空态里只有「可重试」的提示(失败 / 暂时性)才占位显示 —— 「书架太少」这类
+          // 需用户去收藏、重试无用的,直接不占位。
+          final showNote = recs.isEmpty && !_recs.loading && note != null && _recs.canRetry;
+          if (recs.isEmpty && !_recs.loading && !showNote) {
+            return const SizedBox.shrink();
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 12, 14),
+                child: Row(
+                  children: [
+                    AppSectionHeading('为你推荐'),
+                    const SizedBox(width: 10),
+                    if (_recs.loading)
+                      SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: p.accent)),
+                    const Spacer(),
+                    if (!_recs.loading)
+                      Pressable(
+                        onTap: () => _recs.ensure(store, force: true),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(Icons.refresh_rounded,
+                              size: 18, color: p.textMuted),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (recs.isEmpty && _recs.loading)
+                SizedBox(
+                  height: 56,
+                  child: Center(
+                    child: Text('根据你的收藏与在读生成推荐…',
+                        style: TextStyle(color: p.textMuted, fontSize: 12)),
+                  ),
+                ),
+              if (showNote)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Text(note,
+                      style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+                ),
+              if (recs.isNotEmpty)
+                SizedBox(
+                  height: 172,
+                  child: Listener(
+                    onPointerSignal: (e) {
+                      if (e is PointerScrollEvent && _recScroll.hasClients) {
+                        final d = e.scrollDelta.dy != 0
+                            ? e.scrollDelta.dy
+                            : e.scrollDelta.dx;
+                        final t = (_recScroll.offset + d)
+                            .clamp(0.0, _recScroll.position.maxScrollExtent);
+                        _recScroll.jumpTo(t);
+                      }
+                    },
+                    child: ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: const {
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.trackpad,
+                        },
+                        scrollbars: false,
+                      ),
+                      child: AppScrollView.separated(
+                        controller: _recScroll,
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: recs.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 10),
+                        itemBuilder: (context, i) => _recCard(p, recs[i]),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      );
+
+  Widget _recCard(AppPalette p, RecItem rec) {
+    final m = rec.manga;
+    final tag = 'rec:${rec.meta.id}:${m.id}';
+    return SizedBox(
+      width: 92,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Flexible(
+            child: MangaCover(
+              manga: m,
+              headers: imageHeadersOf(rec.meta),
+              heroTag: tag,
+              onTap: () => Navigator.of(context).push(
+                  appRoute(DetailPage(manga: m, meta: rec.meta, heroTag: tag))),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(m.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: p.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700)),
+          if (rec.bgm.score > 0)
+            Text('★ ${rec.bgm.score.toStringAsFixed(1)} · ${rec.meta.name}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: p.textMuted, fontSize: 10.5)),
+        ],
+      ),
+    );
+  }
 
   // 未配置漫画源(引擎不内置源,需在设置里添加源仓库)的空态。
   Widget _noSourceHint(AppPalette p) => Padding(
