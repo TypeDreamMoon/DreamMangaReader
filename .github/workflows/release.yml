@@ -31,8 +31,29 @@ env:
   FLUTTER_VERSION: '3.44.4'
 
 jobs:
+  # 门禁:发布 tag 必须与 AppInfo.version 一致(应用内更新拿它比版本,
+  # 不一致会让新包自己提示「发现新版本」死循环 —— v1.1.0 首发就踩过)。
+  check-version:
+    name: Check AppInfo.version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+          case "$tag" in v*) ;; *) echo "非发布 tag($tag),跳过校验"; exit 0;; esac
+          want="${tag#v}"
+          have=$(grep -oP "static const version = '\K[^']+" lib/app/app_info.dart)
+          echo "tag=$want AppInfo.version=$have"
+          if [ "$want" != "$have" ]; then
+            echo "::error::AppInfo.version($have)与发布 tag($want)不一致,先改 lib/app/app_info.dart"
+            exit 1
+          fi
+
   build-android:
     name: Build Android APK
+    needs: check-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +110,7 @@ jobs:
 
   build-windows:
     name: Build Windows x64
+    needs: check-version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
