@@ -280,7 +280,11 @@ class _DetailPageState extends State<DetailPage> {
         break;
       }
     }
-    final prov = cur ?? row.providers.first;
+    _openViaProvider(cur ?? row.providers.first, initialPage: initialPage);
+  }
+
+  /// 用**指定源**打开一话(点源角标 / 章节行右键·长按选源,可绕开默认的当前源优先)。
+  void _openViaProvider(_ChapterProvider prov, {int initialPage = 0}) {
     if (prov.meta.id == widget.meta.id) {
       _openChapter(prov.chapter, initialPage: initialPage);
       return;
@@ -297,6 +301,44 @@ class _DetailPageState extends State<DetailPage> {
       index: idx,
       imageHeaders: imageHeadersOf(os.meta),
     )));
+  }
+
+  /// 章节行右键/长按:列出提供本话的源,选谁用谁打开(当前源带勾)。
+  Future<void> _showChapterSourceMenu(Offset pos, _MergedChapter row,
+      {int initialPage = 0}) async {
+    final p = context.palette;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final picked = await showMenu<_ChapterProvider>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy,
+          overlay.size.width - pos.dx, overlay.size.height - pos.dy),
+      color: p.elevated,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: p.line)),
+      items: [
+        for (final pv in row.providers)
+          PopupMenuItem<_ChapterProvider>(
+            value: pv,
+            height: 42,
+            child: Row(children: [
+              Icon(
+                  pv.meta.id == widget.meta.id
+                      ? Icons.check_rounded
+                      : Icons.swap_horiz_rounded,
+                  size: 17,
+                  color: pv.meta.id == widget.meta.id ? p.accent : p.textMuted),
+              const SizedBox(width: 10),
+              Text('用 ${pv.meta.name} 打开',
+                  style: TextStyle(fontSize: 13.5, color: p.textPrimary)),
+            ]),
+          ),
+      ],
+    );
+    if (picked == null || !mounted) return;
+    _openViaProvider(picked,
+        initialPage: picked.meta.id == widget.meta.id ? initialPage : 0);
   }
 
   @override
@@ -1493,11 +1535,20 @@ class _DetailPageState extends State<DetailPage> {
       status = const SizedBox.shrink();
     }
 
+    final startPage = (mark != null && !mark.finished) ? mark.page : 0;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: GestureDetector(
-        onTap: () => _openMerged(row,
-            initialPage: (mark != null && !mark.finished) ? mark.page : 0),
+        onTap: () => _openMerged(row, initialPage: startPage),
+        // 多个源提供本话:右键/长按选「用哪个源打开」(点源角标也行)。
+        onLongPressStart: row.providers.length > 1
+            ? (d) => _showChapterSourceMenu(d.globalPosition, row,
+                initialPage: startPage)
+            : null,
+        onSecondaryTapUp: row.providers.length > 1
+            ? (d) => _showChapterSourceMenu(d.globalPosition, row,
+                initialPage: startPage)
+            : null,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
@@ -1525,9 +1576,16 @@ class _DetailPageState extends State<DetailPage> {
                         spacing: 4,
                         runSpacing: 4,
                         children: [
+                          // 角标可点:直接用该源打开这一话(不用先整页换源)。
                           for (final pv in row.providers)
-                            _srcChip(p, pv.meta.name,
-                                pv.meta.id == widget.meta.id),
+                            GestureDetector(
+                              onTap: () => _openViaProvider(pv,
+                                  initialPage: pv.meta.id == widget.meta.id
+                                      ? startPage
+                                      : 0),
+                              child: _srcChip(p, pv.meta.name,
+                                  pv.meta.id == widget.meta.id),
+                            ),
                         ],
                       ),
                     ],
