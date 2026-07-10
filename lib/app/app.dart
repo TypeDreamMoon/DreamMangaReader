@@ -36,12 +36,13 @@ class _AppState extends State<App> {
     super.initState();
     _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
     _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
-    // 书架读档完成后,若开了自动同步则后台合并一次(此时源仓已在 main 里 load 好)。
-    _library.load().then((_) => SyncController.instance
-        .autoSyncOnStart(_library, SourceRepository.instance));
-    // 收藏/取消收藏 → 云同步的「收藏后自动上传」(开关没开时它内部直接跳过)。
-    _library.onFavoritesChangedByUser = () => SyncController.instance
-        .scheduleUploadOnFavorite(_library, SourceRepository.instance);
+    // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
+    // 能补传上次退出前漏掉的变化),再跑启动自动同步(源仓已在 main 里 load 好)。
+    _library.load().then((_) async {
+      final sync = SyncController.instance;
+      await sync.attachAutoUpload(_library, SourceRepository.instance);
+      await sync.autoSyncOnStart(_library, SourceRepository.instance);
+    });
     _downloads.load();
     _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
   }

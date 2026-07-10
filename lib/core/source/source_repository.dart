@@ -57,6 +57,11 @@ class SourceRepository {
   /// 被用户「删除」的仓库源 id:重载后仍过滤掉(本地源是真删文件,不进这里)。可整体恢复。
   Set<String> removedIds = {};
 
+  /// 源/仓库配置变化钩子(云同步「变化后自动上传」挂这里;app 启动时接线)。
+  /// 所有修改路径(加/删源、导入、改仓库配置)最后都会 [load] 重载,故挂在 load 末尾
+  /// 即可全覆盖;[setToken] 不重载,单独补一次。
+  void Function()? onChanged;
+
   Future<Directory> _cacheDir() async {
     final base = await getApplicationSupportDirectory();
     final d = Directory('${base.path}/sources');
@@ -92,6 +97,7 @@ class SourceRepository {
           ? LogLevel.error
           : (n == 0 ? LogLevel.warning : LogLevel.success);
       AppLog.i.log(LogCat.source, '加载源 · $n 个 · $status', level: lvl);
+      onChanged?.call();
     }
   }
 
@@ -449,6 +455,7 @@ class SourceRepository {
     } else {
       await prefs.setString(_kToken, token!);
     }
+    onChanged?.call();
   }
 
   /// 设置里选本地目录后调用:持久化并重新加载。

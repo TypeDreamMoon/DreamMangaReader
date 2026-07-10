@@ -35,7 +35,8 @@ class SyncData {
       (v is List) ? v.map((e) => e.toString()).toList() : <String>[];
 
   /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图内容与版本标记)。
-  static bool _isSettingsKey(String k) =>
+  /// 公开:变化侦测(自动上传的类别签名)也按同一套归类,别再抄一份。
+  static bool isSettingsKey(String k) =>
       k != 'v' &&
       k != 'favorites' &&
       k != 'history' &&
@@ -125,7 +126,7 @@ class SyncData {
     }
     if (categories.contains(SyncCategory.settings)) {
       for (final e in full.entries) {
-        if (_isSettingsKey(e.key)) outLib[e.key] = e.value;
+        if (isSettingsKey(e.key)) outLib[e.key] = e.value;
       }
       _embedBgImage(outLib, full['bgImage']); // 背景图内容一并带上
     }
@@ -374,7 +375,7 @@ class SyncData {
     // 设置:只有覆盖(false)才应用;追加/不选保持本地。
     if (modes[SyncCategory.settings] == false) {
       for (final e in blib.entries) {
-        if (_isSettingsKey(e.key)) toImport[e.key] = e.value;
+        if (isSettingsKey(e.key)) toImport[e.key] = e.value;
       }
     }
     // 源开关:按 kind 分别重建整份 disabledSources 交给 importData。

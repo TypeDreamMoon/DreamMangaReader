@@ -44,7 +44,6 @@ class _SyncPageState extends State<SyncPage> {
   late String _kind = _sync.backendKind;
   late String _preset = _sync.hertzPreset; // 'custom' | 'hertz'
   late bool _auto = _sync.auto;
-  late bool _autoUpFav = _sync.autoUploadOnFavorite;
   bool _busy = false;
   bool _loginBusy = false;
   String _result = '';
@@ -479,19 +478,43 @@ class _SyncPageState extends State<SyncPage> {
                     },
             ),
             Divider(height: 1, thickness: 1, color: p.line),
-            AppSwitchRow(
-              dense: true,
-              contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-              title: '收藏后自动上传',
-              titleWeight: FontWeight.w600,
-              subtitle: '收藏 / 取消收藏几秒后,自动把所选内容上传到云端',
-              value: _autoUpFav,
-              onChanged: _busy
-                  ? null
-                  : (v) {
-                      setState(() => _autoUpFav = v);
-                      _sync.setAutoUploadOnFavorite(v);
-                    },
+            // 变化后自动上传:每个需要同步的内容各一个开关,勾了谁、谁在本机
+            // 变化后就自动上传谁(只推该类别,不动云端其它内容)。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('变化后自动上传',
+                      style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('勾选的内容在本机变化几秒后自动上传对应类别;阅读进度最快每 2 分钟一次。',
+                      style: TextStyle(
+                          color: p.textMuted, fontSize: 11.5, height: 1.4)),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 2,
+                    children: [
+                      for (final c in SyncCategory.values)
+                        AppFilterChip(
+                          label: kCatLabels[c]!,
+                          selected: _sync.autoUploadOn.contains(c),
+                          onTap: _busy
+                              ? () {}
+                              : () {
+                                  final sel = _sync.autoUploadOn.contains(c);
+                                  _sync.setAutoUploadOn(c, !sel);
+                                  setState(() {});
+                                },
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),

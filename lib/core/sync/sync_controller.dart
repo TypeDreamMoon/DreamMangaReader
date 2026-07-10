@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../app/library_store.dart';
 import '../log/app_log.dart';
 import '../net/iam_auth.dart';
+import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import 'hertz_backend.dart';
 import 'sync_backend.dart';
@@ -29,7 +31,9 @@ class SyncController extends ChangeNotifier {
   static const _kPass = 'sync.webdav.pass';
   // 通用
   static const _kAuto = 'sync.auto';
-  static const _kAutoUpFav = 'sync.autoUploadOnFavorite';
+  static const _kAutoUpFav = 'sync.autoUploadOnFavorite'; // 旧布尔开关(已并入 _kAutoUpOn)
+  static const _kAutoUpOn = 'sync.autoUploadOn';
+  static const _kAutoUpBase = 'sync.autoUploadBase'; // 各类别基线签名(跨启动)
   static const _kLastAt = 'sync.lastAt';
   static const _kBackend = 'sync.backend';
   // 账号服务(hertz）
@@ -62,8 +66,8 @@ class SyncController extends ChangeNotifier {
 
   bool auto = false;
 
-  /// 收藏/取消收藏后自动上传(去抖几秒,best-effort,失败只记状态不打扰)。
-  bool autoUploadOnFavorite = false;
+  /// 「变化后自动上传」勾选的类别:本机该类内容变化后去抖自动上传到云端。
+  Set<SyncCategory> autoUploadOn = {};
 
   int lastSyncedAt = 0;
 
@@ -105,7 +109,20 @@ class SyncController extends ChangeNotifier {
       hertzClientId = hzPresetClientId;
     }
     auto = p.getBool(_kAuto) ?? false;
-    autoUploadOnFavorite = p.getBool(_kAutoUpFav) ?? false;
+    final upCats = p.getStringList(_kAutoUpOn);
+    autoUploadOn = upCats == null
+        ? <SyncCategory>{}
+        : {
+            for (final c in SyncCategory.values)
+              if (upCats.contains(c.name)) c
+          };
+    // 迁移旧的「收藏后自动上传」布尔开关 → 类别集合。
+    if (p.getBool(_kAutoUpFav) == true) {
+      autoUploadOn.add(SyncCategory.favorites);
+      await p.remove(_kAutoUpFav);
+      await p.setStringList(
+          _kAutoUpOn, [for (final c in autoUploadOn) c.name]);
+    }
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
     final cats = p.getStringList(_kCategories);
     syncCategories = cats == null
@@ -131,38 +148,224 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setAutoUploadOnFavorite(bool v) async {
-    autoUploadOnFavorite = v;
-    if (!v) {
-      _favUploadTimer?.cancel(); // 关掉开关时连带取消还没触发的上传
-      _favUploadTimer = null;
+  /// 勾选/取消某类别的「变化后自动上传」。全取消时连带取消还没触发的上传。
+  Future<void> setAutoUploadOn(SyncCategory c, bool on) async {
+    if (on) {
+      autoUploadOn.add(c);
+    } else {
+      autoUploadOn.remove(c);
     }
-    await (await _p).setBool(_kAutoUpFav, v);
+    if (autoUploadOn.isEmpty) {
+      _upTimer?.cancel();
+      _upTimer = null;
+    } else if (on) {
+      _onLocalChanged(); // 刚勾上 → 把开启前积累的变化也检查/传一次
+    }
+    await (await _p)
+        .setStringList(_kAutoUpOn, [for (final x in autoUploadOn) x.name]);
     notifyListeners();
   }
 
-  Timer? _favUploadTimer;
+  // ---- 变化后自动上传:监听本地数据 → 按类别签名比对 → 去抖上传变了的类别 ----
+  //
+  // 一处引擎覆盖所有「需要同步的地方」:收藏/进度/设置(书架 store 的一切)走
+  // LibraryStore 的通知;源脚本与源仓库配置走 SourceRepository.onChanged 钩子。
+  // 云同步/下载写回本地也会触发通知,但同步成功后会用「写回时刻」的签名重置基线,
+  // 签名对得上就不会自己触发自己(不回环)。基线跨启动持久化:退出前没来得及传的
+  // 变化(还在去抖/节流窗口里),下次启动能对出差异接着传,不会被吞。
 
-  /// 收藏/取消收藏后调用(由 app 层挂到 [LibraryStore] 的用户收藏钩子上)。
-  /// 去抖几秒:连续收藏多本只上传一次;撞上进行中的同步就再等一轮。
-  /// 开关没开 / 后端没配置好 → 什么都不做;失败只记状态与日志,不弹错打扰操作。
-  void scheduleUploadOnFavorite(LibraryStore lib, SourceRepository repo) {
-    if (!autoUploadOnFavorite || !configured) return;
-    _favUploadTimer?.cancel();
-    _favUploadTimer = Timer(const Duration(seconds: 3), () async {
-      if (!autoUploadOnFavorite) return; // 等待期间开关被关了
-      if (_syncing) {
-        scheduleUploadOnFavorite(lib, repo); // 正在同步 → 再等一轮
-        return;
-      }
+  LibraryStore? _upLib;
+  SourceRepository? _upRepo;
+  Timer? _upTimer;
+  int _upTimerDueAt = 0; // 当前定时器到点时刻(比较「谁更早」用)
+  int _upFirstDirtyAt = 0; // 本轮连续变化的起点(去抖上限用;0=没有待查变化)
+  int _upFailAt = 0; // 上次自动上传失败时刻(退避 1 分钟,别在断网时每 20 秒重试)
+  final Map<SyncCategory, String> _upBase = {}; // 各类别云端已知状态的本地签名(基线)
+  final Map<SyncCategory, int> _upLastAt = {}; // 各类别上次自动上传时刻(节流)
+
+  static const _upDebounceMs = 5000;
+
+  /// 去抖上限:连续变化(阅读翻页每几秒一次)会不断顺延 5 秒去抖,最多顺延到
+  /// 首次变化后 20 秒——保证检查照样跑,阅读中进度照样按节流间隔上传。
+  static const _upMaxWaitMs = 20000;
+
+  /// 高频类别的最小上传间隔:阅读进度逐页更新,阅读中最快每 2 分钟传一次,
+  /// 停止翻页后由去抖兜底把最终进度传上去。其余类别变化即传。
+  static const _upMinGapMs = {SyncCategory.history: 120000};
+
+  /// app 启动(书架读档完成后)挂上变化监听。基线优先用上次持久化的(能接着传
+  /// 上次退出前漏掉的变化);首次使用则取挂载时刻的本地状态。
+  Future<void> attachAutoUpload(LibraryStore lib, SourceRepository repo) async {
+    _upLib = lib;
+    _upRepo = repo;
+    final saved = (await _p).getStringList(_kAutoUpBase) ?? const [];
+    final savedMap = <String, String>{
+      for (final s in saved)
+        if (s.contains('=')) s.substring(0, s.indexOf('=')): s.substring(s.indexOf('=') + 1)
+    };
+    final cur = _localSigs(SyncCategory.values.toSet());
+    _upBase.clear();
+    for (final c in SyncCategory.values) {
+      _upBase[c] = savedMap[c.name] ?? cur[c]!;
+    }
+    lib.addListener(_onLocalChanged);
+    repo.onChanged = _onLocalChanged;
+    if (savedMap.isEmpty) {
+      _persistBase(); // 首次:把当前基线落盘
+    } else {
+      _onLocalChanged(); // 有历史基线 → 启动就检查一次,补传上次退出前的变化
+    }
+  }
+
+  void _onLocalChanged() {
+    if (autoUploadOn.isEmpty || !configured) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_upFirstDirtyAt == 0) _upFirstDirtyAt = now;
+    // 去抖 5 秒,但连续变化最多顺延到首次变化后 [_upMaxWaitMs],别把检查饿死。
+    var due = now + _upDebounceMs;
+    final cap = _upFirstDirtyAt + _upMaxWaitMs;
+    if (cap < due) due = cap;
+    _armAt(due, keepEarlier: false);
+  }
+
+  /// 把检查定时器定到 [dueMs]。[keepEarlier]=true 时若已有更早的定时器则不动它
+  /// (节流补查/重试用,别把「变化 5 秒即查」的近期定时器顶掉)。
+  void _armAt(int dueMs, {required bool keepEarlier}) {
+    if (keepEarlier && _upTimer != null && _upTimerDueAt <= dueMs) return;
+    _upTimer?.cancel();
+    _upTimerDueAt = dueMs;
+    final delta = dueMs - DateTime.now().millisecondsSinceEpoch;
+    _upTimer =
+        Timer(Duration(milliseconds: delta < 0 ? 0 : delta), _autoUploadCheck);
+  }
+
+  Future<void> _autoUploadCheck() async {
+    _upTimer = null;
+    _upFirstDirtyAt = 0; // 本轮检查消化当前积累;之后的新变化重新起算
+    final lib = _upLib;
+    final repo = _upRepo;
+    if (lib == null || repo == null) return;
+    if (autoUploadOn.isEmpty || !configured) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_syncing) {
+      _armAt(now + _upDebounceMs, keepEarlier: true); // 撞上进行中的同步 → 再等一轮
+      return;
+    }
+    if (now - _upFailAt < 60000) {
+      _armAt(_upFailAt + 60250, keepEarlier: true); // 刚失败过 → 退避 1 分钟再试
+      return;
+    }
+    final sigs = _localSigs(autoUploadOn);
+    final changed = <SyncCategory>{
+      for (final e in sigs.entries)
+        if (_upBase[e.key] != e.value) e.key
+    };
+    if (changed.isEmpty) return;
+    // 高频类别(进度)节流:没到最小间隔的先攒着,到点再传。
+    final ready = <SyncCategory>{
+      for (final c in changed)
+        if (now - (_upLastAt[c] ?? 0) >= (_upMinGapMs[c] ?? 0)) c
+    };
+    if (ready.isNotEmpty) {
       try {
-        AppLog.i.info(LogCat.sync, '收藏变化 · 自动上传');
-        await uploadNow(lib, repo);
+        AppLog.i.info(
+            LogCat.sync, '本地变化 · 自动上传 ${ready.map((c) => c.name).join(', ')}');
+        // 基线由 uploadNow 用「打快照时刻」的签名重置,上传期间的新变化下轮还能测到。
+        await uploadNow(lib, repo, categories: ready);
+        _upFailAt = 0;
+        for (final c in ready) {
+          _upLastAt[c] = now;
+        }
       } catch (e) {
-        status = '收藏自动上传失败:$e';
+        // 失败退避 1 分钟(uploadNow 已记日志);之后本地变化/补查会自然重试。
+        _upFailAt = DateTime.now().millisecondsSinceEpoch;
+        status = '自动上传失败:$e';
         notifyListeners();
       }
-    });
+    }
+    // 被节流攒下的类别:按剩余等待时间补一次检查(取更早的定时器,别顶掉新变化的 5 秒查)。
+    final deferred = changed.difference(ready);
+    if (deferred.isNotEmpty) {
+      final now2 = DateTime.now().millisecondsSinceEpoch;
+      var wait = 0;
+      for (final c in deferred) {
+        final left = (_upMinGapMs[c] ?? 0) - (now2 - (_upLastAt[c] ?? 0));
+        if (left > 0 && (wait == 0 || left < wait)) wait = left;
+      }
+      _armAt(now2 + wait + 250, keepEarlier: true);
+    }
+  }
+
+  /// 同步/上传/下载把本地与云端对齐后,用**对齐时刻**(打快照/写回完成时)的签名
+  /// 重置基线——期间又发生的本地变化签名对不上,下轮检查照样能传,不会被吞。
+  void _rebaselineWith(Map<SyncCategory, String> sigs) {
+    if (sigs.isEmpty) return;
+    _upBase.addAll(sigs);
+    _persistBase();
+  }
+
+  void _persistBase() {
+    _p.then((p) => p.setStringList(_kAutoUpBase,
+        [for (final e in _upBase.entries) '${e.key.name}=${e.value}']));
+  }
+
+  /// 各类别当前本地状态的**短签名**(变了 = 签名不同)。长度 + FNV-1a 哈希:
+  /// 跨进程稳定(String.hashCode 不保证跨启动一致),且短到可以随基线落盘。
+  static String _sig(String s) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h ^ s.codeUnitAt(i)) * 0x01000193) & 0xFFFFFFFF;
+    }
+    return '${s.length}:${h.toRadixString(16)}';
+  }
+
+  /// 设置类别的键归类沿用 [SyncData.isSettingsKey];源类别看「禁用列表 +
+  /// 每个源的 meta(名称/开关/防盗链等,同步载荷里都带)+ 脚本内容」。
+  Map<SyncCategory, String> _localSigs(Set<SyncCategory> cats) {
+    final lib = _upLib;
+    final repo = _upRepo;
+    if (lib == null || repo == null) return const {};
+    final full = lib.exportData();
+    String enc(Object? v) => _sig(jsonEncode(v ?? ''));
+    String srcSig(bool anime) {
+      final disabled = ((full['disabledSources'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .where((id) => _srcIsAnime(id) == anime)
+          .toList()
+        ..sort();
+      final scripts = [
+        for (final m in registeredSources)
+          if (m.isAnime == anime)
+            '${m.id}:${m.name}:${m.kind}:${m.experimental}:${m.useWebView}:'
+                '${m.imageReferer}:${m.needsLogin}:${_sig(m.script)}'
+      ]..sort();
+      return _sig('${disabled.join(',')}|${scripts.join(',')}');
+    }
+
+    final out = <SyncCategory, String>{};
+    for (final c in cats) {
+      out[c] = switch (c) {
+        SyncCategory.favorites => enc(full['favorites']),
+        SyncCategory.history =>
+          _sig('${enc(full['history'])}|${enc(full['workProgress'])}'),
+        SyncCategory.settings => enc({
+            for (final e in full.entries)
+              if (SyncData.isSettingsKey(e.key)) e.key: e.value
+          }),
+        SyncCategory.mangaSources => srcSig(false),
+        SyncCategory.animeSources => srcSig(true),
+        SyncCategory.sourceRepo =>
+          _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}|${repo.token ?? ''}'),
+      };
+    }
+    return out;
+  }
+
+  static bool _srcIsAnime(String id) {
+    for (final m in registeredSources) {
+      if (m.id == id) return m.isAnime;
+    }
+    return false;
   }
 
   /// 勾选/取消一个同步内容类别。
@@ -264,6 +467,8 @@ class SyncController extends ChangeNotifier {
       }
       await SyncData.apply(merged, lib, repo, modes: applyModes);
       AppLog.i.debug(LogCat.sync, '已应用合并结果到本地');
+      // 基线签名取「写回完成时刻」:推送期间的新变化对不上签名,之后照样能自动上传。
+      var preSigs = _localSigs(sel);
 
       // 推回;账号后端可能因并发写入抛 SyncConflict → 与服务端最新态重合并后重试。
       var attempt = 0;
@@ -281,12 +486,14 @@ class SyncController extends ChangeNotifier {
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
             await SyncData.apply(merged, lib, repo, modes: applyModes);
+            preSigs = _localSigs(sel);
           }
         }
       }
 
       lastSyncedAt = (merged['syncedAt'] as num).toInt();
       await (await _p).setInt(_kLastAt, lastSyncedAt);
+      _rebaselineWith(preSigs); // 合并结果已两边一致,别让「同步写回」再触发自动上传
       final favN = ((merged['library'] as Map)['favorites'] as List?)?.length ?? 0;
       final hisN = ((merged['library'] as Map)['history'] as Map?)?.length ?? 0;
       status = '已同步 · 收藏 $favN · 进度 $hisN';
@@ -302,22 +509,27 @@ class SyncController extends ChangeNotifier {
   }
 
   /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
-  Future<String> uploadNow(LibraryStore lib, SourceRepository repo) async {
+  /// [categories] 不传 = 用设置里勾选的 [syncCategories];自动上传只传变化的类别。
+  Future<String> uploadNow(LibraryStore lib, SourceRepository repo,
+      {Set<SyncCategory>? categories}) async {
+    final cats = categories ?? syncCategories;
     if (!configured) {
       throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
     }
-    if (syncCategories.isEmpty) throw Exception('至少选择一项要同步的内容');
+    if (cats.isEmpty) throw Exception('至少选择一项要同步的内容');
     if (_syncing) throw Exception('正在同步中…');
     _syncing = true;
     status = '上传中…';
     notifyListeners();
-    AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(syncCategories)}');
+    AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(cats)}');
     final sw = Stopwatch()..start();
     try {
       final backend = _backend();
-      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(syncCategories)}',
-          detail: '类别:${syncCategories.map((c) => c.name).join(', ')}');
-      final local = SyncData.build(lib, repo, categories: syncCategories);
+      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(cats)}',
+          detail: '类别:${cats.map((c) => c.name).join(', ')}');
+      final local = SyncData.build(lib, repo, categories: cats);
+      // 基线签名与快照同刻采集:推送期间的新变化对不上签名,之后照样能自动上传。
+      final preSigs = _localSigs(cats);
       AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
       AppLog.i.debug(LogCat.sync,
@@ -337,7 +549,8 @@ class SyncController extends ChangeNotifier {
         }
       }
       await _stampSynced();
-      status = '已上传 · ${_catLabel(syncCategories)}';
+      _rebaselineWith(preSigs); // 云端此刻 = 快照时刻的本地态
+      status = '已上传 · ${_catLabel(cats)}';
       AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
       return status;
     } catch (e) {
@@ -381,7 +594,9 @@ class SyncController extends ChangeNotifier {
       AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
       await SyncData.apply(remote, lib, repo, modes: modes);
       AppLog.i.debug(LogCat.sync, '已写入本地(${modes.length} 项)');
+      final preSigs = _localSigs(modes.keys.toSet()); // 写回完成时刻的签名
       await _stampSynced();
+      _rebaselineWith(preSigs); // 下载写回的内容不算「本地新变化」
       status = '已下载 · ${modes.length} 项';
       AppLog.i.success(LogCat.sync, '云端$status · ${sw.elapsedMilliseconds}ms');
       return status;

@@ -1079,15 +1079,10 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 用户收藏/取消收藏后的钩子(app 层挂云同步的「收藏后自动上传」)。
-  /// 只在 [toggleFavorite] 这类用户动作触发;云同步/导入写入收藏不触发,避免回环。
-  void Function()? onFavoritesChangedByUser;
-
   void toggleFavorite(FavoriteEntry e) {
     if (_favorites.remove(e.key) == null) _favorites[e.key] = e;
     _persistFavorites();
     notifyListeners(); // 用户动作,低频,即时通知
-    onFavoritesChangedByUser?.call();
   }
 
   /// 记录/更新阅读进度。reader 每次翻页调用。
@@ -1507,6 +1502,9 @@ class LibraryStore extends ChangeNotifier {
   void _persistHistoryNow() {
     _prefs?.setString(_kHistory,
         jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    // 共享进度的续读点(同章翻页只改内存)也跟着这班防抖车落盘:让磁盘态和内存态
+    // 保持一致,云同步「变化后自动上传」的持久化基线才对得上,不会重启后误传旧态。
+    _persistWorkProgress();
   }
 
   @override
