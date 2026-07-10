@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dream_manga_reader/core/source/chinese_fold.dart';
 import 'package:dream_manga_reader/core/source/title_match.dart';
 
 /// 覆盖跨源「同一作品」判定:容繁简 + 副标题,但不误合续作/外传。
@@ -44,9 +45,16 @@ void main() {
   });
 
   // 多源同名去重键:繁体折成简体后归一,繁简变体得到同一 key(截图里的重复卡就靠它合并)。
+  // 字表来自打包资源 assets/data/t2s.txt(OpenCC),测试里先 load 再验。
   group('dedupKey 繁简折叠', () {
-    void same(String a, String b) =>
-        expect(dedupKey(a), dedupKey(b), reason: '「$a」应与「$b」同 key');
+    setUpAll(() async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      await ChineseFold.load();
+    });
+
+    void same(String a, String b) => expect(
+        ChineseFold.dedupKey(a), ChineseFold.dedupKey(b),
+        reason: '「$a」应与「$b」同 key');
 
     test('截图里的重复卡对', () {
       same('绝世武神', '絕世武神');
@@ -61,7 +69,8 @@ void main() {
     });
 
     test('不同的书 key 不同', () {
-      expect(dedupKey('火影忍者') == dedupKey('海贼王'), false);
+      expect(ChineseFold.dedupKey('火影忍者') == ChineseFold.dedupKey('海贼王'),
+          false);
     });
   });
 }

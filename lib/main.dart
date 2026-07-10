@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'app/app.dart';
 import 'app/app_info.dart';
 import 'core/log/app_log.dart';
+import 'core/source/chinese_fold.dart';
 import 'core/net/app_proxy.dart';
 import 'core/platform/system_fonts.dart';
 import 'core/source/source_repository.dart';
@@ -25,6 +26,8 @@ void main() async {
       defaultTargetPlatform == TargetPlatform.iOS;
   PaintingBinding.instance.imageCache.maximumSizeBytes =
       (mobile ? 128 : 256) * 1024 * 1024;
+  // 繁→简折叠字表(OpenCC 资源)读进内存,供发现页多源同名去重折繁简变体。
+  await ChineseFold.load();
   // 解析并注入系统/环境代理(否则从无代理环境变量的终端启动会直连、被墙的源握手失败)。
   await AppProxy.init();
   // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;未配置则为空)。

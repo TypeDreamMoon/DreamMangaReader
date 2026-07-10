@@ -110,6 +110,7 @@ flutter:
 
   assets:
     - assets/logo.png
+    - assets/data/t2s.txt
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
