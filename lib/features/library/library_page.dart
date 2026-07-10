@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
@@ -625,35 +624,13 @@ class _LibraryPageState extends State<LibraryPage> {
               if (recs.isNotEmpty)
                 SizedBox(
                   height: 172,
-                  child: Listener(
-                    onPointerSignal: (e) {
-                      if (e is PointerScrollEvent && _recScroll.hasClients) {
-                        final d = e.scrollDelta.dy != 0
-                            ? e.scrollDelta.dy
-                            : e.scrollDelta.dx;
-                        final t = (_recScroll.offset + d)
-                            .clamp(0.0, _recScroll.position.maxScrollExtent);
-                        _recScroll.jumpTo(t);
-                      }
-                    },
-                    child: ScrollConfiguration(
-                      behavior: ScrollConfiguration.of(context).copyWith(
-                        dragDevices: const {
-                          PointerDeviceKind.touch,
-                          PointerDeviceKind.mouse,
-                          PointerDeviceKind.trackpad,
-                        },
-                        scrollbars: false,
-                      ),
-                      child: AppScrollView.separated(
-                        controller: _recScroll,
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: recs.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 10),
-                        itemBuilder: (context, i) => _recCard(p, recs[i]),
-                      ),
-                    ),
+                  // 桌面滚轮/鼠标拖拽可横滑(AppHStrip 统一处理)。
+                  child: AppHStrip.separated(
+                    controller: _recScroll,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: recs.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, i) => _recCard(p, recs[i]),
                   ),
                 ),
             ],
@@ -734,28 +711,9 @@ class _LibraryPageState extends State<LibraryPage> {
         _sectionHeader(p, '继续阅读'),
         SizedBox(
           height: 172,
-          // 桌面:竖向滚轮转横向滚动 + 允许鼠标拖拽,否则溢出屏外的卡片够不着。
-          child: Listener(
-            onPointerSignal: (e) {
-              if (e is PointerScrollEvent && _continueScroll.hasClients) {
-                final d = e.scrollDelta.dy != 0 ? e.scrollDelta.dy : e.scrollDelta.dx;
-                final t = (_continueScroll.offset + d)
-                    .clamp(0.0, _continueScroll.position.maxScrollExtent);
-                _continueScroll.jumpTo(t);
-              }
-            },
-            child: ScrollConfiguration(
-              behavior: ScrollConfiguration.of(context).copyWith(
-                dragDevices: const {
-                  PointerDeviceKind.touch,
-                  PointerDeviceKind.mouse,
-                  PointerDeviceKind.trackpad,
-                },
-                scrollbars: false,
-              ),
-              child: AppScrollView.separated(
+          // 桌面:竖向滚轮转横向滚动 + 允许鼠标拖拽(AppHStrip 统一处理)。
+          child: AppHStrip.separated(
             controller: _continueScroll,
-            scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
@@ -815,8 +773,6 @@ class _LibraryPageState extends State<LibraryPage> {
               ),
               );
             },
-              ),
-            ),
           ),
         ),
         const SizedBox(height: 14),

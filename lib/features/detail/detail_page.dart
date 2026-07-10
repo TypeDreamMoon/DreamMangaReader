@@ -461,8 +461,8 @@ class _DetailPageState extends State<DetailPage> {
         ),
         SizedBox(
           height: 168,
-          child: AppScrollView.separated(
-            scrollDirection: Axis.horizontal,
+          // 桌面滚轮/鼠标拖拽可横滑(AppHStrip),否则溢出屏外的推荐够不着。
+          child: AppHStrip.separated(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _recommend.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),

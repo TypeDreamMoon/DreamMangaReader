@@ -21,6 +21,14 @@ class SmoothScroll extends StatefulWidget {
     this.curve = Curves.easeOutCubic,
   });
 
+  // ---- 滚轮让位(横向条用)----
+  // 指针悬停在 AppHStrip 之类「滚轮转横滑」的区域时置位:盖层不抢注滚轮,
+  // 让横条自己经 resolver 接管(否则盖层在栈顶必胜,横条永远收不到)。
+  static int _yield = 0;
+  static void pushYield() => _yield++;
+  static void popYield() => _yield = _yield > 0 ? _yield - 1 : 0;
+  static bool get _yielding => _yield > 0;
+
   /// 用传入的 controller 构建可滚组件(务必把它设到 controller: 上)。
   final Widget Function(ScrollController controller) builder;
 
@@ -64,6 +72,7 @@ class _SmoothScrollState extends State<SmoothScroll> {
 
   void _onSignal(PointerSignalEvent e) {
     if (e is! PointerScrollEvent) return;
+    if (SmoothScroll._yielding) return; // 指针在横向条上:滚轮让给它
     if (!LibraryStore.scrollAnimationsEnabled) return;
     if (!_c.hasClients) return;
     // 用 resolver 注册:盖层在栈顶最先派发 → 最先注册 → resolver 只调用我们,
