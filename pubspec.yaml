@@ -41,6 +41,8 @@ dependencies:
   path_provider: ^2.1.6
   lzstring: ^2.0.0+2
   crypto: ^3.0.7
+  # @visibleForTesting 等注解(核心层是纯 Dart,不引 flutter/foundation)。
+  meta: ^1.18.0
   encrypt: ^5.0.3
   archive: ^3.6.1 # zip 导入源:解压 index.json + 多脚本
   shared_preferences: ^2.5.5

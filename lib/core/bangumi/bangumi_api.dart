@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:meta/meta.dart';
 
 import '../source/chinese_fold.dart';
 import '../source/title_match.dart' show normalizeTitle, sameCoreKey;
@@ -95,6 +96,20 @@ class BangumiApi {
     receiveTimeout: const Duration(seconds: 12),
     validateStatus: (_) => true,
   ));
+
+  /// 测试用:拿到内部 Dio 换 httpClientAdapter 桩掉网络。
+  @visibleForTesting
+  static Dio get dioForTesting => _dio;
+
+  /// validateStatus 放行了所有状态码,这里手动把非预期状态还原成错误抛出——
+  /// 否则 bgm.tv 一次 5xx/429 会被当成「没搜到/条目不存在」,throwOnError
+  /// 调用方(推荐的种子缓存)会把它写成 24 小时的未命中缓存。
+  static Never _throwBadStatus(Response<dynamic> r) =>
+      throw DioException.badResponse(
+        statusCode: r.statusCode ?? 0,
+        requestOptions: r.requestOptions,
+        response: r,
+      );
 
   /// 去掉副标题:遇到 ~…~ /(…)/【…】/ 空格 就截断(保留主标题)。
   static String _cleanTitle(String t) {
@@ -224,7 +239,7 @@ class BangumiApi {
     return out;
   }
 
-  /// 单次关键词搜索(不折叠;错误按 [throwOnError] 抛出或返回空)。
+  /// 单次关键词搜索(不折叠;非 200 一律算接口错误,按 [throwOnError] 抛出或返回空)。
   static Future<List<BangumiCandidate>> _searchOne(String title,
       {bool throwOnError = false}) async {
     try {
@@ -236,6 +251,7 @@ class BangumiApi {
           'max_results': 12,
         },
       );
+      if (r.statusCode != 200) _throwBadStatus(r);
       final data = r.data;
       if (data is! Map) return const [];
       final list = (data['list'] as List?) ?? const [];
@@ -264,10 +280,13 @@ class BangumiApi {
   }
 
   /// 按条目 id 直接拉完整详情(手动绑定/复用置信匹配结果)。
-  /// [throwOnError]=true 时网络/接口错误抛出(区分「条目不存在」与「暂时失败」)。
+  /// [throwOnError]=true 时网络/接口错误抛出(区分「条目不存在」与「暂时失败」):
+  /// 404 是真的「条目不存在」→ 返回 null(调用方可放心缓存),5xx/429 才抛。
   static Future<BangumiInfo?> fromId(int id, {bool throwOnError = false}) async {
     try {
       final s = await _dio.get<dynamic>('https://api.bgm.tv/v0/subjects/$id');
+      if (s.statusCode == 404) return null; // 条目不存在
+      if (s.statusCode != 200) _throwBadStatus(s);
       if (s.data is! Map) return null;
       return _fromSubject((s.data as Map).cast<String, dynamic>());
     } catch (_) {
