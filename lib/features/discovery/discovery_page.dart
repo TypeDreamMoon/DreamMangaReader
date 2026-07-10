@@ -276,7 +276,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   /// 已存在的标题只把源 id 累加到集合(驱动「N源」角标),不再重复出卡。
   void _ingestMixed(SourceMeta meta, List<Manga> items) {
     for (final m in items) {
-      final key = normalizeTitle(m.title);
+      final key = dedupKey(m.title); // 折繁→简再归一:绝世武神 / 絕世武神 合成一张卡
       if (key.isEmpty) {
         _results.add((manga: m, meta: meta)); // 无法归一(纯符号名)→ 不去重
         continue;
@@ -969,7 +969,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     final layout = store.feedLayout;
     // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
     int srcCountOf(Manga m) =>
-        _mixed ? (_titleSrcIds[normalizeTitle(m.title)]?.length ?? 1) : 1;
+        _mixed ? (_titleSrcIds[dedupKey(m.title)]?.length ?? 1) : 1;
     void open(Manga m, SourceMeta meta, String tag) => Navigator.of(context)
         .push(appRoute(DetailPage(manga: m, meta: meta, heroTag: tag)));
 

@@ -42,4 +42,26 @@ void main() {
     expect(sameWork('', ''), false);
     expect(sameWork('！！！', '？？？'), false);
   });
+
+  // 多源同名去重键:繁体折成简体后归一,繁简变体得到同一 key(截图里的重复卡就靠它合并)。
+  group('dedupKey 繁简折叠', () {
+    void same(String a, String b) =>
+        expect(dedupKey(a), dedupKey(b), reason: '「$a」应与「$b」同 key');
+
+    test('截图里的重复卡对', () {
+      same('绝世武神', '絕世武神');
+      same('我的妻子有点可怕', '我的妻子有點可怕');
+      same('靠山满天飞的英雄谭', '靠山滿天飛的英雄譚'); // 满/飞/谭 三字繁简不同,sameCoreKey 接不住
+      same('小红帽的狼徒弟', '小紅帽的狼徒弟');
+      same('取得骑龙执照的女高中生', '取得騎龍執照的女高中生');
+    });
+
+    test('高繁简差异标题(sameCoreKey 的已知局限)也能折', () {
+      same('斗罗大陆', '鬥羅大陸'); // 4 字里 3 字繁简不同
+    });
+
+    test('不同的书 key 不同', () {
+      expect(dedupKey('火影忍者') == dedupKey('海贼王'), false);
+    });
+  });
 }
