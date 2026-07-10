@@ -84,8 +84,14 @@ jobs:
       - name: Build APKs (universal + per-abi)
         # GitHub 登录(设备码流)的 OAuth Client ID 是公开值,已烤进
         # lib/core/net/github_oauth.dart 的默认值,CI 无需注入(注入空值反而会盖掉默认值)。
+        #
+        # universal 的 versionCode 抬到 5000+n 档:--split-per-abi 的分包会被 Flutter
+        # 加 ABI 档位(v7a=1000+n / arm64=2000+n / x86_64=4000+n),裸 n 的 universal
+        # 装在分包之上会被系统拒绝「降级安装」(应用内一键更新固定下 universal)。
+        # 5000 档 > 一切分包档 → 任何安装来源都能一键升级到 universal。别去掉!
         run: |
-          flutter build apk --release
+          n=$(grep -oE '^version:\s*[0-9.]+\+[0-9]+' pubspec.yaml | grep -oE '[0-9]+$')
+          flutter build apk --release --build-number=$((5000+n))
           flutter build apk --release --split-per-abi
 
       - name: Collect APKs

@@ -36,6 +36,11 @@ class UpdateInstaller {
   ));
 
   /// 从 release 附件里挑当前平台要下的那个(Android=通用 APK · Windows=setup.exe)。
+  ///
+  /// Android 必须下 universal:CI 把它的 versionCode 抬到 5000+n 档,高于一切
+  /// --split-per-abi 分包档(1000~4000+n),从任何安装来源升级都不会撞
+  /// 「无法降级安装」。**别改成挑分档 APK**——装过 5000 档 universal 的设备
+  /// 再装分包就是降级,一键更新会永久失败。
   static UpdateAsset? pickAsset(List<UpdateAsset> assets) {
     if (Platform.isAndroid) {
       return _firstWhere(
