@@ -5,12 +5,15 @@ import 'package:dio/dio.dart';
 /// 流程:请求设备码 → 展示 user_code + 让用户去 github.com/login/device 输码授权 →
 /// 轮询换 access_token → 当作源仓库 token 用(_fetch 照旧 Bearer)。
 ///
-/// 【一次性配置】需你在 GitHub 注册一个 OAuth App 并开启 Device Flow:
+/// 【一次性配置】需在 GitHub 注册一个 OAuth App 并开启 Device Flow:
 ///   GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
-///   勾选「Enable Device Flow」,拿到 Client ID 填到下面 [kGithubOAuthClientId](公开值,非密钥)。
-///   也可构建时 `--dart-define=GITHUB_CLIENT_ID=xxx` 覆盖(优先)。
-const String kGithubOAuthClientId =
-    String.fromEnvironment('GITHUB_CLIENT_ID', defaultValue: '');
+///   勾选「Enable Device Flow」,Client ID 填到下面默认值(**公开值,非密钥**,
+///   Device Flow 不需要 client secret,烤进代码是官方允许的做法)。
+///   构建时 `--dart-define=GITHUB_CLIENT_ID=xxx` 可覆盖(优先;别传空串,会盖掉默认值)。
+const String kGithubOAuthClientId = String.fromEnvironment(
+  'GITHUB_CLIENT_ID',
+  defaultValue: 'Ov23likQJd7IwZyP0E3k', // TypeDreamMoon 的 OAuth App(已开 Device Flow)
+);
 
 class GithubDeviceCode {
   GithubDeviceCode({

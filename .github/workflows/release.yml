@@ -61,11 +61,11 @@ jobs:
       - run: flutter pub get
 
       - name: Build APKs (universal + per-abi)
-        # GITHUB_CLIENT_ID 供源仓库「GitHub 登录」(设备码流)用;从仓库变量
-        # GH_OAUTH_CLIENT_ID 注入(GitHub 不允许变量名以 GITHUB_ 开头,故换名)。未设=空=按钮给提示。
+        # GitHub 登录(设备码流)的 OAuth Client ID 是公开值,已烤进
+        # lib/core/net/github_oauth.dart 的默认值,CI 无需注入(注入空值反而会盖掉默认值)。
         run: |
-          flutter build apk --release --dart-define=GITHUB_CLIENT_ID=${{ vars.GH_OAUTH_CLIENT_ID }}
-          flutter build apk --release --split-per-abi --dart-define=GITHUB_CLIENT_ID=${{ vars.GH_OAUTH_CLIENT_ID }}
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
 
       - name: Collect APKs
         run: |
@@ -103,7 +103,8 @@ jobs:
       - run: flutter --version
       - run: flutter config --no-analytics
       - run: flutter pub get
-      - run: flutter build windows --release --dart-define=GITHUB_CLIENT_ID=${{ vars.GH_OAUTH_CLIENT_ID }}
+      # OAuth Client ID 已烤进代码默认值(公开值),无需注入。
+      - run: flutter build windows --release
 
       - name: Bundle VC++ runtime + portable zip
         shell: pwsh
