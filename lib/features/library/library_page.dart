@@ -315,7 +315,8 @@ class _LibraryPageState extends State<LibraryPage> {
                 padding: const EdgeInsets.fromLTRB(16, 10, 12, 14),
                 child: Row(
                   children: [
-                    AppSectionHeading('为你推荐'),
+                    // Row 给子级无界宽度,带尾线(内部 Expanded)会炸布局 → 关掉尾线。
+                    const AppSectionHeading('为你推荐', trailingRule: false),
                     const SizedBox(width: 10),
                     if (_recs.loading)
                       SizedBox(
