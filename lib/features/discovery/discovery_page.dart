@@ -11,6 +11,7 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/log/app_log.dart';
 import '../../core/source/chinese_fold.dart';
+import '../../core/source/search_rank.dart';
 import '../../core/translate/translated_search.dart';
 import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
@@ -24,7 +25,9 @@ import '../library/manga_cover.dart';
 import '../library/masonry_feed.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
-typedef _Result = ({Manga manga, SourceMeta meta});
+/// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
+/// 混合搜索按它插排——精确命中排最前,不再被先返回的模糊结果压住。浏览模式恒 0。
+typedef _Result = ({Manga manga, SourceMeta meta, int rank});
 
 /// 混合模式:每个源一份独立游标 —— 各自异步翻页、先到先显示,慢源不拖累快源。
 class _MixedCursor {
@@ -66,9 +69,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   String _mixedStatus = ''; // '' | ongoing | completed
   String? _mixedError; // 混合模式最近一次源报错的消息(用于全源失败时的错误视图)
 
-  // 混合去重:归一化标题 → 该书在 _results 中的下标 / 已贡献它的源 id 集合。
+  // 混合去重:已出卡的归一化标题集合 / 每个标题已贡献它的源 id 集合。
   // 同名只显示一次(保留最先到达的源为代表),其余源只累加到源集合 → 「N源」角标。
-  final Map<String, int> _titlePos = {};
+  // (不存下标:搜索结果按相关度插排,下标会漂移。)
+  final Set<String> _titleSeen = {};
   final Map<String, Set<String>> _titleSrcIds = {};
   // 加载会话代际:每次 _reset 自增。单源与混合的在途旧请求回来后都据此丢弃
   // (切筛选/搜索/换源期间旧的 getSearch/getDiscovery 完成时不再 append,避免污染新结果、
@@ -172,7 +176,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       c.loading = false;
       c.errored = false;
     }
-    _titlePos.clear();
+    _titleSeen.clear();
     _titleSrcIds.clear();
     _mixedError = null;
     setState(() {
@@ -223,7 +227,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           : await _source!.getDiscovery(_page, filters: _activeFilters());
       if (!mounted || gen != _loadGen) return; // 已被新一轮取代:丢弃陈旧结果
       setState(() {
-        _results.addAll(page.items.map((m) => (manga: m, meta: meta!)));
+        // 单源:保持源自身的返回顺序(站点通常已按相关度排)。
+        _results.addAll(page.items.map((m) => (manga: m, meta: meta!, rank: 0)));
         _hasNext = page.hasNext && page.items.isNotEmpty;
         _page++;
         _loading = false;
@@ -272,24 +277,43 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
   }
 
-  /// 把一批结果按「归一化标题」去重后并入 _results:新标题追加成卡片(记源为代表),
+  /// 把一批结果按「归一化标题」去重后并入 _results:新标题出卡(记源为代表),
   /// 已存在的标题只把源 id 累加到集合(驱动「N源」角标),不再重复出卡。
+  /// 搜索时按相关度**插排**:精确同名永远在最前,不会被先返回的模糊结果压住
+  /// (各源按关键词模糊召回 + 到达顺序交错,不排序的话第一张常常不是要找的书)。
   void _ingestMixed(SourceMeta meta, List<Manga> items) {
     for (final m in items) {
       final key = ChineseFold.dedupKey(m.title); // 折繁→简再归一:绝世武神 / 絕世武神 合成一张卡
       if (key.isEmpty) {
-        _results.add((manga: m, meta: meta)); // 无法归一(纯符号名)→ 不去重
+        // 无法归一(纯符号名)→ 不去重,但照样按相关度插位。
+        _insertRanked((manga: m, meta: meta, rank: _relevanceOf(m.title)));
         continue;
       }
-      final pos = _titlePos[key];
-      if (pos == null) {
-        _titlePos[key] = _results.length;
+      if (_titleSeen.add(key)) {
         _titleSrcIds[key] = {meta.id};
-        _results.add((manga: m, meta: meta));
+        _insertRanked((manga: m, meta: meta, rank: _relevanceOf(m.title)));
       } else {
         (_titleSrcIds[key] ??= {}).add(meta.id);
       }
     }
+  }
+
+  /// 与当前搜索词的相关度(见 [searchRelevance])。翻译回退时命中原词或译词都算。
+  int _relevanceOf(String title) {
+    if (_query.isEmpty) return 0; // 浏览模式:维持到达顺序
+    final s = searchRelevance(title, _query);
+    if (s >= 3 || _origQuery == _query) return s;
+    final so = searchRelevance(title, _origQuery);
+    return so > s ? so : s;
+  }
+
+  /// 插到同分段的末尾:整体按 rank 降序,同分内保持到达顺序(稳定)。
+  void _insertRanked(_Result r) {
+    var i = _results.length;
+    while (i > 0 && _results[i - 1].rank < r.rank) {
+      i--;
+    }
+    _results.insert(i, r);
   }
 
   // 混合总体标志:任一源在加载 = 转圈;任一源还有下一页 = 可继续翻。
