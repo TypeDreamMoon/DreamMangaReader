@@ -39,6 +39,9 @@ class _AppState extends State<App> {
     // 书架读档完成后,若开了自动同步则后台合并一次(此时源仓已在 main 里 load 好)。
     _library.load().then((_) => SyncController.instance
         .autoSyncOnStart(_library, SourceRepository.instance));
+    // 收藏/取消收藏 → 云同步的「收藏后自动上传」(开关没开时它内部直接跳过)。
+    _library.onFavoritesChangedByUser = () => SyncController.instance
+        .scheduleUploadOnFavorite(_library, SourceRepository.instance);
     _downloads.load();
     _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
   }

@@ -44,6 +44,7 @@ class _SyncPageState extends State<SyncPage> {
   late String _kind = _sync.backendKind;
   late String _preset = _sync.hertzPreset; // 'custom' | 'hertz'
   late bool _auto = _sync.auto;
+  late bool _autoUpFav = _sync.autoUploadOnFavorite;
   bool _busy = false;
   bool _loginBusy = false;
   String _result = '';
@@ -461,19 +462,38 @@ class _SyncPageState extends State<SyncPage> {
   Widget _autoCard(AppPalette p) => AppCard(
         radius: 14,
         padding: EdgeInsets.zero, // 让 AppSwitchRow 的 contentPadding 独当留白,避免双重内缩
-        child: AppSwitchRow(
-          dense: true,
-          contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-          title: '启动时自动同步',
-          titleWeight: FontWeight.w600,
-          subtitle: '每次打开 App 后台双向合并一次(不丢本地)',
-          value: _auto,
-          onChanged: _busy
-              ? null
-              : (v) {
-                  setState(() => _auto = v);
-                  _sync.setAuto(v);
-                },
+        child: Column(
+          children: [
+            AppSwitchRow(
+              dense: true,
+              contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+              title: '启动时自动同步',
+              titleWeight: FontWeight.w600,
+              subtitle: '每次打开 App 后台双向合并一次(不丢本地)',
+              value: _auto,
+              onChanged: _busy
+                  ? null
+                  : (v) {
+                      setState(() => _auto = v);
+                      _sync.setAuto(v);
+                    },
+            ),
+            Divider(height: 1, thickness: 1, color: p.line),
+            AppSwitchRow(
+              dense: true,
+              contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+              title: '收藏后自动上传',
+              titleWeight: FontWeight.w600,
+              subtitle: '收藏 / 取消收藏几秒后,自动把所选内容上传到云端',
+              value: _autoUpFav,
+              onChanged: _busy
+                  ? null
+                  : (v) {
+                      setState(() => _autoUpFav = v);
+                      _sync.setAutoUploadOnFavorite(v);
+                    },
+            ),
+          ],
         ),
       );
 

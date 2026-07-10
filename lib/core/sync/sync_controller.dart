@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -27,6 +29,7 @@ class SyncController extends ChangeNotifier {
   static const _kPass = 'sync.webdav.pass';
   // 通用
   static const _kAuto = 'sync.auto';
+  static const _kAutoUpFav = 'sync.autoUploadOnFavorite';
   static const _kLastAt = 'sync.lastAt';
   static const _kBackend = 'sync.backend';
   // 账号服务(hertz）
@@ -58,6 +61,10 @@ class SyncController extends ChangeNotifier {
   static const hzPresetClientId = 'dream_manga_reader';
 
   bool auto = false;
+
+  /// 收藏/取消收藏后自动上传(去抖几秒,best-effort,失败只记状态不打扰)。
+  bool autoUploadOnFavorite = false;
+
   int lastSyncedAt = 0;
 
   /// 要同步的内容类别(默认全选)。两个后端共用。
@@ -98,6 +105,7 @@ class SyncController extends ChangeNotifier {
       hertzClientId = hzPresetClientId;
     }
     auto = p.getBool(_kAuto) ?? false;
+    autoUploadOnFavorite = p.getBool(_kAutoUpFav) ?? false;
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
     final cats = p.getStringList(_kCategories);
     syncCategories = cats == null
@@ -121,6 +129,40 @@ class SyncController extends ChangeNotifier {
     auto = v;
     await (await _p).setBool(_kAuto, v);
     notifyListeners();
+  }
+
+  Future<void> setAutoUploadOnFavorite(bool v) async {
+    autoUploadOnFavorite = v;
+    if (!v) {
+      _favUploadTimer?.cancel(); // 关掉开关时连带取消还没触发的上传
+      _favUploadTimer = null;
+    }
+    await (await _p).setBool(_kAutoUpFav, v);
+    notifyListeners();
+  }
+
+  Timer? _favUploadTimer;
+
+  /// 收藏/取消收藏后调用(由 app 层挂到 [LibraryStore] 的用户收藏钩子上)。
+  /// 去抖几秒:连续收藏多本只上传一次;撞上进行中的同步就再等一轮。
+  /// 开关没开 / 后端没配置好 → 什么都不做;失败只记状态与日志,不弹错打扰操作。
+  void scheduleUploadOnFavorite(LibraryStore lib, SourceRepository repo) {
+    if (!autoUploadOnFavorite || !configured) return;
+    _favUploadTimer?.cancel();
+    _favUploadTimer = Timer(const Duration(seconds: 3), () async {
+      if (!autoUploadOnFavorite) return; // 等待期间开关被关了
+      if (_syncing) {
+        scheduleUploadOnFavorite(lib, repo); // 正在同步 → 再等一轮
+        return;
+      }
+      try {
+        AppLog.i.info(LogCat.sync, '收藏变化 · 自动上传');
+        await uploadNow(lib, repo);
+      } catch (e) {
+        status = '收藏自动上传失败:$e';
+        notifyListeners();
+      }
+    });
   }
 
   /// 勾选/取消一个同步内容类别。
