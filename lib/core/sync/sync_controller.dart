@@ -109,28 +109,43 @@ class SyncController extends ChangeNotifier {
       hertzClientId = hzPresetClientId;
     }
     auto = p.getBool(_kAuto) ?? false;
+    // 解析类别名集合;旧版整份「settings」类别展开成 阅读/界面/其它设置+搜索历史。
+    Set<SyncCategory>? parseCats(List<String>? raw) {
+      if (raw == null) return null;
+      final out = <SyncCategory>{
+        for (final c in SyncCategory.values)
+          if (raw.contains(c.name)) c
+      };
+      if (raw.contains('settings')) {
+        out.addAll(const {
+          SyncCategory.readerSettings,
+          SyncCategory.uiSettings,
+          SyncCategory.appSettings,
+          SyncCategory.searchHistory,
+        });
+      }
+      return out;
+    }
+
     final upCats = p.getStringList(_kAutoUpOn);
-    autoUploadOn = upCats == null
-        ? <SyncCategory>{}
-        : {
-            for (final c in SyncCategory.values)
-              if (upCats.contains(c.name)) c
-          };
+    autoUploadOn = parseCats(upCats) ?? <SyncCategory>{};
     // 迁移旧的「收藏后自动上传」布尔开关 → 类别集合。
     if (p.getBool(_kAutoUpFav) == true) {
       autoUploadOn.add(SyncCategory.favorites);
       await p.remove(_kAutoUpFav);
       await p.setStringList(
           _kAutoUpOn, [for (final c in autoUploadOn) c.name]);
+    } else if (upCats != null && upCats.contains('settings')) {
+      await p.setStringList(
+          _kAutoUpOn, [for (final c in autoUploadOn) c.name]); // 落盘迁移结果
     }
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
     final cats = p.getStringList(_kCategories);
-    syncCategories = cats == null
-        ? SyncCategory.values.toSet()
-        : {
-            for (final c in SyncCategory.values)
-              if (cats.contains(c.name)) c
-          };
+    syncCategories = parseCats(cats) ?? SyncCategory.values.toSet();
+    if (cats != null && cats.contains('settings')) {
+      await p.setStringList(
+          _kCategories, syncCategories.map((e) => e.name).toList());
+    }
     await IamAuth.instance.load(issuer: hertzIssuer, clientId: hertzClientId);
     notifyListeners();
   }
@@ -189,9 +204,16 @@ class SyncController extends ChangeNotifier {
   /// 首次变化后 20 秒——保证检查照样跑,阅读中进度照样按节流间隔上传。
   static const _upMaxWaitMs = 20000;
 
-  /// 高频类别的最小上传间隔:阅读进度逐页更新,阅读中最快每 2 分钟传一次,
-  /// 停止翻页后由去抖兜底把最终进度传上去。其余类别变化即传。
-  static const _upMinGapMs = {SyncCategory.history: 120000};
+  /// 高频类别的最小上传间隔:阅读进度逐页更新,阅读中最快每 2 分钟传一次;
+  /// 设置类(亮度/缩放等滑条逐 tick 通知)最快每 1 分钟——每次上传都是
+  /// 整包 pull+push(可能带 3MB 背景图),不能跟着滑条跑。停止操作后由
+  /// 去抖/节流补查兜底把最终值传上去。其余类别变化即传。
+  static const _upMinGapMs = {
+    SyncCategory.history: 120000,
+    SyncCategory.readerSettings: 60000,
+    SyncCategory.uiSettings: 60000,
+    SyncCategory.appSettings: 60000,
+  };
 
   /// app 启动(书架读档完成后)挂上变化监听。基线优先用上次持久化的(能接着传
   /// 上次退出前漏掉的变化);首次使用则取挂载时刻的本地状态。
@@ -207,6 +229,18 @@ class SyncController extends ChangeNotifier {
     _upBase.clear();
     for (final c in SyncCategory.values) {
       _upBase[c] = savedMap[c.name] ?? cur[c]!;
+    }
+    // 旧版整份「settings」基线拆类后对不上新类别名:给四个细类塞必不匹配的
+    // 哨兵基线,强制补传一次——升级前还在去抖窗口里的设置变化不能被吞。
+    if (savedMap.containsKey('settings')) {
+      for (final c in const [
+        SyncCategory.readerSettings,
+        SyncCategory.uiSettings,
+        SyncCategory.appSettings,
+        SyncCategory.searchHistory,
+      ]) {
+        _upBase[c] = '';
+      }
     }
     lib.addListener(_onLocalChanged);
     repo.onChanged = _onLocalChanged;
@@ -319,7 +353,7 @@ class SyncController extends ChangeNotifier {
     return '${s.length}:${h.toRadixString(16)}';
   }
 
-  /// 设置类别的键归类沿用 [SyncData.isSettingsKey];源类别看「禁用列表 +
+  /// 设置类别的键归类沿用 [SyncData.settingsCatOf];源类别看「禁用列表 +
   /// 每个源的 meta(名称/开关/防盗链等,同步载荷里都带)+ 脚本内容」。
   Map<SyncCategory, String> _localSigs(Set<SyncCategory> cats) {
     final lib = _upLib;
@@ -327,6 +361,10 @@ class SyncController extends ChangeNotifier {
     if (lib == null || repo == null) return const {};
     final full = lib.exportData();
     String enc(Object? v) => _sig(jsonEncode(v ?? ''));
+    String setCatSig(SyncCategory c) => enc({
+          for (final e in full.entries)
+            if (SyncData.settingsCatOf(e.key) == c) e.key: e.value
+        });
     String srcSig(bool anime) {
       final disabled = ((full['disabledSources'] as List?) ?? const [])
           .map((e) => e.toString())
@@ -348,10 +386,11 @@ class SyncController extends ChangeNotifier {
         SyncCategory.favorites => enc(full['favorites']),
         SyncCategory.history =>
           _sig('${enc(full['history'])}|${enc(full['workProgress'])}'),
-        SyncCategory.settings => enc({
-            for (final e in full.entries)
-              if (SyncData.isSettingsKey(e.key)) e.key: e.value
-          }),
+        SyncCategory.searchHistory => enc(full['searchHistory']),
+        SyncCategory.readerSettings ||
+        SyncCategory.uiSettings ||
+        SyncCategory.appSettings =>
+          setCatSig(c),
         SyncCategory.mangaSources => srcSig(false),
         SyncCategory.animeSources => srcSig(true),
         SyncCategory.sourceRepo =>

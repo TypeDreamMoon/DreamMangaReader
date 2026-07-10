@@ -11,7 +11,10 @@ import '../../ui/ui.dart';
 const Map<SyncCategory, String> kCatLabels = {
   SyncCategory.favorites: '收藏',
   SyncCategory.history: '阅读进度',
-  SyncCategory.settings: '阅读设置',
+  SyncCategory.searchHistory: '搜索历史',
+  SyncCategory.readerSettings: '阅读设置',
+  SyncCategory.uiSettings: '界面与外观',
+  SyncCategory.appSettings: '其它设置',
   SyncCategory.mangaSources: '漫画源',
   SyncCategory.animeSources: '番剧源',
   SyncCategory.sourceRepo: '源仓库',
@@ -610,7 +613,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                   child: Row(
                     children: [
                       SizedBox(
-                        width: 56,
+                        width: 72, // 最长标签「界面与外观」(5 字)不换行
                         child: Text(kCatLabels[c]!,
                             style: TextStyle(
                                 color: p.textPrimary,

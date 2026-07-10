@@ -8,11 +8,16 @@ import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import '../source/title_match.dart' show sameCoreKey;
 
-/// 可选择同步的内容类别。源开关按内容类型拆成漫画源 / 番剧源两档。
+/// 可选择同步的内容类别。源开关按内容类型拆成漫画源 / 番剧源两档;
+/// 设置按用途拆成 阅读 / 界面外观 / 其它,搜索历史单独一类(是数据不是设置)。
+/// 旧版的整份「settings」类别在 [SyncController.load] 迁移成后四类。
 enum SyncCategory {
   favorites, // 收藏
-  history, // 阅读进度 / 历史
-  settings, // 阅读/界面设置(整份,不再细拆)
+  history, // 阅读进度 / 历史(含作品级共享进度)
+  searchHistory, // 搜索历史
+  readerSettings, // 阅读设置(翻页/缩放/滤镜/亮度/每本书的模式…)
+  uiSettings, // 界面与外观(布局/字体/圆角/背景图/动画…)
+  appSettings, // 其它设置(更新检查/搜索翻译/Bangumi 绑定…)
   mangaSources, // 漫画源开关(disabledSources 中 kind=manga 的)
   animeSources, // 番剧源开关(disabledSources 中 kind=anime 的)
   sourceRepo, // 源仓库配置(repoUrl/localDir/token)
@@ -44,6 +49,41 @@ class SyncData {
       k != 'disabledSources' &&
       k != 'bgImageData' &&
       k != 'bgImageExt';
+
+  // ---- 设置键 → 细分类别 ----
+  // 阅读器行为(含每本书的模式覆盖 mangaModes)。
+  static const _readerKeys = {
+    'readerMode', 'preload', 'doublePage', 'doubleTapZoom', 'showPageNumber',
+    'brightness', 'webtoonWidth', 'readerBackground', 'readerGestures',
+    'volumeKeyPaging', 'invertTapZones', 'readerBg', 'readerOrientation',
+    'keepScreenOn', 'autoDetectMode', 'webtoonGap', 'chapterToast',
+    'cfGrayscale', 'cfInvert', 'cfSepia', 'cfContrast', 'zoomMode',
+    'autoScrollSpeed', 'mangaModes',
+  };
+
+  // 界面与外观(布局/字体/圆角/背景图/动画;showSourcePicker 与书架布局同组)。
+  static const _uiKeys = {
+    'gridColumns', 'coverRadius', 'controlRadius', 'uiScale', 'uiFont',
+    'bgImage', 'bgBlur', 'bgTintColor', 'bgTintAlpha', 'enableAnimations',
+    'scrollAnimations', 'detailTintStrength', 'feedLayout', 'showSourcePicker',
+  };
+
+  /// 设置类键 → 细分类别;非设置键(收藏/历史/源开关/v 等)返回 null。
+  /// 不在名单里的键(将来新增的设置)兜底归「其它设置」,保证仍会被同步。
+  static SyncCategory? settingsCatOf(String k) {
+    if (!isSettingsKey(k)) return null;
+    if (k == 'searchHistory') return SyncCategory.searchHistory;
+    if (_readerKeys.contains(k)) return SyncCategory.readerSettings;
+    if (_uiKeys.contains(k)) return SyncCategory.uiSettings;
+    return SyncCategory.appSettings; // 更新/翻译/Bangumi 绑定 + 未来新增
+  }
+
+  /// 三个设置细类(遍历用)。
+  static const settingsCats = [
+    SyncCategory.readerSettings,
+    SyncCategory.uiSettings,
+    SyncCategory.appSettings,
+  ];
 
   /// 背景图:设置里只存本地路径,跨设备无意义;上传时把图片内容(base64)也带上,
   /// 有 3MB 上限(免撑爆 blob;更大就只同步路径,目标机自行处理)。
@@ -124,11 +164,18 @@ class SyncData {
       outLib['history'] = full['history'];
       outLib['workProgress'] = full['workProgress']; // 作品级共享进度随进度一起走
     }
-    if (categories.contains(SyncCategory.settings)) {
-      for (final e in full.entries) {
-        if (isSettingsKey(e.key)) outLib[e.key] = e.value;
-      }
-      _embedBgImage(outLib, full['bgImage']); // 背景图内容一并带上
+    // 设置细类 + 搜索历史:按键归类,选了哪类就带哪类的键。
+    for (final e in full.entries) {
+      final cat = settingsCatOf(e.key);
+      if (cat != null && categories.contains(cat)) outLib[e.key] = e.value;
+    }
+    if (categories.contains(SyncCategory.uiSettings)) {
+      // 先放墓碑再嵌图:本机没有可嵌的背景图(没设/超 3MB)时,空串会经
+      // overlay/LWW 盖掉云端残留的旧 bgImageData——否则清掉的背景图会在
+      // 别的设备上复活。_applyBgImage 对空串按「无图」处理。
+      outLib['bgImageData'] = '';
+      outLib['bgImageExt'] = '';
+      _embedBgImage(outLib, full['bgImage']); // 背景图内容随「界面与外观」走
     }
     final allDisabled = _strList(full['disabledSources']);
     if (categories.contains(SyncCategory.mangaSources)) {
@@ -372,10 +419,19 @@ class SyncData {
               _map(full['workProgress']), _map(blib['workProgress']))
           : blib['workProgress'];
     }
-    // 设置:只有覆盖(false)才应用;追加/不选保持本地。
-    if (modes[SyncCategory.settings] == false) {
+    // 搜索历史:覆盖=用服务器的;追加=并集(本地近期在前,免清掉本地记录)。
+    final shMode = modes[SyncCategory.searchHistory];
+    if (shMode != null && blib.containsKey('searchHistory')) {
+      toImport['searchHistory'] = shMode == true
+          ? _mergeSearchHistory(
+              _strList(full['searchHistory']), 1, _strList(blib['searchHistory']), 0)
+          : blib['searchHistory'];
+    }
+    // 设置细类:只有覆盖(false)才应用;追加/不选保持本地。
+    for (final cat in settingsCats) {
+      if (modes[cat] != false) continue;
       for (final e in blib.entries) {
-        if (isSettingsKey(e.key)) toImport[e.key] = e.value;
+        if (settingsCatOf(e.key) == cat) toImport[e.key] = e.value;
       }
     }
     // 源开关:按 kind 分别重建整份 disabledSources 交给 importData。
@@ -399,8 +455,8 @@ class SyncData {
     await lib.importData(toImport,
         replaceFavorites: importFav, replaceHistory: importHist);
 
-    // 背景图:覆盖模式下落地图片内容并指向本机路径(追加不动设置)。
-    if (modes[SyncCategory.settings] == false) {
+    // 背景图:「界面与外观」覆盖模式下落地图片内容并指向本机路径(追加不动设置)。
+    if (modes[SyncCategory.uiSettings] == false) {
       await _applyBgImage(blib, lib);
     }
 
@@ -423,10 +479,12 @@ class SyncData {
     }
   }
 
-  /// 哪些类别支持「追加」(其余只有覆盖):收藏/历史/源开关是集合可并;设置/源仓库是整份值。
+  /// 哪些类别支持「追加」(其余只有覆盖):收藏/历史/搜索历史/源开关是集合可并;
+  /// 各设置细类/源仓库是整份值。
   static bool supportsAppend(SyncCategory c) =>
       c == SyncCategory.favorites ||
       c == SyncCategory.history ||
+      c == SyncCategory.searchHistory ||
       c == SyncCategory.mangaSources ||
       c == SyncCategory.animeSources;
 }
