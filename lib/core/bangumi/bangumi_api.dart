@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../source/chinese_fold.dart';
 import '../source/title_match.dart' show normalizeTitle, sameCoreKey;
 
 /// Bangumi(番组计划 bgm.tv)条目详情。评分 + 元数据(制作信息、发售、卷话数、简介)。
@@ -103,8 +104,9 @@ class BangumiApi {
     return s.trim();
   }
 
-  /// 归一化:只留字母/数字/日文假名/汉字(去空格标点),再去数字(卷号)。
-  static String _norm(String s) => s
+  /// 归一化:繁→简折叠(条目中文名基本是简体,查询可能是繁体书名),
+  /// 只留字母/数字/日文假名/汉字(去空格标点),再去数字(卷号)。
+  static String _norm(String s) => ChineseFold.fold(s)
       .toLowerCase()
       .replaceAll(RegExp(r'[^0-9a-z぀-ヿ一-鿿]'), '')
       .replaceAll(RegExp(r'\d'), '');
@@ -202,10 +204,29 @@ class BangumiApi {
 
   /// 搜索候选列表(手动匹配用)。失败返回空;[throwOnError]=true 时网络/接口错误
   /// 改为抛出——调用方需要区分「真没搜到」和「暂时失败」(如推荐的未命中缓存)。
+  ///
+  /// **繁体书名先折简体再搜**:Bangumi 条目中文名基本是简体,繁体直搜常只回无关
+  /// 结果(穿越者的幸運禮 搜不到 穿越者的幸运礼,线上实测)。折叠命中排前,
+  /// 原文再搜一次补漏(港台版条目),按 id 去重合并。
   static Future<List<BangumiCandidate>> search(String rawTitle,
       {bool throwOnError = false}) async {
     final title = _cleanTitle(rawTitle);
     if (title.isEmpty) return const [];
+    final folded = ChineseFold.fold(title);
+    final queries = folded == title ? [title] : [folded, title];
+    final out = <BangumiCandidate>[];
+    final seen = <int>{};
+    for (final q in queries) {
+      for (final c in await _searchOne(q, throwOnError: throwOnError)) {
+        if (seen.add(c.id)) out.add(c);
+      }
+    }
+    return out;
+  }
+
+  /// 单次关键词搜索(不折叠;错误按 [throwOnError] 抛出或返回空)。
+  static Future<List<BangumiCandidate>> _searchOne(String title,
+      {bool throwOnError = false}) async {
     try {
       final r = await _dio.get<dynamic>(
         'https://api.bgm.tv/search/subject/${Uri.encodeComponent(title)}',
