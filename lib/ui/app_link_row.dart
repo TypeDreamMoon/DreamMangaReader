@@ -33,6 +33,7 @@ class AppLinkRow extends StatelessWidget {
       subtitleMaxLines: 1,
       trailing: Icon(Icons.open_in_new_rounded, size: 18, color: p.textMuted),
       onTap: onTap,
+      cardPadding: const EdgeInsetsGeometry.fromLTRB(25, 0, 25, 0),
     );
   }
 }
