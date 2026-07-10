@@ -9,6 +9,7 @@ import '../../core/source/chinese_fold.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart' show MangaSource;
 import '../../core/source/source_registry.dart';
+import '../../core/source/source_search.dart';
 import '../../core/source/title_match.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
@@ -165,6 +166,194 @@ class _LibraryPageState extends State<LibraryPage> {
       Navigator.of(context).push(
         appRoute(DetailPage(manga: m, meta: meta, heroTag: heroTag)),
       );
+
+  // ---- 智能打开(源被删自动找同名换源)+ 卡片右键/长按菜单 ----
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  bool _crossOpening = false; // 同名查找进行中(防连点重复扇出)
+
+  /// 在(除 [excludeSourceId] 外的)启用漫画源里搜同名并打开详情页。
+  Future<void> _openInOtherSource(String title, {String? excludeSourceId}) async {
+    if (_crossOpening) return;
+    final store = LibraryScope.read(context);
+    final metas = [
+      for (final s in registeredSources)
+        if (s.kind == 'manga' &&
+            store.isSourceEnabled(s.id) &&
+            s.id != excludeSourceId)
+          s
+    ];
+    if (metas.isEmpty) {
+      _snack('没有其它可用的漫画源');
+      return;
+    }
+    _crossOpening = true;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('正在其它源查找「$title」…'),
+        duration: const Duration(seconds: 20), // 找到/失败会主动收掉
+      ));
+    }
+    try {
+      final r = await findFirstWork(metas, title);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      // 搜索期间用户已经点开别的页面 → 别把陈旧结果压到人家头上。
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      final m = r.match;
+      if (m == null) {
+        _snack(r.allErrored ? '所有源都搜索失败了' : '其它源里没找到同名漫画');
+        return;
+      }
+      _openManga(m.manga, m.meta);
+    } finally {
+      _crossOpening = false;
+    }
+  }
+
+  /// 打开一个书架条目:源还在直接开;**源被删/不存在就自动在其它源找同名**打开
+  /// (收藏不再因为删了源而变成死卡片)。
+  void _openEntrySmart({
+    required String title,
+    required String sourceId,
+    required String mangaId,
+    String? cover,
+    Object? heroTag,
+  }) {
+    final meta = _metaById(sourceId);
+    if (meta != null) {
+      _openManga(Manga(id: mangaId, title: title, cover: cover), meta,
+          heroTag: heroTag);
+      return;
+    }
+    _openInOtherSource(title, excludeSourceId: sourceId);
+  }
+
+  /// 同一作品(容繁简/装饰副标题,与书架去重同口径)的全部收藏与历史条目。
+  /// 标题归一化为空(纯符号名)时书架也是按单条出卡的,组操作只作用于被点的
+  /// 那一条([sourceId]:[mangaId]),不能按字面标题误伤其它同符号名的书。
+  ({List<FavoriteEntry> favs, List<ReadState> hist}) _workEntries(
+      LibraryStore store, String title,
+      {required String sourceId, required String mangaId}) {
+    final core = coreTitle(title);
+    if (core.isEmpty) {
+      return (
+        favs: [
+          for (final f in store.favorites)
+            if (f.sourceId == sourceId && f.mangaId == mangaId) f
+        ],
+        hist: [
+          for (final h in store.history)
+            if (h.sourceId == sourceId && h.mangaId == mangaId) h
+        ],
+      );
+    }
+    bool same(String t) {
+      final c = coreTitle(t);
+      return c == core || sameCoreKey(c, core);
+    }
+
+    return (
+      favs: [
+        for (final f in store.favorites)
+          if (same(f.title)) f
+      ],
+      hist: [
+        for (final h in store.history)
+          if (same(h.title)) h
+      ],
+    );
+  }
+
+  /// 卡片右键(桌面)/长按(触屏)菜单。条目按「作品」操作:去重卡代表的是
+  /// 跨源同一部书,取消收藏/删记录作用于该作品在**所有源**的条目,卡片才会消失。
+  Widget _withEntryMenu({
+    required Widget child,
+    required String title,
+    required String sourceId,
+    required String mangaId,
+    String? cover,
+    Object? heroTag,
+  }) =>
+      GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onLongPressStart: (d) => _showEntryMenu(d.globalPosition,
+            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag),
+        onSecondaryTapUp: (d) => _showEntryMenu(d.globalPosition,
+            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag),
+        child: child,
+      );
+
+  Future<void> _showEntryMenu(
+    Offset pos, {
+    required String title,
+    required String sourceId,
+    required String mangaId,
+    String? cover,
+    Object? heroTag,
+  }) async {
+    final p = context.palette;
+    final store = LibraryScope.read(context);
+    final w = _workEntries(store, title, sourceId: sourceId, mangaId: mangaId);
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    PopupMenuItem<String> item(String v, IconData ic, String label,
+            {Color? color}) =>
+        PopupMenuItem<String>(
+          value: v,
+          height: 42,
+          child: Row(children: [
+            Icon(ic, size: 17, color: color ?? p.textMuted),
+            const SizedBox(width: 10),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13.5, color: color ?? p.textPrimary)),
+          ]),
+        );
+    final picked = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy,
+          overlay.size.width - pos.dx, overlay.size.height - pos.dy),
+      color: p.elevated,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: p.line)),
+      items: [
+        item('open', Icons.menu_book_rounded, '打开'),
+        item('other', Icons.swap_horiz_rounded, '用其它源打开'),
+        if (w.favs.isNotEmpty)
+          item('unfav', Icons.favorite_border_rounded, '取消收藏',
+              color: p.statusFail),
+        if (w.hist.isNotEmpty)
+          item('delhist', Icons.delete_outline_rounded, '删除阅读记录',
+              color: p.statusFail),
+      ],
+    );
+    if (!mounted) return;
+    switch (picked) {
+      case 'open':
+        _openEntrySmart(
+            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag);
+      case 'other':
+        _openInOtherSource(title, excludeSourceId: sourceId);
+      case 'unfav':
+        for (final f in w.favs) {
+          store.toggleFavorite(f);
+        }
+        _snack(w.favs.length > 1 ? '已取消收藏(${w.favs.length} 个源)' : '已取消收藏');
+      case 'delhist':
+        for (final h in w.hist) {
+          store.removeHistory(h.sourceId, h.mangaId);
+        }
+        _snack('已删除阅读记录');
+    }
+  }
 
   // ---- 多源同名去重(书架把同一作品的多源副本合成一张卡;容繁简 + 副标题)----
 
@@ -575,7 +764,13 @@ class _LibraryPageState extends State<LibraryPage> {
               final meta = _metaById(h.sourceId);
               final m = Manga(id: h.mangaId, title: h.title, cover: h.cover);
               final tag = meta != null ? 'cont:${meta.id}:${m.id}' : null;
-              return SizedBox(
+              return _withEntryMenu(
+                title: h.title,
+                sourceId: h.sourceId,
+                mangaId: h.mangaId,
+                cover: h.cover,
+                heroTag: tag,
+                child: SizedBox(
                 width: 92,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -588,9 +783,13 @@ class _LibraryPageState extends State<LibraryPage> {
                         sourceCount: items[i].sources,
                         headers: meta != null ? imageHeadersOf(meta) : const {},
                         heroTag: tag,
-                        onTap: meta != null
-                            ? () => _openManga(m, meta, heroTag: tag)
-                            : null,
+                        // 源被删也能点:自动在其它源找同名打开。
+                        onTap: () => _openEntrySmart(
+                            title: h.title,
+                            sourceId: h.sourceId,
+                            mangaId: h.mangaId,
+                            cover: h.cover,
+                            heroTag: tag),
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -613,6 +812,7 @@ class _LibraryPageState extends State<LibraryPage> {
                     ),
                   ],
                 ),
+              ),
               );
             },
               ),
@@ -653,27 +853,40 @@ class _LibraryPageState extends State<LibraryPage> {
     final meta = _metaById(f.sourceId);
     final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
     final tag = meta != null ? '$tagPrefix:${meta.id}:${m.id}' : null;
+    void open() => _openEntrySmart(
+        title: f.title,
+        sourceId: f.sourceId,
+        mangaId: f.mangaId,
+        cover: f.cover,
+        heroTag: tag);
     final cover = MangaCover(
       manga: m,
       sourceCount: item.sources,
       headers: meta != null ? imageHeadersOf(meta) : const {},
       aspect: layout == FeedLayout.masonry ? aspectForId(m.id) : 3 / 4,
       heroTag: tag,
-      onTap: meta != null ? () => _openManga(m, meta, heroTag: tag) : null,
+      onTap: open, // 源被删也能点:自动在其它源找同名打开
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        layout == FeedLayout.grid ? Flexible(child: cover) : cover,
-        const SizedBox(height: 6),
-        Text(f.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: p.textPrimary)),
-      ],
+    return _withEntryMenu(
+      title: f.title,
+      sourceId: f.sourceId,
+      mangaId: f.mangaId,
+      cover: f.cover,
+      heroTag: tag,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          layout == FeedLayout.grid ? Flexible(child: cover) : cover,
+          const SizedBox(height: 6),
+          Text(f.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: p.textPrimary)),
+        ],
+      ),
     );
   }
 
@@ -683,12 +896,25 @@ class _LibraryPageState extends State<LibraryPage> {
     final meta = _metaById(f.sourceId);
     final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
     final tag = meta != null ? '$tagPrefix:${meta.id}:${m.id}' : null;
-    return coverListTile(p, context,
-        manga: m,
-        headers: meta != null ? imageHeadersOf(meta) : const {},
-        sourceCount: item.sources,
-        heroTag: tag,
-        onTap: meta != null ? () => _openManga(m, meta, heroTag: tag) : () {});
+    return _withEntryMenu(
+      title: f.title,
+      sourceId: f.sourceId,
+      mangaId: f.mangaId,
+      cover: f.cover,
+      heroTag: tag,
+      child: coverListTile(p, context,
+          manga: m,
+          headers: meta != null ? imageHeadersOf(meta) : const {},
+          sourceCount: item.sources,
+          heroTag: tag,
+          // 源被删也能点:自动在其它源找同名打开。
+          onTap: () => _openEntrySmart(
+              title: f.title,
+              sourceId: f.sourceId,
+              mangaId: f.mangaId,
+              cover: f.cover,
+              heroTag: tag)),
+    );
   }
 
   Future<void> _pickSource(SourceMeta current) async {

@@ -552,6 +552,50 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 自动换源:本源章节加载失败(源挂了/被限流)时,在其它启用源里自动搜同名,
+  /// 找到就用那个源重开详情页(替换当前页)。找不到给轻提示,原错误视图还在。
+  bool _autoSwitching = false;
+  Future<void> _autoSwitchSource() async {
+    if (_autoSwitching) return;
+    final store = LibraryScope.read(context);
+    final metas = [
+      for (final s in registeredSources)
+        if (s.kind == 'manga' &&
+            store.isSourceEnabled(s.id) &&
+            s.id != widget.meta.id)
+          s,
+    ];
+    if (metas.isEmpty) {
+      _toast('没有其它可用的漫画源');
+      return;
+    }
+    setState(() => _autoSwitching = true);
+    try {
+      final r = await findFirstWork(metas, _manga.title);
+      if (!mounted) return;
+      final m = r.match;
+      if (m == null) {
+        _toast(r.allErrored ? '其它源也都失败了' : '其它源里没找到同名漫画');
+        return;
+      }
+      // 查找期间用户又开了别的页(推荐卡/弹层)→ pushReplacement 会替掉**栈顶**
+      // 而不是本页;不再是当前页就放弃,免得替错。
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      Navigator.of(context).pushReplacement(
+        appRoute(DetailPage(manga: m.manga, meta: m.meta)),
+      );
+    } finally {
+      if (mounted) setState(() => _autoSwitching = false);
+    }
+  }
+
   /// 从封面算主色(KMeans),用来给详情页头部/按钮染色。失败静默,保持主题色。
   Future<void> _extractPalette() async {
     final url = _manga.cover;
@@ -1553,11 +1597,27 @@ class _DetailPageState extends State<DetailPage> {
     if (_error != null) {
       return [
         header,
-        stateBox(AppErrorView(
-          title: '章节加载失败',
-          message: '$_error',
-          onRetry: _reloadChapters,
-          retryLabel: '重新加载章节',
+        stateBox(Column(
+          children: [
+            AppErrorView(
+              title: '章节加载失败',
+              message: '$_error',
+              onRetry: _reloadChapters,
+              retryLabel: '重新加载章节',
+            ),
+            const SizedBox(height: 4),
+            // 源挂了重试也没用 → 一键在其它源里找同名的这本书直接换过去。
+            OutlinedButton.icon(
+              onPressed: _autoSwitching ? null : _autoSwitchSource,
+              icon: _autoSwitching
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.swap_horiz_rounded, size: 17),
+              label: Text(_autoSwitching ? '正在其它源查找同名…' : '自动换源(其它源找同名)'),
+            ),
+          ],
         )),
       ];
     }
