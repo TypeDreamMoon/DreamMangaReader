@@ -5,7 +5,9 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/source/chinese_fold.dart';
 import '../../core/source/models.dart';
+import '../../core/source/source.dart' show MangaSource;
 import '../../core/source/source_registry.dart';
 import '../../core/source/title_match.dart';
 import '../../ui/ui.dart';
@@ -28,7 +30,18 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   SourceController? _sc;
-  late Future<List<Manga>> _future;
+
+  // ---- 底部「推荐」浏览区(默认混合源;开了「显示源选择器」= 单源可切)----
+  List<({Manga manga, SourceMeta meta})> _feedItems = [];
+  final Map<String, int> _feedPos = {}; // 归一化标题 → 卡片下标(去重)
+  final Map<String, Set<String>> _feedSrc = {}; // 归一化标题 → 源集合(N源角标)
+  bool _feedLoading = false;
+  String? _feedError; // 只有所有源都失败才展示
+  int _feedOk = 0; // 本轮成功返回的源数
+  int _feedGen = 0;
+  bool? _feedMixed; // 当前一轮是混合还是单源(设置切换时重拉)
+  static const _feedCap = 60; // 混合模式卡片上限(嵌在书架里,别无限长)
+
   final TextEditingController _shelfCtrl = TextEditingController();
   bool _showShelfSearch = false;
   String _shelfQuery = ''; // 非空 = 在收藏里筛选
@@ -54,30 +67,92 @@ class _LibraryPageState extends State<LibraryPage> {
     if (sc != _sc) {
       _sc?.removeListener(_onSourceChanged);
       _sc = sc..addListener(_onSourceChanged);
-      _future = _load();
+      _loadFeed();
     }
   }
 
-  // 注意用块体:箭头体会让闭包“返回” _load() 的 Future,setState 会报错。
-  void _onSourceChanged() => setState(() {
-        _future = _load();
-      });
+  void _onSourceChanged() => setState(_loadFeed);
 
-  Future<List<Manga>> _load() async {
+  /// 重拉底部浏览区。默认**混合源**:所有启用的漫画源各拉第一页,谁先到谁先上,
+  /// 同名(容繁简)去重合成一张卡 + 「N源」角标;单源失败不拖累其它源。
+  /// 开了「显示源选择器」则退回单源模式(与发现页语义一致)。
+  /// 同步段只改字段不 setState(didChangeDependencies 里也能安全调),
+  /// 需要立即重绘的调用方用 `setState(_loadFeed)`。
+  void _loadFeed() {
+    final gen = ++_feedGen;
+    _feedItems = [];
+    _feedPos.clear();
+    _feedSrc.clear();
+    _feedError = null;
+    _feedOk = 0;
+    final store = LibraryScope.read(context);
+    final mixed = !store.showSourcePicker;
+    _feedMixed = mixed;
     final cur = _sc?.current;
-    if (cur == null) return const []; // 未配置源:书架下半部走空态
-    final source = buildSource(cur);
-    try {
-      final page = await source.getDiscovery(1);
-      return page.items;
-    } finally {
-      source.dispose();
+    final metas = mixed
+        ? [
+            for (final s in registeredSources)
+              if (s.kind == 'manga' && store.isSourceEnabled(s.id)) s
+          ]
+        : [if (cur != null) cur];
+    if (metas.isEmpty) {
+      _feedLoading = false;
+      return; // 没有可用源:外层 meta==null 已走空态提示
+    }
+    var pending = metas.length;
+    _feedLoading = true;
+    for (final meta in metas) {
+      // Future(...) 包一层:每个源的脚本 eval(buildSource,同步且不便宜)排到
+      // 各自的事件循环轮次,不在同一帧里连评 N 个脚本卡住 UI。
+      Future(() async {
+        MangaSource? src;
+        List<Manga> items = const [];
+        var ok = false;
+        try {
+          if (!mounted || gen != _feedGen) return; // 排队期间已换代:别白建引擎
+          src = buildSource(meta);
+          final page = await src.getDiscovery(1);
+          items = page.items;
+          ok = true;
+        } catch (e) {
+          if (gen == _feedGen) _feedError ??= '$e';
+        } finally {
+          src?.dispose();
+        }
+        if (!mounted || gen != _feedGen) return;
+        setState(() {
+          if (ok) {
+            _feedOk++;
+            _ingestFeed(meta, items);
+          }
+          if (--pending == 0) _feedLoading = false;
+        });
+      });
     }
   }
 
-  void _refresh() => setState(() {
-        _future = _load();
-      });
+  /// 一批结果按「繁→简折叠 + 归一化标题」去重并入:新标题出卡(记源为代表),
+  /// 已有的只累加源 id(驱动「N源」角标)。超过 [_feedCap] 不再出新卡。
+  void _ingestFeed(SourceMeta meta, List<Manga> items) {
+    for (final m in items) {
+      final key = ChineseFold.dedupKey(m.title);
+      if (key.isEmpty) {
+        if (_feedItems.length < _feedCap) _feedItems.add((manga: m, meta: meta));
+        continue;
+      }
+      final pos = _feedPos[key];
+      if (pos == null) {
+        if (_feedItems.length >= _feedCap) continue;
+        _feedPos[key] = _feedItems.length;
+        _feedSrc[key] = {meta.id};
+        _feedItems.add((manga: m, meta: meta));
+      } else {
+        (_feedSrc[key] ??= {}).add(meta.id);
+      }
+    }
+  }
+
+  void _refresh() => setState(_loadFeed);
 
   SourceMeta? _metaById(String id) {
     for (final s in registeredSources) {
@@ -172,6 +247,13 @@ class _LibraryPageState extends State<LibraryPage> {
         if (mounted) _recs.ensure(store);
       });
     }
+    // 设置里切了「显示源选择器」(混合↔单源)→ 底部浏览区按新模式重拉。
+    if (_feedMixed != null && _feedMixed != !store.showSourcePicker) {
+      _feedMixed = !store.showSourcePicker;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(_loadFeed);
+      });
+    }
     // 内容延伸到毛玻璃标题栏之后 → 标题栏能糊到身后背景图;body 手动留出顶部内边距。
     final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
@@ -233,7 +315,7 @@ class _LibraryPageState extends State<LibraryPage> {
                            _sectionHeader(p, "推荐"),
                             if (store.showSourcePicker)
                               _sourcePicker(p, meta, store),
-                            _browse(p, meta, store),
+                            _browse(p, store),
                           ] else
                             _noSourceHint(p),
                         ],
@@ -625,66 +707,71 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
 
-  Widget _browse(AppPalette p, SourceMeta meta, LibraryStore store) =>
-      FutureBuilder<List<Manga>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const SizedBox(
-                height: 220, child: Center(child: CircularProgressIndicator()));
-          }
-          if (snap.hasError) return _error(p, '${snap.error}');
-          final items = snap.data ?? const [];
-          if (items.isEmpty) return _error(p, '没有拿到数据(列表为空)');
-          // 瀑布流:嵌在外层 ListView 里,shrinkWrap + 禁自身滚动。
-          return LayoutBuilder(
-            builder: (context, c) => MasonryGridView.count(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-              crossAxisCount: columnsFor(c.maxWidth, store.gridColumns),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 14,
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final m = items[i];
-                // 带下标:源 feed 分页可能重复同一本,避免 Hero tag 撞车。
-                final tag = 'feed:${meta.id}:${m.id}:$i';
-                return FlyInUp(
-                  seed: m.id,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 瀑布流 tile 高度由内容决定(无界主轴)→ 不能用 Flexible。
-                      // MangaCover 自带 AspectRatio,直接放,高度自然算出。
-                      MangaCover(
-                        manga: m,
-                        headers: imageHeadersOf(meta),
-                        updated: m.status == MangaStatus.ongoing,
-                        aspect: aspectForId(m.id),
-                        heroTag: tag,
-                        onTap: () => _openManga(m, meta, heroTag: tag),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(m.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: p.textPrimary)),
-                      Text(m.authors.isNotEmpty ? m.authors.first : ' ',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10, color: p.textMuted)),
-                    ],
-                  ),
-                );
-              },
+  Widget _browse(AppPalette p, LibraryStore store) {
+    // 混合源:结果按到达顺序渐进出现;还没有任何结果时才转圈/报错。
+    if (_feedItems.isEmpty) {
+      if (_feedLoading) {
+        return const SizedBox(
+            height: 220, child: Center(child: CircularProgressIndicator()));
+      }
+      if (_feedError != null && _feedOk == 0) return _error(p, _feedError!);
+      return _error(p, '没有拿到数据(列表为空)');
+    }
+    int srcCountOf(Manga m) {
+      final k = ChineseFold.dedupKey(m.title);
+      return k.isEmpty ? 1 : (_feedSrc[k]?.length ?? 1);
+    }
+
+    // 瀑布流:嵌在外层 ListView 里,shrinkWrap + 禁自身滚动。
+    return LayoutBuilder(
+      builder: (context, c) => MasonryGridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+        crossAxisCount: columnsFor(c.maxWidth, store.gridColumns),
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 14,
+        itemCount: _feedItems.length,
+        itemBuilder: (context, i) {
+          final item = _feedItems[i];
+          final m = item.manga;
+          // 带下标:源 feed 可能重复同一本,避免 Hero tag 撞车。
+          final tag = 'feed:${item.meta.id}:${m.id}:$i';
+          return FlyInUp(
+            seed: m.id,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 瀑布流 tile 高度由内容决定(无界主轴)→ 不能用 Flexible。
+                // MangaCover 自带 AspectRatio,直接放,高度自然算出。
+                MangaCover(
+                  manga: m,
+                  headers: imageHeadersOf(item.meta),
+                  sourceCount: srcCountOf(m),
+                  updated: m.status == MangaStatus.ongoing,
+                  aspect: aspectForId(m.id),
+                  heroTag: tag,
+                  onTap: () => _openManga(m, item.meta, heroTag: tag),
+                ),
+                const SizedBox(height: 6),
+                Text(m.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: p.textPrimary)),
+                Text(m.authors.isNotEmpty ? m.authors.first : ' ',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10, color: p.textMuted)),
+              ],
             ),
           );
         },
-      );
+      ),
+    );
+  }
 
   Widget _error(AppPalette p, String msg) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),

@@ -200,8 +200,10 @@ class BangumiApi {
     );
   }
 
-  /// 搜索候选列表(手动匹配用)。失败返回空。
-  static Future<List<BangumiCandidate>> search(String rawTitle) async {
+  /// 搜索候选列表(手动匹配用)。失败返回空;[throwOnError]=true 时网络/接口错误
+  /// 改为抛出——调用方需要区分「真没搜到」和「暂时失败」(如推荐的未命中缓存)。
+  static Future<List<BangumiCandidate>> search(String rawTitle,
+      {bool throwOnError = false}) async {
     final title = _cleanTitle(rawTitle);
     if (title.isEmpty) return const [];
     try {
@@ -235,28 +237,33 @@ class BangumiApi {
       }
       return out;
     } catch (_) {
+      if (throwOnError) rethrow;
       return const [];
     }
   }
 
   /// 按条目 id 直接拉完整详情(手动绑定/复用置信匹配结果)。
-  static Future<BangumiInfo?> fromId(int id) async {
+  /// [throwOnError]=true 时网络/接口错误抛出(区分「条目不存在」与「暂时失败」)。
+  static Future<BangumiInfo?> fromId(int id, {bool throwOnError = false}) async {
     try {
       final s = await _dio.get<dynamic>('https://api.bgm.tv/v0/subjects/$id');
       if (s.data is! Map) return null;
       return _fromSubject((s.data as Map).cast<String, dynamic>());
     } catch (_) {
+      if (throwOnError) rethrow;
       return null;
     }
   }
 
   /// 标题自动置信匹配 → 拉完整详情。匹配不上/无评分返回 null。
-  static Future<BangumiInfo?> lookup(String rawTitle) async {
+  /// [throwOnError]=true 时网络/接口错误抛出——null 就真的只表示「没匹配上」。
+  static Future<BangumiInfo?> lookup(String rawTitle,
+      {bool throwOnError = false}) async {
     final title = _cleanTitle(rawTitle);
     if (title.length < 2) return null;
     final nq = _norm(title);
     if (nq.length < 2) return null;
-    final cands = await search(rawTitle);
+    final cands = await search(rawTitle, throwOnError: throwOnError);
     // 置信匹配里挑评分人数最多的(主条目通常票最多)。
     BangumiCandidate? best;
     var bestVotes = -1;
@@ -268,7 +275,7 @@ class BangumiApi {
       }
     }
     if (best == null) return null;
-    final info = await fromId(best.id);
+    final info = await fromId(best.id, throwOnError: throwOnError);
     if (info == null || info.score <= 0) return null; // 没评分不显示
     return info;
   }
@@ -555,6 +562,11 @@ class BangumiApi {
     '愛情', '搞笑', '喜剧', '喜劇', '日常', '校园', '校園', '治愈', '治癒', '后宫',
     '後宮', '科幻', '悬疑', '懸疑', '少年', '少女', '青年',
   };
+
+  /// 公开版 [_genreTags]:推荐的种子缓存要存**过滤后**的题材 tag——
+  /// 过滤依赖 infobox(剔作者/出版社名),缓存重建的 BangumiInfo 没有 infobox,
+  /// 存原始 tags 会让作者名混进口味画像。对已过滤列表重过滤是幂等的。
+  static List<String> genreTagsOf(BangumiInfo bgm) => _genreTags(bgm);
 
   /// 抽取本作的「题材」tag(用于相似度):剔除载体/地区/连载状态、作者名、书名类、单字。
   /// 保序(Bangumi 按 tag 计数降序,越靠前越主流),取前若干。

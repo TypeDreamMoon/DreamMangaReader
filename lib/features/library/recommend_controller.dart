@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/library_store.dart';
 import '../../core/bangumi/bangumi_api.dart';
@@ -24,7 +27,18 @@ class RecommendController extends ChangeNotifier {
   static const _candLimit = 18; // 候选池上限
   static const _target = 12; // 最终展示多少条
   static const _bgmConcurrency = 5; // 种子查 Bangumi 的并发
-  static const _resolveWorkers = 2; // 候选解析成源漫画的并发(每个再扇出到各源)
+  static const _resolveWorkers = 3; // 候选解析成源漫画的并发(findFirstWork 首命中即返,单候选耗时已大降)
+
+  // ---- 缓存:结果落盘(重启秒出)+ Bangumi 种子查询缓存(重算不再逐本联网)----
+  static const _kRecCache = 'rec.cache.v1'; // {sig, items:[…]}
+  static const _kBgmCache = 'rec.bgmCache.v1'; // normTitle → {id,n,o,t,ts};id=0 表「查不到」
+  static const _bgmHitTtlMs = 7 * 24 * 3600 * 1000; // 命中缓存 7 天
+  static const _bgmMissTtlMs = 24 * 3600 * 1000; // 「查不到」缓存 1 天(条目可能后补)
+  static const _bgmCacheCap = 300;
+
+  SharedPreferences? _prefs;
+  bool _cacheLoaded = false;
+  Map<String, dynamic> _bgmCache = {};
 
   bool _loading = false;
   bool get loading => _loading;
@@ -67,8 +81,13 @@ class RecommendController extends ChangeNotifier {
       if (force || signatureOf(store) != _sig) _pending = store;
       return;
     }
+    await _initCache(store); // 读回上次的推荐结果:签名没变就直接用,秒出且零联网
+    if (_loading) return; // 等 prefs 期间被并发 ensure 抢跑了
     final sig = signatureOf(store);
-    if (!force && sig == _sig && _recs.isNotEmpty) return; // 只有成功结果才短路
+    if (!force && sig == _sig && _recs.isNotEmpty) {
+      _safeNotify(); // 缓存直出的路径也要通知一次,strip 才会画出来
+      return;
+    }
     _loading = true;
     _note = null;
     _canRetry = false;
@@ -80,6 +99,7 @@ class RecommendController extends ChangeNotifier {
       _recs = recs;
       if (recs.isNotEmpty) {
         _sig = sig; // 成功才记签名(失败不缓存,留待重试)
+        _saveRecCache(sig, recs); // 落盘:下次启动直接秒出
       } else if (_note == null) {
         _note = '暂时没算出推荐 · 稍后再试';
         _canRetry = true;
@@ -127,14 +147,14 @@ class RecommendController extends ChangeNotifier {
     }
     final picked = seeds.take(_seedLimit).toList();
 
-    // ② 每颗种子 → Bangumi 条目(有手动绑定用 fromId,否则按标题 lookup)。有限并发。
+    // ② 每颗种子 → Bangumi 条目(有手动绑定用 fromId,否则按标题 lookup)。
+    // 有限并发 + 7 天缓存:重算时老种子不再逐本联网,只查新加的书。
     final infos = <BangumiInfo>[];
     await _pool(picked, _bgmConcurrency, (s) async {
-      final bound = store.bangumiBindingFor(s.key);
-      final info =
-          bound != null ? await BangumiApi.fromId(bound) : await BangumiApi.lookup(s.title);
+      final info = await _lookupCached(s.title, store.bangumiBindingFor(s.key));
       if (info != null) infos.add(info);
     });
+    _saveBgmCache();
     if (infos.length < 2) {
       _note = '没匹配到足够的 Bangumi 条目算口味 · 点重试';
       _canRetry = true; // 多为网络/接口抖动,重试可能就好
@@ -184,6 +204,151 @@ class RecommendController extends ChangeNotifier {
     final ordered = resolved.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
     return [for (final e in ordered) e.value];
+  }
+
+  // ---- 缓存 ----
+
+  /// 一次性:读回 Bangumi 查询缓存与上次的推荐结果。结果里源已被删/禁用的条目丢弃。
+  Future<void> _initCache(LibraryStore store) async {
+    if (_cacheLoaded) return;
+    _cacheLoaded = true;
+    try {
+      final p = _prefs ??= await SharedPreferences.getInstance();
+      final rawBgm = p.getString(_kBgmCache);
+      if (rawBgm != null) {
+        _bgmCache = (jsonDecode(rawBgm) as Map).cast<String, dynamic>();
+      }
+      if (_recs.isNotEmpty) return; // 本会话已有结果,不用旧缓存盖
+      final raw = p.getString(_kRecCache);
+      if (raw == null) return;
+      final j = (jsonDecode(raw) as Map).cast<String, dynamic>();
+      final items = <RecItem>[];
+      for (final e in (j['items'] as List? ?? const [])) {
+        if (e is! Map) continue;
+        final metaId = e['metaId'] as String?;
+        SourceMeta? meta;
+        for (final s in registeredSources) {
+          if (s.id == metaId) {
+            meta = s;
+            break;
+          }
+        }
+        if (meta == null || !store.isSourceEnabled(meta.id)) continue;
+        items.add(RecItem(
+          BangumiCandidate(
+            id: (e['bid'] as num?)?.toInt() ?? 0,
+            name: e['bn'] as String? ?? '',
+            nameCn: e['bc'] as String? ?? '',
+            date: '',
+            score: (e['bs'] as num?)?.toDouble() ?? 0,
+            votes: 0,
+            image: '',
+          ),
+          Manga(
+              id: e['mid'] as String? ?? '',
+              title: e['mt'] as String? ?? '',
+              cover: e['mc'] as String?),
+          meta,
+        ));
+      }
+      if (items.isEmpty) return;
+      _recs = items;
+      // 缓存签名:与当前书架一致 → ensure 短路秒出;不一致 → 先展示旧结果再后台重算。
+      _sig = (j['sig'] as String?) ?? '';
+    } catch (_) {
+      // 缓存坏了就当没有,照常联网算
+    }
+  }
+
+  void _saveRecCache(String sig, List<RecItem> recs) {
+    _prefs?.setString(
+        _kRecCache,
+        jsonEncode({
+          'sig': sig,
+          'items': [
+            for (final r in recs)
+              {
+                'bid': r.bgm.id,
+                'bn': r.bgm.name,
+                'bc': r.bgm.nameCn,
+                'bs': r.bgm.score,
+                'mid': r.manga.id,
+                'mt': r.manga.title,
+                'mc': r.manga.cover,
+                'metaId': r.meta.id,
+              }
+          ],
+        }));
+  }
+
+  /// 带缓存的种子查询。缓存只存推荐算法用得到的字段(id/名称/题材 tag),
+  /// 「查不到」也缓存(id=0,短 TTL),免得每次重算都对同一批冷门书白搜一轮。
+  Future<BangumiInfo?> _lookupCached(String title, int? boundId) async {
+    final key = normalizeTitle(title);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final hit = key.isEmpty ? null : _bgmCache[key];
+    if (hit is Map) {
+      final id = (hit['id'] as num?)?.toInt() ?? 0;
+      final ts = (hit['ts'] as num?)?.toInt() ?? 0;
+      final fresh = now - ts < (id == 0 ? _bgmMissTtlMs : _bgmHitTtlMs);
+      final matchesBinding = boundId == null || boundId == id; // 手动绑定优先于缓存
+      if (fresh && matchesBinding) {
+        if (id == 0) return null;
+        return BangumiInfo(
+          id: id,
+          name: hit['n'] as String? ?? '',
+          nameOrig: hit['o'] as String? ?? '',
+          score: 0,
+          rank: 0,
+          votes: 0,
+          tags: [for (final t in (hit['t'] as List? ?? const [])) t.toString()],
+          summary: '',
+          date: '',
+          eps: 0,
+          volumes: 0,
+          image: '',
+          infobox: const [],
+        );
+      }
+    }
+    // 网络/接口错误会抛出 → 只跳过本次,**不**缓存成「查不到」。否则一次断网
+    // 会把所有种子毒成 24 小时的未命中缓存,点「重试」也救不回来。
+    BangumiInfo? info;
+    try {
+      info = boundId != null
+          ? await BangumiApi.fromId(boundId, throwOnError: true)
+          : await BangumiApi.lookup(title, throwOnError: true);
+    } catch (_) {
+      return null; // 暂时失败:不写缓存,下次重试真的会重查
+    }
+    if (key.isNotEmpty) {
+      _bgmCache[key] = info == null
+          ? {'id': 0, 'ts': now}
+          : {
+              'id': info.id,
+              'n': info.name,
+              'o': info.nameOrig,
+              // 存过滤后的题材 tag:缓存重建的 info 没有 infobox,原始 tags 会让
+              // 作者名混进口味画像(genreTagsOf 对已过滤列表幂等)。
+              't': BangumiApi.genreTagsOf(info),
+              'ts': now,
+            };
+    }
+    return info;
+  }
+
+  void _saveBgmCache() {
+    // 超上限按 ts 淘汰最旧。
+    if (_bgmCache.length > _bgmCacheCap) {
+      int tsOf(String k) =>
+          (((_bgmCache[k] as Map?)?['ts'] as num?) ?? 0).toInt();
+      final keys = _bgmCache.keys.toList()
+        ..sort((a, b) => tsOf(a).compareTo(tsOf(b)));
+      for (final k in keys.take(_bgmCache.length - _bgmCacheCap)) {
+        _bgmCache.remove(k);
+      }
+    }
+    _prefs?.setString(_kBgmCache, jsonEncode(_bgmCache));
   }
 
   // 有限并发跑一批异步任务。
