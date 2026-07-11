@@ -88,6 +88,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   bool _showFilters = true;
 
   final TextEditingController _searchCtrl = TextEditingController();
+  // 番剧档:顶栏搜索复用漫画那套 UI,执行时经由此 key 转交给 AnimeBrowser。
+  final GlobalKey<AnimeBrowserState> _animeKey = GlobalKey<AnimeBrowserState>();
   bool _showSearch = false;
   String _query = ''; // 非空 = 搜索模式(可能是 _origQuery 的译名)
   bool _translating = false; // 正在翻译搜索词
@@ -200,6 +202,15 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     if (q.isNotEmpty) {
       LibraryScope.read(context).addSearchHistory(q);
       AppLog.i.info(LogCat.search, '搜索「$q」· ${_mixed ? '混合源' : (_meta?.name ?? '')}');
+    }
+    // 番剧档:交给 AnimeBrowser 执行(它自管源/结果/翻译回退);顶栏只负责词与历史 UI。
+    if (_kind == ContentKind.anime) {
+      setState(() {
+        _query = q;
+        _origQuery = q;
+      });
+      _animeKey.currentState?.runSearch(q);
+      return;
     }
     if (q == _query && q == _origQuery) return;
     _query = q;
@@ -398,18 +409,21 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         title: Text(context.l10n.navDiscover,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
+          // 搜索:漫画 + 番剧共用顶栏这一个入口(番剧搜索经 _animeKey 转交)。
+          if (_kind == ContentKind.manga || _kind == ContentKind.anime)
+            IconButton(
+              tooltip: context.l10n.disc_searchTooltip,
+              onPressed: () => setState(() {
+                _showSearch = !_showSearch;
+                if (!_showSearch && _query.isNotEmpty) {
+                  _searchCtrl.clear();
+                  _search('');
+                }
+              }),
+              icon: Icon(
+                  _showSearch ? Icons.search_off_rounded : Icons.search_rounded),
+            ),
           if (_kind == ContentKind.manga) ...[
-          IconButton(
-            tooltip: context.l10n.disc_searchTooltip,
-            onPressed: () => setState(() {
-              _showSearch = !_showSearch;
-              if (!_showSearch && _query.isNotEmpty) {
-                _searchCtrl.clear();
-                _search('');
-              }
-            }),
-            icon: Icon(_showSearch ? Icons.search_off_rounded : Icons.search_rounded),
-          ),
           // 站点板块浏览(排行榜/连载/完结…):仅当前源声明了 sections 时显示。
           if (!_mixed && _meta != null && (_source?.sections.isNotEmpty ?? false))
             IconButton(
@@ -462,9 +476,17 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       : const SizedBox(width: double.infinity),
             ),
             Expanded(child: _grid(p, store, columns)),
-          ] else if (_kind == ContentKind.anime)
-            const Expanded(child: AnimeBrowser())
-          else
+          ] else if (_kind == ContentKind.anime) ...[
+            // 番剧档:复用漫画那套顶栏搜索 UI(搜索框 + 历史),执行转交 AnimeBrowser。
+            _animExpand(_showSearch
+                ? _searchField(p)
+                : const SizedBox(width: double.infinity)),
+            _animExpand(
+                (_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
+                    ? _recentSearches(p, store)
+                    : const SizedBox(width: double.infinity)),
+            Expanded(child: AnimeBrowser(key: _animeKey)),
+          ] else
             Expanded(child: _comingSoon(p, _kind)),
         ],
           ),
@@ -489,7 +511,24 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   Widget _kindChip(AppPalette p, ContentKind k) {
     final sel = _kind == k;
     return GestureDetector(
-      onTap: () => setState(() => _kind = k),
+      // 换档收起搜索栏并清掉**共享**搜索态。_query/_origQuery/_searchCtrl 被漫画网格与番剧
+      // browser 共用;若不清,漫画分页(_loadMore 读 _query)会把另一档的搜索词接着当搜索翻页,
+      // 悄悄把发现流变成搜索结果。清掉后再 _reset() 让漫画列表回到干净的浏览态。
+      onTap: () {
+        if (_kind == k) return;
+        final hadQuery = _query.isNotEmpty;
+        setState(() {
+          _kind = k;
+          _showSearch = false;
+          if (hadQuery) {
+            _query = '';
+            _origQuery = '';
+            _fallbackQueue = null;
+            _searchCtrl.clear();
+          }
+        });
+        if (hadQuery) _reset(); // 漫画列表可能停在旧搜索结果 → 重置回发现浏览
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -596,9 +635,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           style: TextStyle(color: p.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            hintText: context.l10n.disc_searchHint(_mixed
-                ? context.l10n.disc_mixedAllSources
-                : (_meta?.name ?? '')),
+            hintText: context.l10n.disc_searchHint(_kind == ContentKind.anime
+                ? '番剧'
+                : (_mixed
+                    ? context.l10n.disc_mixedAllSources
+                    : (_meta?.name ?? ''))),
             hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
             prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             suffixIcon: _query.isNotEmpty

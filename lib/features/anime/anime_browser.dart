@@ -20,10 +20,12 @@ class AnimeBrowser extends StatefulWidget {
   const AnimeBrowser({super.key});
 
   @override
-  State<AnimeBrowser> createState() => _AnimeBrowserState();
+  State<AnimeBrowser> createState() => AnimeBrowserState();
 }
 
-class _AnimeBrowserState extends State<AnimeBrowser> {
+/// 公有 State:发现页用 GlobalKey 调 [runSearch] 把顶栏搜索词喂进来(搜索 UI 与漫画统一到
+/// 发现页顶栏,番剧不再自带内联搜索框)。
+class AnimeBrowserState extends State<AnimeBrowser> {
   SourceMeta? _meta;
   MangaSource? _source;
   final List<Manga> _results = [];
@@ -33,11 +35,12 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
   String? _error;
 
   final ScrollController _scroll = ScrollController();
-  final TextEditingController _searchCtrl = TextEditingController();
-  bool _showSearch = false;
   String _query = ''; // 可能是 _origQuery 的译名
   String _origQuery = ''; // 翻译回退:用户输入的原查询
   List<String>? _fallbackQueue; // 待试译名队列;null=本轮还没翻译过
+
+  /// 发现页顶栏搜索把词喂进来(空串 = 清空回到发现)。
+  void runSearch(String q) => _search(q);
 
   @override
   void initState() {
@@ -55,7 +58,6 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
   void dispose() {
     _source?.dispose();
     _scroll.dispose();
-    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -207,67 +209,18 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
 
     return Column(
       children: [
-        // 源选择 + 搜索
+        // 源选择(搜索已统一到发现页顶栏,这里只留源选择器)。
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: SourcePickerPill(
-                  label: '${_meta?.name ?? ''} · 番剧',
-                  icon: Icons.movie_rounded,
-                  onTap: _pickSource,
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: '搜索',
-                onPressed: () => setState(() {
-                  _showSearch = !_showSearch;
-                  if (!_showSearch && _query.isNotEmpty) {
-                    _searchCtrl.clear();
-                    _search('');
-                  }
-                }),
-                icon: Icon(_showSearch
-                    ? Icons.search_off_rounded
-                    : Icons.search_rounded),
-              ),
-            ],
+          child: SourcePickerPill(
+            label: '${_meta?.name ?? ''} · 番剧',
+            icon: Icons.movie_rounded,
+            onTap: _pickSource,
           ),
         ),
         if (_isBili) _biliBar(p),
-        if (_showSearch)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: TextField(
-              controller: _searchCtrl,
-              autofocus: true,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _search,
-              style: TextStyle(color: p.textPrimary, fontSize: 14),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索番剧名',
-                hintStyle: TextStyle(color: p.textMuted),
-                prefixIcon:
-                    Icon(Icons.search_rounded, size: 18, color: p.textMuted),
-                filled: true,
-                fillColor: p.surface,
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.line)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: p.accent)),
-              ),
-            ),
-          ),
         // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
-        if (_showSearch &&
-            _query.isNotEmpty &&
-            _query != _origQuery &&
-            _results.isNotEmpty)
+        if (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Row(
