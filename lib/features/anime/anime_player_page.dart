@@ -70,6 +70,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   String? _pendingAudioUrl;
   bool _audioAttached = false;
 
+  // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  int _panelTab = 0; // 0=选集 1=线路 2=设置
+  double _rate = 1.0; // 倍速(跨集保持)
+  BoxFit _fit = BoxFit.contain; // 画面填充
+
   // 诊断:流订阅 + 采样定时器 + 卡顿计数。
   final List<StreamSubscription<dynamic>> _diag = [];
   Timer? _diagTimer;
@@ -231,7 +237,60 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       rethrow;
     }
     // DASH 外挂音轨不在这里挂 —— 见 _attachPendingAudio(在首帧开播后挂,避开冷启竞态)。
+    // 倍速跨集保持:新 loadfile 后重设一次(mpv speed 虽是全局,但保险起见显式回填)。
+    if (_rate != 1.0) {
+      try {
+        await _player.setRate(_rate);
+      } catch (_) {}
+    }
     if (mounted) setState(() => _loading = false);
+  }
+
+  void _go(int delta) => _goTo(_i + delta);
+
+  /// 跳到第 [index] 集(绝对)。越界/同集则忽略;换集后关面板。
+  void _goTo(int index) {
+    if (index < 0 || index >= widget.episodes.length) return;
+    _scaffoldKey.currentState?.closeEndDrawer();
+    if (index == _i) return;
+    setState(() => _i = index);
+    _load();
+  }
+
+  /// 切线路 / 清晰度(与 _play 同逻辑,含错误兜底)。切完关面板。
+  Future<void> _switchTrack(VideoTrack t) async {
+    _scaffoldKey.currentState?.closeEndDrawer();
+    if (identical(t, _current)) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await _play(t);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
+  Future<void> _setRate(double r) async {
+    setState(() => _rate = r);
+    try {
+      await _player.setRate(r);
+    } catch (_) {}
+  }
+
+  /// 选集网格用的短标签:优先用解析出的话数,否则用序号。
+  String _epShort(int i) {
+    final n = widget.episodes[i].number;
+    if (n != null && n > 0) {
+      return n == n.roundToDouble() ? '${n.round()}' : '$n';
+    }
+    return '${i + 1}';
   }
 
   /// 把 [_pendingAudioUrl] 作为外挂音轨挂到当前已开播的文件上。用 `audio-add`
@@ -251,20 +310,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     }
   }
 
-  void _go(int delta) {
-    final n = _i + delta;
-    if (n < 0 || n >= widget.episodes.length) return;
-    setState(() => _i = n);
-    _load();
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
     final hasPrev = _i > 0;
     final hasNext = _i < widget.episodes.length - 1;
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: Colors.black,
+      endDrawer: _controlPanel(p),
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
@@ -273,37 +327,22 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
         actions: [
-          if (_tracks.length > 1)
-            PopupMenuButton<VideoTrack>(
-              tooltip: '线路 / 清晰度',
-              icon: const Icon(Icons.hd_rounded),
-              onSelected: (t) async {
-                setState(() {
-                  _loading = true;
-                  _error = null;
-                });
-                try {
-                  await _play(t);
-                } catch (e) {
-                  if (mounted) {
-                    setState(() {
-                      _loading = false;
-                      _error = '$e';
-                    });
-                  }
-                }
-              },
-              itemBuilder: (_) => [
-                for (final t in _tracks)
-                  PopupMenuItem(
-                    value: t,
-                    child: Text(
-                      (t.quality.isEmpty ? '线路' : t.quality) +
-                          (identical(t, _current) ? '  ✓' : ''),
-                    ),
-                  ),
-              ],
+          if (_current != null && _current!.quality.isNotEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(_current!.quality,
+                    style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+              ),
             ),
+          IconButton(
+            tooltip: '选集 / 线路 / 设置',
+            icon: const Icon(Icons.playlist_play_rounded),
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+          ),
         ],
       ),
       body: Column(
@@ -313,7 +352,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               color: Colors.black,
               child: _error != null
                   ? _errorView(p)
-                  : Video(controller: _controller),
+                  : Video(controller: _controller, fit: _fit),
             ),
           ),
           // 集导航条
@@ -358,4 +397,210 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         onRetry: _load,
         retryLabel: '重试',
       );
+
+  // ————————————————— 悬浮控制面板(右侧抽屉)—————————————————
+
+  static const Color _panelBg = Color(0xFF161616);
+  static const Color _panelChip = Color(0xFF2A2A2A);
+  static const Color _accent = Color(0xFFFF6699); // B站粉,作选中高亮
+
+  Widget _controlPanel(AppPalette p) {
+    final width = MediaQuery.of(context).size.width;
+    return Drawer(
+      backgroundColor: _panelBg,
+      width: width < 520 ? width * 0.82 : 360,
+      shape: const RoundedRectangleBorder(),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 顶部分段:选集 / 线路 / 设置
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: Row(
+                children: [
+                  _tabBtn('选集', 0),
+                  _tabBtn('线路', 1),
+                  _tabBtn('设置', 2),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Colors.white12),
+            Expanded(
+              child: switch (_panelTab) {
+                0 => _panelEpisodes(),
+                1 => _panelTracks(),
+                _ => _panelSettings(),
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tabBtn(String label, int idx) {
+    final on = _panelTab == idx;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _panelTab = idx),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            color: on ? _accent.withValues(alpha: 0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(
+                color: on ? _accent : Colors.white24, width: on ? 1.2 : 1),
+          ),
+          alignment: Alignment.center,
+          child: Text(label,
+              style: TextStyle(
+                  color: on ? _accent : Colors.white70,
+                  fontSize: 13.5,
+                  fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+        ),
+      ),
+    );
+  }
+
+  // —— 选集:话数网格 ——
+  Widget _panelEpisodes() {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 68,
+        mainAxisExtent: 40,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: widget.episodes.length,
+      itemBuilder: (_, i) {
+        final on = i == _i;
+        return Tooltip(
+          message: widget.episodes[i].name,
+          waitDuration: const Duration(milliseconds: 500),
+          child: Material(
+            color: on ? _accent.withValues(alpha: 0.20) : _panelChip,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _goTo(i),
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: on ? Border.all(color: _accent, width: 1.2) : null,
+                ),
+                child: Text(_epShort(i),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: on ? _accent : Colors.white,
+                        fontSize: 13,
+                        fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // —— 线路 / 清晰度 ——
+  Widget _panelTracks() {
+    if (_tracks.isEmpty) {
+      return const Center(
+          child: Text('暂无可选线路',
+              style: TextStyle(color: Colors.white38, fontSize: 13)));
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _tracks.length,
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, color: Colors.white10, indent: 16),
+      itemBuilder: (_, i) {
+        final t = _tracks[i];
+        final on = identical(t, _current);
+        return ListTile(
+          dense: true,
+          onTap: () => _switchTrack(t),
+          leading: Icon(on ? Icons.check_circle_rounded : Icons.hd_outlined,
+              color: on ? _accent : Colors.white38, size: 20),
+          title: Text(t.quality.isEmpty ? '线路 ${i + 1}' : t.quality,
+              style: TextStyle(
+                  color: on ? _accent : Colors.white,
+                  fontSize: 14,
+                  fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+        );
+      },
+    );
+  }
+
+  // —— 设置:倍速 + 画面比例 ——
+  Widget _panelSettings() {
+    const rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    const fits = [
+      ('适应', BoxFit.contain),
+      ('填充', BoxFit.cover),
+      ('拉伸', BoxFit.fill),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        const _PanelLabel('倍速播放'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final r in rates)
+              _chip(r == 1.0 ? '1.0x' : '${r}x', _rate == r, () => _setRate(r)),
+          ],
+        ),
+        const SizedBox(height: 24),
+        const _PanelLabel('画面比例'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final f in fits)
+              _chip(f.$1, _fit == f.$2, () => setState(() => _fit = f.$2)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _chip(String label, bool on, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: on ? _accent.withValues(alpha: 0.18) : _panelChip,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: on ? _accent : Colors.transparent),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: on ? _accent : Colors.white70,
+                fontSize: 13,
+                fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+      ),
+    );
+  }
+}
+
+class _PanelLabel extends StatelessWidget {
+  const _PanelLabel(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14.5,
+          fontWeight: FontWeight.w700));
 }
