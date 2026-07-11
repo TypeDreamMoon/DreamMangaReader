@@ -10,6 +10,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/ui_signals.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/color/cover_palette.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
@@ -330,7 +331,7 @@ class _DetailPageState extends State<DetailPage> {
                   size: 17,
                   color: pv.meta.id == widget.meta.id ? p.accent : p.textMuted),
               const SizedBox(width: 10),
-              Text('用 ${pv.meta.name} 打开',
+              Text(context.l10n.detail_openWithSource(pv.meta.name),
                   style: TextStyle(fontSize: 13.5, color: p.textPrimary)),
             ]),
           ),
@@ -405,7 +406,8 @@ class _DetailPageState extends State<DetailPage> {
     ];
     if (metas.isEmpty) return;
     setState(() => _recOpening = true);
-    showAppNotify(context, '在源里找《$title》…', kind: AppNotifyKind.info);
+    showAppNotify(context, context.l10n.detail_findingInSources(title),
+        kind: AppNotifyKind.info);
     // 先搜原名;没命中、且不是「全源都报错」(断网/全限流时翻译再搜无意义)→ 翻成
     // 简/繁/英/日 逐个再搜(受设置「搜索翻译回退」开关控制),中途若全源报错则停。
     var r = await findFirstWork(metas, title);
@@ -426,7 +428,8 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted) return;
     setState(() => _recOpening = false);
     if (found == null) {
-      showAppNotify(context, '源里没找到《$title》', kind: AppNotifyKind.info);
+      showAppNotify(context, context.l10n.detail_notFoundInSources(title),
+          kind: AppNotifyKind.info);
       return;
     }
     Navigator.of(context).push(
@@ -444,7 +447,7 @@ class _DetailPageState extends State<DetailPage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
           child: Row(
             children: [
-              Text('相关推荐',
+              Text(context.l10n.detail_relatedRecommend,
                   style: TextStyle(
                       color: Color.lerp(p.textPrimary, acc, 0.4),
                       fontWeight: FontWeight.w700,
@@ -547,7 +550,7 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _openBangumiSearch() async {
     final picked = await showAppSheet<BangumiCandidate>(
       context,
-      title: '搜索 Bangumi',
+      title: context.l10n.detail_searchBangumi,
       showCloseButton: true,
       resizeForKeyboard: true,
       heightFactor: 0.7,
@@ -562,7 +565,8 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted) return;
     if (info == null) {
       setState(() => _bgmLoading = false); // 保留原卡片状态,只提示
-      showAppNotify(context, '加载该条目失败,请重试', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.detail_loadItemFailed,
+          kind: AppNotifyKind.error);
       return;
     }
     final key = '${widget.meta.id}:${widget.manga.id}';
@@ -579,7 +583,7 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _openCrossSource() async {
     final picked = await showAppSheet<CrossSourcePick>(
       context,
-      title: '换源',
+      title: context.l10n.detail_switchSource,
       showCloseButton: true,
       resizeForKeyboard: true,
       heightFactor: 0.7,
@@ -615,7 +619,7 @@ class _DetailPageState extends State<DetailPage> {
           s,
     ];
     if (metas.isEmpty) {
-      _toast('没有其它可用的漫画源');
+      _toast(context.l10n.detail_noOtherSources);
       return;
     }
     setState(() => _autoSwitching = true);
@@ -624,7 +628,9 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted) return;
       final m = r.match;
       if (m == null) {
-        _toast(r.allErrored ? '其它源也都失败了' : '其它源里没找到同名漫画');
+        _toast(r.allErrored
+            ? context.l10n.detail_otherSourcesAllFailed
+            : context.l10n.detail_noSameNameInOthers);
         return;
       }
       // 查找期间用户又开了别的页(推荐卡/弹层)→ pushReplacement 会替掉**栈顶**
@@ -694,7 +700,8 @@ class _DetailPageState extends State<DetailPage> {
     if (uri == null) return;
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      showAppNotify(context, '打不开链接:$raw', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.detail_cannotOpenLink(raw),
+          kind: AppNotifyKind.error);
     }
   }
 
@@ -728,7 +735,7 @@ class _DetailPageState extends State<DetailPage> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            tooltip: '换源',
+            tooltip: context.l10n.detail_switchSource,
             onPressed: _openCrossSource,
             icon: const Icon(Icons.swap_horiz_rounded),
           ),
@@ -927,7 +934,7 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                       if (m.authors.isNotEmpty) ...[
                         const SizedBox(height: 4),
-                        Text('作者 · ${m.authors.join('、')}',
+                        Text(context.l10n.detail_authorPrefix(m.authors.join('、')),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style:
@@ -957,15 +964,15 @@ class _DetailPageState extends State<DetailPage> {
   String _statusText(MangaStatus s) {
     switch (s) {
       case MangaStatus.ongoing:
-        return '● 连载中';
+        return context.l10n.detail_statusOngoing;
       case MangaStatus.completed:
-        return '● 完结';
+        return context.l10n.detail_statusCompleted;
       case MangaStatus.hiatus:
-        return '● 休刊';
+        return context.l10n.detail_statusHiatus;
       case MangaStatus.cancelled:
-        return '● 停载';
+        return context.l10n.detail_statusCancelled;
       case MangaStatus.unknown:
-        return '● 未知';
+        return context.l10n.detail_statusUnknown;
     }
   }
 
@@ -1069,7 +1076,9 @@ class _DetailPageState extends State<DetailPage> {
                   const SizedBox(width: 8),
                   Flexible(
                     child: Text(
-                      resume != null ? '继续 · ${resume.chapter.name}' : '从头开始',
+                      resume != null
+                          ? context.l10n.detail_continueChapter(resume.chapter.name)
+                          : context.l10n.detail_startFromBeginning,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
@@ -1120,15 +1129,15 @@ class _DetailPageState extends State<DetailPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('下载全部'),
-        content: Text('将下载 ${todo.length} 话到本地,可离线阅读。'),
+        title: Text(context.l10n.detail_downloadAll),
+        content: Text(context.l10n.detail_downloadNConfirm(todo.length)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+              child: Text(context.l10n.cancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('下载')),
+              child: Text(context.l10n.detail_download)),
         ],
       ),
     );
@@ -1137,7 +1146,7 @@ class _DetailPageState extends State<DetailPage> {
       dl.enqueue(widget.meta, widget.manga, c, _imgHeaders);
     }
     if (mounted) {
-      showAppNotify(context, '已加入下载队列 · ${todo.length} 话',
+      showAppNotify(context, context.l10n.detail_addedToQueueN(todo.length),
           kind: AppNotifyKind.success);
     }
   }
@@ -1199,7 +1208,7 @@ class _DetailPageState extends State<DetailPage> {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Text('简介',
+                Text(context.l10n.detail_synopsis,
                     style: TextStyle(
                         color: acc,
                         fontSize: 12,
@@ -1207,7 +1216,7 @@ class _DetailPageState extends State<DetailPage> {
                         letterSpacing: 1.0)),
                 if (fromBangumi) ...[
                   const SizedBox(width: 6),
-                  Text('· 来自 Bangumi',
+                  Text(context.l10n.detail_fromBangumi,
                       style: TextStyle(color: p.textMuted, fontSize: 10.5)),
                 ],
               ],
@@ -1235,7 +1244,7 @@ class _DetailPageState extends State<DetailPage> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_descExpanded ? '收起' : '展开全部',
+                    Text(_descExpanded ? context.l10n.detail_collapse : context.l10n.detail_expandAll,
                         style: TextStyle(
                             color: acc,
                             fontSize: 12,
@@ -1292,7 +1301,7 @@ class _DetailPageState extends State<DetailPage> {
               child:
                   CircularProgressIndicator(strokeWidth: 2, color: p.bangumi)),
           const SizedBox(width: 10),
-          Text('正在匹配 Bangumi…',
+          Text(context.l10n.detail_matchingBangumi,
               style: TextStyle(color: p.textMuted, fontSize: 12)),
         ],
       ));
@@ -1305,13 +1314,13 @@ class _DetailPageState extends State<DetailPage> {
           Icon(Icons.search_off_rounded, size: 18, color: p.textMuted),
           const SizedBox(width: 8),
           Expanded(
-            child: Text('Bangumi 未找到匹配条目',
+            child: Text(context.l10n.detail_bangumiNoMatch,
                 style: TextStyle(color: p.textMuted, fontSize: 12.5)),
           ),
           TextButton.icon(
             onPressed: _openBangumiSearch,
             icon: const Icon(Icons.search_rounded, size: 16),
-            label: const Text('手动搜索'),
+            label: Text(context.l10n.detail_manualSearch),
             style: TextButton.styleFrom(
                 foregroundColor: p.bangumi,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1326,8 +1335,8 @@ class _DetailPageState extends State<DetailPage> {
     final half = (b.score / 2 - filled) >= 0.5;
     final metaBits = <String>[
       if (b.date.isNotEmpty) b.date,
-      if (b.volumes > 0) '${b.volumes} 卷',
-      if (b.eps > 0) '${b.eps} 话',
+      if (b.volumes > 0) context.l10n.detail_volumesN(b.volumes),
+      if (b.eps > 0) context.l10n.detail_epsN(b.eps),
     ];
     return shell(Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1341,12 +1350,13 @@ class _DetailPageState extends State<DetailPage> {
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.0)),
             const Spacer(),
-            _bgmIcon(p, Icons.search_rounded, '重新匹配', _openBangumiSearch),
+            _bgmIcon(p, Icons.search_rounded, context.l10n.detail_rematch,
+                _openBangumiSearch),
             const SizedBox(width: 2),
             _bgmIcon(
                 p,
                 Icons.open_in_new_rounded,
-                '在 Bangumi 打开',
+                context.l10n.detail_openInBangumi,
                 () => launchUrl(Uri.parse(b.url),
                     mode: LaunchMode.externalApplication)),
           ],
@@ -1524,7 +1534,8 @@ class _DetailPageState extends State<DetailPage> {
       status = Icon(Icons.check_circle_rounded, size: 16, color: p.accent);
     } else if (cur != null && mark != null) {
       status = Text(
-          '读到 ${mark.page + 1}${mark.total > 0 ? '/${mark.total}' : ''}',
+          context.l10n.detail_readTo(
+              '${mark.page + 1}${mark.total > 0 ? '/${mark.total}' : ''}'),
           style: TextStyle(
               color: p.accentSoft, fontSize: 10.5, fontWeight: FontWeight.w700));
     } else if (read) {
@@ -1636,10 +1647,10 @@ class _DetailPageState extends State<DetailPage> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
         child: Text(
           _chapters == null
-              ? '章节'
-              : '章节 · 共 ${merged.length}'
-                  '${extra > 0 ? '(+$extra 他源)' : ''}'
-                  '${_mergeLoading ? ' · 找其它源中…' : ''}',
+              ? context.l10n.detail_chapters
+              : context.l10n.detail_chaptersCount(merged.length) +
+                  (extra > 0 ? context.l10n.detail_extraFromOthers(extra) : '') +
+                  (_mergeLoading ? context.l10n.detail_findingOthers : ''),
           style: TextStyle(
               color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
               fontWeight: FontWeight.w700,
@@ -1658,10 +1669,10 @@ class _DetailPageState extends State<DetailPage> {
         stateBox(Column(
           children: [
             AppErrorView(
-              title: '章节加载失败',
+              title: context.l10n.detail_chapterLoadFailed,
               message: '$_error',
               onRetry: _reloadChapters,
-              retryLabel: '重新加载章节',
+              retryLabel: context.l10n.detail_reloadChapters,
             ),
             const SizedBox(height: 4),
             // 源挂了重试也没用 → 一键在其它源里找同名的这本书直接换过去。
@@ -1673,7 +1684,9 @@ class _DetailPageState extends State<DetailPage> {
                       height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.swap_horiz_rounded, size: 17),
-              label: Text(_autoSwitching ? '正在其它源查找同名…' : '自动换源(其它源找同名)'),
+              label: Text(_autoSwitching
+                  ? context.l10n.detail_searchingInOthers
+                  : context.l10n.detail_autoSwitchSource),
             ),
           ],
         )),
@@ -1693,7 +1706,7 @@ class _DetailPageState extends State<DetailPage> {
         header,
         stateBox(Column(
           children: [
-            Text('没解析到章节',
+            Text(context.l10n.detail_noChaptersParsed,
                 style: TextStyle(color: p.textPrimary, fontSize: 13)),
             const SizedBox(height: 8),
             SelectableText('id: ${widget.manga.id}\n${widget.manga.url ?? ''}',

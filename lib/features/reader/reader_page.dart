@@ -13,6 +13,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../app/download_store.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/platform/reader_keys.dart';
@@ -192,7 +193,8 @@ class _ReaderPageState extends State<ReaderPage> {
         // 空章节 —— 退回并提示(延到帧后,getPages 可能极快返回时树处于锁定期)。
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          showAppNotify(context, '本章暂无图片,已返回', kind: AppNotifyKind.info);
+          showAppNotify(context, context.l10n.reader_chapterNoImages,
+              kind: AppNotifyKind.info);
           Navigator.of(context).maybePop();
         });
         return;
@@ -521,24 +523,27 @@ class _ReaderPageState extends State<ReaderPage> {
         );
 
     final Widget zones = (webtoon || _mode == ReaderMode.vertical)
-        ? zone(1, Icons.swap_vert_rounded, '上下滑动翻页\n点击切换控制条', 0.05)
+        ? zone(1, Icons.swap_vert_rounded, context.l10n.reader_hintVerticalSwipe,
+            0.05)
         : gesturesOff
-            ? zone(1, Icons.touch_app_rounded, '点击切换控制条\n(翻页手势已关)', 0.05)
+            ? zone(1, Icons.touch_app_rounded,
+                context.l10n.reader_hintTapToggleGestureOff, 0.05)
             : Row(children: [
                 zone(
                     30,
                     rtl
                         ? Icons.chevron_right_rounded
                         : Icons.chevron_left_rounded,
-                    rtl ? '下一页' : '上一页',
+                    rtl ? context.l10n.reader_nextPage : context.l10n.reader_prevPage,
                     0.10),
-                zone(40, Icons.touch_app_rounded, '控制条', 0.03),
+                zone(40, Icons.touch_app_rounded, context.l10n.reader_controlBar,
+                    0.03),
                 zone(
                     30,
                     rtl
                         ? Icons.chevron_left_rounded
                         : Icons.chevron_right_rounded,
-                    rtl ? '上一页' : '下一页',
+                    rtl ? context.l10n.reader_prevPage : context.l10n.reader_nextPage,
                     0.10),
               ]);
 
@@ -568,7 +573,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       const Icon(Icons.gesture_rounded,
                           color: Colors.white70, size: 22),
                       const SizedBox(height: 8),
-                      Text('点击任意处关闭 · 可在阅读设置里开关手势',
+                      Text(context.l10n.reader_hintTapAnywhereClose,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.75),
@@ -1192,12 +1197,12 @@ class _ReaderPageState extends State<ReaderPage> {
               IconButton(
                 onPressed: _savePage,
                 icon: const Icon(Icons.save_alt_rounded, color: Colors.white),
-                tooltip: '保存 / 分享本页',
+                tooltip: context.l10n.reader_saveOrSharePage,
               ),
               IconButton(
                 onPressed: _openPagesSheet,
                 icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
-                tooltip: '页面',
+                tooltip: context.l10n.reader_pages,
               ),
               IconButton(
                 onPressed: _openSettings,
@@ -1404,7 +1409,8 @@ class _ReaderPageState extends State<ReaderPage> {
     final f = await _pageFile(fp.img);
     if (!mounted) return;
     if (f == null) {
-      showAppNotify(context, '本页尚未缓存', kind: AppNotifyKind.warn);
+      showAppNotify(context, context.l10n.reader_pageNotCached,
+          kind: AppNotifyKind.warn);
       return;
     }
     final name = _pageFileName(fp);
@@ -1413,15 +1419,21 @@ class _ReaderPageState extends State<ReaderPage> {
         await Share.shareXFiles([XFile(f.path)], fileNameOverrides: [name]);
       } else {
         final path = await FilePicker.saveFile(
-            dialogTitle: '保存本页', fileName: name, lockParentWindow: true);
+            dialogTitle: context.l10n.reader_saveThisPage,
+            fileName: name,
+            lockParentWindow: true);
         if (path == null) return; // 用户取消
         await f.copy(path);
         if (mounted) {
-          showAppNotify(context, '已保存', kind: AppNotifyKind.success);
+          showAppNotify(context, context.l10n.reader_saved,
+              kind: AppNotifyKind.success);
         }
       }
     } catch (e) {
-      if (mounted) showAppNotify(context, '保存失败:$e', kind: AppNotifyKind.error);
+      if (mounted) {
+        showAppNotify(context, context.l10n.reader_saveFailed('$e'),
+            kind: AppNotifyKind.error);
+      }
     }
   }
 
@@ -1432,7 +1444,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final startFlat = ch.chapterStartFlat;
     showAppSheet<void>(
       context,
-      title: '跳转页面',
+      title: context.l10n.reader_jumpToPage,
       trailingText: ch.chapter.name,
       heightFactor: 0.7,
       bodyPadding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
@@ -1511,7 +1523,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void _openSettings() {
     showAppSheet<void>(
       context,
-      title: '阅读设置',
+      title: context.l10n.reader_settings,
       bodyPadding: const EdgeInsets.fromLTRB(20, 16, 16, 24),
       body: (ctx, setSheet) {
         final p = ctx.palette;
@@ -1527,22 +1539,30 @@ class _ReaderPageState extends State<ReaderPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('阅读模式', style: label(p.textMuted)),
+            Text(ctx.l10n.reader_mode, style: label(p.textMuted)),
             const SizedBox(height: 8),
             SegmentedButton<ReaderMode>(
-              segments: const [
-                ButtonSegment(value: ReaderMode.paged, label: Text('普通')),
-                ButtonSegment(value: ReaderMode.pagedRtl, label: Text('日漫')),
-                ButtonSegment(value: ReaderMode.vertical, label: Text('竖翻')),
-                ButtonSegment(value: ReaderMode.webtoon, label: Text('滚动')),
+              segments: [
+                ButtonSegment(
+                    value: ReaderMode.paged,
+                    label: Text(ctx.l10n.reader_modeNormal)),
+                ButtonSegment(
+                    value: ReaderMode.pagedRtl,
+                    label: Text(ctx.l10n.reader_modeManga)),
+                ButtonSegment(
+                    value: ReaderMode.vertical,
+                    label: Text(ctx.l10n.reader_modeVertical)),
+                ButtonSegment(
+                    value: ReaderMode.webtoon,
+                    label: Text(ctx.l10n.reader_modeWebtoon)),
               ],
               selected: {_mode},
               showSelectedIcon: false,
               onSelectionChanged: (s) => apply(() => _switchMode(s.first)),
             ),
             AppSwitchRow(
-              title: '自动判断条漫',
-              subtitle: '高瘦长条漫画自动用滚动模式(未手动指定时)',
+              title: ctx.l10n.reader_autoDetectWebtoon,
+              subtitle: ctx.l10n.reader_autoDetectWebtoonSub,
               value: _store?.autoDetectMode ?? true,
               onChanged: (v) => apply(() => _store?.autoDetectMode = v),
               dense: true,
@@ -1552,14 +1572,22 @@ class _ReaderPageState extends State<ReaderPage> {
             ),
             if (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl) ...[
               const SizedBox(height: 2),
-              Text('缩放模式', style: label(p.textMuted)),
+              Text(ctx.l10n.reader_zoomMode, style: label(p.textMuted)),
               const SizedBox(height: 6),
               SegmentedButton<ZoomMode>(
-                segments: const [
-                  ButtonSegment(value: ZoomMode.fitScreen, label: Text('适屏')),
-                  ButtonSegment(value: ZoomMode.fitWidth, label: Text('适宽')),
-                  ButtonSegment(value: ZoomMode.fitHeight, label: Text('适高')),
-                  ButtonSegment(value: ZoomMode.original, label: Text('原始')),
+                segments: [
+                  ButtonSegment(
+                      value: ZoomMode.fitScreen,
+                      label: Text(ctx.l10n.reader_zoomFitScreen)),
+                  ButtonSegment(
+                      value: ZoomMode.fitWidth,
+                      label: Text(ctx.l10n.reader_zoomFitWidth)),
+                  ButtonSegment(
+                      value: ZoomMode.fitHeight,
+                      label: Text(ctx.l10n.reader_zoomFitHeight)),
+                  ButtonSegment(
+                      value: ZoomMode.original,
+                      label: Text(ctx.l10n.reader_zoomOriginal)),
                 ],
                 selected: {_store?.zoomMode ?? ZoomMode.fitScreen},
                 showSelectedIcon: false,
@@ -1569,7 +1597,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   setState(() => _pageZoomed = false);
                 }),
               ),
-              Text('适宽/适高/原始:拖动滚动查看,点两侧或按键翻页',
+              Text(ctx.l10n.reader_zoomModeHint,
                   style: TextStyle(color: p.textMuted, fontSize: 11)),
             ],
             if (_mode == ReaderMode.webtoon) ...[
@@ -1577,7 +1605,7 @@ class _ReaderPageState extends State<ReaderPage> {
               AppSliderRow(
                 icon: Icons.aspect_ratio_rounded,
                 iconColor: p.textMuted,
-                label: '横屏内容宽度',
+                label: ctx.l10n.reader_landscapeContentWidth,
                 value: (_store?.webtoonWidth ?? 0.5).clamp(0.3, 1.0),
                 min: 0.3,
                 max: 1.0,
@@ -1590,12 +1618,12 @@ class _ReaderPageState extends State<ReaderPage> {
                   setState(() {}); // 阅读器按新宽度即时重建
                 }),
               ),
-              Text('仅横屏生效 · 越窄一屏看得越长',
+              Text(ctx.l10n.reader_landscapeWidthHint,
                   style: TextStyle(color: p.textMuted, fontSize: 11)),
               AppSliderRow(
                 icon: Icons.density_medium_rounded,
                 iconColor: p.textMuted,
-                label: '页间距',
+                label: ctx.l10n.reader_pageGap,
                 value: (_store?.webtoonGap ?? 0).clamp(0, 40),
                 min: 0,
                 max: 40,
@@ -1610,7 +1638,7 @@ class _ReaderPageState extends State<ReaderPage> {
               AppSliderRow(
                 icon: Icons.speed_rounded,
                 iconColor: p.textMuted,
-                label: '自动滚动速度',
+                label: ctx.l10n.reader_autoScrollSpeed,
                 value: (_store?.autoScrollSpeed ?? 40).clamp(10, 200),
                 min: 10,
                 max: 200,
@@ -1619,12 +1647,12 @@ class _ReaderPageState extends State<ReaderPage> {
                 valueFontSize: 12,
                 onChanged: (v) => apply(() => _store?.autoScrollSpeed = v),
               ),
-              Text('播放/暂停:控制条显示时右下角按钮',
+              Text(ctx.l10n.reader_autoScrollHint,
                   style: TextStyle(color: p.textMuted, fontSize: 11)),
             ],
             AppSwitchRow(
-              title: '双页同看',
-              subtitle: '横向翻页模式下并排显示两页',
+              title: ctx.l10n.reader_doublePage,
+              subtitle: ctx.l10n.reader_doublePageSub,
               value: _dual,
               onChanged:
                   (_mode == ReaderMode.paged || _mode == ReaderMode.pagedRtl)
@@ -1636,7 +1664,7 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitleSize: 11,
             ),
             AppSwitchRow(
-              title: '允许双击缩放',
+              title: ctx.l10n.reader_allowDoubleTapZoom,
               value: _dtZoom,
               onChanged: (v) => apply(() {
                 setState(() => _dtZoom = v);
@@ -1647,7 +1675,7 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
             ),
             AppSwitchRow(
-              title: '展示页码',
+              title: ctx.l10n.reader_showPageNumber,
               value: _showPageNum,
               onChanged: (v) => apply(() {
                 setState(() => _showPageNum = v);
@@ -1658,8 +1686,8 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
             ),
             AppSwitchRow(
-              title: '跨章提示',
-              subtitle: '连读进入下一章时提示章节名',
+              title: ctx.l10n.reader_crossChapterToast,
+              subtitle: ctx.l10n.reader_crossChapterToastSub,
               value: _store?.chapterToast ?? true,
               onChanged: (v) => apply(() => _store?.chapterToast = v),
               dense: true,
@@ -1668,14 +1696,22 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitleSize: 11,
             ),
             const SizedBox(height: 6),
-            Text('色彩 / 底色', style: label(p.textMuted)),
+            Text(ctx.l10n.reader_colorAndBackground, style: label(p.textMuted)),
             const SizedBox(height: 8),
             SegmentedButton<ReaderBackground>(
-              segments: const [
-                ButtonSegment(value: ReaderBackground.dark, label: Text('深色')),
-                ButtonSegment(value: ReaderBackground.black, label: Text('纯黑')),
-                ButtonSegment(value: ReaderBackground.white, label: Text('白')),
-                ButtonSegment(value: ReaderBackground.sepia, label: Text('纸')),
+              segments: [
+                ButtonSegment(
+                    value: ReaderBackground.dark,
+                    label: Text(ctx.l10n.reader_bgDark)),
+                ButtonSegment(
+                    value: ReaderBackground.black,
+                    label: Text(ctx.l10n.reader_bgBlack)),
+                ButtonSegment(
+                    value: ReaderBackground.white,
+                    label: Text(ctx.l10n.reader_bgWhite)),
+                ButtonSegment(
+                    value: ReaderBackground.sepia,
+                    label: Text(ctx.l10n.reader_bgSepia)),
               ],
               selected: {_store?.readerBg ?? ReaderBackground.dark},
               showSelectedIcon: false,
@@ -1684,10 +1720,10 @@ class _ReaderPageState extends State<ReaderPage> {
                 setState(() {});
               }),
             ),
-            Text('底色在「未显示全局背景图」时生效',
+            Text(ctx.l10n.reader_bgHint,
                 style: TextStyle(color: p.textMuted, fontSize: 11)),
             AppSwitchRow(
-              title: '黑白',
+              title: ctx.l10n.reader_grayscale,
               value: _store?.cfGrayscale ?? false,
               onChanged: (v) => apply(() {
                 _store?.cfGrayscale = v;
@@ -1698,8 +1734,8 @@ class _ReaderPageState extends State<ReaderPage> {
               titleWeight: FontWeight.w600,
             ),
             AppSwitchRow(
-              title: '护眼纸色',
-              subtitle: '暖色纸张色调,久读护眼',
+              title: ctx.l10n.reader_sepiaTitle,
+              subtitle: ctx.l10n.reader_sepiaSub,
               value: _store?.cfSepia ?? false,
               onChanged: (v) => apply(() {
                 _store?.cfSepia = v;
@@ -1711,8 +1747,8 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitleSize: 11,
             ),
             AppSwitchRow(
-              title: '反色',
-              subtitle: '暗色漫画 / 夜间反相',
+              title: ctx.l10n.reader_invert,
+              subtitle: ctx.l10n.reader_invertSub,
               value: _store?.cfInvert ?? false,
               onChanged: (v) => apply(() {
                 _store?.cfInvert = v;
@@ -1726,7 +1762,7 @@ class _ReaderPageState extends State<ReaderPage> {
             AppSliderRow(
               icon: Icons.contrast_rounded,
               iconColor: p.textMuted,
-              label: '对比度',
+              label: ctx.l10n.reader_contrast,
               value: (_store?.cfContrast ?? 1.0).clamp(0.5, 1.5),
               min: 0.5,
               max: 1.5,
@@ -1739,10 +1775,10 @@ class _ReaderPageState extends State<ReaderPage> {
               }),
             ),
             const SizedBox(height: 6),
-            Text('手势', style: label(p.textMuted)),
+            Text(ctx.l10n.reader_gestures, style: label(p.textMuted)),
             AppSwitchRow(
-              title: '点击分区翻页',
-              subtitle: '屏幕左/右侧点击翻页,中间切控制条',
+              title: ctx.l10n.reader_tapZonePaging,
+              subtitle: ctx.l10n.reader_tapZonePagingSub,
               value: _store?.readerGestures ?? true,
               onChanged: (v) => apply(() => _store?.readerGestures = v),
               dense: true,
@@ -1751,8 +1787,8 @@ class _ReaderPageState extends State<ReaderPage> {
               subtitleSize: 11,
             ),
             AppSwitchRow(
-              title: '反转翻页方向',
-              subtitle: '左侧点击 = 下一页,右侧 = 上一页(左手 / 习惯反转)',
+              title: ctx.l10n.reader_invertTapZones,
+              subtitle: ctx.l10n.reader_invertTapZonesSub,
               value: _store?.invertTapZones ?? false,
               onChanged: (v) => apply(() => _store?.invertTapZones = v),
               dense: true,
@@ -1762,8 +1798,8 @@ class _ReaderPageState extends State<ReaderPage> {
             ),
             if (Platform.isAndroid)
               AppSwitchRow(
-                title: '音量键翻页',
-                subtitle: '音量下 = 下一页,音量上 = 上一页',
+                title: ctx.l10n.reader_volumeKeyPaging,
+                subtitle: ctx.l10n.reader_volumeKeyPagingSub,
                 value: _store?.volumeKeyPaging ?? false,
                 onChanged: (v) => apply(() {
                   _store?.volumeKeyPaging = v;
@@ -1786,16 +1822,16 @@ class _ReaderPageState extends State<ReaderPage> {
                   setState(() => _showHint = true);
                 },
                 icon: const Icon(Icons.gesture_rounded, size: 16),
-                label: const Text('查看手势提示'),
+                label: Text(ctx.l10n.reader_viewGestureHint),
                 style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8)),
               ),
             ),
             const SizedBox(height: 6),
-            Text('屏幕', style: label(p.textMuted)),
+            Text(ctx.l10n.reader_screen, style: label(p.textMuted)),
             AppSwitchRow(
-              title: '常亮屏幕',
-              subtitle: '阅读时不自动息屏',
+              title: ctx.l10n.reader_keepScreenOn,
+              subtitle: ctx.l10n.reader_keepScreenOnSub,
               value: _store?.keepScreenOn ?? true,
               onChanged: (v) => apply(() {
                 _store?.keepScreenOn = v;
@@ -1816,13 +1852,16 @@ class _ReaderPageState extends State<ReaderPage> {
             if (Platform.isAndroid || Platform.isIOS) ...[
               const SizedBox(height: 4),
               SegmentedButton<ReaderOrientation>(
-                segments: const [
+                segments: [
                   ButtonSegment(
-                      value: ReaderOrientation.auto, label: Text('自动')),
+                      value: ReaderOrientation.auto,
+                      label: Text(ctx.l10n.reader_orientAuto)),
                   ButtonSegment(
-                      value: ReaderOrientation.portrait, label: Text('竖屏')),
+                      value: ReaderOrientation.portrait,
+                      label: Text(ctx.l10n.reader_orientPortrait)),
                   ButtonSegment(
-                      value: ReaderOrientation.landscape, label: Text('横屏')),
+                      value: ReaderOrientation.landscape,
+                      label: Text(ctx.l10n.reader_orientLandscape)),
                 ],
                 selected: {_store?.readerOrientation ?? ReaderOrientation.auto},
                 showSelectedIcon: false,
@@ -1833,7 +1872,7 @@ class _ReaderPageState extends State<ReaderPage> {
               ),
             ],
             const SizedBox(height: 6),
-            Text('亮度', style: label(p.textMuted)),
+            Text(ctx.l10n.reader_brightness, style: label(p.textMuted)),
             AppSliderRow(
               leading: Icon(Icons.nightlight_round, size: 18, color: p.textMuted),
               value: _brightness,

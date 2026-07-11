@@ -32,5 +32,189 @@
   "uiScale": "界面缩放",
   "font": "字体",
   "chooseFont": "选择字体",
-  "about": "关于"
+  "about": "关于",
+  "detail_openWithSource": "用 {name} 打开",
+  "@detail_openWithSource": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "detail_findingInSources": "在源里找《{title}》…",
+  "@detail_findingInSources": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "detail_notFoundInSources": "源里没找到《{title}》",
+  "@detail_notFoundInSources": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "detail_relatedRecommend": "相关推荐",
+  "detail_searchBangumi": "搜索 Bangumi",
+  "detail_loadItemFailed": "加载该条目失败,请重试",
+  "detail_switchSource": "换源",
+  "detail_noOtherSources": "没有其它可用的漫画源",
+  "detail_otherSourcesAllFailed": "其它源也都失败了",
+  "detail_noSameNameInOthers": "其它源里没找到同名漫画",
+  "detail_cannotOpenLink": "打不开链接:{url}",
+  "@detail_cannotOpenLink": {
+    "placeholders": {
+      "url": {}
+    }
+  },
+  "detail_authorPrefix": "作者 · {authors}",
+  "@detail_authorPrefix": {
+    "placeholders": {
+      "authors": {}
+    }
+  },
+  "detail_statusOngoing": "● 连载中",
+  "detail_statusCompleted": "● 完结",
+  "detail_statusHiatus": "● 休刊",
+  "detail_statusCancelled": "● 停载",
+  "detail_statusUnknown": "● 未知",
+  "detail_continueChapter": "继续 · {name}",
+  "@detail_continueChapter": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "detail_startFromBeginning": "从头开始",
+  "detail_downloadAll": "下载全部",
+  "detail_downloadNConfirm": "将下载 {n} 话到本地,可离线阅读。",
+  "@detail_downloadNConfirm": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "detail_download": "下载",
+  "detail_addedToQueueN": "已加入下载队列 · {n} 话",
+  "@detail_addedToQueueN": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "detail_synopsis": "简介",
+  "detail_fromBangumi": "· 来自 Bangumi",
+  "detail_collapse": "收起",
+  "detail_expandAll": "展开全部",
+  "detail_matchingBangumi": "正在匹配 Bangumi…",
+  "detail_bangumiNoMatch": "Bangumi 未找到匹配条目",
+  "detail_manualSearch": "手动搜索",
+  "detail_volumesN": "{n} 卷",
+  "@detail_volumesN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "detail_epsN": "{n} 话",
+  "@detail_epsN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "detail_rematch": "重新匹配",
+  "detail_openInBangumi": "在 Bangumi 打开",
+  "detail_readTo": "读到 {pos}",
+  "@detail_readTo": {
+    "placeholders": {
+      "pos": {}
+    }
+  },
+  "detail_chapters": "章节",
+  "detail_chaptersCount": "章节 · 共 {n}",
+  "@detail_chaptersCount": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "detail_extraFromOthers": "(+{n} 他源)",
+  "@detail_extraFromOthers": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "detail_findingOthers": " · 找其它源中…",
+  "detail_chapterLoadFailed": "章节加载失败",
+  "detail_reloadChapters": "重新加载章节",
+  "detail_searchingInOthers": "正在其它源查找同名…",
+  "detail_autoSwitchSource": "自动换源(其它源找同名)",
+  "detail_noChaptersParsed": "没解析到章节",
+  "reader_chapterNoImages": "本章暂无图片,已返回",
+  "reader_hintVerticalSwipe": "上下滑动翻页\n点击切换控制条",
+  "reader_hintTapToggleGestureOff": "点击切换控制条\n(翻页手势已关)",
+  "reader_nextPage": "下一页",
+  "reader_prevPage": "上一页",
+  "reader_controlBar": "控制条",
+  "reader_hintTapAnywhereClose": "点击任意处关闭 · 可在阅读设置里开关手势",
+  "reader_saveOrSharePage": "保存 / 分享本页",
+  "reader_pages": "页面",
+  "reader_pageNotCached": "本页尚未缓存",
+  "reader_saveThisPage": "保存本页",
+  "reader_saved": "已保存",
+  "reader_saveFailed": "保存失败:{error}",
+  "@reader_saveFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "reader_jumpToPage": "跳转页面",
+  "reader_settings": "阅读设置",
+  "reader_mode": "阅读模式",
+  "reader_modeNormal": "普通",
+  "reader_modeManga": "日漫",
+  "reader_modeVertical": "竖翻",
+  "reader_modeWebtoon": "滚动",
+  "reader_autoDetectWebtoon": "自动判断条漫",
+  "reader_autoDetectWebtoonSub": "高瘦长条漫画自动用滚动模式(未手动指定时)",
+  "reader_zoomMode": "缩放模式",
+  "reader_zoomFitScreen": "适屏",
+  "reader_zoomFitWidth": "适宽",
+  "reader_zoomFitHeight": "适高",
+  "reader_zoomOriginal": "原始",
+  "reader_zoomModeHint": "适宽/适高/原始:拖动滚动查看,点两侧或按键翻页",
+  "reader_landscapeContentWidth": "横屏内容宽度",
+  "reader_landscapeWidthHint": "仅横屏生效 · 越窄一屏看得越长",
+  "reader_pageGap": "页间距",
+  "reader_autoScrollSpeed": "自动滚动速度",
+  "reader_autoScrollHint": "播放/暂停:控制条显示时右下角按钮",
+  "reader_doublePage": "双页同看",
+  "reader_doublePageSub": "横向翻页模式下并排显示两页",
+  "reader_allowDoubleTapZoom": "允许双击缩放",
+  "reader_showPageNumber": "展示页码",
+  "reader_crossChapterToast": "跨章提示",
+  "reader_crossChapterToastSub": "连读进入下一章时提示章节名",
+  "reader_colorAndBackground": "色彩 / 底色",
+  "reader_bgDark": "深色",
+  "reader_bgBlack": "纯黑",
+  "reader_bgWhite": "白",
+  "reader_bgSepia": "纸",
+  "reader_bgHint": "底色在「未显示全局背景图」时生效",
+  "reader_grayscale": "黑白",
+  "reader_sepiaTitle": "护眼纸色",
+  "reader_sepiaSub": "暖色纸张色调,久读护眼",
+  "reader_invert": "反色",
+  "reader_invertSub": "暗色漫画 / 夜间反相",
+  "reader_contrast": "对比度",
+  "reader_gestures": "手势",
+  "reader_tapZonePaging": "点击分区翻页",
+  "reader_tapZonePagingSub": "屏幕左/右侧点击翻页,中间切控制条",
+  "reader_invertTapZones": "反转翻页方向",
+  "reader_invertTapZonesSub": "左侧点击 = 下一页,右侧 = 上一页(左手 / 习惯反转)",
+  "reader_volumeKeyPaging": "音量键翻页",
+  "reader_volumeKeyPagingSub": "音量下 = 下一页,音量上 = 上一页",
+  "reader_viewGestureHint": "查看手势提示",
+  "reader_screen": "屏幕",
+  "reader_keepScreenOn": "常亮屏幕",
+  "reader_keepScreenOnSub": "阅读时不自动息屏",
+  "reader_orientAuto": "自动",
+  "reader_orientPortrait": "竖屏",
+  "reader_orientLandscape": "横屏",
+  "reader_brightness": "亮度"
 }
