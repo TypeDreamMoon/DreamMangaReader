@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -101,11 +102,11 @@ class _BrowsePageState extends State<BrowsePage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: Text('浏览 · ${widget.meta.name}',
+        title: Text(context.l10n.browse_titleName(widget.meta.name),
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
       ),
       body: _sections.isEmpty
-          ? const EmptyState(title: '该源暂无浏览板块')
+          ? EmptyState(title: context.l10n.browse_noSections)
           : Column(
               children: [
                 _tabs(),
@@ -140,13 +141,13 @@ class _BrowsePageState extends State<BrowsePage> {
         return Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: SelectableText('加载失败:\n$_error',
+            child: SelectableText(context.l10n.browse_loadFailedDetail('$_error'),
                 textAlign: TextAlign.center,
                 style: TextStyle(color: p.textMuted, fontSize: 12)),
           ),
         );
       }
-      return const EmptyState(title: '该板块暂无内容');
+      return EmptyState(title: context.l10n.browse_sectionEmpty);
     }
     return SmoothScroll(
       builder: (sc) => NotificationListener<ScrollNotification>(

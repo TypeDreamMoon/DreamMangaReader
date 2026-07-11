@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import 'animations.dart';
@@ -73,7 +74,7 @@ Future<String?> showSourcePicker(
   // 源数量少(≤ 全部启用源),随内容自适应即可,无需固定限高。
   return showAppSheet<String>(
     context,
-    title: '选择漫画源',
+    title: context.l10n.srcpick_title,
     titleIcon: Icons.dashboard_rounded,
     showDragHandle: true,
     glass: true,
@@ -84,9 +85,9 @@ Future<String?> showSourcePicker(
       children: [
         if (includeMixed)
           _SourceRow(
-            glyph: '混',
-            name: '混合 · 全部源',
-            subtitle: '同时搜索 / 浏览所有启用的源',
+            glyph: context.l10n.srcpick_mixedGlyph,
+            name: context.l10n.srcpick_mixedAllSources,
+            subtitle: context.l10n.srcpick_mixedSubtitle,
             selected: currentId == mixedId,
             onTap: () => Navigator.pop(ctx, mixedId),
           ),
@@ -94,7 +95,7 @@ Future<String?> showSourcePicker(
           _SourceRow(
             glyph: s.name.characters.first,
             name: s.name,
-            subtitle: s.experimental ? '实验性' : null,
+            subtitle: s.experimental ? context.l10n.srcpick_experimental : null,
             selected: currentId == s.id,
             onTap: () => Navigator.pop(ctx, s.id),
           ),

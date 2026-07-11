@@ -9,6 +9,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../core/source/chinese_fold.dart';
 import '../../core/source/search_rank.dart';
@@ -327,7 +328,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _results.isEmpty &&
         _mixedSources.isNotEmpty &&
         _mixedSources.every((c) => c.errored)) {
-      _error = _mixedError ?? '所有源都加载失败了';
+      _error = _mixedError ?? context.l10n.disc_allSourcesFailed;
     }
   }
 
@@ -394,12 +395,12 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: GlassTitleBar(
-        title: const Text('发现',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.navDiscover,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
           if (_kind == ContentKind.manga) ...[
           IconButton(
-            tooltip: '搜索',
+            tooltip: context.l10n.disc_searchTooltip,
             onPressed: () => setState(() {
               _showSearch = !_showSearch;
               if (!_showSearch && _query.isNotEmpty) {
@@ -412,14 +413,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           // 站点板块浏览(排行榜/连载/完结…):仅当前源声明了 sections 时显示。
           if (!_mixed && _meta != null && (_source?.sections.isNotEmpty ?? false))
             IconButton(
-              tooltip: '浏览板块',
+              tooltip: context.l10n.disc_browseSections,
               onPressed: () => Navigator.of(context)
                   .push(appRoute(BrowsePage(meta: _meta!))),
               icon: const Icon(Icons.dashboard_rounded),
             ),
           if (_filters.isNotEmpty || _mixed)
             IconButton(
-              tooltip: _showFilters ? '收起筛选' : '展开筛选',
+              tooltip: _showFilters
+                  ? context.l10n.disc_collapseFilters
+                  : context.l10n.disc_expandFilters,
               onPressed: () => setState(() => _showFilters = !_showFilters),
               icon: Icon(_showFilters
                   ? Icons.filter_list_rounded
@@ -518,13 +521,13 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           children: [
             Icon(kind.icon, size: 56, color: p.textMuted),
             const SizedBox(height: 16),
-            Text('${kind.label} · 即将推出',
+            Text(context.l10n.disc_comingSoonKind(kind.label),
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text('这个板块正在规划中,后续版本接入',
+            Text(context.l10n.disc_comingSoonDesc,
                 style: TextStyle(color: p.textMuted, fontSize: 13)),
           ],
         ),
@@ -567,8 +570,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         child: SourcePickerPill(
           icon: _mixed ? Icons.dashboard_rounded : Icons.source_rounded,
           label: _mixed
-              ? '混合 · 全部源'
-              : '${_meta?.name ?? '选择源'} · 分类浏览',
+              ? context.l10n.disc_mixedAllSources
+              : context.l10n.disc_sourceCategoryBrowse(
+                  _meta?.name ?? context.l10n.disc_selectSource),
           onTap: _pickSource,
         ),
       );
@@ -592,7 +596,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           style: TextStyle(color: p.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            hintText: '搜索漫画名 · ${_meta?.name ?? ''}',
+            hintText: context.l10n.disc_searchHint(_mixed
+                ? context.l10n.disc_mixedAllSources
+                : (_meta?.name ?? '')),
             hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
             prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             suffixIcon: _query.isNotEmpty
@@ -636,12 +642,12 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         border: Border.all(color: p.line),
       ),
       child: PopupMenuButton<TranslateLang>(
-        tooltip: '翻译搜索词',
+        tooltip: context.l10n.disc_translateTooltip,
         icon: Icon(Icons.translate_rounded, size: 20, color: p.accent),
         onSelected: _translateQuery,
         itemBuilder: (_) => [
           for (final l in TranslateLang.values)
-            PopupMenuItem(value: l, child: Text('译为 ${l.label}')),
+            PopupMenuItem(value: l, child: Text(context.l10n.disc_translateTo(l.label))),
         ],
       ),
     );
@@ -675,7 +681,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             Icon(Icons.translate_rounded, size: 13, color: p.textMuted),
             const SizedBox(width: 6),
             Expanded(
-              child: Text('「$_origQuery」没搜到,已用译名「$via」',
+              child: Text(context.l10n.disc_fallbackHint(_origQuery, via),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: p.textMuted, fontSize: 11.5)),
@@ -696,7 +702,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             children: [
               Icon(Icons.history_rounded, size: 14, color: p.textMuted),
               const SizedBox(width: 6),
-              Text('最近搜索',
+              Text(context.l10n.disc_recentSearches,
                   style: TextStyle(
                       color: p.textMuted,
                       fontSize: 12,
@@ -706,7 +712,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 onTap: store.clearSearchHistory,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  child: Text('清空',
+                  child: Text(context.l10n.disc_clear,
                       style: TextStyle(color: p.textMuted, fontSize: 12)),
                 ),
               ),
@@ -949,18 +955,18 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _mixedRow(p, Icons.sort_rounded, '排序', const [
-              ('latest', '最新更新'),
-              ('popular', '人气'),
+            _mixedRow(p, Icons.sort_rounded, context.l10n.disc_sort, [
+              ('latest', context.l10n.disc_sortLatest),
+              ('popular', context.l10n.disc_sortPopular),
             ], _mixedSort, (v) {
               _mixedSort = v;
               _reset();
             }),
             const SizedBox(height: 8),
-            _mixedRow(p, Icons.timelapse_rounded, '进度', const [
-              ('', '全部'),
-              ('ongoing', '连载中'),
-              ('completed', '已完结'),
+            _mixedRow(p, Icons.timelapse_rounded, context.l10n.disc_status, [
+              ('', context.l10n.disc_statusAll),
+              ('ongoing', context.l10n.disc_statusOngoing),
+              ('completed', context.l10n.disc_statusCompleted),
             ], _mixedStatus, (v) {
               _mixedStatus = v;
               _reset();
@@ -986,7 +992,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       if (_loading) return const Center(child: CircularProgressIndicator());
       if (_error != null) return _errorView(p);
       return Center(
-        child: Text('没有拿到数据',
+        child: Text(context.l10n.disc_noData,
             style: TextStyle(color: p.textMuted, fontSize: 13)),
       );
     }
@@ -1063,9 +1069,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                   child: CircularProgressIndicator(strokeWidth: 2.4))
               : _error != null
                   ? TextButton(
-                      onPressed: _loadMore, child: const Text('加载失败,重试'))
+                      onPressed: _loadMore,
+                      child: Text(context.l10n.disc_loadFailedRetry))
                   : !_hasNext
-                      ? Text('没有更多了',
+                      ? Text(context.l10n.disc_noMore,
                           style: TextStyle(color: p.textMuted, fontSize: 11))
                       : const SizedBox.shrink(),
         ),
@@ -1079,11 +1086,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             children: [
               Icon(Icons.cloud_off_rounded, size: 40, color: p.textMuted),
               const SizedBox(height: 12),
-              SelectableText('加载失败:\n$_error',
+              SelectableText(context.l10n.disc_loadFailedDetail('$_error'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.textMuted, fontSize: 12)),
               const SizedBox(height: 14),
-              FilledButton(onPressed: _reset, child: const Text('重试')),
+              FilledButton(onPressed: _reset, child: Text(context.l10n.retry)),
             ],
           ),
         ),

@@ -216,5 +216,165 @@
   "reader_orientAuto": "自动",
   "reader_orientPortrait": "竖屏",
   "reader_orientLandscape": "横屏",
-  "reader_brightness": "亮度"
+  "reader_brightness": "亮度",
+  "disc_searchTooltip": "搜索",
+  "disc_browseSections": "浏览板块",
+  "disc_collapseFilters": "收起筛选",
+  "disc_expandFilters": "展开筛选",
+  "disc_comingSoonKind": "{label} · 即将推出",
+  "@disc_comingSoonKind": {
+    "placeholders": {
+      "label": {}
+    }
+  },
+  "disc_comingSoonDesc": "这个板块正在规划中,后续版本接入",
+  "disc_mixedAllSources": "混合 · 全部源",
+  "disc_selectSource": "选择源",
+  "disc_sourceCategoryBrowse": "{name} · 分类浏览",
+  "@disc_sourceCategoryBrowse": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "disc_searchHint": "搜索漫画名 · {name}",
+  "@disc_searchHint": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "disc_translateTooltip": "翻译搜索词",
+  "disc_translateTo": "译为 {lang}",
+  "@disc_translateTo": {
+    "placeholders": {
+      "lang": {}
+    }
+  },
+  "disc_fallbackHint": "「{orig}」没搜到,已用译名「{via}」",
+  "@disc_fallbackHint": {
+    "placeholders": {
+      "orig": {},
+      "via": {}
+    }
+  },
+  "disc_recentSearches": "最近搜索",
+  "disc_clear": "清空",
+  "disc_sort": "排序",
+  "disc_sortLatest": "最新更新",
+  "disc_sortPopular": "人气",
+  "disc_status": "进度",
+  "disc_statusAll": "全部",
+  "disc_statusOngoing": "连载中",
+  "disc_statusCompleted": "已完结",
+  "disc_noData": "没有拿到数据",
+  "disc_loadFailedRetry": "加载失败,重试",
+  "disc_noMore": "没有更多了",
+  "disc_loadFailedDetail": "加载失败:\n{error}",
+  "@disc_loadFailedDetail": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "disc_allSourcesFailed": "所有源都加载失败了",
+  "browse_titleName": "浏览 · {name}",
+  "@browse_titleName": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "browse_noSections": "该源暂无浏览板块",
+  "browse_loadFailedDetail": "加载失败:\n{error}",
+  "@browse_loadFailedDetail": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "browse_sectionEmpty": "该板块暂无内容",
+  "srcpick_title": "选择漫画源",
+  "srcpick_mixedGlyph": "混",
+  "srcpick_mixedAllSources": "混合 · 全部源",
+  "srcpick_mixedSubtitle": "同时搜索 / 浏览所有启用的源",
+  "srcpick_experimental": "实验性",
+  "sync_account": "账号",
+  "sync_loginSuccess": "登录成功:{name}",
+  "@sync_loginSuccess": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sync_loginFailed": "登录失败:{e}",
+  "@sync_loginFailed": {
+    "placeholders": {
+      "e": {}
+    }
+  },
+  "sync_loggedOut": "已退出登录",
+  "sync_uploadFailed": "上传失败:{e}",
+  "@sync_uploadFailed": {
+    "placeholders": {
+      "e": {}
+    }
+  },
+  "sync_downloadFailed": "下载失败:{e}",
+  "@sync_downloadFailed": {
+    "placeholders": {
+      "e": {}
+    }
+  },
+  "sync_neverSynced": "尚未同步",
+  "sync_lastSyncedAt": "上次同步 {time}",
+  "@sync_lastSyncedAt": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "sync_title": "云同步",
+  "sync_intro": "把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源(源脚本+开关) / 源仓库配置 跨设备同步。上传=本地推到服务器,下载=服务器拉到本地(可选覆盖或追加)。不含每源登录态与下载文件。",
+  "sync_upload": "上传",
+  "sync_download": "下载",
+  "sync_testConnection": "测试连接",
+  "sync_hertzHint": "提示:\n账号数据存自建的 dreamreader-sync 服务。\n使用云存储(64hz.cn) 我们承诺不会共享您的账号数据。",
+  "sync_webdavHint": "提示:坚果云等需在网页端「安全选项 → 添加应用」生成专用密码,别用登录密码。",
+  "sync_webdavUrl": "WebDAV 地址",
+  "sync_webdavUrlHint": "如 https://dav.jianguoyun.com/dav/",
+  "sync_userHint": "用户名 / 邮箱",
+  "sync_password": "密码",
+  "sync_passwordHint": "密码 / 应用授权码",
+  "sync_serviceUrl": "同步服务地址",
+  "sync_serviceUrlHint": "如 https://sync.yourhost.com",
+  "sync_iamUrl": "IAM 地址",
+  "sync_iamUrlHint": "如 https://iam.yourhost.com",
+  "sync_clientIdHint": "你的 IAM client_id",
+  "sync_loggedInAs": "已登录:{name}",
+  "@sync_loggedInAs": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sync_logout": "退出登录",
+  "sync_browserLoginHint": "用系统浏览器打开官方 IAM 登录页,授权后自动返回(密码不经过 App)。",
+  "sync_browserLogin": "浏览器登录",
+  "sync_username": "用户名",
+  "sync_usernameHint": "账号 / 用户名",
+  "sync_loginPasswordHint": "登录密码",
+  "sync_login": "登录",
+  "sync_scopeTitle": "同步内容(上传范围)",
+  "sync_scopeSubtitle": "上传只推勾选的类别;下载时可在弹窗里单独再选。",
+  "sync_autoOnLaunch": "启动时自动同步",
+  "sync_autoOnLaunchSub": "每次打开 App 后台双向合并一次(不丢本地)",
+  "sync_autoUploadTitle": "变化后自动上传",
+  "sync_autoUploadSubtitle": "勾选的内容在本机变化几秒后自动上传对应类别;阅读进度最快每 2 分钟一次。",
+  "sync_skip": "跳过",
+  "sync_overwrite": "覆盖",
+  "sync_append": "追加",
+  "sync_downloadDialogTitle": "从服务器下载",
+  "sync_all": "全部:",
+  "sync_downloadModeHint": "覆盖=服务器替换本地;追加=收藏/进度/源取并集(不丢本地)。设置/源仓库无「追加」,只能覆盖。",
+  "sync_catFavorites": "收藏",
+  "sync_catHistory": "阅读进度",
+  "sync_catSearchHistory": "搜索历史",
+  "sync_catUiSettings": "界面与外观",
+  "sync_catAppSettings": "其它设置",
+  "sync_catMangaSources": "漫画源",
+  "sync_catAnimeSources": "番剧源",
+  "sync_catSourceRepo": "源仓库"
 }

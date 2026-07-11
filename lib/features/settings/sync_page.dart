@@ -2,23 +2,28 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/sync/sync_controller.dart';
 import '../../core/sync/sync_data.dart';
 import '../../ui/ui.dart';
 
-/// 同步内容类别的中文名(页面与下载弹窗共用)。
-const Map<SyncCategory, String> kCatLabels = {
-  SyncCategory.favorites: '收藏',
-  SyncCategory.history: '阅读进度',
-  SyncCategory.searchHistory: '搜索历史',
-  SyncCategory.readerSettings: '阅读设置',
-  SyncCategory.uiSettings: '界面与外观',
-  SyncCategory.appSettings: '其它设置',
-  SyncCategory.mangaSources: '漫画源',
-  SyncCategory.animeSources: '番剧源',
-  SyncCategory.sourceRepo: '源仓库',
-};
+/// 同步内容类别的本地化名(页面与下载弹窗共用)。多语言下不能是 const map,
+/// 走 context.l10n(阅读设置类别复用阅读器的 reader_settings)。
+String kCatLabel(BuildContext context, SyncCategory c) {
+  final l = context.l10n;
+  return switch (c) {
+    SyncCategory.favorites => l.sync_catFavorites,
+    SyncCategory.history => l.sync_catHistory,
+    SyncCategory.searchHistory => l.sync_catSearchHistory,
+    SyncCategory.readerSettings => l.reader_settings,
+    SyncCategory.uiSettings => l.sync_catUiSettings,
+    SyncCategory.appSettings => l.sync_catAppSettings,
+    SyncCategory.mangaSources => l.sync_catMangaSources,
+    SyncCategory.animeSources => l.sync_catAnimeSources,
+    SyncCategory.sourceRepo => l.sync_catSourceRepo,
+  };
+}
 
 /// 云同步设置页。后端可切 WebDAV / 账号(Hertz Service 官方 或 Custom 自建)。
 /// 同步方式:上传(本地→服务器)/ 下载(服务器→本地,可选类别 + 覆盖/追加)。
@@ -101,12 +106,13 @@ class _SyncPageState extends State<SyncPage> {
       }
       if (!mounted) return;
       setState(() => _loginBusy = false);
-      showAppNotify(context, '登录成功:${_sync.auth.username ?? '账号'}',
+      showAppNotify(
+          context, context.l10n.sync_loginSuccess(_sync.auth.username ?? context.l10n.sync_account),
           kind: AppNotifyKind.success);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loginBusy = false);
-      showAppNotify(context, '登录失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_loginFailed('$e'), kind: AppNotifyKind.error);
     }
   }
 
@@ -114,7 +120,7 @@ class _SyncPageState extends State<SyncPage> {
     await _sync.auth.logout();
     if (!mounted) return;
     setState(() {});
-    showAppNotify(context, '已退出登录', kind: AppNotifyKind.success);
+    showAppNotify(context, context.l10n.sync_loggedOut, kind: AppNotifyKind.success);
   }
 
   Future<void> _test() async {
@@ -155,7 +161,7 @@ class _SyncPageState extends State<SyncPage> {
         _busy = false;
         _result = '$e';
       });
-      showAppNotify(context, '上传失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_uploadFailed('$e'), kind: AppNotifyKind.error);
     }
   }
 
@@ -187,15 +193,17 @@ class _SyncPageState extends State<SyncPage> {
         _busy = false;
         _result = '$e';
       });
-      showAppNotify(context, '下载失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_downloadFailed('$e'), kind: AppNotifyKind.error);
     }
   }
 
   String _lastLabel() {
-    if (_sync.lastSyncedAt == 0) return '尚未同步';
+    if (_sync.lastSyncedAt == 0) return context.l10n.sync_neverSynced;
     final d = DateTime.fromMillisecondsSinceEpoch(_sync.lastSyncedAt);
     String two(int n) => n.toString().padLeft(2, '0');
-    return '上次同步 ${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
+    final ts =
+        '${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
+    return context.l10n.sync_lastSyncedAt(ts);
   }
 
   @override
@@ -205,8 +213,8 @@ class _SyncPageState extends State<SyncPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('云同步',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.sync_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
       body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -214,22 +222,21 @@ class _SyncPageState extends State<SyncPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
-              '把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源(源脚本+开关) / 源仓库配置 跨设备同步。'
-              '上传=本地推到服务器,下载=服务器拉到本地(可选覆盖或追加)。不含每源登录态与下载文件。',
+              context.l10n.sync_intro,
               style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.55),
             ),
           ),
           // 后端切换
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
+            segments: [
+              const ButtonSegment(
                   value: 'webdav',
                   label: Text('WebDAV'),
                   icon: Icon(Icons.folder_shared_rounded, size: 17)),
               ButtonSegment(
                   value: 'hertz',
-                  label: Text('账号'),
-                  icon: Icon(Icons.account_circle_rounded, size: 17)),
+                  label: Text(context.l10n.sync_account),
+                  icon: const Icon(Icons.account_circle_rounded, size: 17)),
             ],
             selected: {_kind},
             onSelectionChanged: _busy
@@ -258,7 +265,7 @@ class _SyncPageState extends State<SyncPage> {
                           height: 15,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.cloud_upload_rounded, size: 18),
-                  label: const Text('上传'),
+                  label: Text(context.l10n.sync_upload),
                 ),
               ),
               const SizedBox(width: 10),
@@ -266,7 +273,7 @@ class _SyncPageState extends State<SyncPage> {
                 child: FilledButton.icon(
                   onPressed: _busy ? null : _download,
                   icon: const Icon(Icons.cloud_download_rounded, size: 18),
-                  label: const Text('下载'),
+                  label: Text(context.l10n.sync_download),
                 ),
               ),
             ],
@@ -277,7 +284,7 @@ class _SyncPageState extends State<SyncPage> {
             child: OutlinedButton.icon(
               onPressed: _busy ? null : _test,
               icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
-              label: const Text('测试连接'),
+              label: Text(context.l10n.sync_testConnection),
             ),
           ),
           const SizedBox(height: 14),
@@ -297,12 +304,7 @@ class _SyncPageState extends State<SyncPage> {
           ],
           const SizedBox(height: 20),
           Text(
-            isHertz
-                ? '提示:\n'
-                  '账号数据存自建的 dreamreader-sync 服务。\n'
-                  '使用云存储(64hz.cn) 我们承诺不会共享您的账号数据。'
-
-                : '提示:坚果云等需在网页端「安全选项 → 添加应用」生成专用密码,别用登录密码。',
+            isHertz ? context.l10n.sync_hertzHint : context.l10n.sync_webdavHint,
             style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.5),
           ),
         ],
@@ -316,11 +318,14 @@ class _SyncPageState extends State<SyncPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _field(p, _urlCtrl, 'WebDAV 地址', '如 https://dav.jianguoyun.com/dav/'),
+            _field(p, _urlCtrl, context.l10n.sync_webdavUrl,
+                context.l10n.sync_webdavUrlHint),
             const SizedBox(height: 10),
-            _field(p, _userCtrl, '账号', '用户名 / 邮箱'),
+            _field(p, _userCtrl, context.l10n.sync_account,
+                context.l10n.sync_userHint),
             const SizedBox(height: 10),
-            _field(p, _passCtrl, '密码', '密码 / 应用授权码', obscure: true),
+            _field(p, _passCtrl, context.l10n.sync_password,
+                context.l10n.sync_passwordHint, obscure: true),
           ],
         ),
       );
@@ -364,11 +369,13 @@ class _SyncPageState extends State<SyncPage> {
           const SizedBox(height: 12),
           // Custom 才显示地址三项;Hertz Service 地址已内置,直接给登录。
           if (!isHertzPreset) ...[
-            _field(p, _hSyncCtrl, '同步服务地址', '如 https://sync.yourhost.com'),
+            _field(p, _hSyncCtrl, context.l10n.sync_serviceUrl,
+                context.l10n.sync_serviceUrlHint),
             const SizedBox(height: 10),
-            _field(p, _hIssuerCtrl, 'IAM 地址', '如 https://iam.yourhost.com'),
+            _field(p, _hIssuerCtrl, context.l10n.sync_iamUrl,
+                context.l10n.sync_iamUrlHint),
             const SizedBox(height: 10),
-            _field(p, _hClientCtrl, 'client_id', '你的 IAM client_id'),
+            _field(p, _hClientCtrl, 'client_id', context.l10n.sync_clientIdHint),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Divider(height: 1, color: p.line),
@@ -381,7 +388,9 @@ class _SyncPageState extends State<SyncPage> {
                 Icon(Icons.check_circle_rounded, size: 18, color: p.accent),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text('已登录:${_sync.auth.username ?? '账号'}',
+                  child: Text(
+                      context.l10n.sync_loggedInAs(
+                          _sync.auth.username ?? context.l10n.sync_account),
                       style: TextStyle(
                           color: p.textPrimary,
                           fontSize: 13.5,
@@ -389,21 +398,24 @@ class _SyncPageState extends State<SyncPage> {
                 ),
                 TextButton(
                   onPressed: _loginBusy ? null : _logout,
-                  child: const Text('退出登录'),
+                  child: Text(context.l10n.sync_logout),
                 ),
               ],
             )
           else if (isHertzPreset) ...[
-            Text('用系统浏览器打开官方 IAM 登录页,授权后自动返回(密码不经过 App)。',
+            Text(context.l10n.sync_browserLoginHint,
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
             const SizedBox(height: 12),
-            _loginButton(p, '浏览器登录', Icons.open_in_browser_rounded),
+            _loginButton(p, context.l10n.sync_browserLogin,
+                Icons.open_in_browser_rounded),
           ] else ...[
-            _field(p, _loginUserCtrl, '用户名', '账号 / 用户名'),
+            _field(p, _loginUserCtrl, context.l10n.sync_username,
+                context.l10n.sync_usernameHint),
             const SizedBox(height: 10),
-            _field(p, _loginPassCtrl, '密码', '登录密码', obscure: true),
+            _field(p, _loginPassCtrl, context.l10n.sync_password,
+                context.l10n.sync_loginPasswordHint, obscure: true),
             const SizedBox(height: 12),
-            _loginButton(p, '登录', Icons.login_rounded),
+            _loginButton(p, context.l10n.sync_login, Icons.login_rounded),
           ],
         ],
       ),
@@ -430,13 +442,13 @@ class _SyncPageState extends State<SyncPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('同步内容(上传范围)',
+            Text(context.l10n.sync_scopeTitle,
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            Text('上传只推勾选的类别;下载时可在弹窗里单独再选。',
+            Text(context.l10n.sync_scopeSubtitle,
                 style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.4)),
             const SizedBox(height: 10),
             Wrap(
@@ -445,7 +457,7 @@ class _SyncPageState extends State<SyncPage> {
               children: [
                 for (final c in SyncCategory.values)
                   AppFilterChip(
-                    label: kCatLabels[c]!,
+                    label: kCatLabel(context, c),
                     selected: _sync.syncCategories.contains(c),
                     onTap: _busy
                         ? () {}
@@ -469,9 +481,9 @@ class _SyncPageState extends State<SyncPage> {
             AppSwitchRow(
               dense: true,
               contentPadding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-              title: '启动时自动同步',
+              title: context.l10n.sync_autoOnLaunch,
               titleWeight: FontWeight.w600,
-              subtitle: '每次打开 App 后台双向合并一次(不丢本地)',
+              subtitle: context.l10n.sync_autoOnLaunchSub,
               value: _auto,
               onChanged: _busy
                   ? null
@@ -488,13 +500,13 @@ class _SyncPageState extends State<SyncPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('变化后自动上传',
+                  Text(context.l10n.sync_autoUploadTitle,
                       style: TextStyle(
                           color: p.textPrimary,
                           fontSize: 13,
                           fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
-                  Text('勾选的内容在本机变化几秒后自动上传对应类别;阅读进度最快每 2 分钟一次。',
+                  Text(context.l10n.sync_autoUploadSubtitle,
                       style: TextStyle(
                           color: p.textMuted, fontSize: 11.5, height: 1.4)),
                   const SizedBox(height: 10),
@@ -504,7 +516,7 @@ class _SyncPageState extends State<SyncPage> {
                     children: [
                       for (final c in SyncCategory.values)
                         AppFilterChip(
-                          label: kCatLabels[c]!,
+                          label: kCatLabel(context, c),
                           selected: _sync.autoUploadOn.contains(c),
                           onTap: _busy
                               ? () {}
@@ -573,10 +585,12 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       });
 
   List<ButtonSegment<_DlMode>> _segments(SyncCategory c) => [
-        const ButtonSegment(value: _DlMode.skip, label: Text('跳过')),
-        const ButtonSegment(value: _DlMode.overwrite, label: Text('覆盖')),
+        ButtonSegment(value: _DlMode.skip, label: Text(context.l10n.sync_skip)),
+        ButtonSegment(
+            value: _DlMode.overwrite, label: Text(context.l10n.sync_overwrite)),
         if (SyncData.supportsAppend(c))
-          const ButtonSegment(value: _DlMode.append, label: Text('追加')),
+          ButtonSegment(
+              value: _DlMode.append, label: Text(context.l10n.sync_append)),
       ];
 
   @override
@@ -587,7 +601,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       backgroundColor: p.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      title: Text('从服务器下载',
+      title: Text(context.l10n.sync_downloadDialogTitle,
           style: TextStyle(
               color: p.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
       content: SizedBox(
@@ -599,11 +613,13 @@ class _DownloadDialogState extends State<_DownloadDialog> {
             children: [
               Row(
                 children: [
-                  Text('全部:',
+                  Text(context.l10n.sync_all,
                       style: TextStyle(color: p.textMuted, fontSize: 12)),
-                  _quick(p, '跳过', () => _setAll(_DlMode.skip)),
-                  _quick(p, '覆盖', () => _setAll(_DlMode.overwrite)),
-                  _quick(p, '追加', () => _setAll(_DlMode.append)),
+                  _quick(p, context.l10n.sync_skip, () => _setAll(_DlMode.skip)),
+                  _quick(p, context.l10n.sync_overwrite,
+                      () => _setAll(_DlMode.overwrite)),
+                  _quick(p, context.l10n.sync_append,
+                      () => _setAll(_DlMode.append)),
                 ],
               ),
               const SizedBox(height: 2),
@@ -613,8 +629,8 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                   child: Row(
                     children: [
                       SizedBox(
-                        width: 72, // 最长标签「界面与外观」(5 字)不换行
-                        child: Text(kCatLabels[c]!,
+                        width: 78, // 容中文标签;英文等较长的会自然换行到 2 行
+                        child: Text(kCatLabel(context, c),
                             style: TextStyle(
                                 color: p.textPrimary,
                                 fontSize: 13,
@@ -641,8 +657,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                 ),
               const SizedBox(height: 10),
               Text(
-                '覆盖=服务器替换本地;追加=收藏/进度/源取并集(不丢本地)。'
-                '设置/源仓库无「追加」,只能覆盖。',
+                context.l10n.sync_downloadModeHint,
                 style:
                     TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.45),
               ),
@@ -653,7 +668,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.l10n.cancel),
         ),
         FilledButton(
           onPressed: any
@@ -663,7 +678,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                         e.key: e.value == _DlMode.append,
                   })
               : null,
-          child: const Text('下载'),
+          child: Text(context.l10n.sync_download),
         ),
       ],
     );
