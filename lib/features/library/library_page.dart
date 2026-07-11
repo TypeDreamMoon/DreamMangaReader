@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
@@ -921,60 +920,74 @@ class _LibraryPageState extends State<LibraryPage> {
       if (_feedError != null && _feedOk == 0) return _error(p, _feedError!);
       return _error(p, context.l10n.shelf_noDataEmpty);
     }
-    int srcCountOf(Manga m) {
-      final k = ChineseFold.dedupKey(m.title);
-      return k.isEmpty ? 1 : (_feedSrc[k]?.length ?? 1);
-    }
+    // 跟随设置里的「封面布局」(瀑布流 / 网格 / 列表),与收藏区一致。
+    final layout = store.feedLayout;
+    return FeedView(
+      layout: layout,
+      shrinkWrap: true, // 嵌在书架外层 ListView 里,自身不滚
+      columns: store.gridColumns,
+      itemCount: _feedItems.length,
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+      cardBuilder: (context, i) => _browseCard(p, store, i, layout),
+      tileBuilder: (context, i) => _browseTile(p, store, i),
+    );
+  }
 
-    // 瀑布流:嵌在外层 ListView 里,shrinkWrap + 禁自身滚动。
-    return LayoutBuilder(
-      builder: (context, c) => MasonryGridView.count(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-        crossAxisCount: columnsFor(c.maxWidth, store.gridColumns),
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 14,
-        itemCount: _feedItems.length,
-        itemBuilder: (context, i) {
-          final item = _feedItems[i];
-          final m = item.manga;
-          // 带下标:源 feed 可能重复同一本,避免 Hero tag 撞车。
-          final tag = 'feed:${item.meta.id}:${m.id}:$i';
-          return FlyInUp(
-            seed: m.id,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 瀑布流 tile 高度由内容决定(无界主轴)→ 不能用 Flexible。
-                // MangaCover 自带 AspectRatio,直接放,高度自然算出。
-                MangaCover(
-                  manga: m,
-                  headers: imageHeadersOf(item.meta),
-                  sourceCount: srcCountOf(m),
-                  updated: m.status == MangaStatus.ongoing,
-                  aspect: aspectForId(m.id),
-                  heroTag: tag,
-                  onTap: () => _openManga(m, item.meta, heroTag: tag),
-                ),
-                const SizedBox(height: 6),
-                Text(m.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: p.textPrimary)),
-                Text(m.authors.isNotEmpty ? m.authors.first : ' ',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10, color: p.textMuted)),
-              ],
-            ),
-          );
-        },
+  // 混合源 feed 里某本书的可用源数(驱动「N源」角标)。
+  int _feedSrcCount(Manga m) {
+    final k = ChineseFold.dedupKey(m.title);
+    return k.isEmpty ? 1 : (_feedSrc[k]?.length ?? 1);
+  }
+
+  // 浏览卡(瀑布流/网格):封面 + 标题 + 作者。网格用 Flexible 防固定高溢出;瀑布流取自然高。
+  Widget _browseCard(AppPalette p, LibraryStore store, int i, FeedLayout layout) {
+    final item = _feedItems[i];
+    final m = item.manga;
+    // 带下标:源 feed 可能重复同一本,避免 Hero tag 撞车。
+    final tag = 'feed:${item.meta.id}:${m.id}:$i';
+    final cover = MangaCover(
+      manga: m,
+      headers: imageHeadersOf(item.meta),
+      sourceCount: _feedSrcCount(m),
+      updated: m.status == MangaStatus.ongoing,
+      aspect: layout == FeedLayout.masonry ? aspectForId(m.id) : 3 / 4,
+      heroTag: tag,
+      onTap: () => _openManga(m, item.meta, heroTag: tag),
+    );
+    return FlyInUp(
+      seed: m.id,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          layout == FeedLayout.grid ? Flexible(child: cover) : cover,
+          const SizedBox(height: 6),
+          Text(m.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: p.textPrimary)),
+          Text(m.authors.isNotEmpty ? m.authors.first : ' ',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: p.textMuted)),
+        ],
       ),
     );
+  }
+
+  // 浏览行(列表布局):横排封面 + 信息(复用书架列表行)。
+  Widget _browseTile(AppPalette p, LibraryStore store, int i) {
+    final item = _feedItems[i];
+    final m = item.manga;
+    final tag = 'feedl:${item.meta.id}:${m.id}:$i';
+    return coverListTile(p, context,
+        manga: m,
+        headers: imageHeadersOf(item.meta),
+        sourceCount: _feedSrcCount(m),
+        heroTag: tag,
+        onTap: () => _openManga(m, item.meta, heroTag: tag));
   }
 
   Widget _error(AppPalette p, String msg) => Padding(
