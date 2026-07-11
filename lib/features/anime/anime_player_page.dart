@@ -68,7 +68,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   // 而非 open() 一返回就挂 —— 冷启时主流 demuxer 还没建好,过早的 audio-add 会被静默丢弃
   // (表现为「第一次进没声音」)。以 playing 首次 true 作为「主流已就绪」的信号。
   String? _pendingAudioUrl;
-  bool _audioAttached = false;
+  Timer? _audioRetry; // 轮询「文件就绪」后挂外挂音轨的定时器
+  int _audioTries = 0; // 轮询次数(兜底上限)
+  int _audioAttaches = 0; // 就绪后已挂次数(连挂 2 次盖默认选择)
 
   // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -85,10 +87,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   void initState() {
     super.initState();
     _startDiag(); // 先订阅,别漏掉 open 早期事件
-    // DASH 外挂音轨挂载(非诊断态也要):tracks 事件 = mpv 已探明当前文件的音视频流 =
-    // 主流 demuxer 就绪,此刻 audio-add 才生效(冷启时 open() 一返回就挂会被丢弃 → 没声音)。
-    // 每次 open() 重新探流都会再发一次 tracks 事件,故换集/换清晰度都会触发重挂;幂等。
-    _diag.add(_player.stream.tracks.listen((_) => _attachPendingAudio()));
+    // DASH 外挂音轨挂载见 _armAudio(在 _play 里 open 后启动:轮询到文件就绪再挂)。
     // 关键:_tuneBuffering 不能 gate 住 _load —— setProperty 内部会
     // `await videoControllerCompleter`,而该 completer 要等 open() 后 VO 就绪才完成;
     // 若先 await 调优再 open,就成了「调优等 VO、VO 等 open、open 等调优」的死锁 → 永远不播。
@@ -175,6 +174,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void dispose() {
     _diagTimer?.cancel();
+    _audioRetry?.cancel();
     for (final s in _diag) {
       s.cancel();
     }
@@ -222,7 +222,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   Future<void> _play(VideoTrack t) async {
     _current = t;
     // 待挂载音轨随本次播放复位;非 DASH(audioUrl 空)则清空,new open() 会重置轨道无残留。
-    _audioAttached = false;
+    _audioRetry?.cancel();
     _pendingAudioUrl =
         (t.audioUrl != null && t.audioUrl!.isNotEmpty) ? t.audioUrl : null;
     await _applyNetOptions(); // 关键:open 前配 mpv UA + 代理,否则 CDN 重置连接
@@ -236,7 +236,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       _av('!! open 抛错 用时${sw.elapsedMilliseconds}ms: $e');
       rethrow;
     }
-    // DASH 外挂音轨不在这里挂 —— 见 _attachPendingAudio(在首帧开播后挂,避开冷启竞态)。
+    _armAudio(); // DASH 外挂音轨:轮询到文件就绪后挂(见 _armAudio)
     // 倍速跨集保持:新 loadfile 后重设一次(mpv speed 虽是全局,但保险起见显式回填)。
     if (_rate != 1.0) {
       try {
@@ -293,19 +293,43 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     return '${i + 1}';
   }
 
-  /// 把 [_pendingAudioUrl] 作为外挂音轨挂到当前已开播的文件上。用 `audio-add`
-  /// (setAudioTrack→audio-add 命令,字面量 argv 不会被路径分隔符拆),**不用** `audio-files`
-  /// 属性(path-list,Android 按 `:` 会切碎 https URL)。playing 首次 true 后调用,确保
-  /// 主流 demuxer 已就绪、audio-add 不被丢弃。幂等:每次播放只挂一次。
+  /// DASH 外挂音轨挂载:**轮询到「主文件已 loaded(时长已知)」再挂**。
+  /// 关键坑:media_kit 的 `playing==true` 是 open() 里乐观发出的(早于 demuxer 就绪),
+  /// 此刻 audio-add 会被随后的默认音轨选择顶掉 → 首播没声、换清晰度重开才有(用户实测)。
+  /// 时长 > 0 才代表 demuxer 已读到文件头、真正就绪。就绪后**连挂 2 次**盖过默认选择;
+  /// 一直没就绪信号则 ~5.6s 后兜底挂一次收手。同 URL 重复挂:mpv 已加载则重选,不叠轨。
+  void _armAudio() {
+    _audioRetry?.cancel();
+    _audioTries = 0;
+    _audioAttaches = 0;
+    if (_pendingAudioUrl == null) return;
+    _audioRetry = Timer.periodic(const Duration(milliseconds: 700), (t) {
+      if (!mounted || _pendingAudioUrl == null) {
+        t.cancel();
+        return;
+      }
+      _audioTries++;
+      final ready = _player.state.duration > Duration.zero;
+      if (ready) {
+        _attachPendingAudio();
+        if (++_audioAttaches >= 2) t.cancel();
+      } else if (_audioTries >= 8) {
+        _attachPendingAudio(); // 兜底:始终没拿到时长也试一次
+        t.cancel();
+      }
+    });
+  }
+
+  /// 把 [_pendingAudioUrl] 作为外挂音轨挂到当前文件。用 `audio-add`(setAudioTrack→audio-add
+  /// 命令,字面量 argv 不会被路径分隔符拆),**不用** `audio-files` 属性(path-list,Android
+  /// 按 `:` 会切碎 https URL)。同 URL 重复挂:mpv 已加载则重选,不会叠轨。
   Future<void> _attachPendingAudio() async {
     final au = _pendingAudioUrl;
-    if (au == null || au.isEmpty || _audioAttached) return;
-    _audioAttached = true; // 先占位防重入;失败再回滚,等下个 playing 事件重试
+    if (au == null || au.isEmpty) return;
     try {
       await _player.setAudioTrack(AudioTrack.uri(au));
       _av('外挂音轨已挂载(DASH)');
     } catch (e) {
-      _audioAttached = false;
       _av('!! 外挂音轨挂载失败: $e');
     }
   }
