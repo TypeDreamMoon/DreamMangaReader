@@ -111,10 +111,33 @@ class BiliApi {
   static String _stripEm(String? s) =>
       (s ?? '').replaceAll(_emTag, '').replaceAll('&amp;', '&');
 
-  /// 番剧搜索(WBI 签名)。search_type=media_bangumi。
+  /// 一条番剧卡片(media_bangumi)→ Manga。search/type 与 search/all/v2 的番剧块同构,共用。
+  static Manga? _mapMedia(Map m) {
+    final sid = m['season_id'];
+    if (sid == null) return null;
+    return Manga(
+      id: '$sid',
+      title: _stripEm(m['title'] as String?),
+      cover: _https(m['cover'] as String?),
+      description: _stripEm(m['desc'] as String?),
+      genres: [
+        if ((m['styles'] as String?)?.isNotEmpty ?? false)
+          ...('${m['styles']}').split('/').map((e) => e.trim())
+      ],
+    );
+  }
+
+  /// 番剧搜索(WBI 签名)。先用番剧专搜 search/type;个别环境专搜被风控软拦(返回 v_voucher
+  /// 空结果)时,回退综合搜索 search/all/v2 抽「番剧」块,尽量还能出结果。
   Future<List<Manga>> searchBangumi(String keyword, int page) async {
     await _ensureBuvid();
     final mk = await _wbiKey();
+    final primary = await _searchType(keyword, page, mk);
+    if (primary.isNotEmpty) return primary;
+    return _searchAllBangumi(keyword, page, mk);
+  }
+
+  Future<List<Manga>> _searchType(String keyword, int page, String mk) async {
     final signed = biliWbiSign({
       'search_type': 'media_bangumi',
       'keyword': keyword,
@@ -124,23 +147,28 @@ class BiliApi {
       'https://api.bilibili.com/x/web-interface/wbi/search/type',
       queryParameters: signed,
     );
-    final b = _body(r);
-    final list = (b['data'] as Map?)?['result'] as List? ?? const [];
+    final list = (_body(r)['data'] as Map?)?['result'] as List? ?? const [];
+    return [
+      for (final m in list.whereType<Map>())
+        if (_mapMedia(m) case final mg?) mg
+    ];
+  }
+
+  Future<List<Manga>> _searchAllBangumi(
+      String keyword, int page, String mk) async {
+    final signed = biliWbiSign({'keyword': keyword, 'page': page}, mk);
+    final r = await _dio().get(
+      'https://api.bilibili.com/x/web-interface/wbi/search/all/v2',
+      queryParameters: signed,
+    );
+    final blocks = (_body(r)['data'] as Map?)?['result'] as List? ?? const [];
     final out = <Manga>[];
-    for (final m in list) {
-      if (m is! Map) continue;
-      final sid = m['season_id'];
-      if (sid == null) continue;
-      out.add(Manga(
-        id: '$sid',
-        title: _stripEm(m['title'] as String?),
-        cover: _https(m['cover'] as String?),
-        description: _stripEm(m['desc'] as String?),
-        genres: [
-          if ((m['styles'] as String?)?.isNotEmpty ?? false)
-            ...('${m['styles']}').split('/').map((e) => e.trim())
-        ],
-      ));
+    for (final blk in blocks.whereType<Map>()) {
+      if (blk['result_type'] != 'media_bangumi') continue;
+      for (final m in (blk['data'] as List? ?? const []).whereType<Map>()) {
+        final mg = _mapMedia(m);
+        if (mg != null) out.add(mg);
+      }
     }
     return out;
   }
@@ -166,6 +194,40 @@ class BiliApi {
         title: '${m['title'] ?? ''}',
         cover: _https(m['cover'] as String?),
         description: '${m['evaluate'] ?? ''}',
+      ));
+    }
+    return out;
+  }
+
+  /// 番剧索引「热门」(按追番人数降序,**无需登录**)。未登录时的默认浏览。
+  Future<List<Manga>> indexBangumi(int page) async {
+    await _ensureBuvid();
+    final r = await _dio().get(
+      'https://api.bilibili.com/pgc/season/index/result',
+      queryParameters: {
+        'st': 1, // 番剧
+        'season_type': 1,
+        'type': 1,
+        'order': 3, // 3=追番人数
+        'sort': 0, // 0=降序
+        'page': page,
+        'pagesize': 20,
+      },
+    );
+    final b = _body(r);
+    final list = (b['data'] as Map?)?['list'] as List? ?? const [];
+    final out = <Manga>[];
+    for (final m in list.whereType<Map>()) {
+      final sid = m['season_id'];
+      if (sid == null) continue;
+      out.add(Manga(
+        id: '$sid',
+        title: '${m['title'] ?? ''}',
+        cover: _https(m['cover'] as String?),
+        description: '${m['subTitle'] ?? m['index_show'] ?? ''}',
+        status: m['is_finish'] == 1
+            ? MangaStatus.completed
+            : MangaStatus.ongoing,
       ));
     }
     return out;

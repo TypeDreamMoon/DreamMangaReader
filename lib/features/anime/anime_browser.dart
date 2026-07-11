@@ -348,38 +348,8 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   Widget _grid(AppPalette p) {
-    // B站未登录且在浏览「追番」(非搜索):直接给登录引导,别抛错误。
-    if (_isBili &&
-        !BiliAuth.instance.isLoggedIn &&
-        _query.isEmpty &&
-        _results.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.live_tv_rounded, size: 42, color: p.textMuted),
-              const SizedBox(height: 12),
-              Text('登录后查看你的追番',
-                  style: TextStyle(
-                      color: p.textPrimary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15)),
-              const SizedBox(height: 6),
-              Text('也可直接在上方搜索番剧',
-                  style: TextStyle(color: p.textMuted, fontSize: 12.5)),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: _openBiliLogin,
-                icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-                label: const Text('扫码登录哔哩哔哩'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    // B站不再有登录墙:未登录也能浏览「热门番剧」+ 搜索 + 看免费番(见 BiliSource.getDiscovery)。
+    // 登录入口保留在上方 _biliBar,用于追番 / 解锁大会员清晰度。
     if (_results.isEmpty) {
       if (_loading) {
         return const Center(child: CircularProgressIndicator());

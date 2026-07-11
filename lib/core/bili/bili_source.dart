@@ -34,11 +34,18 @@ class BiliSource implements MangaSource {
   @override
   Future<Paged<Manga>> getDiscovery(int page,
       {Map<String, Object?>? filters}) async {
+    // 未登录:浏览「热门番剧」(番剧索引,无需账号),支持不登录看番。
     if (!BiliAuth.instance.isLoggedIn) {
-      throw Exception('请先在「哔哩哔哩」扫码登录后查看追番');
+      final hot = await _api.indexBangumi(page);
+      return Paged<Manga>(hot, hasNext: hot.length >= 20);
     }
-    final list = await _api.followBangumi(page);
-    return Paged<Manga>(list, hasNext: list.length >= 30);
+    // 已登录:优先显示「我的追番」;新号/没追番则回退热门,别给空页。
+    final follows = await _api.followBangumi(page);
+    if (page == 1 && follows.isEmpty) {
+      final hot = await _api.indexBangumi(1);
+      return Paged<Manga>(hot, hasNext: hot.length >= 20);
+    }
+    return Paged<Manga>(follows, hasNext: follows.length >= 30);
   }
 
   @override
