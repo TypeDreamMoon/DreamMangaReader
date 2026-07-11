@@ -99,88 +99,95 @@ class SettingsPage extends StatelessWidget {
           _group(l10n.secReading, [
             _rowCard(AppSegmentedRow<ReaderMode>(
               icon: Icons.menu_book_rounded,
-              title: '阅读模式',
-              segments: const [
+              title: l10n.reader_mode,
+              segments: [
                 ButtonSegment(
                     value: ReaderMode.paged,
-                    label: Text('普通'),
-                    icon: Icon(Icons.arrow_forward_rounded, size: 15)),
+                    label: Text(l10n.reader_modeNormal),
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 15)),
                 ButtonSegment(
                     value: ReaderMode.pagedRtl,
-                    label: Text('日漫'),
-                    icon: Icon(Icons.arrow_back_rounded, size: 15)),
+                    label: Text(l10n.reader_modeManga),
+                    icon: const Icon(Icons.arrow_back_rounded, size: 15)),
                 ButtonSegment(
                     value: ReaderMode.webtoon,
-                    label: Text('滚动'),
-                    icon: Icon(Icons.arrow_downward_rounded, size: 15)),
+                    label: Text(l10n.reader_modeWebtoon),
+                    icon: const Icon(Icons.arrow_downward_rounded, size: 15)),
               ],
               selected: {lib.readerMode},
               onSelectionChanged: (s) => lib.readerMode = s.first,
             )),
-            _sliderRow(Icons.download_for_offline_rounded, '预加载后续页',
+            _sliderRow(Icons.download_for_offline_rounded, l10n.set_preloadPages,
                 lib.preload.toDouble(), 0, 8, 8, (v) => lib.preload = v.round()),
-            _switch(Icons.auto_stories_rounded, '双页并排', '横屏翻页模式下左右并排显示两页',
+            _switch(Icons.auto_stories_rounded, l10n.set_doublePage,
+                l10n.set_doublePageSub,
                 lib.doublePage, (v) => lib.doublePage = v),
-            _switch(Icons.zoom_in_rounded, '双击缩放', '阅读时双击放大 / 还原',
+            _switch(Icons.zoom_in_rounded, l10n.set_doubleTapZoom,
+                l10n.set_doubleTapZoomSub,
                 lib.doubleTapZoom, (v) => lib.doubleTapZoom = v),
-            _switch(Icons.pin_rounded, '显示页码', '阅读时在角落显示 当前页 / 总页',
+            _switch(Icons.pin_rounded, l10n.set_showPageNumber,
+                l10n.set_showPageNumberSub,
                 lib.showPageNumber, (v) => lib.showPageNumber = v),
           ]),
           _group(l10n.secBookshelf, [
             _rowCard(AppSegmentedRow<int>(
               icon: Icons.grid_view_rounded,
-              title: '每行列数',
-              subtitle: '封面每行列数 · 自动=按窗宽',
-              segments: const [
-                ButtonSegment(value: 0, label: Text('自动')),
-                ButtonSegment(value: 3, label: Text('3')),
-                ButtonSegment(value: 4, label: Text('4')),
-                ButtonSegment(value: 5, label: Text('5')),
-                ButtonSegment(value: 6, label: Text('6')),
+              title: l10n.set_gridColumns,
+              subtitle: l10n.set_gridColumnsSub,
+              segments: [
+                ButtonSegment(value: 0, label: Text(l10n.set_colAuto)),
+                const ButtonSegment(value: 3, label: Text('3')),
+                const ButtonSegment(value: 4, label: Text('4')),
+                const ButtonSegment(value: 5, label: Text('5')),
+                const ButtonSegment(value: 6, label: Text('6')),
               ],
               selected: {lib.gridColumns},
               onSelectionChanged: (s) => lib.gridColumns = s.first,
             )),
-            _sliderRow(Icons.rounded_corner_rounded, '封面圆角', lib.coverRadius,
-                0, 24, 12, (v) => lib.coverRadius = v),
+            _sliderRow(Icons.rounded_corner_rounded, l10n.set_coverRadius,
+                lib.coverRadius, 0, 24, 12, (v) => lib.coverRadius = v),
             _rowCard(AppSegmentedRow<FeedLayout>(
               icon: Icons.dashboard_customize_rounded,
-              title: '封面布局',
-              subtitle: '发现页 / 书架封面容器的排布',
-              segments: const [
-                ButtonSegment(value: FeedLayout.masonry, label: Text('瀑布流')),
-                ButtonSegment(value: FeedLayout.grid, label: Text('网格')),
-                ButtonSegment(value: FeedLayout.list, label: Text('列表')),
+              title: l10n.set_coverLayout,
+              subtitle: l10n.set_coverLayoutSub,
+              segments: [
+                ButtonSegment(
+                    value: FeedLayout.masonry,
+                    label: Text(l10n.set_layoutMasonry)),
+                ButtonSegment(
+                    value: FeedLayout.grid, label: Text(l10n.set_layoutGrid)),
+                ButtonSegment(
+                    value: FeedLayout.list, label: Text(l10n.set_layoutList)),
               ],
               selected: {lib.feedLayout},
               onSelectionChanged: (s) => lib.feedLayout = s.first,
             )),
             _switch(
                 Icons.source_rounded,
-                '显示源选择器',
-                '关掉(默认)→ 发现页 / 书架直接用「混合 · 全部源」,不显示源选择器',
+                l10n.set_showSourcePicker,
+                l10n.set_showSourcePickerSub,
                 lib.showSourcePicker,
                 (v) => lib.showSourcePicker = v),
           ]),
-          _group('背景', [
+          _group(l10n.set_secBackground, [
             _tile(
               Icons.wallpaper_rounded,
-              '背景图片',
+              l10n.set_bgImage,
               lib.bgImage.isEmpty
-                  ? '未设置 · 点击选择一张图片'
+                  ? l10n.set_bgImageEmpty
                   : lib.bgImage.split(Platform.pathSeparator).last,
               () => _pickBg(lib),
             ),
             if (lib.bgImage.isNotEmpty) ...[
               _rowCard(AppListRow(
                 icon: Icons.close_rounded,
-                title: '清除背景图',
+                title: l10n.set_clearBg,
                 onTap: () => lib.bgImage = '',
                 showChevron: false,
                 contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
               )),
-              _sliderRow(Icons.blur_on_rounded, '背景模糊', lib.bgBlur, 0, 40, 40,
-                  (v) => lib.bgBlur = v),
+              _sliderRow(Icons.blur_on_rounded, l10n.set_bgBlur, lib.bgBlur, 0,
+                  40, 40, (v) => lib.bgBlur = v),
               Padding(
                 padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
                 child: Row(
@@ -188,81 +195,87 @@ class SettingsPage extends StatelessWidget {
                     Icon(Icons.palette_rounded, size: 16, color: p.textMuted),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text('混合色随主题自动 · 深色系用暗调、浅色用白调',
+                      child: Text(l10n.set_bgTintHint,
                           style: TextStyle(color: p.textMuted, fontSize: 11)),
                     ),
                   ],
                 ),
               ),
-              _sliderRow(Icons.opacity_rounded, '混合强度', lib.bgTintAlpha, 0, 1,
-                  20, (v) => lib.bgTintAlpha = v, pct: true),
-              _sliderRow(Icons.gradient_rounded, '详情页融合',
+              _sliderRow(Icons.opacity_rounded, l10n.set_bgTintAlpha,
+                  lib.bgTintAlpha, 0, 1, 20, (v) => lib.bgTintAlpha = v,
+                  pct: true),
+              _sliderRow(Icons.gradient_rounded, l10n.set_detailTint,
                   lib.detailTintStrength, 0, 1, 20,
                   (v) => lib.detailTintStrength = v, pct: true),
               Padding(
                 padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                child: Text('详情页背景融入封面主题色的强度 · 越低越接近底色',
+                child: Text(l10n.set_detailTintHint,
                     style: TextStyle(color: p.textMuted, fontSize: 11)),
               ),
               _switch(
                   Icons.auto_stories_rounded,
-                  '阅读器显示背景',
-                  '阅读时也透出全局背景(默认关,专注阅读)',
+                  l10n.set_readerBg,
+                  l10n.set_readerBgSub,
                   lib.readerBackground,
                   (v) => lib.readerBackground = v),
             ],
           ]),
-          _group('网络', [
+          _group(l10n.set_secNetwork, [
             _tile(
               Icons.vpn_lock_rounded,
-              '网络代理',
-              '当前:${AppProxy.current ?? '直连'} · ${AppProxy.sourceLabel}',
+              l10n.proxy_title,
+              l10n.set_proxyCurrent(
+                  AppProxy.current ?? l10n.proxy_direct, AppProxy.sourceLabel),
               () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ProxySettingsPage())),
             ),
             _tile(
               Icons.translate_rounded,
-              '翻译',
-              '搜索栏翻译 · 当前:${lib.translateProvider.label}',
+              l10n.trans_title,
+              l10n.set_translateSubtitle(lib.translateProvider.label),
               () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => const TranslateSettingsPage())),
             ),
             _switch(
                 Icons.manage_search_rounded,
-                '搜索翻译回退',
-                '搜不到时自动把关键词翻成 简 / 繁 / 英 / 日 再搜(默认开)',
+                l10n.set_translateSearch,
+                l10n.set_translateSearchSub,
                 lib.translateSearch,
                 (v) => lib.translateSearch = v),
           ]),
-          _group('数据', [
+          _group(l10n.set_secData, [
             _tile(
                 Icons.source_rounded,
-                '源管理',
-                '启用/禁用漫画源',
+                l10n.srcmgmt_title,
+                l10n.set_srcMgmtSub,
                 () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const SourceManagementPage()))),
-            _tile(Icons.backup_rounded, '备份与恢复', '导出/导入书架与进度',
+            _tile(Icons.backup_rounded, l10n.set_backup, l10n.set_backupSub,
                 () => _backup(context, lib)),
-            _tile(Icons.cloud_sync_rounded, '云同步 (WebDAV)',
-                '收藏 / 进度 / 设置 / 源 跨设备同步',
+            _tile(Icons.cloud_sync_rounded, l10n.set_sync,
+                l10n.set_syncSub,
                 () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SyncPage()))),
-            _tile(Icons.cleaning_services_rounded, '清理缓存', '查看占用 · 分类清理',
+            _tile(Icons.cleaning_services_rounded, l10n.set_clearCache,
+                l10n.set_clearCacheSub,
                 () => _showCacheSheet(context)),
           ]),
-          _group('更新', [
-            _switch(Icons.system_update_rounded, '自动检查更新', '启动时后台检查有无新版本',
+          _group(l10n.set_secUpdate, [
+            _switch(Icons.system_update_rounded, l10n.set_autoCheckUpdate,
+                l10n.set_autoCheckUpdateSub,
                 lib.autoCheckUpdate, (v) => lib.autoCheckUpdate = v),
-            _switch(Icons.science_rounded, '包含测试版', '检查时把 Beta / RC 预发布也算进来',
+            _switch(Icons.science_rounded, l10n.set_includeBeta,
+                l10n.set_includeBetaSub,
                 lib.updateIncludeBeta, (v) => lib.updateIncludeBeta = v),
-            _tile(Icons.refresh_rounded, '立即检查更新',
-                '当前 v${AppInfo.version}', () => _checkUpdate(context, lib)),
+            _tile(Icons.refresh_rounded, l10n.set_checkNow,
+                l10n.set_currentVersion(AppInfo.version),
+                () => _checkUpdate(context, lib)),
           ]),
           _group(l10n.secOther, [
             _tile(
               Icons.receipt_long_rounded,
-              '运行日志',
-              '本次启动的动作记录 · 源 / 下载 / 同步…',
+              l10n.log_title,
+              l10n.set_logSub,
               () => Navigator.of(context).push(appRoute(const LogPage())),
             ),
             _tile(
@@ -284,15 +297,16 @@ class SettingsPage extends StatelessWidget {
     final path = await backupPath();
     if (!context.mounted) return;
     final p = context.palette;
+    final l10n = context.l10n;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('备份与恢复'),
+        title: Text(l10n.set_backup),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('导出:把收藏 / 阅读进度 / 阅读设置写到下面这个文件。恢复:从同一文件读回(异地备份就把之前的文件放回此路径)。',
+            Text(l10n.set_backupDialogBody,
                 style: TextStyle(color: p.textMuted, fontSize: 12)),
             const SizedBox(height: 10),
             SelectableText(path,
@@ -301,28 +315,29 @@ class SettingsPage extends StatelessWidget {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+              onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
           TextButton(
             onPressed: () async {
               final ok = await importBackup(lib);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
-                showAppNotify(context, ok ? '已从备份恢复' : '没找到备份文件',
+                showAppNotify(
+                    context, ok ? l10n.set_restored : l10n.set_backupNotFound,
                     kind: ok ? AppNotifyKind.success : AppNotifyKind.error);
               }
             },
-            child: const Text('恢复'),
+            child: Text(l10n.set_restore),
           ),
           FilledButton(
             onPressed: () async {
               final out = await exportBackup(lib);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
-                showAppNotify(context, '已导出:$out',
+                showAppNotify(context, l10n.set_exported(out),
                     kind: AppNotifyKind.success);
               }
             },
-            child: const Text('导出'),
+            child: Text(l10n.set_export),
           ),
         ],
       ),
@@ -336,12 +351,13 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _checkUpdate(BuildContext context, LibraryStore lib) async {
-    showAppNotify(context, '正在检查更新…',
+    showAppNotify(context, context.l10n.set_checkingUpdate,
         icon: Icons.sync_rounded, duration: const Duration(seconds: 6));
     final info = await UpdateService.check(includeBeta: lib.updateIncludeBeta);
     if (!context.mounted) return;
     if (info == null) {
-      showAppNotify(context, '已是最新版本', kind: AppNotifyKind.success);
+      showAppNotify(context, context.l10n.set_upToDate,
+          kind: AppNotifyKind.success);
     } else {
       await showUpdateDialog(context, info);
     }
@@ -391,7 +407,8 @@ class SettingsPage extends StatelessWidget {
             'KaiTi',
             'SimHei',
           ];
-    final label = lib.uiFont.isEmpty ? '系统默认' : lib.uiFont;
+    final label =
+        lib.uiFont.isEmpty ? context.l10n.fontpick_systemDefault : lib.uiFont;
     return _rowCard(AppSelectRow(
       icon: Icons.font_download_rounded,
       title: context.l10n.font,
@@ -490,7 +507,7 @@ class SettingsPage extends StatelessWidget {
 
   Future<void> _showCacheSheet(BuildContext context) => showAppSheet<void>(
         context,
-        title: '清理缓存',
+        title: context.l10n.set_clearCache,
         bodyPadding: const EdgeInsets.fromLTRB(20, 12, 16, 24),
         body: (ctx, setSheet) => const _CacheSheet(),
       );
@@ -548,23 +565,27 @@ class _CacheSheetState extends State<_CacheSheet> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final l10n = context.l10n;
     // 外壳(圆角/SafeArea/内边距/标题「清理缓存」)由 showAppSheet 提供,这里只出内容。
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('只清缓存,不动已下载章节与书架数据。',
+        Text(l10n.set_cacheBody,
             style: TextStyle(color: p.textMuted, fontSize: 12)),
         const SizedBox(height: 14),
-        _cacheRow(p, Icons.image_rounded, '图片缓存', '封面 / 章节图', _fmt(_imgBytes),
-            _busy ? null : () => _clear(clearImageCache, '已清理图片缓存')),
-        const SizedBox(height: 8),
-        _cacheRow(p, Icons.dataset_rounded, '源缓存', '清单 / 脚本 · 清后自动重拉',
-            _fmt(_srcBytes),
+        _cacheRow(p, Icons.image_rounded, l10n.set_imgCache, l10n.set_imgCacheSub,
+            _fmt(_imgBytes),
             _busy
                 ? null
-                : () => _clear(
-                    SourceRepository.instance.clearCache, '已清理源缓存')),
+                : () => _clear(clearImageCache, l10n.set_imgCacheCleared)),
+        const SizedBox(height: 8),
+        _cacheRow(p, Icons.dataset_rounded, l10n.set_srcCache,
+            l10n.set_srcCacheSub, _fmt(_srcBytes),
+            _busy
+                ? null
+                : () => _clear(SourceRepository.instance.clearCache,
+                    l10n.set_srcCacheCleared)),
       ],
     );
   }
@@ -609,7 +630,7 @@ class _CacheSheetState extends State<_CacheSheet> {
                 ],
               ),
             ),
-            TextButton(onPressed: onClear, child: const Text('清理')),
+            TextButton(onPressed: onClear, child: Text(context.l10n.set_clean)),
           ],
         ),
       );
