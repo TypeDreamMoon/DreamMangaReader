@@ -20,6 +20,7 @@ import '../common/transitions.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
 import 'about_page.dart';
+import 'account_page.dart';
 import 'font_picker_sheet.dart';
 import 'log_page.dart';
 import 'proxy_settings_page.dart';
@@ -244,6 +245,9 @@ class SettingsPage extends StatelessWidget {
                 (v) => lib.translateSearch = v),
           ]),
           _group(l10n.set_secData, [
+            _tile(Icons.account_circle_rounded, l10n.sync_account,
+                '哔哩哔哩 · 梦漫账号(云同步)',
+                () => Navigator.of(context).push(appRoute(const AccountPage()))),
             _tile(
                 Icons.source_rounded,
                 l10n.srcmgmt_title,
