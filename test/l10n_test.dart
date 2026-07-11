@@ -1,21 +1,17 @@
 import 'package:dream_manga_reader/core/l10n/app_locale.dart';
 import 'package:dream_manga_reader/core/l10n/app_strings.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// 用 gen-l10n 生成的 AppLocalizations 渲染,验证:委托解析 + 切 locale → 文案随之变化
+// + 未译条目回退到简体模板。
 Widget _app(Locale locale) => MaterialApp(
       locale: locale,
-      supportedLocales: [for (final l in AppLocale.values) l.toLocale()],
-      localizationsDelegates: const [
-        AppStrings.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Builder(
-        builder: (ctx) => Text(ctx.l10n.navBookshelf,
-            textDirection: TextDirection.ltr),
+        builder: (ctx) =>
+            Text(ctx.l10n.navBookshelf, textDirection: TextDirection.ltr),
       ),
     );
 
@@ -39,13 +35,13 @@ void main() {
         AppLocale.zhHant);
   });
 
-  test('未译条目回退到简体基类', () {
-    // loadFailed 四语都译了;随便挑一个只在基类的将来键不易测,这里验证基类即简体。
-    expect(const AppStrings().navBookshelf, '书架');
-    // 子类覆盖生效。
-    expect(const AppStringsEn().navBookshelf, 'Library');
-    expect(const AppStringsJa().navBookshelf, '本棚');
-    expect(const AppStringsZhHant().navBookshelf, '書架');
+  test('AppLocale.toLocale 与生成的 supportedLocales 一一对应', () {
+    final supported = AppLocalizations.supportedLocales.toSet();
+    for (final l in AppLocale.values) {
+      expect(supported.contains(l.toLocale()), isTrue,
+          reason: '${l.code} 的 Locale 应在生成的 supportedLocales 里');
+    }
+    expect(supported.length, AppLocale.values.length);
   });
 
   testWidgets('切换 locale → context.l10n 文案随之变化', (tester) async {

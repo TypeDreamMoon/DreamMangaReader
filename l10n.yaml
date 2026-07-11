@@ -1,0 +1,10 @@
+# flutter gen-l10n 配置。文案表 = lib/l10n/app_*.arb(每语言一个,Kotatsu 的
+# per-locale strings.xml 之 Flutter 版);模板 = 简体(源语言),未译条目自动回退到它。
+# 生成 lib/l10n/app_localizations.dart 的类型安全 AppLocalizations(改表后 flutter
+# 构建/`flutter gen-l10n` 会重新生成)。
+arb-dir: lib/l10n
+template-arb-file: app_zh.arb
+output-dir: lib/l10n
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+nullable-getter: false

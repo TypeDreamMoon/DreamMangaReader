@@ -2,7 +2,9 @@ import 'dart:ui' show Locale;
 
 /// App 支持的界面语言。**本机设置**(不随云同步),存 [code] 到 SharedPreferences。
 enum AppLocale {
-  zhHans('zh', 'Hans', '简体中文'),
+  // 简体 = 通用中文(不带 script),与 gen-l10n 的模板 locale `zh` 对齐;
+  // 繁体是带 Hant 的变体。
+  zhHans('zh', null, '简体中文'),
   zhHant('zh', 'Hant', '繁體中文'),
   ja('ja', null, '日本語'),
   en('en', null, 'English');

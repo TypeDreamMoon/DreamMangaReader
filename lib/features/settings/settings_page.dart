@@ -348,7 +348,8 @@ class SettingsPage extends StatelessWidget {
   }
 
   // 语言选择行:点开弹出四语单选(各语言用自身写法标注)。本机设置,不随云同步。
-  Widget _languageRow(BuildContext context, AppStrings l10n, LibraryStore lib) =>
+  Widget _languageRow(
+          BuildContext context, AppLocalizations l10n, LibraryStore lib) =>
       _rowCard(AppSelectRow(
         icon: Icons.translate_rounded,
         title: l10n.language,
