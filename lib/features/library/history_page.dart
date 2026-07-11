@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
@@ -27,12 +28,12 @@ class HistoryPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('阅读历史',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.hist_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
           if (history.isNotEmpty)
             IconButton(
-              tooltip: '清空',
+              tooltip: context.l10n.disc_clear,
               onPressed: () => _confirmClear(context, store),
               icon: const Icon(Icons.delete_sweep_rounded),
             ),
@@ -40,7 +41,7 @@ class HistoryPage extends StatelessWidget {
         ],
       ),
       body: history.isEmpty
-          ? const EmptyState(title: '还没有阅读记录')
+          ? EmptyState(title: context.l10n.hist_emptyTitle)
           : AppScrollView.builder(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
               itemCount: history.length,
@@ -53,8 +54,9 @@ class HistoryPage extends StatelessWidget {
       BuildContext context, AppPalette p, LibraryStore store, ReadState h) {
     final meta = _metaById(h.sourceId);
     final manga = Manga(id: h.mangaId, title: h.title, cover: h.cover);
-    final frac =
-        h.lastTotal > 0 ? '${h.lastPage + 1}/${h.lastTotal} 页' : '';
+    final frac = h.lastTotal > 0
+        ? context.l10n.hist_pagesFrac(h.lastPage + 1, h.lastTotal)
+        : '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
@@ -90,7 +92,7 @@ class HistoryPage extends StatelessWidget {
                             fontSize: 13.5)),
                     const SizedBox(height: 3),
                     Text(
-                        '${sourceNameOf(h.sourceId)} · 读到 ${h.lastChapterName}${frac.isNotEmpty ? ' · $frac' : ''}',
+                        '${context.l10n.hist_readToLine(sourceNameOf(h.sourceId), h.lastChapterName)}${frac.isNotEmpty ? ' · $frac' : ''}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.accentSoft, fontSize: 11.5)),
@@ -98,7 +100,7 @@ class HistoryPage extends StatelessWidget {
                 ),
               ),
             IconButton(
-              tooltip: '移除',
+              tooltip: context.l10n.hist_remove,
               onPressed: () => store.removeHistory(h.sourceId, h.mangaId),
               icon: Icon(Icons.close_rounded, size: 18, color: p.textMuted),
             ),
@@ -112,15 +114,15 @@ class HistoryPage extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('清空阅读历史'),
-        content: const Text('只清历史记录,不影响收藏和下载。'),
+        title: Text(context.l10n.hist_clearTitle),
+        content: Text(context.l10n.hist_clearMsg),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+              child: Text(context.l10n.cancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('清空')),
+              child: Text(context.l10n.disc_clear)),
         ],
       ),
     );

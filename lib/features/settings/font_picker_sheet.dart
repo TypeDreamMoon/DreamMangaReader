@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_theme.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../ui/ui.dart';
 
 /// 系统字体选择器:搜索 + **懒加载**列表(每行用该字体渲染,ListView.builder
@@ -47,7 +48,7 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
       children: [
         AppSearchField(
           controller: _c,
-          hint: '搜索字体名',
+          hint: context.l10n.fontpick_searchHint,
           onChanged: _filter,
         ),
         const SizedBox(height: 8),
@@ -67,7 +68,7 @@ class _FontPickerSheetState extends State<FontPickerSheet> {
 
   Widget _row(AppPalette p, String family) {
     final sel = family == widget.current;
-    final label = family.isEmpty ? '系统默认' : family;
+    final label = family.isEmpty ? context.l10n.fontpick_systemDefault : family;
     return InkWell(
       onTap: () => Navigator.of(context).pop(family),
       child: Padding(

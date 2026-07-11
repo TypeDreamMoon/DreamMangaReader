@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/net/app_proxy.dart';
 import '../../ui/ui.dart';
 
@@ -41,25 +42,46 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
   }
 
   Future<void> _test() async {
+    final l10n = context.l10n;
     setState(() {
       _testing = true;
-      _result = '测试中…（联网)';
+      _result = l10n.proxy_testing;
     });
     final p = await _effectiveProxy();
-    final (ok, msg) = await AppProxy.test(p);
+    final r = await AppProxy.test(p);
     if (!mounted) return;
     setState(() {
-      _ok = ok;
-      _result = msg;
+      _ok = r.ok;
+      _result = _testResultText(l10n, r);
       _testing = false;
     });
   }
+
+  /// 结构化测试结果 → 当前语言文案(via 为 null 时显示「直连」)。
+  String _testResultText(AppLocalizations l10n, ProxyTestResult r) {
+    final via = r.via ?? l10n.proxy_direct;
+    return switch (r.kind) {
+      ProxyTestKind.ok => l10n.proxy_testOk(r.status, r.ms, via),
+      ProxyTestKind.abnormal => l10n.proxy_testAbnormal(r.status, r.ms, via),
+      ProxyTestKind.failed => l10n.proxy_testFailed(r.ms, via, r.error ?? ''),
+    };
+  }
+
+  /// 代理来源码 → 当前语言标签。
+  String _sourceText(AppLocalizations l10n, ProxySource s) => switch (s) {
+        ProxySource.forcedDirect => l10n.proxy_srcForcedDirect,
+        ProxySource.manual => l10n.proxy_srcManual,
+        ProxySource.envVar => l10n.proxy_srcEnvVar,
+        ProxySource.systemProxy => l10n.proxy_srcSystemProxy,
+        ProxySource.directNoProxy => l10n.proxy_srcDirectNoProxy,
+      };
 
   Future<void> _save() async {
     final v = _mode == 0 ? 'DIRECT' : (_mode == 1 ? null : _ctrl.text.trim());
     await AppProxy.setOverride(v);
     if (!mounted) return;
-    showAppNotify(context, '代理已保存:${AppProxy.current ?? '直连'}',
+    showAppNotify(
+        context, context.l10n.proxy_savedToast(AppProxy.current ?? context.l10n.proxy_direct),
         kind: AppNotifyKind.success);
     Navigator.of(context).pop();
   }
@@ -70,8 +92,8 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('网络代理',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.proxy_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
       body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -85,7 +107,9 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '当前生效:${AppProxy.current ?? '直连'} · ${AppProxy.sourceLabel}',
+                    context.l10n.proxy_current(
+                        AppProxy.current ?? context.l10n.proxy_direct,
+                        _sourceText(context.l10n, AppProxy.sourceCode)),
                     style: TextStyle(color: p.textPrimary, fontSize: 12.5),
                   ),
                 ),
@@ -93,18 +117,19 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
             ),
           ),
           const SizedBox(height: 18),
-          _option(p, 0, Icons.public_off_rounded, '不使用代理',
-              '直连,不走任何代理。国内可能访问不了被墙的源。'),
-          _option(p, 1, Icons.settings_ethernet_rounded, '使用系统代理',
-              '跟随 Windows 系统代理 / 环境变量。开了 FlClash 系统代理就能用(推荐)。'),
-          _option(p, 2, Icons.dns_rounded, '自定义代理', '手动指定 host:port。'),
+          _option(p, 0, Icons.public_off_rounded, context.l10n.proxy_modeNone,
+              context.l10n.proxy_modeNoneSub),
+          _option(p, 1, Icons.settings_ethernet_rounded,
+              context.l10n.proxy_modeSystem, context.l10n.proxy_modeSystemSub),
+          _option(p, 2, Icons.dns_rounded, context.l10n.proxy_modeCustom,
+              context.l10n.proxy_modeCustomSub),
           if (_mode == 2) ...[
             const SizedBox(height: 4),
             Padding(
               padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
               child: AppTextField(
                 controller: _ctrl,
-                hint: 'host:port,如 127.0.0.1:7890',
+                hint: context.l10n.proxy_customHint,
                 prefixIcon:
                     Icon(Icons.link_rounded, size: 18, color: p.textMuted),
               ),
@@ -122,14 +147,14 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: p.accent))
                     : const Icon(Icons.wifi_tethering_rounded, size: 18),
-                label: const Text('测试连接'),
+                label: Text(context.l10n.sync_testConnection),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _save,
                   icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('保存'),
+                  label: Text(context.l10n.save),
                 ),
               ),
             ],
@@ -139,7 +164,7 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
             AppCard(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
-              borderColor: _result.startsWith('测试中')
+              borderColor: _testing
                   ? p.line
                   : (_ok ? p.statusOk : p.statusFail),
               child: SelectableText(

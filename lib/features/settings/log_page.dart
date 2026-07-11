@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../ui/ui.dart';
 
@@ -25,20 +26,21 @@ class _LogPageState extends State<LogPage> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: GlassTitleBar(
-        title: const Text('运行日志',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.log_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
           IconButton(
-            tooltip: '复制全部',
+            tooltip: context.l10n.log_copyAll,
             onPressed: _copyAll,
             icon: const Icon(Icons.copy_all_rounded),
           ),
           IconButton(
-            tooltip: '清空',
+            tooltip: context.l10n.disc_clear,
             onPressed: () {
               AppLog.i.clear();
               setState(_expanded.clear);
-              showAppNotify(context, '已清空日志', kind: AppNotifyKind.success);
+              showAppNotify(context, context.l10n.log_cleared,
+                  kind: AppNotifyKind.success);
             },
             icon: const Icon(Icons.delete_sweep_rounded),
           ),
@@ -77,7 +79,9 @@ class _LogPageState extends State<LogPage> {
     final shown = _filter == null
         ? total
         : AppLog.i.entries.where((e) => e.level == _filter).length;
-    final countText = _filter == null ? '共 $total 条' : '筛出 $shown 条 · 共 $total';
+    final countText = _filter == null
+        ? context.l10n.log_countTotal(total)
+        : context.l10n.log_countFiltered(shown, total);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
       child: Row(
@@ -85,7 +89,7 @@ class _LogPageState extends State<LogPage> {
           Text(countText,
               style: TextStyle(color: p.textMuted, fontSize: 11)),
           const SizedBox(width: 8),
-          Text('· 点带 ⌄ 的条目看完整详情',
+          Text(context.l10n.log_tapDetailHint,
               style: TextStyle(
                   color: p.textMuted.withValues(alpha: 0.7), fontSize: 11)),
         ],
@@ -99,12 +103,12 @@ class _LogPageState extends State<LogPage> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           children: [
-            _chip(p, '全部', null),
-            _chip(p, '信息', LogLevel.info),
-            _chip(p, '成功', LogLevel.success),
-            _chip(p, '警告', LogLevel.warning),
-            _chip(p, '错误', LogLevel.error),
-            _chip(p, '调试', LogLevel.debug),
+            _chip(p, context.l10n.disc_statusAll, null),
+            _chip(p, context.l10n.log_lvlInfo, LogLevel.info),
+            _chip(p, context.l10n.log_lvlSuccess, LogLevel.success),
+            _chip(p, context.l10n.log_lvlWarning, LogLevel.warning),
+            _chip(p, context.l10n.log_lvlError, LogLevel.error),
+            _chip(p, context.l10n.log_lvlDebug, LogLevel.debug),
           ],
         ),
       );
@@ -149,9 +153,10 @@ class _LogPageState extends State<LogPage> {
     if (items.isEmpty) {
       return EmptyState(
         icon: Icons.receipt_long_rounded,
-        title: all.isEmpty ? '暂无日志' : '该级别下暂无日志',
-        message:
-            all.isEmpty ? '各类动作(源 / 漫画 / 下载 / 同步…)会记录在这里' : null,
+        title: all.isEmpty
+            ? context.l10n.log_emptyTitle
+            : context.l10n.log_emptyLevelTitle,
+        message: all.isEmpty ? context.l10n.log_emptyMsg : null,
       );
     }
     return AppScrollView.separated(
@@ -275,7 +280,7 @@ class _LogPageState extends State<LogPage> {
               children: [
                 Icon(Icons.copy_rounded, size: 13, color: p.accent),
                 const SizedBox(width: 4),
-                Text('复制此条',
+                Text(context.l10n.log_copyOne,
                     style: TextStyle(
                         color: p.accent,
                         fontSize: 11,
@@ -292,7 +297,10 @@ class _LogPageState extends State<LogPage> {
     final text = '${e.timeText}  [${e.cat.label}] ${e.message}'
         '${e.detail != null && e.detail!.isNotEmpty ? '\n${e.detail}' : ''}';
     await Clipboard.setData(ClipboardData(text: text));
-    if (mounted) showAppNotify(context, '已复制该条', kind: AppNotifyKind.success);
+    if (mounted) {
+      showAppNotify(context, context.l10n.log_copiedOne,
+          kind: AppNotifyKind.success);
+    }
   }
 
   Future<void> _copyAll() async {
@@ -300,12 +308,14 @@ class _LogPageState extends State<LogPage> {
     final text = AppLog.i.asText();
     final n = AppLog.i.length;
     if (text.isEmpty) {
-      showAppNotify(context, '暂无日志可复制', kind: AppNotifyKind.info);
+      showAppNotify(context, context.l10n.log_nothingToCopy,
+          kind: AppNotifyKind.info);
       return;
     }
     await Clipboard.setData(ClipboardData(text: text));
     if (mounted) {
-      showAppNotify(context, '已复制 $n 条日志', kind: AppNotifyKind.success);
+      showAppNotify(context, context.l10n.log_copiedN(n),
+          kind: AppNotifyKind.success);
     }
   }
 }

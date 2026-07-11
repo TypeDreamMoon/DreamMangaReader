@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
 
@@ -23,10 +24,18 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
   bool _testOk = false;
   TranslateLang _targetSource = TranslateLang.zhHans; // 正在编辑目标顺序的源语言
 
-  static String _desc(TranslateProvider v) => switch (v) {
-        TranslateProvider.google => '免费端点,开箱即用(可能需代理)',
-        TranslateProvider.microsoft => '免费端点,自动取临时令牌',
-        TranslateProvider.llm => '你自己的大模型 · 需在下方配置',
+  // 服务商名(枚举 label 是中文,按当前语言映射)。语言名(TranslateLang.label)是各语言
+  // 自身写法(简体中文/日本語…),不翻译、保持原样。
+  String _provName(BuildContext context, TranslateProvider v) => switch (v) {
+        TranslateProvider.google => context.l10n.trans_provGoogle,
+        TranslateProvider.microsoft => context.l10n.trans_provMicrosoft,
+        TranslateProvider.llm => context.l10n.trans_provLlm,
+      };
+
+  String _desc(BuildContext context, TranslateProvider v) => switch (v) {
+        TranslateProvider.google => context.l10n.trans_descGoogle,
+        TranslateProvider.microsoft => context.l10n.trans_descMicrosoft,
+        TranslateProvider.llm => context.l10n.trans_descLlm,
       };
 
   @override
@@ -49,7 +58,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
   Future<void> _test(LibraryStore lib) async {
     setState(() {
       _testing = true;
-      _testResult = '测试中…(联网)';
+      _testResult = context.l10n.trans_testing;
     });
     try {
       // 按优先级链式翻译:验证「按当前排序实际会用到的」服务商可用。
@@ -60,7 +69,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
       if (!mounted) return;
       setState(() {
         _testOk = true;
-        _testResult = '「你好,世界」→ $out';
+        _testResult = context.l10n.trans_testResult(out);
       });
     } catch (e) {
       if (!mounted) return;
@@ -106,7 +115,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                 Row(
                   children: [
                     Flexible(
-                      child: Text(v.label,
+                      child: Text(_provName(context, v),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -122,7 +131,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                         decoration: BoxDecoration(
                             color: p.accent.withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(5)),
-                        child: Text('主用',
+                        child: Text(context.l10n.trans_badgePrimary,
                             style: TextStyle(
                                 color: p.accent,
                                 fontSize: 10,
@@ -132,7 +141,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text(_desc(v),
+                Text(_desc(context, v),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: p.textMuted, fontSize: 11.5)),
@@ -166,7 +175,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
           borderRadius: BorderRadius.circular(context.radius),
           border: Border.all(color: sel ? p.accent : p.line, width: sel ? 1.5 : 1),
         ),
-        child: Text('源:${s.label}',
+        child: Text(context.l10n.trans_srcChip(s.label),
             style: TextStyle(
                 color: sel ? p.accent : p.textMuted,
                 fontSize: 12.5,
@@ -220,7 +229,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                     decoration: BoxDecoration(
                         color: p.accent.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(5)),
-                    child: Text('首选',
+                    child: Text(context.l10n.trans_badgePreferred,
                         style: TextStyle(
                             color: p.accent,
                             fontSize: 10,
@@ -251,8 +260,8 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('翻译',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.trans_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
       body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -266,8 +275,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '把搜索词翻成 简 / 繁 / 英 / 日 / 韩 再搜(换语种源、搜不到时自动回退)。'
-                    '可拖动下方服务商调整优先级 —— 从上到下依次尝试,失败自动降级。',
+                    context.l10n.trans_intro,
                     style: TextStyle(color: p.textPrimary, fontSize: 12.5),
                   ),
                 ),
@@ -275,11 +283,11 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
             ),
           ),
           const SizedBox(height: 18),
-          AppSectionHeading('服务商优先级'),
+          AppSectionHeading(context.l10n.trans_providerPriority),
           const SizedBox(height: 6),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('从上到下依次尝试,前一个失败(未配置 / 报错)就自动降级到下一个。拖右侧 ☰ 排序。',
+            child: Text(context.l10n.trans_providerPriorityHint,
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
           ),
           const SizedBox(height: 10),
@@ -304,19 +312,19 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
             ),
           ),
           const SizedBox(height: 18),
-          AppSectionHeading('大模型参数'),
+          AppSectionHeading(context.l10n.trans_llmParams),
           const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('排到「大模型」时才会用。OpenAI 兼容 /chat/completions;密钥仅存本机、不随云同步。',
+            child: Text(context.l10n.trans_llmParamsHint,
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
           ),
           const SizedBox(height: 10),
           ...[
             AppTextField(
               controller: _base,
-              label: 'API 地址',
-              hint: '如 https://api.openai.com/v1',
+              label: context.l10n.trans_apiBase,
+              hint: context.l10n.trans_apiBaseHint,
               prefixIcon: Icon(Icons.link_rounded, size: 18, color: p.textMuted),
               keyboardType: TextInputType.url,
               onChanged: (v) => lib.translateLlmBase = v.trim(),
@@ -324,8 +332,8 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
             const SizedBox(height: 10),
             AppTextField(
               controller: _key,
-              label: 'API 密钥',
-              hint: 'sk-…(仅存本机)',
+              label: context.l10n.trans_apiKey,
+              hint: context.l10n.trans_apiKeyHint,
               obscure: true,
               prefixIcon: Icon(Icons.key_rounded, size: 18, color: p.textMuted),
               onChanged: (v) => lib.translateLlmKey = v.trim(),
@@ -333,21 +341,20 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
             const SizedBox(height: 10),
             AppTextField(
               controller: _model,
-              label: '模型',
-              hint: '如 gpt-4o-mini / deepseek-chat',
+              label: context.l10n.trans_model,
+              hint: context.l10n.trans_modelHint,
               prefixIcon:
                   Icon(Icons.smart_toy_rounded, size: 18, color: p.textMuted),
               onChanged: (v) => lib.translateLlmModel = v.trim(),
             ),
           ],
           const SizedBox(height: 18),
-          AppSectionHeading('自动翻译目标语言'),
+          AppSectionHeading(context.l10n.trans_autoTargetLang),
           const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text(
-                '搜不到时,按「原文的源语言」对应的目标顺序依次翻译再搜(取第一个有结果的)。'
-                '选一个源语言,拖动它的目标语言优先级。',
+                context.l10n.trans_autoTargetLangHint,
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
           ),
           const SizedBox(height: 10),
@@ -390,7 +397,7 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: p.accent))
                     : const Icon(Icons.wifi_tethering_rounded, size: 18),
-                label: const Text('测试翻译'),
+                label: Text(context.l10n.trans_testTranslate),
               ),
             ],
           ),

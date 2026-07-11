@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/auth_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 
@@ -41,7 +42,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
       await auth.login(widget.meta, _userCtrl.text, _pwCtrl.text);
       if (mounted) {
         _pwCtrl.clear();
-        showAppNotify(context, '已登录,$_sourceName 现在走账号 API',
+        showAppNotify(context, context.l10n.srclogin_loggedInNow(_sourceName),
             kind: AppNotifyKind.success);
       }
     } catch (e) {
@@ -62,7 +63,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: Text('$_sourceName 账号',
+        title: Text(context.l10n.srclogin_accountTitle(_sourceName),
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
       ),
       body: AppScrollView(
@@ -71,11 +72,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
           AppCard(
             padding: const EdgeInsets.all(14),
             child: Text(
-              '$_sourceName 的内容(详情 / 章节 / 图片)需要登录后才能读。登录后本 App 用你的账号 '
-              'Token 直连该源 API,比未登录路径更快更稳、也不易被限流。\n\n'
-              '• 用你自己在该源的账号。没有就去它的官方 App/网站注册。\n'
-              '• 登录可能需要能访问该源(通常要开代理/翻墙)。\n'
-              '• 只在本机保存登录 Token,不保存密码。',
+              context.l10n.srclogin_intro(_sourceName),
               style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.5),
             ),
           ),
@@ -97,7 +94,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '已登录:${auth.nicknameOf(id) ?? auth.usernameOf(id) ?? ''}',
+                context.l10n.sync_loggedInAs(auth.nicknameOf(id) ?? auth.usernameOf(id) ?? ''),
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 15,
@@ -107,7 +104,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
           ],
         ),
         const SizedBox(height: 6),
-        Text('$_sourceName 现在走账号 API 取内容。',
+        Text(context.l10n.srclogin_accountApiNow(_sourceName),
             style: TextStyle(color: p.textMuted, fontSize: 12)),
         const SizedBox(height: 20),
         OutlinedButton.icon(
@@ -116,12 +113,12 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
               : () async {
                   await auth.logout(id);
                   if (mounted) {
-                    showAppNotify(context, '已退出登录',
+                    showAppNotify(context, context.l10n.sync_loggedOut,
                         kind: AppNotifyKind.success);
                   }
                 },
           icon: const Icon(Icons.logout_rounded, size: 18),
-          label: const Text('退出登录'),
+          label: Text(context.l10n.sync_logout),
         ),
       ],
     );
@@ -134,7 +131,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
         AppTextField(
           controller: _userCtrl,
           enabled: !_busy,
-          label: '账号(用户名 / 邮箱)',
+          label: context.l10n.srclogin_accountLabel,
           autofillHints: const [AutofillHints.username],
         ),
         const SizedBox(height: 14),
@@ -142,7 +139,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
           controller: _pwCtrl,
           enabled: !_busy,
           obscure: _obscure,
-          label: '密码',
+          label: context.l10n.sync_password,
           autofillHints: const [AutofillHints.password],
           onSubmitted: (_) => _busy ? null : _login(auth),
           suffixIcon: IconButton(
@@ -165,7 +162,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('登录'),
+              : Text(context.l10n.sync_login),
         ),
       ],
     );

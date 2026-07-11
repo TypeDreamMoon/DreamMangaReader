@@ -409,7 +409,7 @@ class SettingsPage extends StatelessWidget {
         final picked = await showAppSheet<String>(
           context,
           title: context.l10n.chooseFont,
-          trailingText: '${fonts.length} 个',
+          trailingText: context.l10n.fontpick_countN(fonts.length),
           showCloseButton: true,
           resizeForKeyboard: true,
           heightFactor: 0.72,

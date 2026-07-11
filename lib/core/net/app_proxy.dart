@@ -2,6 +2,31 @@ import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 代理来源(设置页展示;文案由 UI 按语言映射)。
+enum ProxySource { forcedDirect, manual, envVar, systemProxy, directNoProxy }
+
+/// 测试连接结果类型。
+enum ProxyTestKind { ok, abnormal, failed }
+
+/// 结构化的测试连接结果(UI 按当前语言拼展示文案)。
+class ProxyTestResult {
+  const ProxyTestResult({
+    required this.kind,
+    required this.status,
+    required this.ms,
+    this.via, // null=直连
+    this.error,
+  });
+
+  final ProxyTestKind kind;
+  final int status; // HTTP 状态码(失败=0)
+  final int ms;
+  final String? via; // 经由的代理 host:port,null=直连
+  final String? error;
+
+  bool get ok => kind == ProxyTestKind.ok;
+}
+
 /// 全局 HTTP 代理解析 + 注入。
 ///
 /// **背景**:dio / dart:io 默认只认 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量;从没有这些变量的
@@ -18,13 +43,22 @@ class AppProxy {
 
   static String? _override;
   static String? _resolved; // 当前生效的 host:port(null=直连)
-  static String _source = '未初始化'; // 来源说明(设置页展示)
+  static ProxySource _sourceCode = ProxySource.directNoProxy; // 来源码(UI 映射 l10n)
 
   /// 当前生效代理("host:port",null=直连)。
   static String? get current => _resolved;
 
-  /// 当前代理来源的人话说明。
-  static String get sourceLabel => _source;
+  /// 当前代理来源码(设置页据此按当前语言展示)。
+  static ProxySource get sourceCode => _sourceCode;
+
+  /// 来源码的中文标签(**仅日志/诊断用**;UI 走 [sourceCode] 映射 l10n)。
+  static String get sourceLabel => switch (_sourceCode) {
+        ProxySource.forcedDirect => '强制直连',
+        ProxySource.manual => '手动设置',
+        ProxySource.envVar => '环境变量',
+        ProxySource.systemProxy => 'Windows 系统代理',
+        ProxySource.directNoProxy => '直连(未检测到代理)',
+      };
 
   /// 覆盖模式:null=自动 · 'DIRECT'=强制直连 · 'host:port'=手动。
   static String? get override => _override;
@@ -57,21 +91,21 @@ class AppProxy {
   static Future<String?> _resolve() async {
     final ov = _override;
     if (ov == 'DIRECT') {
-      _source = '强制直连';
+      _sourceCode = ProxySource.forcedDirect;
       return null;
     }
     if (ov != null && ov.isNotEmpty) {
-      _source = '手动设置';
+      _sourceCode = ProxySource.manual;
       return _strip(ov);
     }
     final (proxy, src) = await detectAuto();
-    _source = src;
+    _sourceCode = src;
     return proxy;
   }
 
-  /// 自动检测:环境变量 → Windows 系统代理。返回 (host:port 或 null, 来源说明)。
+  /// 自动检测:环境变量 → Windows 系统代理。返回 (host:port 或 null, 来源码)。
   /// 供"使用系统代理"选项 + 测试连接复用。
-  static Future<(String?, String)> detectAuto() async {
+  static Future<(String?, ProxySource)> detectAuto() async {
     final env = Platform.environment;
     final e = env['HTTPS_PROXY'] ??
         env['https_proxy'] ??
@@ -79,22 +113,23 @@ class AppProxy {
         env['http_proxy'] ??
         env['ALL_PROXY'] ??
         env['all_proxy'];
-    if (e != null && e.isNotEmpty) return (_strip(e), '环境变量');
+    if (e != null && e.isNotEmpty) return (_strip(e), ProxySource.envVar);
     if (Platform.isWindows) {
       final sys = await _windowsSystemProxy();
-      if (sys != null) return (sys, 'Windows 系统代理');
+      if (sys != null) return (sys, ProxySource.systemProxy);
     }
-    return (null, '直连(未检测到代理)');
+    return (null, ProxySource.directNoProxy);
   }
 
-  /// 测试连接:用指定代理([proxy] 为 null=直连)访问一个在墙内会被拦的站点,返回 (成功?, 说明)。
-  /// 用 Google 的 generate_204(墙内直连握手失败、走代理返回 204)做通用连通性探针。
-  /// 独立构建 HttpClient 并显式设 findProxy,**不受当前全局设置影响**,可在保存前预演。
-  static Future<(bool, String)> test(String? proxy) async {
+  /// 测试连接:用指定代理([proxy] 为 null=直连)访问一个在墙内会被拦的站点,返回结构化结果
+  /// (UI 按当前语言拼文案)。用 Google 的 generate_204 做通用连通性探针;独立 HttpClient +
+  /// 显式 findProxy,**不受当前全局设置影响**,可在保存前预演。[ProxyTestResult.via] null=直连。
+  static Future<ProxyTestResult> test(String? proxy) async {
     const url = 'https://www.google.com/generate_204';
     final sw = Stopwatch()..start();
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
     final p = proxy;
+    final via = (p == null || p.isEmpty) ? null : p;
     client.findProxy = (uri) {
       final h = uri.host;
       if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return 'DIRECT';
@@ -107,19 +142,21 @@ class AppProxy {
       final resp = await req.close().timeout(const Duration(seconds: 12));
       await resp.drain<void>();
       sw.stop();
-      final via = (p == null || p.isEmpty) ? '直连' : p;
       final ok = resp.statusCode == 204 || resp.statusCode == 200;
-      return (
-        ok,
-        '${ok ? '✓ 连通' : '⚠ 有响应但异常'} · HTTP ${resp.statusCode}'
-            ' · ${sw.elapsedMilliseconds}ms · 经 $via'
+      return ProxyTestResult(
+        kind: ok ? ProxyTestKind.ok : ProxyTestKind.abnormal,
+        status: resp.statusCode,
+        ms: sw.elapsedMilliseconds,
+        via: via,
       );
     } catch (e) {
       sw.stop();
-      final via = (p == null || p.isEmpty) ? '直连' : p;
-      return (
-        false,
-        '✗ 失败 · ${sw.elapsedMilliseconds}ms · 经 $via\n$e'
+      return ProxyTestResult(
+        kind: ProxyTestKind.failed,
+        status: 0,
+        ms: sw.elapsedMilliseconds,
+        via: via,
+        error: '$e',
       );
     } finally {
       client.close(force: true);

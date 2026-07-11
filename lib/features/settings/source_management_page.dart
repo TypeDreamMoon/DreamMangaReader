@@ -8,6 +8,7 @@ import '../../core/net/github_oauth.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_health.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_repository.dart';
@@ -70,17 +71,18 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
 
   Future<void> _pickLocalDir(SourceController sc) async {
     final dir = await FilePicker.getDirectoryPath(
-        dialogTitle: '选择包含 index.json 的源目录');
+        dialogTitle: context.l10n.srcmgmt_pickLocalDirTitle);
     if (dir == null) return;
     await _applyRepo(() => _repo.setLocalDir(dir), sc);
   }
 
   /// 导入本地源:单个 `.js` 脚本,或一整套打包的 `.zip`(index.json + 多脚本)。
   Future<void> _addLocalSource(SourceController sc) async {
+    final l10n = context.l10n; // 跨 await 前抓好文案,别在异步后再读 context
     final res = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['js', 'zip'],
-        dialogTitle: '选择源脚本(.js)或源包(.zip)');
+        dialogTitle: l10n.srcmgmt_pickSourceFileTitle);
     final path = res?.files.single.path;
     if (path == null) return;
     setState(() => _reloading = true);
@@ -88,9 +90,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       final String msg;
       if (path.toLowerCase().endsWith('.zip')) {
         final n = await _repo.addLocalSourceZip(path);
-        msg = '已从 zip 导入 $n 个源';
+        msg = l10n.srcmgmt_importedZipN(n);
       } else {
-        msg = '已添加本地源:${await _repo.addLocalSource(path)}';
+        msg = l10n.srcmgmt_addedLocalSource(await _repo.addLocalSource(path));
       }
       _revalidate(sc);
       if (!mounted) return;
@@ -100,7 +102,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _reloading = false);
-      showAppNotify(context, '导入失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.srcmgmt_importFailed('$e'), kind: AppNotifyKind.error);
     }
   }
 
@@ -108,7 +110,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   Future<void> _githubLogin(SourceController sc) async {
     if (!GithubOAuth.configured) {
       showAppNotify(context,
-          'GitHub 登录需先配置 OAuth Client ID(见 github_oauth.dart 注释),或继续用手动令牌',
+          context.l10n.srcmgmt_githubNeedsClientId,
           kind: AppNotifyKind.warn, duration: const Duration(seconds: 5));
       return;
     }
@@ -119,7 +121,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _reloading = false);
-      showAppNotify(context, 'GitHub 登录发起失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.srcmgmt_githubLoginFailed('$e'), kind: AppNotifyKind.error);
       return;
     }
     if (!mounted) return;
@@ -144,11 +146,11 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     final isLocal = _repo.localIds.contains(s.id);
     final ok = await showAppConfirm(
       context,
-      title: '删除源',
+      title: context.l10n.srcmgmt_deleteSource,
       message: isLocal
-          ? '确定删除本地源「${s.name}」?会删掉本地脚本文件,不可撤销。'
-          : '确定删除源「${s.name}」?会从列表隐藏(重载仓库也不再出现),之后可在源仓库卡片「恢复已删除的源」找回。',
-      confirmLabel: '删除',
+          ? context.l10n.srcmgmt_deleteLocalConfirm(s.name)
+          : context.l10n.srcmgmt_deleteRepoConfirm(s.name),
+      confirmLabel: context.l10n.delete,
       destructive: true,
     );
     if (!ok || !mounted) return;
@@ -157,7 +159,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    showAppNotify(context, '已删除源:${s.name}', kind: AppNotifyKind.success);
+    showAppNotify(context, context.l10n.srcmgmt_sourceDeleted(s.name), kind: AppNotifyKind.success);
   }
 
   Future<void> _restoreRemoved(SourceController sc) async {
@@ -166,7 +168,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    showAppNotify(context, '已恢复删除的源', kind: AppNotifyKind.success);
+    showAppNotify(context, context.l10n.srcmgmt_removedRestored, kind: AppNotifyKind.success);
     _checkAll();
   }
 
@@ -206,15 +208,15 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
   String _labelOf(SourceHealthResult r) {
     switch (r.status) {
       case SourceHealthStatus.ok:
-        return '正常 · ${r.count} 部 · ${r.elapsedMs}ms';
+        return context.l10n.srcmgmt_healthOk(r.count ?? 0, r.elapsedMs);
       case SourceHealthStatus.empty:
-        return '返回 0 部(疑似限流/失效) · ${r.elapsedMs}ms';
+        return context.l10n.srcmgmt_healthEmpty(r.elapsedMs);
       case SourceHealthStatus.fail:
-        return '不可用 · 点圆点看详情';
+        return context.l10n.srcmgmt_healthFail;
       case SourceHealthStatus.checking:
-        return '检测中…（联网）';
+        return context.l10n.srcmgmt_healthChecking;
       case SourceHealthStatus.unknown:
-        return '未检测';
+        return context.l10n.srcmgmt_healthUnknown;
     }
   }
 
@@ -247,7 +249,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     final r = _health[s.id] ?? SourceHealthResult.unknown;
     showAppDialog<void>(
       context,
-      title: '${s.name} · 检测日志',
+      title: context.l10n.srcmgmt_checkLogTitle(s.name),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
         child: SingleChildScrollView(
@@ -266,9 +268,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
         TextButton(
           onPressed: () {
             Clipboard.setData(ClipboardData(text: r.log));
-            showAppNotify(context, '日志已复制', kind: AppNotifyKind.success);
+            showAppNotify(context, context.l10n.srcmgmt_logCopied, kind: AppNotifyKind.success);
           },
-          child: const Text('复制'),
+          child: Text(context.l10n.srcmgmt_copy),
         ),
         Builder(
           builder: (ctx) => TextButton(
@@ -276,13 +278,13 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               Navigator.of(ctx).pop();
               _checkOne(s);
             },
-            child: const Text('重新检测'),
+            child: Text(context.l10n.srcmgmt_recheck),
           ),
         ),
         Builder(
           builder: (ctx) => TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('关闭'),
+            child: Text(context.l10n.close),
           ),
         ),
       ],
@@ -298,11 +300,11 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('源管理',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.srcmgmt_title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
           IconButton(
-            tooltip: '重新检测全部',
+            tooltip: context.l10n.srcmgmt_recheckAll,
             onPressed: _checkingAll ? null : _checkAll,
             icon: _checkingAll
                 ? SizedBox(
@@ -320,22 +322,22 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           _repoCard(p, sc),
           const SizedBox(height: 16),
           if (registeredSources.isEmpty)
-            const EmptyState(
-              title: '还没有加载到任何源',
-              message: '填入上面的源仓库地址,或选择一个包含 index.json 的本地目录。',
+            EmptyState(
+              title: context.l10n.srcmgmt_emptyTitle,
+              message: context.l10n.srcmgmt_emptyMessage,
             )
           else ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
               child: Text(
-                '圆点=可用性:绿=正常 · 黄=可达但返回空(限流/失效) · 红=不可用 · 灰=未测。点圆点看日志。',
+                context.l10n.srcmgmt_dotLegend,
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5),
               ),
             ),
             // 漫画源、番剧源分开成两组,别缠在一起。
-            ..._group('漫画源', registeredSources.where((s) => !s.isAnime).toList(),
+            ..._group(context.l10n.srcmgmt_groupManga, registeredSources.where((s) => !s.isAnime).toList(),
                 p, store, sc, auth),
-            ..._group('番剧源', registeredSources.where((s) => s.isAnime).toList(),
+            ..._group(context.l10n.srcmgmt_groupAnime, registeredSources.where((s) => s.isAnime).toList(),
                 p, store, sc, auth),
           ],
         ],
@@ -371,7 +373,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               children: [
                 Icon(Icons.cloud_sync_rounded, size: 18, color: p.accent),
                 const SizedBox(width: 8),
-                Text('源仓库',
+                Text(context.l10n.srcmgmt_repoTitle,
                     style: TextStyle(
                         color: p.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -379,7 +381,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 const SizedBox(width: 12),
                 // 状态文本可能很长(URL/错误/路径)→ Expanded + 省略号,别撑溢出。
                 Expanded(
-                  child: Text('${registeredSources.length} 个源 · ${_repo.status}',
+                  child: Text(context.l10n.srcmgmt_repoStatus(registeredSources.length, _repo.status),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
@@ -391,7 +393,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
             AppTextField(
               controller: _urlCtrl,
               enabled: !_reloading,
-              hint: '源仓库地址(index.json 所在的 raw 根 URL)',
+              hint: context.l10n.srcmgmt_repoUrlHint,
             ),
             const SizedBox(height: 8),
             // 访问令牌:填了才能拉**私有**源仓库(留空 = 公开地址直接拉)。
@@ -399,7 +401,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               controller: _tokenCtrl,
               enabled: !_reloading,
               obscure: true,
-              hint: '访问令牌(拉私有仓库用,可留空)',
+              hint: context.l10n.srcmgmt_tokenHint,
             ),
             const SizedBox(height: 4),
             // 用 GitHub 登录换取令牌(设备码流),免手动粘贴 PAT。
@@ -408,8 +410,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               child: TextButton.icon(
                 onPressed: _reloading ? null : () => _githubLogin(sc),
                 icon: const Icon(Icons.login_rounded, size: 16),
-                label: const Text('用 GitHub 登录(拉私有仓库,免粘贴令牌)',
-                    style: TextStyle(fontSize: 12.5)),
+                label: Text(context.l10n.srcmgmt_githubLoginButton,
+                    style: const TextStyle(fontSize: 12.5)),
                 style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     visualDensity: VisualDensity.compact,
@@ -433,14 +435,14 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                             height: 15,
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.download_rounded, size: 18),
-                    label: const Text('加载 / 刷新'),
+                    label: Text(context.l10n.srcmgmt_loadRefresh),
                   ),
                 ),
                 const SizedBox(width: 10),
                 OutlinedButton.icon(
                   onPressed: _reloading ? null : () => _pickLocalDir(sc),
                   icon: const Icon(Icons.folder_open_rounded, size: 18),
-                  label: const Text('本地目录'),
+                  label: Text(context.l10n.srcmgmt_localDir),
                 ),
               ],
             ),
@@ -451,7 +453,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
               child: OutlinedButton.icon(
                 onPressed: _reloading ? null : () => _addLocalSource(sc),
                 icon: const Icon(Icons.note_add_rounded, size: 18),
-                label: const Text('导入本地源(.js / .zip)'),
+                label: Text(context.l10n.srcmgmt_importLocal),
               ),
             ),
             // 有删掉的仓库源时,给个一键恢复入口。
@@ -461,7 +463,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 child: TextButton.icon(
                   onPressed: _reloading ? null : () => _restoreRemoved(sc),
                   icon: const Icon(Icons.restore_rounded, size: 16),
-                  label: Text('恢复已删除的源(${_repo.removedIds.length})',
+                  label: Text(context.l10n.srcmgmt_restoreRemovedN(_repo.removedIds.length),
                       style: const TextStyle(fontSize: 12.5)),
                   style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -502,7 +504,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                         fontSize: 14)),
                 const SizedBox(height: 2),
                 Text(
-                  '${_repo.localIds.contains(s.id) ? '本地 · ' : ''}${s.experimental ? '实验性 · ' : ''}${_labelOf(r)}',
+                  '${_repo.localIds.contains(s.id) ? '${context.l10n.srcmgmt_localTag} · ' : ''}${s.experimental ? '${context.l10n.srcpick_experimental} · ' : ''}${_labelOf(r)}',
                   style: TextStyle(
                     color: r.status == SourceHealthStatus.fail
                         ? p.statusFail
@@ -517,7 +519,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           ),
           // 删除源(本地=真删文件;仓库=隐藏,可恢复)。带二次确认。
           IconButton(
-            tooltip: '删除源',
+            tooltip: context.l10n.srcmgmt_deleteSource,
             visualDensity: VisualDensity.compact,
             onPressed: _reloading ? null : () => _deleteSource(s, sc),
             icon: Icon(Icons.delete_outline_rounded,
@@ -527,8 +529,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
           if (s.needsLogin)
             IconButton(
               tooltip: auth.isLoggedIn(s.id)
-                  ? '已登录:${auth.nicknameOf(s.id) ?? auth.usernameOf(s.id) ?? ''}'
-                  : '登录 ${s.name}',
+                  ? context.l10n.sync_loggedInAs(auth.nicknameOf(s.id) ?? auth.usernameOf(s.id) ?? '')
+                  : context.l10n.srcmgmt_loginSource(s.name),
               visualDensity: VisualDensity.compact,
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => SourceLoginPage(meta: s))),
@@ -596,14 +598,14 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
     return AlertDialog(
       backgroundColor: p.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      title: Text('用 GitHub 登录',
+      title: Text(context.l10n.srcmgmt_githubLoginTitle,
           style: TextStyle(
               color: p.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('1. 复制下面的验证码:',
+          Text(context.l10n.srcmgmt_githubStep1,
               style: TextStyle(color: p.textMuted, fontSize: 13)),
           const SizedBox(height: 8),
           Center(
@@ -616,7 +618,7 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
                     fontFeatures: const [FontFeature.tabularFigures()])),
           ),
           const SizedBox(height: 12),
-          Text('2. 打开授权页,粘贴验证码并授权:',
+          Text(context.l10n.srcmgmt_githubStep2,
               style: TextStyle(color: p.textMuted, fontSize: 13)),
           const SizedBox(height: 8),
           Center(
@@ -624,7 +626,7 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
               onPressed: () => launchUrl(Uri.parse(widget.dc.verificationUri),
                   mode: LaunchMode.externalApplication),
               icon: const Icon(Icons.open_in_new_rounded, size: 18),
-              label: const Text('打开 GitHub 授权页'),
+              label: Text(context.l10n.srcmgmt_githubOpenAuthPage),
             ),
           ),
           const SizedBox(height: 14),
@@ -639,7 +641,7 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
                   child:
                       CircularProgressIndicator(strokeWidth: 2, color: p.accent)),
               const SizedBox(width: 8),
-              Text('等待授权…', style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+              Text(context.l10n.srcmgmt_waitingAuth, style: TextStyle(color: p.textMuted, fontSize: 12.5)),
             ]),
         ],
       ),
@@ -650,13 +652,13 @@ class _GithubDeviceDialogState extends State<_GithubDeviceDialog> {
                 setState(() => _error = null);
                 _poll();
               },
-              child: const Text('重试')),
+              child: Text(context.l10n.retry)),
         TextButton(
           onPressed: () {
             _cancelled = true;
             Navigator.of(context).pop();
           },
-          child: const Text('取消'),
+          child: Text(context.l10n.cancel),
         ),
       ],
     );

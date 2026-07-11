@@ -465,5 +465,351 @@
   "rec_shelfTooEmpty": "书架内容太少 · 先收藏 / 阅读几本漫画",
   "rec_notEnoughBangumi": "没匹配到足够的 Bangumi 条目算口味 · 点重试",
   "rec_noSources": "没有可用的漫画源(先在设置里加源)",
-  "rec_generateFailed": "推荐生成失败 · 点重试"
+  "rec_generateFailed": "推荐生成失败 · 点重试",
+  "hist_title": "阅读历史",
+  "hist_emptyTitle": "还没有阅读记录",
+  "hist_pagesFrac": "{cur}/{total} 页",
+  "@hist_pagesFrac": {
+    "placeholders": {
+      "cur": {},
+      "total": {}
+    }
+  },
+  "hist_readToLine": "{source} · 读到 {chapter}",
+  "@hist_readToLine": {
+    "placeholders": {
+      "source": {},
+      "chapter": {}
+    }
+  },
+  "hist_remove": "移除",
+  "hist_clearTitle": "清空阅读历史",
+  "hist_clearMsg": "只清历史记录,不影响收藏和下载。",
+  "log_title": "运行日志",
+  "log_copyAll": "复制全部",
+  "log_cleared": "已清空日志",
+  "log_countTotal": "共 {total} 条",
+  "@log_countTotal": {
+    "placeholders": {
+      "total": {
+        "type": "num"
+      }
+    }
+  },
+  "log_countFiltered": "筛出 {shown} 条 · 共 {total}",
+  "@log_countFiltered": {
+    "placeholders": {
+      "shown": {},
+      "total": {}
+    }
+  },
+  "log_tapDetailHint": "· 点带 ⌄ 的条目看完整详情",
+  "log_lvlInfo": "信息",
+  "log_lvlSuccess": "成功",
+  "log_lvlWarning": "警告",
+  "log_lvlError": "错误",
+  "log_lvlDebug": "调试",
+  "log_emptyTitle": "暂无日志",
+  "log_emptyLevelTitle": "该级别下暂无日志",
+  "log_emptyMsg": "各类动作(源 / 漫画 / 下载 / 同步…)会记录在这里",
+  "log_copyOne": "复制此条",
+  "log_copiedOne": "已复制该条",
+  "log_nothingToCopy": "暂无日志可复制",
+  "log_copiedN": "已复制 {n} 条日志",
+  "@log_copiedN": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "srcmgmt_pickLocalDirTitle": "选择包含 index.json 的源目录",
+  "srcmgmt_pickSourceFileTitle": "选择源脚本(.js)或源包(.zip)",
+  "srcmgmt_importedZipN": "已从 zip 导入 {n} 个源",
+  "@srcmgmt_importedZipN": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "srcmgmt_addedLocalSource": "已添加本地源:{name}",
+  "@srcmgmt_addedLocalSource": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_importFailed": "导入失败:{error}",
+  "@srcmgmt_importFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "srcmgmt_githubNeedsClientId": "GitHub 登录需先配置 OAuth Client ID(见 github_oauth.dart 注释),或继续用手动令牌",
+  "srcmgmt_githubLoginFailed": "GitHub 登录发起失败:{error}",
+  "@srcmgmt_githubLoginFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "srcmgmt_deleteSource": "删除源",
+  "srcmgmt_deleteLocalConfirm": "确定删除本地源「{name}」?会删掉本地脚本文件,不可撤销。",
+  "@srcmgmt_deleteLocalConfirm": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_deleteRepoConfirm": "确定删除源「{name}」?会从列表隐藏(重载仓库也不再出现),之后可在源仓库卡片「恢复已删除的源」找回。",
+  "@srcmgmt_deleteRepoConfirm": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_sourceDeleted": "已删除源:{name}",
+  "@srcmgmt_sourceDeleted": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_removedRestored": "已恢复删除的源",
+  "srcmgmt_healthOk": "正常 · {count} 部 · {ms}ms",
+  "@srcmgmt_healthOk": {
+    "placeholders": {
+      "count": {
+        "type": "num"
+      },
+      "ms": {
+        "type": "num"
+      }
+    }
+  },
+  "srcmgmt_healthEmpty": "返回 0 部(疑似限流/失效) · {ms}ms",
+  "@srcmgmt_healthEmpty": {
+    "placeholders": {
+      "ms": {}
+    }
+  },
+  "srcmgmt_healthFail": "不可用 · 点圆点看详情",
+  "srcmgmt_healthChecking": "检测中…（联网）",
+  "srcmgmt_healthUnknown": "未检测",
+  "srcmgmt_checkLogTitle": "{name} · 检测日志",
+  "@srcmgmt_checkLogTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_logCopied": "日志已复制",
+  "srcmgmt_copy": "复制",
+  "srcmgmt_recheck": "重新检测",
+  "srcmgmt_title": "源管理",
+  "srcmgmt_recheckAll": "重新检测全部",
+  "srcmgmt_emptyTitle": "还没有加载到任何源",
+  "srcmgmt_emptyMessage": "填入上面的源仓库地址,或选择一个包含 index.json 的本地目录。",
+  "srcmgmt_dotLegend": "圆点=可用性:绿=正常 · 黄=可达但返回空(限流/失效) · 红=不可用 · 灰=未测。点圆点看日志。",
+  "srcmgmt_groupManga": "漫画源",
+  "srcmgmt_groupAnime": "番剧源",
+  "srcmgmt_repoTitle": "源仓库",
+  "srcmgmt_repoStatus": "{n} 个源 · {status}",
+  "@srcmgmt_repoStatus": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      },
+      "status": {}
+    }
+  },
+  "srcmgmt_repoUrlHint": "源仓库地址(index.json 所在的 raw 根 URL)",
+  "srcmgmt_tokenHint": "访问令牌(拉私有仓库用,可留空)",
+  "srcmgmt_githubLoginButton": "用 GitHub 登录(拉私有仓库,免粘贴令牌)",
+  "srcmgmt_loadRefresh": "加载 / 刷新",
+  "srcmgmt_localDir": "本地目录",
+  "srcmgmt_importLocal": "导入本地源(.js / .zip)",
+  "srcmgmt_restoreRemovedN": "恢复已删除的源({n})",
+  "@srcmgmt_restoreRemovedN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "srcmgmt_localTag": "本地",
+  "srcmgmt_loginSource": "登录 {name}",
+  "@srcmgmt_loginSource": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srcmgmt_githubLoginTitle": "用 GitHub 登录",
+  "srcmgmt_githubStep1": "1. 复制下面的验证码:",
+  "srcmgmt_githubStep2": "2. 打开授权页,粘贴验证码并授权:",
+  "srcmgmt_githubOpenAuthPage": "打开 GitHub 授权页",
+  "srcmgmt_waitingAuth": "等待授权…",
+  "srclogin_loggedInNow": "已登录,{name} 现在走账号 API",
+  "@srclogin_loggedInNow": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srclogin_accountTitle": "{name} 账号",
+  "@srclogin_accountTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srclogin_intro": "{name} 的内容(详情 / 章节 / 图片)需要登录后才能读。登录后本 App 用你的账号 Token 直连该源 API,比未登录路径更快更稳、也不易被限流。\n\n• 用你自己在该源的账号。没有就去它的官方 App/网站注册。\n• 登录可能需要能访问该源(通常要开代理/翻墙)。\n• 只在本机保存登录 Token,不保存密码。",
+  "@srclogin_intro": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srclogin_accountApiNow": "{name} 现在走账号 API 取内容。",
+  "@srclogin_accountApiNow": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "srclogin_accountLabel": "账号(用户名 / 邮箱)",
+  "fontpick_searchHint": "搜索字体名",
+  "fontpick_systemDefault": "系统默认",
+  "trans_title": "翻译",
+  "trans_intro": "把搜索词翻成 简 / 繁 / 英 / 日 / 韩 再搜(换语种源、搜不到时自动回退)。可拖动下方服务商调整优先级 —— 从上到下依次尝试,失败自动降级。",
+  "trans_providerPriority": "服务商优先级",
+  "trans_providerPriorityHint": "从上到下依次尝试,前一个失败(未配置 / 报错)就自动降级到下一个。拖右侧 ☰ 排序。",
+  "trans_llmParams": "大模型参数",
+  "trans_llmParamsHint": "排到「大模型」时才会用。OpenAI 兼容 /chat/completions;密钥仅存本机、不随云同步。",
+  "trans_apiBase": "API 地址",
+  "trans_apiBaseHint": "如 https://api.openai.com/v1",
+  "trans_apiKey": "API 密钥",
+  "trans_apiKeyHint": "sk-…(仅存本机)",
+  "trans_model": "模型",
+  "trans_modelHint": "如 gpt-4o-mini / deepseek-chat",
+  "trans_autoTargetLang": "自动翻译目标语言",
+  "trans_autoTargetLangHint": "搜不到时,按「原文的源语言」对应的目标顺序依次翻译再搜(取第一个有结果的)。选一个源语言,拖动它的目标语言优先级。",
+  "trans_testTranslate": "测试翻译",
+  "trans_testing": "测试中…(联网)",
+  "trans_testResult": "「你好,世界」→ {out}",
+  "@trans_testResult": {
+    "placeholders": {
+      "out": {}
+    }
+  },
+  "trans_badgePrimary": "主用",
+  "trans_badgePreferred": "首选",
+  "trans_srcChip": "源:{lang}",
+  "@trans_srcChip": {
+    "placeholders": {
+      "lang": {}
+    }
+  },
+  "trans_descGoogle": "免费端点,开箱即用(可能需代理)",
+  "trans_descMicrosoft": "免费端点,自动取临时令牌",
+  "trans_descLlm": "你自己的大模型 · 需在下方配置",
+  "proxy_title": "网络代理",
+  "proxy_testing": "测试中…(联网)",
+  "proxy_direct": "直连",
+  "proxy_savedToast": "代理已保存:{proxy}",
+  "@proxy_savedToast": {
+    "placeholders": {
+      "proxy": {}
+    }
+  },
+  "proxy_current": "当前生效:{proxy} · {source}",
+  "@proxy_current": {
+    "placeholders": {
+      "proxy": {},
+      "source": {}
+    }
+  },
+  "proxy_modeNone": "不使用代理",
+  "proxy_modeNoneSub": "直连,不走任何代理。国内可能访问不了被墙的源。",
+  "proxy_modeSystem": "使用系统代理",
+  "proxy_modeSystemSub": "跟随 Windows 系统代理 / 环境变量。开了 FlClash 系统代理就能用(推荐)。",
+  "proxy_modeCustom": "自定义代理",
+  "proxy_modeCustomSub": "手动指定 host:port。",
+  "proxy_customHint": "host:port,如 127.0.0.1:7890",
+  "about_enteredDebug": "已进入调试工具",
+  "about_tapMoreToDebug": "再点 {n} 次进入调试工具",
+  "@about_tapMoreToDebug": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "about_intro": "简介",
+  "about_introBody": "一个自制的跨平台漫画阅读器,聚合多个漫画源,统一的浏览 / 搜索 / 阅读体验。源以沙箱脚本实现,可跨 Android 与 Windows 运行。",
+  "about_highlights": "功能亮点",
+  "about_sourcesCount": "漫画源 · 共 {n} 个",
+  "@about_sourcesCount": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "about_links": "链接",
+  "about_repo": "开源仓库",
+  "about_tech": "技术",
+  "about_techBody": "Flutter(Material 3)· QuickJS 脚本源引擎(prepare/handle 契约,宿主拥有全部 I/O)· dio / 隐藏 WebView 混合传输。",
+  "about_disclaimer": "免责声明",
+  "about_disclaimerBody": "本应用不存储、不提供任何漫画内容,所有内容均来自第三方公开站点,版权归原作者及站点所有。仅供个人学习与技术交流,请勿用于商业用途,并支持正版。若有侵权请联系删除。",
+  "about_openLinkFailed": "打不开链接,请手动访问仓库地址",
+  "about_tagline": "跨平台漫画 + 番剧 · Android + Windows",
+  "about_hl1": "漫画 + 番剧:多源聚合、混合搜索 / 浏览",
+  "about_hl2": "番剧在线观看:HLS 播放器(libmpv)· 多源冗余",
+  "about_hl3": "瀑布流发现页 + 随机飞入动画",
+  "about_hl4": "详情页封面主题色(KMeans)+ Bangumi 评分",
+  "about_hl5": "离线下载 · 阅读进度记忆 · 阅读历史",
+  "about_hl6": "云同步:WebDAV / 账号登录(IAM 浏览器授权)· 可选类别双向合并",
+  "about_hl7": "源管理:zip 导入源 · GitHub 登录拉私有源仓",
+  "about_hl8": "书架备份 / 恢复 · 源可用性自检",
+  "about_hl9": "普通 / 日漫 / 竖翻 / 滚动 四种阅读模式 · 缩放适配 · 色彩滤镜",
+  "about_hl10": "每漫画模式记忆 + 高瘦条漫自动识别 · 条漫自动滚动 · 保存/分享页",
+  "about_hl11": "OLED / Dark / Light 三套主题",
+  "proxy_srcForcedDirect": "强制直连",
+  "proxy_srcManual": "手动设置",
+  "proxy_srcEnvVar": "环境变量",
+  "proxy_srcSystemProxy": "Windows 系统代理",
+  "proxy_srcDirectNoProxy": "直连(未检测到代理)",
+  "trans_provGoogle": "谷歌翻译 · 免费",
+  "trans_provMicrosoft": "微软翻译 · 免费",
+  "trans_provLlm": "大模型 API",
+  "proxy_testOk": "✓ 连通 · HTTP {status} · {ms}ms · 经 {via}",
+  "@proxy_testOk": {
+    "placeholders": {
+      "status": {
+        "type": "num"
+      },
+      "ms": {
+        "type": "num"
+      },
+      "via": {}
+    }
+  },
+  "proxy_testAbnormal": "⚠ 有响应但异常 · HTTP {status} · {ms}ms · 经 {via}",
+  "@proxy_testAbnormal": {
+    "placeholders": {
+      "status": {
+        "type": "num"
+      },
+      "ms": {
+        "type": "num"
+      },
+      "via": {}
+    }
+  },
+  "proxy_testFailed": "✗ 失败 · {ms}ms · 经 {via}\n{error}",
+  "@proxy_testFailed": {
+    "placeholders": {
+      "ms": {
+        "type": "num"
+      },
+      "via": {},
+      "error": {}
+    }
+  },
+  "fontpick_countN": "{n} 个",
+  "@fontpick_countN": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  }
 }
