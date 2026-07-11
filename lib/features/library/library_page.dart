@@ -7,6 +7,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/source/chinese_fold.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart' show MangaSource;
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_search.dart';
 import '../../core/source/title_match.dart';
@@ -189,13 +190,13 @@ class _LibraryPageState extends State<LibraryPage> {
           s
     ];
     if (metas.isEmpty) {
-      _snack('没有其它可用的漫画源');
+      _snack(context.l10n.detail_noOtherSources);
       return;
     }
     _crossOpening = true;
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('正在其它源查找「$title」…'),
+        content: Text(context.l10n.shelf_searchingInOtherTitle(title)),
         duration: const Duration(seconds: 20), // 找到/失败会主动收掉
       ));
     }
@@ -207,7 +208,9 @@ class _LibraryPageState extends State<LibraryPage> {
       if (ModalRoute.of(context)?.isCurrent != true) return;
       final m = r.match;
       if (m == null) {
-        _snack(r.allErrored ? '所有源都搜索失败了' : '其它源里没找到同名漫画');
+        _snack(r.allErrored
+            ? context.l10n.shelf_allSourcesSearchFailed
+            : context.l10n.detail_noSameNameInOthers);
         return;
       }
       _openManga(m.manga, m.meta);
@@ -324,13 +327,13 @@ class _LibraryPageState extends State<LibraryPage> {
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(color: p.line)),
       items: [
-        item('open', Icons.menu_book_rounded, '打开'),
-        item('other', Icons.swap_horiz_rounded, '用其它源打开'),
+        item('open', Icons.menu_book_rounded, context.l10n.shelf_menuOpen),
+        item('other', Icons.swap_horiz_rounded, context.l10n.shelf_menuOpenOther),
         if (w.favs.isNotEmpty)
-          item('unfav', Icons.favorite_border_rounded, '取消收藏',
+          item('unfav', Icons.favorite_border_rounded, context.l10n.shelf_menuUnfav,
               color: p.statusFail),
         if (w.hist.isNotEmpty)
-          item('delhist', Icons.delete_outline_rounded, '删除阅读记录',
+          item('delhist', Icons.delete_outline_rounded, context.l10n.shelf_menuDelHist,
               color: p.statusFail),
       ],
     );
@@ -345,12 +348,14 @@ class _LibraryPageState extends State<LibraryPage> {
         for (final f in w.favs) {
           store.toggleFavorite(f);
         }
-        _snack(w.favs.length > 1 ? '已取消收藏(${w.favs.length} 个源)' : '已取消收藏');
+        _snack(w.favs.length > 1
+            ? context.l10n.shelf_unfavedN(w.favs.length)
+            : context.l10n.shelf_unfaved);
       case 'delhist':
         for (final h in w.hist) {
           store.removeHistory(h.sourceId, h.mangaId);
         }
-        _snack('已删除阅读记录');
+        _snack(context.l10n.shelf_histDeleted);
     }
   }
 
@@ -447,11 +452,11 @@ class _LibraryPageState extends State<LibraryPage> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: GlassTitleBar(
-        title: const Text('书架',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(context.l10n.navBookshelf,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
           IconButton(
-            tooltip: '在收藏里搜索',
+            tooltip: context.l10n.shelf_searchInFavsTooltip,
             onPressed: () => setState(() {
               _showShelfSearch = !_showShelfSearch;
               if (!_showShelfSearch) {
@@ -462,7 +467,7 @@ class _LibraryPageState extends State<LibraryPage> {
             icon: Icon(_showShelfSearch ? Icons.search_off_rounded : Icons.search_rounded),
           ),
           IconButton(
-            tooltip: '阅读历史',
+            tooltip: context.l10n.shelf_historyTooltip,
             onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const HistoryPage())),
             icon: const Icon(Icons.history_rounded),
@@ -500,7 +505,7 @@ class _LibraryPageState extends State<LibraryPage> {
                             _favoritesSection(p, store),
                           _recommendStrip(p, store),
                           if (meta != null) ...[
-                           _sectionHeader(p, "推荐"),
+                           _sectionHeader(p, context.l10n.shelf_recommend),
                             if (store.showSourcePicker)
                               _sourcePicker(p, meta, store),
                             _browse(p, store),
@@ -525,7 +530,7 @@ class _LibraryPageState extends State<LibraryPage> {
           onChanged: (v) => setState(() => _shelfQuery = v.trim()),
           decoration: InputDecoration(
             isDense: true,
-            hintText: '在收藏里搜索…',
+            hintText: context.l10n.shelf_searchInFavsHint,
             hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
             prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             filled: true,
@@ -548,7 +553,7 @@ class _LibraryPageState extends State<LibraryPage> {
         .where((e) => e.rep.title.toLowerCase().contains(q))
         .toList();
     if (favs.isEmpty) {
-      return EmptyState(title: '收藏里没有匹配「$_shelfQuery」的');
+      return EmptyState(title: context.l10n.shelf_noFavMatch(_shelfQuery));
     }
     final layout = store.feedLayout;
     return FeedView(
@@ -566,15 +571,28 @@ class _LibraryPageState extends State<LibraryPage> {
         child: AppSectionHeading(text),
       );
 
+  // 推荐空态语义码 → 当前语言文案(控制器无 context,映射放这里)。
+  String _recNoteText(BuildContext context, RecNote code) {
+    final l = context.l10n;
+    return switch (code) {
+      RecNote.noRecsYet => l.rec_noRecsYet,
+      RecNote.shelfTooEmpty => l.rec_shelfTooEmpty,
+      RecNote.notEnoughBangumi => l.rec_notEnoughBangumi,
+      RecNote.noSources => l.rec_noSources,
+      RecNote.generateFailed => l.rec_generateFailed,
+    };
+  }
+
   // 「为你推荐」:据收藏 + 在读的口味算、混合源解析出的可读漫画横向条。无结果则不占位。
   Widget _recommendStrip(AppPalette p, LibraryStore store) => AnimatedBuilder(
         animation: _recs,
         builder: (_, __) {
           final recs = _recs.recs;
-          final note = _recs.note;
+          final noteCode = _recs.noteCode;
           // 空态里只有「可重试」的提示(失败 / 暂时性)才占位显示 —— 「书架太少」这类
           // 需用户去收藏、重试无用的,直接不占位。
-          final showNote = recs.isEmpty && !_recs.loading && note != null && _recs.canRetry;
+          final showNote =
+              recs.isEmpty && !_recs.loading && noteCode != null && _recs.canRetry;
           if (recs.isEmpty && !_recs.loading && !showNote) {
             return const SizedBox.shrink();
           }
@@ -586,7 +604,7 @@ class _LibraryPageState extends State<LibraryPage> {
                 child: Row(
                   children: [
                     // Row 给子级无界宽度,带尾线(内部 Expanded)会炸布局 → 关掉尾线。
-                    const AppSectionHeading('为你推荐', trailingRule: false),
+                    AppSectionHeading(context.l10n.shelf_forYou, trailingRule: false),
                     const SizedBox(width: 10),
                     if (_recs.loading)
                       SizedBox(
@@ -611,14 +629,14 @@ class _LibraryPageState extends State<LibraryPage> {
                 SizedBox(
                   height: 56,
                   child: Center(
-                    child: Text('根据你的收藏与在读生成推荐…',
+                    child: Text(context.l10n.shelf_generatingRecs,
                         style: TextStyle(color: p.textMuted, fontSize: 12)),
                   ),
                 ),
               if (showNote)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                  child: Text(note,
+                  child: Text(_recNoteText(context, noteCode),
                       style: TextStyle(color: p.textMuted, fontSize: 12.5)),
                 ),
               if (recs.isNotEmpty)
@@ -680,13 +698,13 @@ class _LibraryPageState extends State<LibraryPage> {
           children: [
             Icon(Icons.travel_explore_rounded, size: 44, color: p.textMuted),
             const SizedBox(height: 14),
-            Text('还没有配置漫画源',
+            Text(context.l10n.shelf_noSourceTitle,
                 style: TextStyle(
                     color: p.textPrimary,
                     fontWeight: FontWeight.w700,
                     fontSize: 15)),
             const SizedBox(height: 8),
-            Text('前往「设置 › 漫画源」填入源仓库地址或选择本地源目录后即可浏览。',
+            Text(context.l10n.shelf_noSourceDesc,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
           ],
@@ -697,8 +715,12 @@ class _LibraryPageState extends State<LibraryPage> {
   // 无共享进度(话数解析不出)时退回本源页码/章名。
   String _progressText(LibraryStore store, ReadState h) {
     final wp = store.workProgressFor(h.title);
-    if (wp != null && wp.chapterLabel.isNotEmpty) return '读到 ${wp.chapterLabel}';
-    if (h.lastTotal > 0) return '读到 ${h.lastPage + 1}/${h.lastTotal}';
+    if (wp != null && wp.chapterLabel.isNotEmpty) {
+      return context.l10n.detail_readTo(wp.chapterLabel);
+    }
+    if (h.lastTotal > 0) {
+      return context.l10n.detail_readTo('${h.lastPage + 1}/${h.lastTotal}');
+    }
     return h.lastChapterName;
   }
 
@@ -708,7 +730,7 @@ class _LibraryPageState extends State<LibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, '继续阅读'),
+        _sectionHeader(p, context.l10n.shelf_continueReading),
         SizedBox(
           height: 172,
           // 桌面:竖向滚轮转横向滚动 + 允许鼠标拖拽(AppHStrip 统一处理)。
@@ -787,7 +809,7 @@ class _LibraryPageState extends State<LibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, '收藏 · ${favs.length}'),
+        _sectionHeader(p, context.l10n.shelf_favoritesN(favs.length)),
         FeedView(
           layout: layout,
           shrinkWrap: true, // 嵌在书架外层 ListView 里,自身不滚
@@ -884,7 +906,7 @@ class _LibraryPageState extends State<LibraryPage> {
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
         child: SourcePickerPill(
-          label: '${meta.name} · 最新更新',
+          label: context.l10n.shelf_sourceLatest(meta.name),
           onTap: () => _pickSource(meta),
         ),
       );
@@ -897,7 +919,7 @@ class _LibraryPageState extends State<LibraryPage> {
             height: 220, child: Center(child: CircularProgressIndicator()));
       }
       if (_feedError != null && _feedOk == 0) return _error(p, _feedError!);
-      return _error(p, '没有拿到数据(列表为空)');
+      return _error(p, context.l10n.shelf_noDataEmpty);
     }
     int srcCountOf(Manga m) {
       final k = ChineseFold.dedupKey(m.title);
@@ -963,7 +985,7 @@ class _LibraryPageState extends State<LibraryPage> {
             children: [
               Icon(Icons.cloud_off_rounded, size: 40, color: p.textMuted),
               const SizedBox(height: 12),
-              Text('加载失败',
+              Text(context.l10n.loadFailed,
                   style: TextStyle(
                       color: p.textPrimary,
                       fontSize: 15,
@@ -973,7 +995,7 @@ class _LibraryPageState extends State<LibraryPage> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.textMuted, fontSize: 12)),
               const SizedBox(height: 14),
-              FilledButton(onPressed: _refresh, child: const Text('重试')),
+              FilledButton(onPressed: _refresh, child: Text(context.l10n.retry)),
             ],
           ),
         ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
@@ -163,7 +164,7 @@ class MangaCover extends StatelessWidget {
                       color: p.accent.withValues(alpha: 0.92),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text('$sourceCount源',
+                    child: Text(context.l10n.cover_nSources(sourceCount),
                         style: TextStyle(
                             color: p.onAccent,
                             fontSize: 9.5,
@@ -234,7 +235,7 @@ Widget coverListTile(
       manga.authors.where((a) => a.trim().isNotEmpty).toList(growable: false);
   final genres =
       manga.genres.where((g) => g.trim().isNotEmpty).take(3).toList();
-  final st = _listStatus(p, manga.status);
+  final st = _listStatus(context, p, manga.status);
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Pressable(
@@ -317,12 +318,17 @@ Widget coverListTile(
 }
 
 /// 状态药丸(圆点 + 文字,状态色),unknown 返回 null(不显示)。
-({String text, Color color})? _listStatus(AppPalette p, MangaStatus s) =>
+({String text, Color color})? _listStatus(
+        BuildContext context, AppPalette p, MangaStatus s) =>
     switch (s) {
-      MangaStatus.ongoing => (text: '连载中', color: p.statusOk),
-      MangaStatus.completed => (text: '完结', color: p.accent),
-      MangaStatus.hiatus => (text: '休刊', color: p.statusWarn),
-      MangaStatus.cancelled => (text: '停载', color: p.statusFail),
+      MangaStatus.ongoing =>
+        (text: context.l10n.disc_statusOngoing, color: p.statusOk),
+      MangaStatus.completed =>
+        (text: context.l10n.cover_statusCompleted, color: p.accent),
+      MangaStatus.hiatus =>
+        (text: context.l10n.cover_statusHiatus, color: p.statusWarn),
+      MangaStatus.cancelled =>
+        (text: context.l10n.cover_statusCancelled, color: p.statusFail),
       MangaStatus.unknown => null,
     };
 

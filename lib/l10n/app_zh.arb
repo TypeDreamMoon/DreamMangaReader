@@ -376,5 +376,94 @@
   "sync_catAppSettings": "其它设置",
   "sync_catMangaSources": "漫画源",
   "sync_catAnimeSources": "番剧源",
-  "sync_catSourceRepo": "源仓库"
+  "sync_catSourceRepo": "源仓库",
+  "dl_downloadingN": "正在下载 {n} 话…",
+  "@dl_downloadingN": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "dl_chaptersDownloaded": "{n} 话已下载",
+  "@dl_chaptersDownloaded": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "dl_deleteTitle": "删除下载",
+  "dl_deleteConfirm": "删除《{title}》的 {n} 话本地缓存?",
+  "@dl_deleteConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "dl_emptyTitle": "还没有下载",
+  "dl_emptyHint": "在漫画详情页点章节右侧的下载图标",
+  "shelf_searchingInOtherTitle": "正在其它源查找「{title}」…",
+  "@shelf_searchingInOtherTitle": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "shelf_allSourcesSearchFailed": "所有源都搜索失败了",
+  "shelf_menuOpen": "打开",
+  "shelf_menuOpenOther": "用其它源打开",
+  "shelf_menuUnfav": "取消收藏",
+  "shelf_menuDelHist": "删除阅读记录",
+  "shelf_unfavedN": "已取消收藏({n} 个源)",
+  "@shelf_unfavedN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "shelf_unfaved": "已取消收藏",
+  "shelf_histDeleted": "已删除阅读记录",
+  "shelf_searchInFavsTooltip": "在收藏里搜索",
+  "shelf_historyTooltip": "阅读历史",
+  "shelf_recommend": "推荐",
+  "shelf_searchInFavsHint": "在收藏里搜索…",
+  "shelf_noFavMatch": "收藏里没有匹配「{q}」的",
+  "@shelf_noFavMatch": {
+    "placeholders": {
+      "q": {}
+    }
+  },
+  "shelf_forYou": "为你推荐",
+  "shelf_generatingRecs": "根据你的收藏与在读生成推荐…",
+  "shelf_noSourceTitle": "还没有配置漫画源",
+  "shelf_noSourceDesc": "前往「设置 › 漫画源」填入源仓库地址或选择本地源目录后即可浏览。",
+  "shelf_continueReading": "继续阅读",
+  "shelf_favoritesN": "收藏 · {n}",
+  "@shelf_favoritesN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "shelf_sourceLatest": "{name} · 最新更新",
+  "@shelf_sourceLatest": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "shelf_noDataEmpty": "没有拿到数据(列表为空)",
+  "cover_nSources": "{n}源",
+  "@cover_nSources": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "cover_statusCompleted": "完结",
+  "cover_statusHiatus": "休刊",
+  "cover_statusCancelled": "停载",
+  "rec_noRecsYet": "暂时没算出推荐 · 稍后再试",
+  "rec_shelfTooEmpty": "书架内容太少 · 先收藏 / 阅读几本漫画",
+  "rec_notEnoughBangumi": "没匹配到足够的 Bangumi 条目算口味 · 点重试",
+  "rec_noSources": "没有可用的漫画源(先在设置里加源)",
+  "rec_generateFailed": "推荐生成失败 · 点重试"
 }

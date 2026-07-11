@@ -11,6 +11,15 @@ import '../../core/source/source_registry.dart';
 import '../../core/source/source_search.dart';
 import '../../core/source/title_match.dart' show normalizeTitle;
 
+/// 空态 / 失败提示的**语义码**(控制器无 BuildContext,文案在 library_page 按当前语言映射)。
+enum RecNote {
+  noRecsYet, // 暂时没算出推荐
+  shelfTooEmpty, // 书架内容太少
+  notEnoughBangumi, // Bangumi 匹配不足
+  noSources, // 没有可用漫画源
+  generateFailed, // 生成失败
+}
+
 /// 一条已落到源的推荐:Bangumi 候选(算出来的口味匹配)+ 在源里搜到的可读漫画。
 class RecItem {
   RecItem(this.bgm, this.manga, this.meta);
@@ -44,8 +53,8 @@ class RecommendController extends ChangeNotifier {
   bool get loading => _loading;
   List<RecItem> _recs = const [];
   List<RecItem> get recs => _recs;
-  String? _note; // 空态 / 失败提示(有 recs 时忽略)
-  String? get note => _note;
+  RecNote? _noteCode; // 空态 / 失败提示(语义码;有 recs 时忽略)
+  RecNote? get noteCode => _noteCode;
   bool _canRetry = false; // 当前空态是否值得「重试」(失败/暂时性 → 是;书架太少 → 否)
   bool get canRetry => _canRetry;
 
@@ -89,7 +98,7 @@ class RecommendController extends ChangeNotifier {
       return;
     }
     _loading = true;
-    _note = null;
+    _noteCode = null;
     _canRetry = false;
     _safeNotify();
     final sw = Stopwatch()..start();
@@ -100,15 +109,15 @@ class RecommendController extends ChangeNotifier {
       if (recs.isNotEmpty) {
         _sig = sig; // 成功才记签名(失败不缓存,留待重试)
         _saveRecCache(sig, recs); // 落盘:下次启动直接秒出
-      } else if (_note == null) {
-        _note = '暂时没算出推荐 · 稍后再试';
+      } else if (_noteCode == null) {
+        _noteCode = RecNote.noRecsYet;
         _canRetry = true;
       }
       AppLog.i.info(LogCat.manga,
           '为你推荐 · ${recs.length} 本 · ${sw.elapsedMilliseconds}ms');
     } catch (e) {
       if (!_disposed) {
-        _note = '推荐生成失败 · 点重试';
+        _noteCode = RecNote.generateFailed;
         _canRetry = true;
       }
       AppLog.i.err(LogCat.manga, '为你推荐失败', detail: '$e');
@@ -142,7 +151,7 @@ class RecommendController extends ChangeNotifier {
       add(h.title, h.sourceId, h.mangaId);
     }
     if (seeds.length < 2) {
-      _note = '书架内容太少 · 先收藏 / 阅读几本漫画';
+      _noteCode = RecNote.shelfTooEmpty;
       return const [];
     }
     final picked = seeds.take(_seedLimit).toList();
@@ -156,7 +165,7 @@ class RecommendController extends ChangeNotifier {
     });
     _saveBgmCache();
     if (infos.length < 2) {
-      _note = '没匹配到足够的 Bangumi 条目算口味 · 点重试';
+      _noteCode = RecNote.notEnoughBangumi;
       _canRetry = true; // 多为网络/接口抖动,重试可能就好
       return const [];
     }
@@ -176,7 +185,7 @@ class RecommendController extends ChangeNotifier {
         if (s.kind == 'manga' && store.isSourceEnabled(s.id)) s,
     ];
     if (metas.isEmpty) {
-      _note = '没有可用的漫画源(先在设置里加源)';
+      _noteCode = RecNote.noSources;
       return const [];
     }
     final resolved = <int, RecItem>{}; // 候选下标 → 解析结果(保排序)
