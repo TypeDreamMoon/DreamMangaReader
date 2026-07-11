@@ -77,11 +77,16 @@ class VideoTrack {
   final Map<String, String>? headers;
   final bool hls; // true = m3u8(HLS 流);false = 直链(mp4 等)
 
+  /// DASH(音视频分离,如 B站)时的**外挂音轨** URL;null = 视频自带音频(HLS/mp4)。
+  /// 播放器据此给 mpv 设 `audio-files` 合流。headers 对音视频共用。
+  final String? audioUrl;
+
   const VideoTrack({
     required this.url,
     this.quality = '',
     this.headers,
     this.hls = false,
+    this.audioUrl,
   });
 }
 

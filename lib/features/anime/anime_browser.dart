@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/bili/bili_auth.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -11,6 +12,7 @@ import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
 import 'anime_detail_page.dart';
+import 'bili_login_page.dart';
 
 /// 发现页「番剧」档的内容:选番剧源(kind=anime)→ 热门/搜索网格 → 点卡进详情。
 /// 与漫画发现的单源/混合机器完全隔离,自管一套状态,不动漫画那套。
@@ -178,6 +180,26 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
         .push(appRoute(AnimeDetailPage(meta: _meta!, anime: m)));
   }
 
+  bool get _isBili => _meta?.id == kBiliSourceId;
+
+  Future<void> _openBiliLogin() async {
+    final ok =
+        await Navigator.of(context).push<bool>(appRoute(const BiliLoginPage()));
+    if (!mounted) return;
+    if (ok == true) {
+      _reset(); // 登录成功:重新拉追番
+    } else {
+      setState(() {}); // 刷新登录条状态
+    }
+  }
+
+  Future<void> _biliLogout() async {
+    await BiliAuth.instance.logout();
+    if (!mounted) return;
+    setState(() {});
+    _reset();
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
@@ -214,6 +236,7 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
             ],
           ),
         ),
+        if (_isBili) _biliBar(p),
         if (_showSearch)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -265,7 +288,98 @@ class _AnimeBrowserState extends State<AnimeBrowser> {
     );
   }
 
+  /// B站登录条:显示登录态,提供扫码登录 / 退出入口。
+  Widget _biliBar(AppPalette p) {
+    final auth = BiliAuth.instance;
+    final loggedIn = auth.isLoggedIn;
+    final uname = auth.uname;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
+        decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: p.line),
+        ),
+        child: Row(
+          children: [
+            Icon(
+                loggedIn
+                    ? Icons.verified_rounded
+                    : Icons.account_circle_outlined,
+                size: 18,
+                color: loggedIn ? p.accent : p.textMuted),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                loggedIn
+                    ? (uname != null && uname.isNotEmpty
+                        ? '已登录 · $uname'
+                        : '已登录哔哩哔哩')
+                    : '登录后可看追番、解锁大会员清晰度',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: p.textPrimary, fontSize: 12.5),
+              ),
+            ),
+            const SizedBox(width: 6),
+            loggedIn
+                ? TextButton(
+                    onPressed: _biliLogout,
+                    style: TextButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    child: const Text('退出'))
+                : FilledButton(
+                    onPressed: _openBiliLogin,
+                    style: FilledButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 5),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    child: const Text('扫码登录')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _grid(AppPalette p) {
+    // B站未登录且在浏览「追番」(非搜索):直接给登录引导,别抛错误。
+    if (_isBili &&
+        !BiliAuth.instance.isLoggedIn &&
+        _query.isEmpty &&
+        _results.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.live_tv_rounded, size: 42, color: p.textMuted),
+              const SizedBox(height: 12),
+              Text('登录后查看你的追番',
+                  style: TextStyle(
+                      color: p.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15)),
+              const SizedBox(height: 6),
+              Text('也可直接在上方搜索番剧',
+                  style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: _openBiliLogin,
+                icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                label: const Text('扫码登录哔哩哔哩'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (_results.isEmpty) {
       if (_loading) {
         return const Center(child: CircularProgressIndicator());

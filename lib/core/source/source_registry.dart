@@ -1,8 +1,12 @@
+import '../bili/bili_source.dart';
 import '../net/dio_http_service.dart';
 import '../net/webview_fetch.dart';
 import '../script/js_engine.dart';
 import '../script/script_source.dart';
 import 'source.dart';
+
+/// 内置(非脚本)原生源 id。这些源由引擎直接实现,不从仓库脚本加载。
+const String kBiliSourceId = 'bilibili';
 
 /// 通用移动端 UA(WebView 与后续图片请求共用;不针对任何具体站点)。
 const String _mobileUa =
@@ -75,11 +79,24 @@ List<SourceMeta> registeredSources = <SourceMeta>[];
 /// - 主传输:useWebView 的源用隐藏 WebView 抓 HTML(过反爬),否则用 dio。
 /// - webHttp:总是配一个 WebView 传输,供源脚本按请求切换(部分源发现走 dio、
 ///   章节/图片走 WebView 带站点 cookie)。
-MangaSource buildSource(SourceMeta meta) => ScriptSource(
-      engine: JsEngine(),
-      http: meta.useWebView
-          ? WebViewHttpService(userAgent: _mobileUa)
-          : DioHttpService(),
-      webHttp: WebViewHttpService(userAgent: _desktopUa),
-      scriptCode: meta.script,
-    );
+MangaSource buildSource(SourceMeta meta) {
+  // 原生番剧源(B站):走引擎内置实现,不经脚本引擎。
+  if (meta.id == kBiliSourceId) return BiliSource();
+  return ScriptSource(
+    engine: JsEngine(),
+    http: meta.useWebView
+        ? WebViewHttpService(userAgent: _mobileUa)
+        : DioHttpService(),
+    webHttp: WebViewHttpService(userAgent: _desktopUa),
+    scriptCode: meta.script,
+  );
+}
+
+/// 内置原生源的元数据(启动时无条件并入 [registeredSources],除非用户手动隐藏)。
+const SourceMeta kBiliSourceMeta = SourceMeta(
+  id: kBiliSourceId,
+  name: '哔哩哔哩',
+  script: '',
+  kind: 'anime',
+  needsLogin: true,
+);

@@ -216,6 +216,20 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       _av('!! open 抛错 用时${sw.elapsedMilliseconds}ms: $e');
       rethrow;
     }
+    // DASH(如 B站高清):音视频分离,视频轨无声,需把音频流当**外挂音轨**挂上。
+    // 必须在 open(loadfile)**之后**用 `audio-add`(setAudioTrack→audio-add 命令,
+    // 参数是字面量 argv,不会被拆);切勿用 `audio-files` 属性——它是 path-list,
+    // Android/Linux 下按 `:` 分隔符会把 `https://` URL 切碎导致挂载失败(静音)。
+    // 新的 open() 会 loadfile 重置,上一集/上一清晰度的外挂音轨自动失效,无需手动清理。
+    final au = t.audioUrl;
+    if (au != null && au.isNotEmpty) {
+      try {
+        await _player.setAudioTrack(AudioTrack.uri(au));
+        _av('外挂音轨已挂载(DASH)');
+      } catch (e) {
+        _av('!! 外挂音轨挂载失败: $e');
+      }
+    }
     if (mounted) setState(() => _loading = false);
   }
 
@@ -245,9 +259,21 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
             PopupMenuButton<VideoTrack>(
               tooltip: '线路 / 清晰度',
               icon: const Icon(Icons.hd_rounded),
-              onSelected: (t) {
-                setState(() => _loading = true);
-                _play(t);
+              onSelected: (t) async {
+                setState(() {
+                  _loading = true;
+                  _error = null;
+                });
+                try {
+                  await _play(t);
+                } catch (e) {
+                  if (mounted) {
+                    setState(() {
+                      _loading = false;
+                      _error = '$e';
+                    });
+                  }
+                }
               },
               itemBuilder: (_) => [
                 for (final t in _tracks)

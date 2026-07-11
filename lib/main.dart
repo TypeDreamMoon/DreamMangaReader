@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'app/app.dart';
 import 'app/app_info.dart';
+import 'core/bili/bili_auth.dart';
 import 'core/log/app_log.dart';
 import 'core/source/chinese_fold.dart';
 import 'core/net/app_proxy.dart';
@@ -32,6 +33,8 @@ void main() async {
   await AppProxy.init();
   // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;未配置则为空)。
   await SourceRepository.instance.load();
+  // B站账号态(扫码登录后的 Cookie,安全存储)读回;不进云同步。
+  await BiliAuth.instance.load();
   // 云同步配置(WebDAV 地址/账密/自动开关)读回;自动同步在书架读档后触发(见 App.initState)。
   await SyncController.instance.load();
   // 桌面:预热系统字体列表(GDI 枚举,~几十毫秒;非 Windows 立即返回)。

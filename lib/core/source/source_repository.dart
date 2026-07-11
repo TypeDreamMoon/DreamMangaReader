@@ -148,8 +148,13 @@ class SourceRepository {
     final repoIds = repo.map((e) => e.id).toSet();
     final localKept = local.where((e) => !repoIds.contains(e.id)).toList();
 
-    // 过滤掉用户「删除」的仓库源(本地源已真删,不在这里)。
-    final combined = [...repo, ...localKept];
+    // 3) 内置原生源(B站番剧)。不来自仓库/脚本,启动即注入(除非用户手动隐藏)。
+    //    仓库若也定义了同 id,以内置为准(去重),把内置排在最前。
+    final combined = [
+      kBiliSourceMeta,
+      ...repo.where((e) => e.id != kBiliSourceId),
+      ...localKept.where((e) => e.id != kBiliSourceId),
+    ];
     registeredSources =
         combined.where((e) => !removedIds.contains(e.id)).toList();
     localIds =
