@@ -27,5 +27,6 @@ export 'app_status_dot.dart';
 export 'empty_state.dart';
 export 'glass.dart';
 export 'glass_title_bar.dart';
+export 'markdown_view.dart';
 export 'smooth_scroll.dart';
 export 'tab_entrance.dart';

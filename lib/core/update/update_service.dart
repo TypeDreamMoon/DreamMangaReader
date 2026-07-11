@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_info.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../ui/ui.dart';
 import '../log/app_log.dart';
 import 'update_installer.dart';
 
@@ -246,13 +247,14 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         children: [
           Flexible(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 260),
+              constraints: const BoxConstraints(maxHeight: 320),
               child: SingleChildScrollView(
-                child: Text(
-                  widget.info.notes.isEmpty ? '暂无更新说明。' : widget.info.notes,
-                  style: TextStyle(
-                      color: p.textMuted, fontSize: 12.5, height: 1.5),
-                ),
+                child: widget.info.notes.isEmpty
+                    ? Text('暂无更新说明。',
+                        style: TextStyle(
+                            color: p.textMuted, fontSize: 12.5, height: 1.5))
+                    // Release Note 是 Markdown,渲染成带样式的富文本。
+                    : MarkdownView(widget.info.notes),
               ),
             ),
           ),
