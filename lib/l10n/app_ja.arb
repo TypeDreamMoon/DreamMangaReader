@@ -416,5 +416,7 @@
   "proxy_testOk": "✓ 接続成功 · HTTP {status} · {ms}ms · 経由 {via}",
   "proxy_testAbnormal": "⚠ 応答あり(異常) · HTTP {status} · {ms}ms · 経由 {via}",
   "proxy_testFailed": "✗ 失敗 · {ms}ms · 経由 {via}\n{error}",
-  "fontpick_countN": "{n} 件"
+  "fontpick_countN": "{n} 件",
+  "detail_orderAsc": "昇順",
+  "detail_orderDesc": "降順"
 }

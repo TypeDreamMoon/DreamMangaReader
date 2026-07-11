@@ -811,5 +811,7 @@
         "type": "num"
       }
     }
-  }
+  },
+  "detail_orderAsc": "正序",
+  "detail_orderDesc": "倒序"
 }

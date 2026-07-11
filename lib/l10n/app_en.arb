@@ -416,5 +416,7 @@
   "proxy_testOk": "✓ Connected · HTTP {status} · {ms}ms · via {via}",
   "proxy_testAbnormal": "⚠ Responded but abnormal · HTTP {status} · {ms}ms · via {via}",
   "proxy_testFailed": "✗ Failed · {ms}ms · via {via}\n{error}",
-  "fontpick_countN": "{n, plural, =1{1 font} other{{n} fonts}}"
+  "fontpick_countN": "{n, plural, =1{1 font} other{{n} fonts}}",
+  "detail_orderAsc": "Oldest first",
+  "detail_orderDesc": "Newest first"
 }

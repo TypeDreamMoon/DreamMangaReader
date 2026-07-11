@@ -1642,19 +1642,56 @@ class _DetailPageState extends State<DetailPage> {
     // 合并跨源章节(当前源 + 库里同名书的他源;无他源时 = 当前源本身)。
     final merged = _chapters == null ? const <_MergedChapter>[] : _mergedChapters();
     final extra = merged.length - (_chapters?.length ?? 0); // 他源补进来的话数
+    // 倒序:新章在上(几千章免从头下拉);全局设置,记住选择。展示时翻转,
+    // 数据模型不动(每行自包含,_openMerged 照常按行对象打开)。
+    final desc = store.chaptersDesc;
+    final display = desc ? merged.reversed.toList() : merged;
     final header = SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-        child: Text(
-          _chapters == null
-              ? context.l10n.detail_chapters
-              : context.l10n.detail_chaptersCount(merged.length) +
-                  (extra > 0 ? context.l10n.detail_extraFromOthers(extra) : '') +
-                  (_mergeLoading ? context.l10n.detail_findingOthers : ''),
-          style: TextStyle(
-              color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
-              fontWeight: FontWeight.w700,
-              fontSize: 13),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _chapters == null
+                    ? context.l10n.detail_chapters
+                    : context.l10n.detail_chaptersCount(merged.length) +
+                        (extra > 0
+                            ? context.l10n.detail_extraFromOthers(extra)
+                            : '') +
+                        (_mergeLoading ? context.l10n.detail_findingOthers : ''),
+                style: TextStyle(
+                    color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13),
+              ),
+            ),
+            // 正序 / 倒序 切换(有章节时才显示)。
+            if (merged.isNotEmpty)
+              Pressable(
+                onTap: () => store.chaptersDesc = !desc,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                          desc
+                              ? Icons.arrow_downward_rounded
+                              : Icons.arrow_upward_rounded,
+                          size: 15,
+                          color: p.textMuted),
+                      const SizedBox(width: 3),
+                      Text(
+                          desc
+                              ? context.l10n.detail_orderDesc
+                              : context.l10n.detail_orderAsc,
+                          style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1725,13 +1762,13 @@ class _DetailPageState extends State<DetailPage> {
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
         sliver: SliverList.builder(
-          itemCount: merged.length,
+          itemCount: display.length,
           // 每行从右侧滑入 + 淡入,首屏按下标错落(滚动时也「滚到哪滑到哪」)。
           itemBuilder: (ctx, i) => FadeSlideIn(
             dx: 32,
             offset: 0,
             delayMs: (i < 8 ? i : 8) * 22,
-            child: _chapterRow(p, store, merged[i], dl),
+            child: _chapterRow(p, store, display[i], dl),
           ),
         ),
       ),

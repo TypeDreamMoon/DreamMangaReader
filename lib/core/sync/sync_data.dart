@@ -58,7 +58,7 @@ class SyncData {
     'volumeKeyPaging', 'invertTapZones', 'readerBg', 'readerOrientation',
     'keepScreenOn', 'autoDetectMode', 'webtoonGap', 'chapterToast',
     'cfGrayscale', 'cfInvert', 'cfSepia', 'cfContrast', 'zoomMode',
-    'autoScrollSpeed', 'mangaModes',
+    'autoScrollSpeed', 'mangaModes', 'chaptersDesc',
   };
 
   // 界面与外观(布局/字体/圆角/背景图/动画;showSourcePicker 与书架布局同组)。

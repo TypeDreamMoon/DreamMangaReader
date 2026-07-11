@@ -182,6 +182,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kGridColumns = 'lib.gridColumns';
   static const _kPreload = 'lib.preload';
   static const _kDoublePage = 'lib.doublePage';
+  static const _kChaptersDesc = 'lib.chaptersDesc'; // 详情页章节列表默认倒序(新→旧)
   static const _kDoubleTapZoom = 'lib.doubleTapZoom';
   static const _kShowPageNumber = 'lib.showPageNumber';
   static const _kBrightness = 'lib.brightness';
@@ -242,6 +243,7 @@ class LibraryStore extends ChangeNotifier {
   int _gridColumns = 0; // 0 = 自适应
   int _preload = 3; // 预加载后 N 页
   bool _doublePage = false; // 翻页模式双页并排
+  bool _chaptersDesc = false; // 详情页章节列表倒序(新章在上,几千章免下拉)
   bool _doubleTapZoom = true; // 允许双击缩放
   bool _showPageNumber = true; // 展示页码
   double _brightness = 1.0; // 阅读器亮度(0.25~1.0,靠遮罩变暗)
@@ -315,6 +317,7 @@ class LibraryStore extends ChangeNotifier {
   int get gridColumns => _gridColumns; // 0 = 自适应
   int get preload => _preload;
   bool get doublePage => _doublePage;
+  bool get chaptersDesc => _chaptersDesc;
   bool get doubleTapZoom => _doubleTapZoom;
   bool get showPageNumber => _showPageNumber;
   double get brightness => _brightness;
@@ -641,6 +644,7 @@ class LibraryStore extends ChangeNotifier {
       _gridColumns = (prefs.getInt(_kGridColumns) ?? 0).clamp(0, 8);
       _preload = (prefs.getInt(_kPreload) ?? 3).clamp(0, 10);
       _doublePage = prefs.getBool(_kDoublePage) ?? false;
+      _chaptersDesc = prefs.getBool(_kChaptersDesc) ?? false;
       _doubleTapZoom = prefs.getBool(_kDoubleTapZoom) ?? true;
       _showPageNumber = prefs.getBool(_kShowPageNumber) ?? true;
       _brightness = (prefs.getDouble(_kBrightness) ?? 1.0).clamp(0.25, 1.0);
@@ -768,6 +772,13 @@ class LibraryStore extends ChangeNotifier {
     if (v == _doublePage) return;
     _doublePage = v;
     _prefs?.setBool(_kDoublePage, v);
+    notifyListeners();
+  }
+
+  set chaptersDesc(bool v) {
+    if (v == _chaptersDesc) return;
+    _chaptersDesc = v;
+    _prefs?.setBool(_kChaptersDesc, v);
     notifyListeners();
   }
 
@@ -1255,6 +1266,7 @@ class LibraryStore extends ChangeNotifier {
         'gridColumns': _gridColumns,
         'preload': _preload,
         'doublePage': _doublePage,
+        'chaptersDesc': _chaptersDesc,
         'doubleTapZoom': _doubleTapZoom,
         'showPageNumber': _showPageNumber,
         'brightness': _brightness,
@@ -1344,6 +1356,7 @@ class LibraryStore extends ChangeNotifier {
     _gridColumns = (j['gridColumns'] as num?)?.toInt() ?? _gridColumns;
     _preload = (j['preload'] as num?)?.toInt() ?? _preload;
     _doublePage = j['doublePage'] as bool? ?? _doublePage;
+    _chaptersDesc = j['chaptersDesc'] as bool? ?? _chaptersDesc;
     _doubleTapZoom = j['doubleTapZoom'] as bool? ?? _doubleTapZoom;
     _showPageNumber = j['showPageNumber'] as bool? ?? _showPageNumber;
     _brightness = (j['brightness'] as num?)?.toDouble() ?? _brightness;
@@ -1455,6 +1468,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setInt(_kGridColumns, _gridColumns);
     _prefs?.setInt(_kPreload, _preload);
     _prefs?.setBool(_kDoublePage, _doublePage);
+    _prefs?.setBool(_kChaptersDesc, _chaptersDesc);
     _prefs?.setBool(_kDoubleTapZoom, _doubleTapZoom);
     _prefs?.setBool(_kShowPageNumber, _showPageNumber);
     _prefs?.setDouble(_kBrightness, _brightness);
