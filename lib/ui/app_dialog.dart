@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme/app_colors.dart';
+import '../core/l10n/app_strings.dart';
 
 /// 统一对话框:主题化 [AlertDialog](surface 底 + 圆角由主题 dialogTheme 给)+ 语义标题。
 ///
@@ -32,12 +33,13 @@ Future<T?> showAppDialog<T>(
 }
 
 /// 二次确认弹窗:返回 true=确认。[destructive] 时确认键用危险色(删除类操作)。
+/// [confirmLabel]/[cancelLabel] 不传 → 用当前语言的「确定 / 取消」。
 Future<bool> showAppConfirm(
   BuildContext context, {
   required String title,
   String? message,
-  String confirmLabel = '确定',
-  String cancelLabel = '取消',
+  String? confirmLabel,
+  String? cancelLabel,
   bool destructive = false,
 }) async {
   final ok = await showAppDialog<bool>(
@@ -55,7 +57,7 @@ Future<bool> showAppConfirm(
       Builder(
         builder: (ctx) => TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: Text(cancelLabel),
+          child: Text(cancelLabel ?? ctx.l10n.cancel),
         ),
       ),
       Builder(
@@ -67,7 +69,7 @@ Future<bool> showAppConfirm(
                 ? FilledButton.styleFrom(
                     backgroundColor: p.statusFail, foregroundColor: Colors.white)
                 : null,
-            child: Text(confirmLabel),
+            child: Text(confirmLabel ?? ctx.l10n.ok),
           );
         },
       ),

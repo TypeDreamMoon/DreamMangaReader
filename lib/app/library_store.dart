@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/l10n/app_locale.dart';
 import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
 import '../core/translate/translator.dart'
@@ -198,6 +199,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kUpdateIncludeBeta = 'lib.updateIncludeBeta'; // 检查更新含测试版
   static const _kUiScale = 'lib.uiScale'; // 桌面:界面文字缩放
   static const _kUiFont = 'lib.uiFont'; // 桌面:字体族(空=跟随回退栈)
+  static const _kUiLocale = 'lib.uiLocale'; // 界面语言(本机设置,不随云同步)
   static const _kDisabledSources = 'lib.disabledSources';
   static const _kDetailTintStrength = 'lib.detailTintStrength'; // 详情页封面色融合强度
   static const _kReaderGestures = 'lib.readerGestures'; // 阅读器点击分区翻页
@@ -251,6 +253,8 @@ class LibraryStore extends ChangeNotifier {
   // 桌面缩放 / 字体也走 VN 广播:改动只需重建 ThemeData / 顶层 MediaQuery。
   final ValueNotifier<double> uiScaleVN = ValueNotifier(1.0);
   final ValueNotifier<String> uiFontVN = ValueNotifier('');
+  // 界面语言:VN 广播 → 驱动 MaterialApp.locale 重建(本机设置,不进 exportData/同步)。
+  final ValueNotifier<AppLocale> uiLocaleVN = ValueNotifier(AppLocale.zhHans);
   String _bgImage = ''; // 全局背景图路径(空=无)
   double _bgBlur = 12; // 背景模糊(0~40)
   int _bgTintColor = 0xFF000000; // 背景混合色(RGB,alpha 见 _bgTintAlpha)
@@ -319,6 +323,7 @@ class LibraryStore extends ChangeNotifier {
   double get controlRadius => controlRadiusVN.value;
   double get uiScale => uiScaleVN.value; // 桌面界面文字缩放(1.0=100%)
   String get uiFont => uiFontVN.value; // 桌面字体族('' = 系统默认回退栈)
+  AppLocale get uiLocale => uiLocaleVN.value; // 界面语言
   String get bgImage => _bgImage;
   double get bgBlur => _bgBlur;
   int get bgTintColor => _bgTintColor;
@@ -644,6 +649,7 @@ class LibraryStore extends ChangeNotifier {
       controlRadiusVN.value = (prefs.getDouble(_kControlRadius) ?? 14).clamp(0, 28);
       uiScaleVN.value = (prefs.getDouble(_kUiScale) ?? 1.0).clamp(0.7, 1.6);
       uiFontVN.value = prefs.getString(_kUiFont) ?? '';
+      uiLocaleVN.value = AppLocale.fromCode(prefs.getString(_kUiLocale));
       _bgImage = prefs.getString(_kBgImage) ?? '';
       _bgBlur = (prefs.getDouble(_kBgBlur) ?? 12).clamp(0, 40);
       _bgTintColor = prefs.getInt(_kBgTintColor) ?? 0xFF000000;
@@ -823,6 +829,14 @@ class LibraryStore extends ChangeNotifier {
     if (v == uiFontVN.value) return;
     uiFontVN.value = v;
     _prefs?.setString(_kUiFont, v);
+    notifyListeners();
+  }
+
+  /// 界面语言。VN 变更即驱动 MaterialApp.locale 重建;本机设置,不进 exportData/同步。
+  set uiLocale(AppLocale v) {
+    if (v == uiLocaleVN.value) return;
+    uiLocaleVN.value = v;
+    _prefs?.setString(_kUiLocale, v.code);
     notifyListeners();
   }
 

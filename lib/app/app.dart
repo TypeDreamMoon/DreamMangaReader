@@ -1,7 +1,10 @@
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import '../core/l10n/app_locale.dart';
+import '../core/l10n/app_strings.dart';
 import 'auth_store.dart';
 import 'download_store.dart';
 import 'library_store.dart';
@@ -65,6 +68,7 @@ class _AppState extends State<App> {
                   _library.controlRadiusVN,
                   _library.uiScaleVN,
                   _library.uiFontVN,
+                  _library.uiLocaleVN,
                 ]),
                 builder: (context, _) {
                   const desktop = {
@@ -76,6 +80,17 @@ class _AppState extends State<App> {
                   return MaterialApp(
                     title: 'Dream Manga Reader',
                     debugShowCheckedModeBanner: false,
+                    // 多语言:自定义文案委托 + Material/Widgets/Cupertino 组件本地化。
+                    locale: _library.uiLocale.toLocale(),
+                    supportedLocales: [
+                      for (final l in AppLocale.values) l.toLocale(),
+                    ],
+                    localizationsDelegates: const [
+                      AppStrings.delegate,
+                      GlobalMaterialLocalizations.delegate,
+                      GlobalWidgetsLocalizations.delegate,
+                      GlobalCupertinoLocalizations.delegate,
+                    ],
                     theme: buildTheme(_theme.variant,
                         controlRadius: _library.controlRadius,
                         // 字体只在桌面平台生效

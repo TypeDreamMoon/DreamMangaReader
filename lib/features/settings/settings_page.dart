@@ -10,6 +10,8 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/theme_controller.dart';
+import '../../core/l10n/app_locale.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/net/app_proxy.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
@@ -31,6 +33,7 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final l10n = context.l10n;
     final theme = ThemeScope.of(context);
     final lib = LibraryScope.of(context);
     const desktop = {
@@ -50,8 +53,8 @@ class SettingsPage extends StatelessWidget {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: GlassTitleBar(
-        title: const Text('设置',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        title: Text(l10n.settingsTitle,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
       ),
       body: EntranceSlide(
         begin: const Offset(0, 0.06),
@@ -60,10 +63,11 @@ class SettingsPage extends StatelessWidget {
           child: AppScrollView(
         padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
         children: [
-          _group('外观', [
+          _group(l10n.secAppearance, [
+            _languageRow(context, l10n, lib),
             _rowCard(AppSegmentedRow<AppThemeVariant>(
               icon: Icons.palette_rounded,
-              title: '主题',
+              title: l10n.theme,
               segments: [
                 for (final v in AppThemeVariant.values)
                   ButtonSegment(value: v, label: Text(v.shortLabel)),
@@ -71,28 +75,28 @@ class SettingsPage extends StatelessWidget {
               selected: {theme.variant},
               onSelectionChanged: (s) => theme.variant = s.first,
             )),
-            _sliderRow(Icons.crop_square_rounded, '控件圆角', lib.controlRadius,
-                0, 28, 28, (v) => lib.controlRadius = v),
+            _sliderRow(Icons.crop_square_rounded, l10n.controlRadius,
+                lib.controlRadius, 0, 28, 28, (v) => lib.controlRadius = v),
             _switch(
                 Icons.animation_rounded,
-                '开启动画',
-                '入场 / 页面切换 / 翻页等动画;关掉更省电、更跟手',
+                l10n.enableAnimations,
+                l10n.enableAnimationsSub,
                 lib.enableAnimations,
                 (v) => lib.enableAnimations = v),
             _switch(
                 Icons.swipe_vertical_rounded,
-                '滚动动画',
-                '列表滚入淡入/滑入 + 桌面滚轮平滑滚动(受「开启动画」总开关约束)',
+                l10n.scrollAnimations,
+                l10n.scrollAnimationsSub,
                 lib.scrollAnimations,
                 (v) => lib.scrollAnimations = v),
           ]),
           if (isDesktop)
-            _group('桌面', [
-              _sliderRow(Icons.zoom_out_map_rounded, '界面缩放', lib.uiScale, 0.7,
-                  1.6, 18, (v) => lib.uiScale = v, pct: true),
+            _group(l10n.secDesktop, [
+              _sliderRow(Icons.zoom_out_map_rounded, l10n.uiScale, lib.uiScale,
+                  0.7, 1.6, 18, (v) => lib.uiScale = v, pct: true),
               if (isWindows) _fontSelector(context, p, lib),
             ]),
-          _group('阅读', [
+          _group(l10n.secReading, [
             _rowCard(AppSegmentedRow<ReaderMode>(
               icon: Icons.menu_book_rounded,
               title: '阅读模式',
@@ -122,7 +126,7 @@ class SettingsPage extends StatelessWidget {
             _switch(Icons.pin_rounded, '显示页码', '阅读时在角落显示 当前页 / 总页',
                 lib.showPageNumber, (v) => lib.showPageNumber = v),
           ]),
-          _group('书架', [
+          _group(l10n.secBookshelf, [
             _rowCard(AppSegmentedRow<int>(
               icon: Icons.grid_view_rounded,
               title: '每行列数',
@@ -254,7 +258,7 @@ class SettingsPage extends StatelessWidget {
             _tile(Icons.refresh_rounded, '立即检查更新',
                 '当前 v${AppInfo.version}', () => _checkUpdate(context, lib)),
           ]),
-          _group('其它', [
+          _group(l10n.secOther, [
             _tile(
               Icons.receipt_long_rounded,
               '运行日志',
@@ -263,7 +267,7 @@ class SettingsPage extends StatelessWidget {
             ),
             _tile(
               Icons.info_outline_rounded,
-              '关于',
+              l10n.about,
               '${AppInfo.name} · v${AppInfo.version}',
               () => Navigator.of(context).push(
                   appRoute(const AboutPage())),
@@ -343,6 +347,36 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  // 语言选择行:点开弹出四语单选(各语言用自身写法标注)。本机设置,不随云同步。
+  Widget _languageRow(BuildContext context, AppStrings l10n, LibraryStore lib) =>
+      _rowCard(AppSelectRow(
+        icon: Icons.translate_rounded,
+        title: l10n.language,
+        subtitle: l10n.languageSub,
+        value: lib.uiLocale.label,
+        onTap: () async {
+          final picked = await showAppSheet<AppLocale>(
+            context,
+            title: l10n.language,
+            showCloseButton: true,
+            body: (ctx, setSheet) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final loc in AppLocale.values) ...[
+                  AppSelectableRow(
+                    title: loc.label,
+                    selected: loc == lib.uiLocale,
+                    onTap: () => Navigator.of(ctx).pop(loc),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          );
+          if (picked != null) lib.uiLocale = picked;
+        },
+      ));
+
   // 系统内所有字体做成下拉:点开是可搜索的懒加载列表(每条用该字体自身渲染)。
   // 枚举失败(极少)时退回几个 Windows 常见字体,保证仍可选。
   Widget _fontSelector(BuildContext context, AppPalette p, LibraryStore lib) {
@@ -359,7 +393,7 @@ class SettingsPage extends StatelessWidget {
     final label = lib.uiFont.isEmpty ? '系统默认' : lib.uiFont;
     return _rowCard(AppSelectRow(
       icon: Icons.font_download_rounded,
-      title: '字体',
+      title: context.l10n.font,
       value: label,
       contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       // 用选中字体自身渲染右侧值,一眼看清字形。
@@ -373,7 +407,7 @@ class SettingsPage extends StatelessWidget {
       onTap: () async {
         final picked = await showAppSheet<String>(
           context,
-          title: '选择字体',
+          title: context.l10n.chooseFont,
           trailingText: '${fonts.length} 个',
           showCloseButton: true,
           resizeForKeyboard: true,

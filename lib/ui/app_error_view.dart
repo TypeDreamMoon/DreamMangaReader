@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme/app_colors.dart';
+import '../core/l10n/app_strings.dart';
 
 /// 加载 / 请求失败占位:图标 + 标题 +(可复制)详情 +(可选)重试按钮。
 ///
@@ -10,25 +11,31 @@ class AppErrorView extends StatelessWidget {
   const AppErrorView({
     super.key,
     required this.message,
-    this.title = '加载失败',
+    this.title,
     this.icon = Icons.cloud_off_rounded,
     this.onRetry,
-    this.retryLabel = '重试',
+    this.retryLabel,
     this.onDark = false,
     this.selectableMessage = true,
   });
 
   final String message;
-  final String title;
+
+  /// 空 → 当前语言的「加载失败」。
+  final String? title;
   final IconData icon;
   final VoidCallback? onRetry;
-  final String retryLabel;
+
+  /// 空 → 当前语言的「重试」。
+  final String? retryLabel;
   final bool onDark;
   final bool selectableMessage;
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final titleText = title ?? context.l10n.loadFailed;
+    final retryText = retryLabel ?? context.l10n.retry;
     final titleColor = onDark ? Colors.white70 : p.textPrimary;
     final msgColor = onDark ? Colors.white54 : p.textMuted;
     final iconColor = onDark ? Colors.white38 : p.textMuted;
@@ -42,7 +49,7 @@ class AppErrorView extends StatelessWidget {
           children: [
             Icon(icon, size: 40, color: iconColor),
             const SizedBox(height: 12),
-            Text(title,
+            Text(titleText,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: titleColor,
@@ -58,7 +65,7 @@ class AppErrorView extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: Text(retryLabel),
+                label: Text(retryText),
               ),
             ],
           ],

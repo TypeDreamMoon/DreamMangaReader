@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/glass.dart';
 import '../../ui/tab_entrance.dart';
@@ -65,11 +66,12 @@ class _HomeShellState extends State<HomeShell>
     SettingsPage(),
   ];
 
-  static const _dests = [
-    (Icons.collections_bookmark_outlined, Icons.collections_bookmark_rounded, '书架'),
-    (Icons.explore_outlined, Icons.explore_rounded, '发现'),
-    (Icons.download_outlined, Icons.download_rounded, '下载'),
-    (Icons.settings_outlined, Icons.settings_rounded, '设置'),
+  // 图标固定;标签走 l10n(随语言切换),在 build 里组装。
+  static const _icons = [
+    (Icons.collections_bookmark_outlined, Icons.collections_bookmark_rounded),
+    (Icons.explore_outlined, Icons.explore_rounded),
+    (Icons.download_outlined, Icons.download_rounded),
+    (Icons.settings_outlined, Icons.settings_rounded),
   ];
 
   void _select(int i) {
@@ -103,6 +105,13 @@ class _HomeShellState extends State<HomeShell>
       ),
     );
     final p = context.palette;
+    final l10n = context.l10n;
+    final labels = [
+      l10n.navBookshelf,
+      l10n.navDiscover,
+      l10n.navDownloads,
+      l10n.navSettings,
+    ];
     return LayoutBuilder(
       builder: (context, c) {
         final wide = c.maxWidth >= 640; // 横屏/桌面
@@ -123,11 +132,11 @@ class _HomeShellState extends State<HomeShell>
                       labelType: NavigationRailLabelType.all,
                       groupAlignment: -0.85,
                       destinations: [
-                        for (final d in _dests)
+                        for (var i = 0; i < _icons.length; i++)
                           NavigationRailDestination(
-                            icon: Icon(d.$1),
-                            selectedIcon: Icon(d.$2),
-                            label: Text(d.$3),
+                            icon: Icon(_icons[i].$1),
+                            selectedIcon: Icon(_icons[i].$2),
+                            label: Text(labels[i]),
                           ),
                       ],
                     ),
@@ -150,11 +159,11 @@ class _HomeShellState extends State<HomeShell>
               selectedIndex: _index,
               onDestinationSelected: _select,
               destinations: [
-                for (final d in _dests)
+                for (var i = 0; i < _icons.length; i++)
                   NavigationDestination(
-                    icon: Icon(d.$1),
-                    selectedIcon: Icon(d.$2),
-                    label: d.$3,
+                    icon: Icon(_icons[i].$1),
+                    selectedIcon: Icon(_icons[i].$2),
+                    label: labels[i],
                   ),
               ],
             ),
