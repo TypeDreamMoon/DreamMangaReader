@@ -11,9 +11,13 @@ import '../../ui/ui.dart';
 /// 手动搜索 Bangumi 条目并选择。返回选中的 [BangumiCandidate](取消返回 null)。
 /// 自动匹配不准/没匹配到时用;搜不到会给出提示。
 class BangumiSearchSheet extends StatefulWidget {
-  const BangumiSearchSheet({super.key, required this.initialQuery});
+  const BangumiSearchSheet(
+      {super.key, required this.initialQuery, this.type = 1});
 
   final String initialQuery;
+
+  /// bgm.tv 条目类型:1=书籍(漫画/小说,默认),2=动画(番剧)。
+  final int type;
 
   @override
   State<BangumiSearchSheet> createState() => _BangumiSearchSheetState();
@@ -55,7 +59,8 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
       providers: store.translateProviderOrder,
       targets: store.translateTargetsFor(q),
       llm: store.translateLlm,
-      search: BangumiApi.search,
+      search: (q, {bool throwOnError = false}) =>
+          BangumiApi.search(q, throwOnError: throwOnError, type: widget.type),
     );
     if (!mounted) return;
     setState(() {

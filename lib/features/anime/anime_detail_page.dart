@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/bangumi/bangumi_api.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
+import '../common/bangumi_card.dart';
 import '../common/transitions.dart';
+import '../detail/bangumi_search_sheet.dart';
 import '../library/manga_cover.dart';
 import 'anime_player_page.dart';
 
@@ -27,6 +31,10 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
   List<Chapter> _episodes = const [];
   bool _loading = true;
   String? _error;
+
+  // Bangumi(bgm.tv 番剧条目)评分。
+  BangumiInfo? _bgm;
+  bool _bgmLoading = true;
 
   @override
   void initState() {
@@ -55,6 +63,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         _episodes = eps.items;
         _loading = false;
       });
+      _loadBangumi(); // 详情就绪后匹配 Bangumi 番剧条目
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -62,6 +71,52 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         _error = '$e';
       });
     }
+  }
+
+  String get _bgmTitle => (_detail?.title.isNotEmpty ?? false)
+      ? _detail!.title
+      : widget.anime.title;
+  String get _bgmKey => '${widget.meta.id}:${widget.anime.id}';
+
+  /// 匹配 Bangumi:有手动绑定只认它(失败不回退自动匹配),否则按标题在**动画**类目
+  /// (type=2)自动置信匹配。失败静默留空。
+  Future<void> _loadBangumi() async {
+    final bound = LibraryScope.read(context).bangumiBindingFor(_bgmKey);
+    final info = bound != null
+        ? await BangumiApi.fromId(bound)
+        : await BangumiApi.lookup(_bgmTitle, type: 2);
+    if (!mounted) return;
+    setState(() {
+      _bgm = info;
+      _bgmLoading = false;
+    });
+  }
+
+  /// 手动搜索 Bangumi 番剧条目并绑定(自动匹配不准/没匹配到时用)。
+  Future<void> _openBangumiSearch() async {
+    final picked = await showAppSheet<BangumiCandidate>(
+      context,
+      title: '搜索 Bangumi',
+      showCloseButton: true,
+      resizeForKeyboard: true,
+      heightFactor: 0.7,
+      body: (ctx, setSheet) =>
+          BangumiSearchSheet(initialQuery: _bgmTitle, type: 2),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _bgmLoading = true);
+    final info = await BangumiApi.fromId(picked.id);
+    if (!mounted) return;
+    if (info == null) {
+      setState(() => _bgmLoading = false);
+      showAppNotify(context, '加载条目失败', kind: AppNotifyKind.error);
+      return;
+    }
+    LibraryScope.read(context).setBangumiBinding(_bgmKey, picked.id);
+    setState(() {
+      _bgm = info;
+      _bgmLoading = false;
+    });
   }
 
   void _play(int index) => Navigator.of(context).push(appRoute(AnimePlayerPage(
@@ -94,6 +149,12 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
                 _header(p, title),
+                const SizedBox(height: 16),
+                BangumiCard(
+                  loading: _bgmLoading,
+                  info: _bgm,
+                  onRematch: _openBangumiSearch,
+                ),
                 const SizedBox(height: 20),
                 AppSectionHeading('分集', fontSize: 18),
                 const SizedBox(height: 12),

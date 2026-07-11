@@ -74,10 +74,14 @@ class BangumiApi {
   static const _ua =
       'DreamMangaReader/1.0 (https://github.com/TypeDreamMoon/DreamMangaReader)';
 
-  // 制作信息里挑这些键展示(按此顺序),其余噪音字段忽略。
+  // 制作信息里挑这些键展示(按此顺序),其余噪音字段忽略。含漫画向 + 番剧向键。
   static const _infoKeys = <String>[
     '作者',
     '原作',
+    '导演', // 番剧
+    '系列构成', // 番剧
+    '动画制作', // 番剧
+    '放送开始', // 番剧
     '作画',
     '出版社',
     '连载杂志',
@@ -223,8 +227,9 @@ class BangumiApi {
   /// **繁体书名先折简体再搜**:Bangumi 条目中文名基本是简体,繁体直搜常只回无关
   /// 结果(穿越者的幸運禮 搜不到 穿越者的幸运礼,线上实测)。折叠命中排前,
   /// 原文再搜一次补漏(港台版条目),按 id 去重合并。
+  /// [type]:bgm.tv 条目类型。1=书籍(漫画/小说,默认),2=动画(番剧)。
   static Future<List<BangumiCandidate>> search(String rawTitle,
-      {bool throwOnError = false}) async {
+      {bool throwOnError = false, int type = 1}) async {
     final title = _cleanTitle(rawTitle);
     if (title.isEmpty) return const [];
     final folded = ChineseFold.fold(title);
@@ -232,7 +237,8 @@ class BangumiApi {
     final out = <BangumiCandidate>[];
     final seen = <int>{};
     for (final q in queries) {
-      for (final c in await _searchOne(q, throwOnError: throwOnError)) {
+      for (final c
+          in await _searchOne(q, throwOnError: throwOnError, type: type)) {
         if (seen.add(c.id)) out.add(c);
       }
     }
@@ -241,12 +247,12 @@ class BangumiApi {
 
   /// 单次关键词搜索(不折叠;非 200 一律算接口错误,按 [throwOnError] 抛出或返回空)。
   static Future<List<BangumiCandidate>> _searchOne(String title,
-      {bool throwOnError = false}) async {
+      {bool throwOnError = false, int type = 1}) async {
     try {
       final r = await _dio.get<dynamic>(
         'https://api.bgm.tv/search/subject/${Uri.encodeComponent(title)}',
         queryParameters: {
-          'type': 1, // 1=书籍(漫画/小说)
+          'type': type, // 1=书籍(漫画/小说) 2=动画(番剧)
           'responseGroup': 'large',
           'max_results': 12,
         },
@@ -298,12 +304,12 @@ class BangumiApi {
   /// 标题自动置信匹配 → 拉完整详情。匹配不上/无评分返回 null。
   /// [throwOnError]=true 时网络/接口错误抛出——null 就真的只表示「没匹配上」。
   static Future<BangumiInfo?> lookup(String rawTitle,
-      {bool throwOnError = false}) async {
+      {bool throwOnError = false, int type = 1}) async {
     final title = _cleanTitle(rawTitle);
     if (title.length < 2) return null;
     final nq = _norm(title);
     if (nq.length < 2) return null;
-    final cands = await search(rawTitle, throwOnError: throwOnError);
+    final cands = await search(rawTitle, throwOnError: throwOnError, type: type);
     // 置信匹配里挑评分人数最多的(主条目通常票最多)。
     BangumiCandidate? best;
     var bestVotes = -1;
