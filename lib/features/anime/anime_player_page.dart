@@ -64,6 +64,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   bool _loading = true;
   String? _error;
 
+  // DASH 外挂音轨(B站):记住待挂载的音频 URL,在**首帧开播后**(demuxer 就绪)才挂,
+  // 而非 open() 一返回就挂 —— 冷启时主流 demuxer 还没建好,过早的 audio-add 会被静默丢弃
+  // (表现为「第一次进没声音」)。以 playing 首次 true 作为「主流已就绪」的信号。
+  String? _pendingAudioUrl;
+  bool _audioAttached = false;
+
   // 诊断:流订阅 + 采样定时器 + 卡顿计数。
   final List<StreamSubscription<dynamic>> _diag = [];
   Timer? _diagTimer;
@@ -73,6 +79,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   void initState() {
     super.initState();
     _startDiag(); // 先订阅,别漏掉 open 早期事件
+    // DASH 外挂音轨挂载(非诊断态也要):tracks 事件 = mpv 已探明当前文件的音视频流 =
+    // 主流 demuxer 就绪,此刻 audio-add 才生效(冷启时 open() 一返回就挂会被丢弃 → 没声音)。
+    // 每次 open() 重新探流都会再发一次 tracks 事件,故换集/换清晰度都会触发重挂;幂等。
+    _diag.add(_player.stream.tracks.listen((_) => _attachPendingAudio()));
     // 关键:_tuneBuffering 不能 gate 住 _load —— setProperty 内部会
     // `await videoControllerCompleter`,而该 completer 要等 open() 后 VO 就绪才完成;
     // 若先 await 调优再 open,就成了「调优等 VO、VO 等 open、open 等调优」的死锁 → 永远不播。
@@ -205,6 +215,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
 
   Future<void> _play(VideoTrack t) async {
     _current = t;
+    // 待挂载音轨随本次播放复位;非 DASH(audioUrl 空)则清空,new open() 会重置轨道无残留。
+    _audioAttached = false;
+    _pendingAudioUrl =
+        (t.audioUrl != null && t.audioUrl!.isNotEmpty) ? t.audioUrl : null;
     await _applyNetOptions(); // 关键:open 前配 mpv UA + 代理,否则 CDN 重置连接
     _av('open url=${t.url}');
     _av('    headers=${t.headers ?? "(无)"} ua=浏览器');
@@ -216,21 +230,25 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       _av('!! open 抛错 用时${sw.elapsedMilliseconds}ms: $e');
       rethrow;
     }
-    // DASH(如 B站高清):音视频分离,视频轨无声,需把音频流当**外挂音轨**挂上。
-    // 必须在 open(loadfile)**之后**用 `audio-add`(setAudioTrack→audio-add 命令,
-    // 参数是字面量 argv,不会被拆);切勿用 `audio-files` 属性——它是 path-list,
-    // Android/Linux 下按 `:` 分隔符会把 `https://` URL 切碎导致挂载失败(静音)。
-    // 新的 open() 会 loadfile 重置,上一集/上一清晰度的外挂音轨自动失效,无需手动清理。
-    final au = t.audioUrl;
-    if (au != null && au.isNotEmpty) {
-      try {
-        await _player.setAudioTrack(AudioTrack.uri(au));
-        _av('外挂音轨已挂载(DASH)');
-      } catch (e) {
-        _av('!! 外挂音轨挂载失败: $e');
-      }
-    }
+    // DASH 外挂音轨不在这里挂 —— 见 _attachPendingAudio(在首帧开播后挂,避开冷启竞态)。
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// 把 [_pendingAudioUrl] 作为外挂音轨挂到当前已开播的文件上。用 `audio-add`
+  /// (setAudioTrack→audio-add 命令,字面量 argv 不会被路径分隔符拆),**不用** `audio-files`
+  /// 属性(path-list,Android 按 `:` 会切碎 https URL)。playing 首次 true 后调用,确保
+  /// 主流 demuxer 已就绪、audio-add 不被丢弃。幂等:每次播放只挂一次。
+  Future<void> _attachPendingAudio() async {
+    final au = _pendingAudioUrl;
+    if (au == null || au.isEmpty || _audioAttached) return;
+    _audioAttached = true; // 先占位防重入;失败再回滚,等下个 playing 事件重试
+    try {
+      await _player.setAudioTrack(AudioTrack.uri(au));
+      _av('外挂音轨已挂载(DASH)');
+    } catch (e) {
+      _audioAttached = false;
+      _av('!! 外挂音轨挂载失败: $e');
+    }
   }
 
   void _go(int delta) {
