@@ -64,6 +64,56 @@ function Assert-SafeFileName {
     return $FileName
 }
 
+function Assert-GiteeTarget {
+    param(
+        [Parameter(Mandatory)][string]$Owner,
+        [Parameter(Mandatory)][string]$Repository
+    )
+
+    if ($Owner -cne 'TypeDreamMoon' -or $Repository -cne 'DreamMangaReader') {
+        throw "拒绝发布到未授权仓库：$Owner/$Repository"
+    }
+    return $true
+}
+
+function Compare-RemoteAttachments {
+    param(
+        [Parameter(Mandatory)][object[]]$Local,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Remote
+    )
+
+    $remoteByName = @{}
+    foreach ($item in $Remote) {
+        $name = [string]$item.name
+        [void](Assert-SafeFileName $name)
+        $key = $name.ToLowerInvariant()
+        if ($remoteByName.ContainsKey($key)) {
+            throw "远端存在重复附件名：$name"
+        }
+        $remoteByName[$key] = $item
+    }
+
+    $missing = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $Local) {
+        $name = if ($null -ne $item.PSObject.Properties['Name']) { [string]$item.Name } else { [string]$item.name }
+        $length = if ($null -ne $item.PSObject.Properties['Length']) { [long]$item.Length } else { [long]$item.size }
+        [void](Assert-SafeFileName $name)
+        if (!(Test-GiteeAttachmentSize -Bytes $length)) {
+            throw "Gitee 附件超过 100 MiB：$name"
+        }
+        $key = $name.ToLowerInvariant()
+        if (!$remoteByName.ContainsKey($key)) {
+            $missing.Add($item)
+            continue
+        }
+        $remoteLength = [long]$remoteByName[$key].size
+        if ($remoteLength -ne $length) {
+            throw "远端同名附件大小冲突：$name（本地 $length，远端 $remoteLength）"
+        }
+    }
+    return $missing.ToArray()
+}
+
 function Read-ReleaseVersion {
     param([Parameter(Mandatory)][string]$PubspecPath)
 

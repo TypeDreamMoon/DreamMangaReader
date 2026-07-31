@@ -34,6 +34,27 @@ Assert-Throws { Assert-SafeFileName '..\package.apk' } 'path traversal'
 Assert-Equal 10013 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 13) 'universal code'
 Assert-Equal 10013 (Get-AndroidSplitBaseBuildNumber -PubspecBuildNumber 13) 'split base'
 Assert-Throws { Get-AndroidUniversalBuildNumber -PubspecBuildNumber 0 } 'invalid Android build number'
+Assert-Equal $true (Assert-GiteeTarget -Owner TypeDreamMoon -Repository DreamMangaReader) 'Gitee target'
+Assert-Throws { Assert-GiteeTarget -Owner someone -Repository DreamMangaReader } 'wrong Gitee owner'
+
+$localAttachments = @(
+    [pscustomobject]@{ Name = 'a.apk'; Length = 12 },
+    [pscustomobject]@{ Name = 'b.exe'; Length = 34 }
+)
+$missingAttachments = @(Compare-RemoteAttachments -Local $localAttachments -Remote @(
+    [pscustomobject]@{ name = 'a.apk'; size = 12 }
+))
+Assert-Equal 1 $missingAttachments.Count 'one missing attachment'
+Assert-Equal 'b.exe' $missingAttachments[0].Name 'missing attachment name'
+Assert-Equal 0 @(Compare-RemoteAttachments -Local $localAttachments -Remote @(
+    [pscustomobject]@{ name = 'a.apk'; size = 12 },
+    [pscustomobject]@{ name = 'b.exe'; size = 34 }
+)).Count 'complete attachments'
+Assert-Throws {
+    Compare-RemoteAttachments -Local $localAttachments -Remote @(
+        [pscustomobject]@{ name = 'a.apk'; size = 99 }
+    )
+} 'same-name size conflict'
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-release-tests-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
