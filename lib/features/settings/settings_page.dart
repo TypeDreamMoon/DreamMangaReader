@@ -357,13 +357,19 @@ class SettingsPage extends StatelessWidget {
   Future<void> _checkUpdate(BuildContext context, LibraryStore lib) async {
     showAppNotify(context, context.l10n.set_checkingUpdate,
         icon: Icons.sync_rounded, duration: const Duration(seconds: 6));
-    final info = await UpdateService.check(includeBeta: lib.updateIncludeBeta);
+    final result =
+        await UpdateService.check(includeBeta: lib.updateIncludeBeta);
     if (!context.mounted) return;
-    if (info == null) {
-      showAppNotify(context, context.l10n.set_upToDate,
-          kind: AppNotifyKind.success);
-    } else {
-      await showUpdateDialog(context, info);
+    switch (result.state) {
+      case UpdateCheckState.updateAvailable:
+        final candidate = result.candidate;
+        if (candidate != null) await showUpdateDialog(context, candidate);
+      case UpdateCheckState.upToDate:
+        showAppNotify(context, context.l10n.set_upToDate,
+            kind: AppNotifyKind.success);
+      case UpdateCheckState.failed:
+        showAppNotify(context, '检查更新失败：${result.error}',
+            kind: AppNotifyKind.error);
     }
   }
 

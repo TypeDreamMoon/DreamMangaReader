@@ -48,8 +48,14 @@ class _HomeShellState extends State<HomeShell>
     if (!mounted) return;
     final lib = LibraryScope.read(context);
     if (!lib.autoCheckUpdate) return;
-    final info = await UpdateService.check(includeBeta: lib.updateIncludeBeta);
-    if (info != null && mounted) await showUpdateDialog(context, info);
+    final result =
+        await UpdateService.check(includeBeta: lib.updateIncludeBeta);
+    final candidate = result.candidate;
+    if (result.state == UpdateCheckState.updateAvailable &&
+        candidate != null &&
+        mounted) {
+      await showUpdateDialog(context, candidate);
+    }
   }
 
   @override

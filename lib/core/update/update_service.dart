@@ -11,162 +11,74 @@ import '../../ui/ui.dart';
 import '../log/app_log.dart';
 import 'update_installer.dart';
 import 'update_models.dart';
+import 'update_release_client.dart';
+import 'update_resolver.dart';
 
-/// 一个可更新的版本。
-class UpdateInfo {
-  const UpdateInfo({
-    required this.tag,
-    required this.version,
-    required this.url,
-    required this.notes,
-    required this.prerelease,
-    this.assets = const [],
-  });
+enum UpdateCheckState { updateAvailable, upToDate, failed }
 
-  final String tag; // v1.2.0
-  final String version; // 1.2.0
-  final String url; // release 页面
-  final String notes; // 更新说明(release body)
-  final bool prerelease; // 是否测试版
-  final List<RemoteAsset> assets; // release 附件(APK / setup.exe),应用内更新用
+class UpdateCheckResult {
+  const UpdateCheckResult(this.state, {this.candidate, this.error});
+
+  final UpdateCheckState state;
+  final UpdateCandidate? candidate;
+  final UpdateResolutionException? error;
 }
 
-/// 检查 GitHub Releases 有没有比当前更新的版本。
+/// 检查 Gitee 和 GitHub Releases 有没有比当前更新的版本。
 class UpdateService {
   UpdateService._();
 
-  static const _owner = 'TypeDreamMoon';
-  static const _repo = 'DreamMangaReader';
-
-  static final Dio _dio = Dio(BaseOptions(
-    headers: {
-      'Accept': 'application/vnd.github+json',
-      'User-Agent': 'DreamMangaReader-UpdateCheck',
-    },
-    connectTimeout: const Duration(seconds: 12),
-    receiveTimeout: const Duration(seconds: 12),
-    validateStatus: (_) => true,
-  ));
-
   /// 查最新版本。[includeBeta]=true 时把预发布(-beta/-rc/-alpha)也算进来。
   /// **当前若本身是预发布,自动包含预发布**——beta 用户就该收到 beta 更新。
-  /// 返回严格比当前版本高(含 -beta.N 逐级比较)的最高版本;已是最新 / 失败返回 null。
-  static Future<UpdateInfo?> check({bool includeBeta = false}) async {
+  /// 网络或来源错误会明确返回 [UpdateCheckState.failed]，不会伪装成最新版。
+  static Future<UpdateCheckResult> check({
+    bool includeBeta = false,
+    UpdateSource preferredSource = UpdateSource.gitee,
+  }) async {
     AppLog.i.info(LogCat.update, '检查更新…${includeBeta ? '(含测试版)' : ''}');
     try {
-      final r = await _dio.get<dynamic>(
-        'https://api.github.com/repos/$_owner/$_repo/releases',
-        queryParameters: {'per_page': 20},
+      final candidate = await UpdateResolver(
+        gitee: GiteeReleaseClient(),
+        github: GitHubReleaseClient(),
+      ).resolve(
+        currentVersion: AppInfo.version,
+        preferred: preferredSource,
+        includeBeta: includeBeta,
       );
-      if (r.statusCode != 200 || r.data is! List) return null;
-      final list = (r.data as List).whereType<Map>().cast<Map<String, dynamic>>();
-
-      final wantBeta = includeBeta || isPrerelease(AppInfo.version);
-
-      // 遍历所有 release,挑「非草稿、允许的类型、版本号严格更高」里**版本最高**的
-      // (release 列表通常按时间倒序,但版本号未必单调,故按版本号取最大)。
-      UpdateInfo? best;
-      for (final rel in list) {
-        if (rel['draft'] == true) continue;
-        final pre = rel['prerelease'] == true;
-        if (pre && !wantBeta) continue;
-        final tag = (rel['tag_name'] ?? '').toString();
-        if (compareVersions(tag, AppInfo.version) <= 0) continue; // 不比当前新
-        if (best != null && compareVersions(tag, best.tag) <= 0) continue;
-        final assets = <RemoteAsset>[
-          for (final a in (rel['assets'] as List? ?? const []))
-            if (a is Map &&
-                a['name'] != null &&
-                a['browser_download_url'] != null)
-              RemoteAsset(
-                name: a['name'].toString(),
-                url: a['browser_download_url'].toString(),
-                size: _assetSize(a['size']),
-              ),
-        ];
-        best = UpdateInfo(
-          tag: tag,
-          version: tag.replaceFirst(RegExp(r'^v'), ''),
-          url: (rel['html_url'] ??
-                  'https://github.com/$_owner/$_repo/releases')
-              .toString(),
-          notes: (rel['body'] ?? '').toString().trim(),
-          prerelease: pre,
-          assets: assets,
-        );
-      }
-      if (best != null) {
-        AppLog.i.success(LogCat.update, '发现新版本 ${best.tag}(当前 v${AppInfo.version})');
-      } else {
+      if (candidate == null) {
         AppLog.i.info(LogCat.update, '已是最新版 · v${AppInfo.version}');
+        return const UpdateCheckResult(UpdateCheckState.upToDate);
       }
-      return best;
-    } catch (e) {
-      AppLog.i.err(LogCat.update, '检查更新失败', detail: '$e');
-      return null;
+      AppLog.i.success(
+        LogCat.update,
+        '发现新版本 ${candidate.tag}(当前 v${AppInfo.version}，${candidate.source.displayName})',
+      );
+      for (final warning in candidate.warnings) {
+        AppLog.i.warn(LogCat.update, warning);
+      }
+      return UpdateCheckResult(
+        UpdateCheckState.updateAvailable,
+        candidate: candidate,
+      );
+    } on UpdateResolutionException catch (error) {
+      AppLog.i.err(LogCat.update, '检查更新失败', detail: '$error');
+      return UpdateCheckResult(UpdateCheckState.failed, error: error);
     }
   }
 
   /// 当前 tag/版本是否为预发布(带 -beta/-rc/-alpha 后缀)。
-  static bool isPrerelease(String s) =>
-      RegExp(r'-(?:beta|rc|alpha)', caseSensitive: false).hasMatch(s);
+  static bool isPrerelease(String value) =>
+      UpdateVersion.tryParse(value)?.isPrerelease ?? false;
 
   /// 语义化版本比较:先比 major.minor.patch;base 相等时正式版 > 预发布,预发布之间
   /// 按标识符逐段比(beta.3 < beta.4、beta.9 < beta.10、alpha < beta)。a>b 正、a<b 负、相等 0。
-  static int compareVersions(String a, String b) {
-    final (baseA, preA) = _semver(a);
-    final (baseB, preB) = _semver(b);
-    for (var i = 0; i < 3; i++) {
-      if (baseA[i] != baseB[i]) return baseA[i] - baseB[i];
-    }
-    if (preA.isEmpty && preB.isEmpty) return 0;
-    if (preA.isEmpty) return 1; // 正式版 > 预发布
-    if (preB.isEmpty) return -1;
-    final n = preA.length < preB.length ? preA.length : preB.length;
-    for (var i = 0; i < n; i++) {
-      final x = preA[i], y = preB[i];
-      final xn = int.tryParse(x), yn = int.tryParse(y);
-      if (xn != null && yn != null) {
-        if (xn != yn) return xn - yn; // 数字段按数值
-      } else if (xn != null) {
-        return -1; // 数字标识符 < 字母标识符
-      } else if (yn != null) {
-        return 1;
-      } else {
-        final c = x.compareTo(y);
-        if (c != 0) return c;
-      }
-    }
-    return preA.length - preB.length; // 前缀相同时,少标识符者更小
-  }
-
-  /// "v1.2.0-beta.3+5" → ([1,2,0], ['beta','3'])。忽略 build 元数据(+…)。
-  static (List<int>, List<String>) _semver(String s) {
-    var t = s.trim().replaceFirst(RegExp(r'^v'), '');
-    final plus = t.indexOf('+');
-    if (plus >= 0) t = t.substring(0, plus);
-    final dash = t.indexOf('-');
-    final basePart = dash >= 0 ? t.substring(0, dash) : t;
-    final preRaw = dash >= 0 ? t.substring(dash + 1) : '';
-    final m = RegExp(r'(\d+)\.(\d+)\.(\d+)').firstMatch(basePart);
-    final base = m == null
-        ? const [0, 0, 0]
-        : [
-            int.parse(m.group(1)!),
-            int.parse(m.group(2)!),
-            int.parse(m.group(3)!)
-          ];
-    final pre = preRaw.isEmpty ? const <String>[] : preRaw.split('.');
-    return (base, pre);
-  }
-
-  static int _assetSize(Object? value) =>
-      value is int ? value : int.tryParse(value?.toString() ?? '') ?? 0;
+  static int compareVersions(String a, String b) =>
+      UpdateVersion.parse(a).compareTo(UpdateVersion.parse(b));
 }
 
 /// 弹出「发现新版本」对话框:版本 + 更新说明 + **应用内一键更新**(下载进度),
 /// 不支持自更新的平台 / 缺少对应附件时退回浏览器下载页。
-Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) {
+Future<void> showUpdateDialog(BuildContext context, UpdateCandidate info) {
   return showDialog<void>(
     context: context,
     barrierDismissible: false, // 下载/安装中别被点外面误关(尤其 Windows 会自杀重启)
@@ -176,7 +88,7 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) {
 
 class _UpdateDialog extends StatefulWidget {
   const _UpdateDialog({required this.info});
-  final UpdateInfo info;
+  final UpdateCandidate info;
 
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
@@ -235,7 +147,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   void _openPage() {
-    launchUrl(Uri.parse(widget.info.url), mode: LaunchMode.externalApplication);
+    launchUrl(Uri.parse(widget.info.pageUrl),
+        mode: LaunchMode.externalApplication);
   }
 
   @override
