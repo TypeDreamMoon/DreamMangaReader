@@ -17,6 +17,7 @@ import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
 import '../common/transitions.dart';
+import '../../core/update/update_models.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
 import 'about_page.dart';
@@ -265,6 +266,7 @@ class SettingsPage extends StatelessWidget {
                 () => _showCacheSheet(context)),
           ]),
           _group(l10n.set_secUpdate, [
+            _updateSourceRow(context, l10n, lib),
             _switch(Icons.system_update_rounded, l10n.set_autoCheckUpdate,
                 l10n.set_autoCheckUpdateSub,
                 lib.autoCheckUpdate, (v) => lib.autoCheckUpdate = v),
@@ -357,8 +359,10 @@ class SettingsPage extends StatelessWidget {
   Future<void> _checkUpdate(BuildContext context, LibraryStore lib) async {
     showAppNotify(context, context.l10n.set_checkingUpdate,
         icon: Icons.sync_rounded, duration: const Duration(seconds: 6));
-    final result =
-        await UpdateService.check(includeBeta: lib.updateIncludeBeta);
+    final result = await UpdateService.check(
+      includeBeta: lib.updateIncludeBeta,
+      preferredSource: lib.updateSource,
+    );
     if (!context.mounted) return;
     switch (result.state) {
       case UpdateCheckState.updateAvailable:
@@ -371,6 +375,44 @@ class SettingsPage extends StatelessWidget {
         showAppNotify(context, '检查更新失败：${result.error}',
             kind: AppNotifyKind.error);
     }
+  }
+
+  Widget _updateSourceRow(
+    BuildContext context,
+    AppLocalizations l10n,
+    LibraryStore lib,
+  ) {
+    String label(UpdateSource source) => source == UpdateSource.gitee
+        ? l10n.set_updateSourceGitee
+        : l10n.set_updateSourceGitHub;
+
+    return _rowCard(AppSelectRow(
+      icon: Icons.cloud_download_rounded,
+      title: l10n.set_updateSource,
+      subtitle: l10n.set_updateSourceSub(lib.updateSource.displayName),
+      value: label(lib.updateSource),
+      onTap: () async {
+        final picked = await showAppSheet<UpdateSource>(
+          context,
+          title: l10n.set_updateSource,
+          showCloseButton: true,
+          body: (ctx, setSheet) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final source in UpdateSource.values) ...[
+                AppSelectableRow(
+                  title: label(source),
+                  selected: source == lib.updateSource,
+                  onTap: () => Navigator.of(ctx).pop(source),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        );
+        if (picked != null) lib.updateSource = picked;
+      },
+    ));
   }
 
   // 语言选择行:点开弹出四语单选(各语言用自身写法标注)。本机设置,不随云同步。

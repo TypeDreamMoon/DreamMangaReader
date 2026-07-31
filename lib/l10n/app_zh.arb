@@ -868,6 +868,15 @@
   "set_clearCache": "清理缓存",
   "set_clearCacheSub": "查看占用 · 分类清理",
   "set_secUpdate": "更新",
+  "set_updateSource": "更新源",
+  "set_updateSourceSub": "首选 {source}，不可用时自动切换备用源",
+  "@set_updateSourceSub": {
+    "placeholders": {
+      "source": {}
+    }
+  },
+  "set_updateSourceGitee": "Gitee / 国内默认源",
+  "set_updateSourceGitHub": "GitHub / 备用源",
   "set_autoCheckUpdate": "自动检查更新",
   "set_autoCheckUpdateSub": "启动时后台检查有无新版本",
   "set_includeBeta": "包含测试版",

@@ -9,6 +9,7 @@ import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
 import '../core/translate/translator.dart'
     show TranslateProvider, TranslateLang, LlmConfig, detectLang;
+import '../core/update/update_models.dart';
 
 /// 阅读模式:paged=横向翻页(默认),webtoon=纵向连续滚动(条漫)。
 /// 阅读模式:paged=普通横翻(左→右),pagedRtl=日漫横翻(右→左),webtoon=滚动竖读。
@@ -198,6 +199,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kScrollAnimations = 'lib.scrollAnimations'; // 滚动动画(滚入+平滑滚轮)
   static const _kAutoCheckUpdate = 'lib.autoCheckUpdate'; // 启动自动检查更新
   static const _kUpdateIncludeBeta = 'lib.updateIncludeBeta'; // 检查更新含测试版
+  static const _kUpdateSource = 'lib.updateSource'; // 首选更新源(另一源始终自动回退)
   static const _kUiScale = 'lib.uiScale'; // 桌面:界面文字缩放
   static const _kUiFont = 'lib.uiFont'; // 桌面:字体族(空=跟随回退栈)
   static const _kUiLocale = 'lib.uiLocale'; // 界面语言(本机设置,不随云同步)
@@ -266,6 +268,7 @@ class LibraryStore extends ChangeNotifier {
   bool _scrollAnimations = true; // 列表滚动动画:滚入淡入/滑入 + 桌面滚轮平滑滚动
   bool _autoCheckUpdate = true; // 启动时自动检查更新
   bool _updateIncludeBeta = false; // 检查更新是否含测试版(-beta/-rc)
+  UpdateSource _updateSource = UpdateSource.gitee; // 国内默认 Gitee，GitHub 自动备用
   double _detailTintStrength = 0.55; // 详情页封面色融合强度(0=纯底色/黑,1=纯封面色)
   bool _readerGestures = true; // 阅读器左右点击翻页
   bool _readerGestureHintSeen = false; // 首次进入阅读器的手势提示是否已展示
@@ -336,6 +339,7 @@ class LibraryStore extends ChangeNotifier {
   bool get scrollAnimations => _scrollAnimations;
   bool get autoCheckUpdate => _autoCheckUpdate;
   bool get updateIncludeBeta => _updateIncludeBeta;
+  UpdateSource get updateSource => _updateSource;
   double get detailTintStrength => _detailTintStrength;
   bool get readerGestures => _readerGestures;
   bool get readerGestureHintSeen => _readerGestureHintSeen;
@@ -665,6 +669,14 @@ class LibraryStore extends ChangeNotifier {
       scrollAnimationsEnabled = _enableAnimations && _scrollAnimations;
       _autoCheckUpdate = prefs.getBool(_kAutoCheckUpdate) ?? true;
       _updateIncludeBeta = prefs.getBool(_kUpdateIncludeBeta) ?? false;
+      final savedUpdateSource = prefs.getString(_kUpdateSource);
+      _updateSource = switch (savedUpdateSource) {
+        'github' => UpdateSource.github,
+        _ => UpdateSource.gitee,
+      };
+      if (savedUpdateSource != _updateSource.name) {
+        await prefs.setString(_kUpdateSource, _updateSource.name);
+      }
       _detailTintStrength =
           (prefs.getDouble(_kDetailTintStrength) ?? 0.55).clamp(0, 1);
       _readerGestures = prefs.getBool(_kReaderGestures) ?? true;
@@ -916,6 +928,13 @@ class LibraryStore extends ChangeNotifier {
     if (v == _updateIncludeBeta) return;
     _updateIncludeBeta = v;
     _prefs?.setBool(_kUpdateIncludeBeta, v);
+    notifyListeners();
+  }
+
+  set updateSource(UpdateSource v) {
+    if (v == _updateSource) return;
+    _updateSource = v;
+    _prefs?.setString(_kUpdateSource, v.name);
     notifyListeners();
   }
 
@@ -1284,6 +1303,7 @@ class LibraryStore extends ChangeNotifier {
         'scrollAnimations': _scrollAnimations,
         'autoCheckUpdate': _autoCheckUpdate,
         'updateIncludeBeta': _updateIncludeBeta,
+        'updateSource': _updateSource.name,
         'detailTintStrength': _detailTintStrength,
         'readerGestures': _readerGestures,
         'volumeKeyPaging': _volumeKeyPaging,
@@ -1378,6 +1398,12 @@ class LibraryStore extends ChangeNotifier {
     scrollAnimationsEnabled = _enableAnimations && _scrollAnimations;
     _autoCheckUpdate = j['autoCheckUpdate'] as bool? ?? _autoCheckUpdate;
     _updateIncludeBeta = j['updateIncludeBeta'] as bool? ?? _updateIncludeBeta;
+    if (j.containsKey('updateSource')) {
+      _updateSource = switch (j['updateSource']) {
+        'github' => UpdateSource.github,
+        _ => UpdateSource.gitee,
+      };
+    }
     _detailTintStrength =
         (j['detailTintStrength'] as num?)?.toDouble() ?? _detailTintStrength;
     _readerGestures = j['readerGestures'] as bool? ?? _readerGestures;
@@ -1486,6 +1512,7 @@ class LibraryStore extends ChangeNotifier {
     _prefs?.setBool(_kScrollAnimations, _scrollAnimations);
     _prefs?.setBool(_kAutoCheckUpdate, _autoCheckUpdate);
     _prefs?.setBool(_kUpdateIncludeBeta, _updateIncludeBeta);
+    _prefs?.setString(_kUpdateSource, _updateSource.name);
     _prefs?.setDouble(_kDetailTintStrength, _detailTintStrength);
     _prefs?.setBool(_kReaderGestures, _readerGestures);
     _prefs?.setBool(_kVolumeKeyPaging, _volumeKeyPaging);
