@@ -1,5 +1,6 @@
 package com.dreammoon.dream_manga_reader
 
+import android.os.Build
 import android.view.KeyEvent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -11,6 +12,7 @@ import io.flutter.plugin.common.MethodChannel
  */
 class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
+    private var platformChannel: MethodChannel? = null
     private var volumeKeyPaging = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -22,6 +24,17 @@ class MainActivity : FlutterActivity() {
                         volumeKeyPaging = call.arguments as? Boolean ?: false
                         result.success(null)
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        platformChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PLATFORM_CHANNEL
+        ).apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "supportedAbis" -> result.success(Build.SUPPORTED_ABIS.toList())
                     else -> result.notImplemented()
                 }
             }
@@ -53,5 +66,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "dream_manga_reader/reader_keys"
+        private const val PLATFORM_CHANNEL = "dream_manga_reader/platform"
     }
 }
