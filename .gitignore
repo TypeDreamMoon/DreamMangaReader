@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/android/build/
 
 # Symbolication related
 app.*.symbols
@@ -52,6 +53,8 @@ sources_local/
 
 # Windows 打包产物(zip / setup.exe)
 /dist/
+/ReleaseOutput/
+/Scripts/*.response.json
 
 # flutter gen-l10n 生成物(源在 lib/l10n/*.arb;pub get 时自动重新生成)
 /lib/l10n/app_localizations*.dart
