@@ -11,6 +11,9 @@
 #ifndef SourceDir
   #define SourceDir "..\..\build\windows\x64\runner\Release"
 #endif
+#ifndef OutputDir
+  #define OutputDir "..\..\dist"
+#endif
 #define MyAppName "Dream Manga Reader"
 #define MyAppExeName "dream_manga_reader.exe"
 #define MyAppPublisher "TypeDreamMoon"
@@ -30,7 +33,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
-OutputDir=..\..\dist
+OutputDir={#OutputDir}
 OutputBaseFilename=DreamMangaReader-windows-x64-setup
 SetupIconFile=..\..\windows\runner\resources\app_icon.ico
 Compression=lzma2/max

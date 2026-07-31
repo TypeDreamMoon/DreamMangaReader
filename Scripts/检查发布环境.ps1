@@ -67,11 +67,23 @@ if ($Platform -in @('All', 'Windows')) {
     }
     else { $null }
     Write-Check 'Visual Studio C++' (![string]::IsNullOrWhiteSpace($vsInstall)) $(if ($vsInstall) { $vsInstall } else { '未找到 C++ x64 工具集' })
+    $vsAtlInstall = if ($vswhere) {
+        (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.ATL -property installationPath | Select-Object -First 1)
+    }
+    else { $null }
+    Write-Check 'Visual Studio ATL' (![string]::IsNullOrWhiteSpace($vsAtlInstall)) $(if ($vsAtlInstall) { $vsAtlInstall } else { '缺少包含 atlstr.h 的 ATL 组件' })
 
-    $nugetPath = Find-CommandPath 'nuget.exe'
+    $nugetCandidates = @(
+        $env:DREAMMANGAREADER_NUGET,
+        (Join-Path $repoRoot '.tools\nuget.exe'),
+        (Find-CommandPath 'nuget.exe')
+    ) | Where-Object { ![string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    $nugetPath = $nugetCandidates | Select-Object -First 1
     Write-Check 'NuGet' (![string]::IsNullOrWhiteSpace($nugetPath)) $(if ($nugetPath) { $nugetPath } else { 'PATH 中未找到 nuget.exe' })
 
     $innoCandidates = @(
+        $env:DREAMMANGAREADER_ISCC,
+        (Join-Path $repoRoot '.tools\inno\ISCC.exe'),
         (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
         (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
         (Find-CommandPath 'ISCC.exe')

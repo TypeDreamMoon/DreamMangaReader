@@ -35,6 +35,21 @@ function Test-GiteeAttachmentSize {
     return $Bytes -ge 0 -and $Bytes -le $script:GiteeAttachmentLimitBytes
 }
 
+function Get-AndroidUniversalBuildNumber {
+    param([Parameter(Mandatory)][int]$PubspecBuildNumber)
+
+    if ($PubspecBuildNumber -le 0 -or $PubspecBuildNumber -ge 1000) {
+        throw "pubspec build number 必须在 1..999：$PubspecBuildNumber"
+    }
+    return 10000 + $PubspecBuildNumber
+}
+
+function Get-AndroidSplitBaseBuildNumber {
+    param([Parameter(Mandatory)][int]$PubspecBuildNumber)
+
+    return Get-AndroidUniversalBuildNumber -PubspecBuildNumber $PubspecBuildNumber
+}
+
 function Assert-SafeFileName {
     param([Parameter(Mandatory)][string]$FileName)
 

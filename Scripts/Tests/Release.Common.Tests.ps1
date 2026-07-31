@@ -31,10 +31,24 @@ Assert-Equal $true (Test-GiteeAttachmentSize -Bytes 100MB) 'at limit'
 Assert-Equal $false (Test-GiteeAttachmentSize -Bytes 101MB) 'over limit'
 Assert-Equal 'package.apk' (Assert-SafeFileName 'package.apk') 'safe file name'
 Assert-Throws { Assert-SafeFileName '..\package.apk' } 'path traversal'
+Assert-Equal 10013 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 13) 'universal code'
+Assert-Equal 10013 (Get-AndroidSplitBaseBuildNumber -PubspecBuildNumber 13) 'split base'
+Assert-Throws { Get-AndroidUniversalBuildNumber -PubspecBuildNumber 0 } 'invalid Android build number'
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-release-tests-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
+    $pubspecFixture = Join-Path $tempRoot 'pubspec.yaml'
+    $appInfoFixture = Join-Path $tempRoot 'app_info.dart'
+    "name: fixture`nversion: 1.3.1+13`n" | Set-Content -LiteralPath $pubspecFixture -Encoding UTF8
+    "class AppInfo { static const version = '1.3.1'; }`n" | Set-Content -LiteralPath $appInfoFixture -Encoding UTF8
+    $releaseVersion = Assert-VersionAgreement -Version 'v1.3.1' -PubspecPath $pubspecFixture -AppInfoPath $appInfoFixture
+    Assert-Equal 13 $releaseVersion.BuildNumber 'version agreement build number'
+    "class AppInfo { static const version = '1.3.0'; }`n" | Set-Content -LiteralPath $appInfoFixture -Encoding UTF8
+    Assert-Throws {
+        Assert-VersionAgreement -Version '1.3.1' -PubspecPath $pubspecFixture -AppInfoPath $appInfoFixture
+    } 'version disagreement'
+
     $assetPath = Join-Path $tempRoot 'package.apk'
     [System.IO.File]::WriteAllBytes($assetPath, [byte[]](1, 2, 3))
     Assert-Equal '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81' (Get-FileSha256 $assetPath) 'file SHA'
