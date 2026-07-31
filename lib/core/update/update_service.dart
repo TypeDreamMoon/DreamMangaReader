@@ -9,6 +9,8 @@ import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
 import '../log/app_log.dart';
+import 'update_asset_selector.dart';
+import 'update_downloader.dart';
 import 'update_installer.dart';
 import 'update_models.dart';
 import 'update_release_client.dart';
@@ -101,12 +103,12 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   String? _error;
   CancelToken? _cancel; // 下载取消令牌
 
-  RemoteAsset? get _asset => UpdateInstaller.pickAsset(widget.info.assets);
-  bool get _canInApp => UpdateInstaller.supported && _asset != null;
+  bool get _canInApp =>
+      UpdateInstaller.supported &&
+      widget.info.integrity == UpdateIntegrity.manifest &&
+      widget.info.manifest != null;
 
   Future<void> _startUpdate() async {
-    final asset = _asset;
-    if (asset == null) return;
     final store = LibraryScope.read(context); // Windows exit(0) 前用它落盘
     final cancel = _cancel = CancelToken();
     setState(() {
@@ -115,13 +117,23 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       _progress = 0;
     });
     try {
-      await UpdateInstaller.downloadAndInstall(
+      final platform =
+          Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
+      final asset = await const UpdateAssetSelector().select(
+        platform: platform,
+        assets: widget.info.resolveAssets(platform),
+      );
+      if (asset == null) throw Exception('没有适用于当前设备的更新包');
+      final package = await UpdateDownloader().download(
         asset,
         cancelToken: cancel,
-        onBeforeExit: () => store.flushPending(),
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
+      );
+      await UpdateInstaller.install(
+        package,
+        onBeforeExit: () => store.flushPending(),
       );
       // Android:到这 = 安装器已打开;Windows:静默安装前进程已退出,一般到不了这里。
       if (mounted) {
