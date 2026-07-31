@@ -10,6 +10,7 @@ import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
 import '../log/app_log.dart';
 import 'update_installer.dart';
+import 'update_models.dart';
 
 /// 一个可更新的版本。
 class UpdateInfo {
@@ -27,7 +28,7 @@ class UpdateInfo {
   final String url; // release 页面
   final String notes; // 更新说明(release body)
   final bool prerelease; // 是否测试版
-  final List<UpdateAsset> assets; // release 附件(APK / setup.exe),应用内更新用
+  final List<RemoteAsset> assets; // release 附件(APK / setup.exe),应用内更新用
 }
 
 /// 检查 GitHub Releases 有没有比当前更新的版本。
@@ -72,13 +73,16 @@ class UpdateService {
         final tag = (rel['tag_name'] ?? '').toString();
         if (compareVersions(tag, AppInfo.version) <= 0) continue; // 不比当前新
         if (best != null && compareVersions(tag, best.tag) <= 0) continue;
-        final assets = <UpdateAsset>[
+        final assets = <RemoteAsset>[
           for (final a in (rel['assets'] as List? ?? const []))
             if (a is Map &&
                 a['name'] != null &&
                 a['browser_download_url'] != null)
-              UpdateAsset(
-                  a['name'].toString(), a['browser_download_url'].toString()),
+              RemoteAsset(
+                name: a['name'].toString(),
+                url: a['browser_download_url'].toString(),
+                size: _assetSize(a['size']),
+              ),
         ];
         best = UpdateInfo(
           tag: tag,
@@ -155,6 +159,9 @@ class UpdateService {
     final pre = preRaw.isEmpty ? const <String>[] : preRaw.split('.');
     return (base, pre);
   }
+
+  static int _assetSize(Object? value) =>
+      value is int ? value : int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 /// 弹出「发现新版本」对话框:版本 + 更新说明 + **应用内一键更新**(下载进度),
@@ -182,7 +189,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   String? _error;
   CancelToken? _cancel; // 下载取消令牌
 
-  UpdateAsset? get _asset => UpdateInstaller.pickAsset(widget.info.assets);
+  RemoteAsset? get _asset => UpdateInstaller.pickAsset(widget.info.assets);
   bool get _canInApp => UpdateInstaller.supported && _asset != null;
 
   Future<void> _startUpdate() async {

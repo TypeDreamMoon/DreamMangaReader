@@ -5,12 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Release 的一个可下载附件(名 + 直链)。
-class UpdateAsset {
-  const UpdateAsset(this.name, this.url);
-  final String name;
-  final String url;
-}
+import 'update_models.dart';
 
 /// 应用内更新:下载新版并唤起安装。
 ///
@@ -41,7 +36,7 @@ class UpdateInstaller {
   /// --split-per-abi 分包档(1000~4000+n),从任何安装来源升级都不会撞
   /// 「无法降级安装」。**别改成挑分档 APK**——装过 5000 档 universal 的设备
   /// 再装分包就是降级,一键更新会永久失败。
-  static UpdateAsset? pickAsset(List<UpdateAsset> assets) {
+  static RemoteAsset? pickAsset(List<RemoteAsset> assets) {
     if (Platform.isAndroid) {
       return _firstWhere(
               assets, (a) => a.name.toLowerCase().endsWith('-universal.apk')) ??
@@ -54,8 +49,8 @@ class UpdateInstaller {
     return null;
   }
 
-  static UpdateAsset? _firstWhere(
-      List<UpdateAsset> xs, bool Function(UpdateAsset) f) {
+  static RemoteAsset? _firstWhere(
+      List<RemoteAsset> xs, bool Function(RemoteAsset) f) {
     for (final x in xs) {
       if (f(x)) return x;
     }
@@ -66,7 +61,7 @@ class UpdateInstaller {
   /// [cancelToken] 供调用方取消下载;[onBeforeExit] 在 Windows 静默安装 exit(0) 前调用
   /// (落盘未保存状态)。Android:装完由系统安装器接手;Windows:见 [_installWindows]。
   static Future<void> downloadAndInstall(
-    UpdateAsset asset, {
+    RemoteAsset asset, {
     required void Function(double progress) onProgress,
     CancelToken? cancelToken,
     Future<void> Function()? onBeforeExit,
