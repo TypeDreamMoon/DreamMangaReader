@@ -8,11 +8,11 @@ enum UpdateIntegrity { manifest, legacy }
 enum UpdatePlatform { windows, android }
 
 /// 更新来源的显示信息和回退来源。
-class UpdateSourceInfo {
-  const UpdateSourceInfo({required this.displayName, this.fallback});
+extension UpdateSourceInfo on UpdateSource {
+  String get displayName => this == UpdateSource.gitee ? 'Gitee' : 'GitHub';
 
-  final String displayName;
-  final UpdateSource? fallback;
+  UpdateSource get fallback =>
+      this == UpdateSource.gitee ? UpdateSource.github : UpdateSource.gitee;
 }
 
 /// 远程 Release 暴露的附件。
@@ -116,8 +116,14 @@ class UpdateManifest {
   });
 
   static const _appId = 'DreamMangaReader';
+  static const _numericIdentifier = r'(?:0|[1-9]\d*)';
+  static const _nonNumericIdentifier = r'(?:\d*[A-Za-z-][0-9A-Za-z-]*)';
+  static const _prereleaseIdentifier =
+      '(?:$_numericIdentifier|$_nonNumericIdentifier)';
   static final _versionPattern = RegExp(
-    r'^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)(?:\.\d+)?)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$',
+    '^$_numericIdentifier\\.$_numericIdentifier\\.$_numericIdentifier'
+    '(?:-$_prereleaseIdentifier(?:\\.$_prereleaseIdentifier)*)?'
+    r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$',
   );
   static final _sha256Pattern = RegExp(r'^[0-9a-fA-F]{64}$');
 
@@ -172,40 +178,40 @@ class UpdateManifest {
   /// 为 [platform] 的每个清单附件绑定同名远程附件。
   ///
   /// 附件名仅按不区分大小写的 basename 比较；远程大小必须与清单一致。
-  ResolvedUpdateAsset resolve(
+  List<ResolvedUpdateAsset> resolve(
     UpdatePlatform platform,
     List<RemoteAsset> remoteAssets,
   ) {
-    final manifestAsset = assets.cast<ManifestAsset?>().firstWhere(
-          (asset) => asset!.platform == platform,
-          orElse: () => null,
-        );
-    if (manifestAsset == null) {
+    final manifestAssets =
+        assets.where((asset) => asset.platform == platform).toList();
+    if (manifestAssets.isEmpty) {
       throw const FormatException(
           'No update manifest asset for this platform.');
     }
 
-    final wantedName = manifestAsset.fileName.toLowerCase();
-    RemoteAsset? remoteAsset;
-    for (final candidate in remoteAssets) {
-      if (_basename(candidate.name).toLowerCase() == wantedName) {
-        remoteAsset = candidate;
-        break;
+    return List.unmodifiable(manifestAssets.map((manifestAsset) {
+      final wantedName = manifestAsset.fileName.toLowerCase();
+      RemoteAsset? remoteAsset;
+      for (final candidate in remoteAssets) {
+        if (_basename(candidate.name).toLowerCase() == wantedName) {
+          remoteAsset = candidate;
+          break;
+        }
       }
-    }
-    if (remoteAsset == null) {
-      throw const FormatException('Release is missing a manifest asset.');
-    }
-    if (remoteAsset.size != manifestAsset.sizeBytes) {
-      throw const FormatException(
-          'Release asset size does not match manifest.');
-    }
+      if (remoteAsset == null) {
+        throw const FormatException('Release is missing a manifest asset.');
+      }
+      if (remoteAsset.size != manifestAsset.sizeBytes) {
+        throw const FormatException(
+            'Release asset size does not match manifest.');
+      }
 
-    return ResolvedUpdateAsset.fromManifest(
-      manifestAsset,
-      url: remoteAsset.url,
-      sourceName: remoteAsset.name,
-    );
+      return ResolvedUpdateAsset.fromManifest(
+        manifestAsset,
+        url: remoteAsset.url,
+        sourceName: remoteAsset.name,
+      );
+    }));
   }
 
   static ManifestAsset _parseAsset(Map<String, dynamic> json) {
