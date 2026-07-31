@@ -902,6 +902,37 @@
   "set_export": "导出",
   "set_checkingUpdate": "正在检查更新…",
   "set_upToDate": "已是最新版本",
+  "update_foundTitle": "发现新版本 {tag}",
+  "@update_foundTitle": {
+    "placeholders": {
+      "tag": {}
+    }
+  },
+  "update_sourceGitee": "Gitee",
+  "update_sourceGitHubFallback": "GitHub / 备用源",
+  "update_preparing": "正在匹配当前设备的更新包…",
+  "update_noNotes": "暂无更新说明。",
+  "update_noCompatibleAsset": "没有适用于当前设备的自动更新包，可前往发布页手动下载。",
+  "update_primary": "一键更新",
+  "update_downloadingProgress": "下载中 {percent}%",
+  "@update_downloadingProgress": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "update_verifying": "正在校验安装包…",
+  "update_launchingWindows": "校验完成 · 正在启动安装程序…",
+  "update_launchingAndroid": "校验完成 · 正在打开系统安装器…",
+  "update_installerOpened": "安装器已打开，请按提示完成安装",
+  "update_failed": "更新失败：{error}",
+  "@update_failed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "update_sourcesFailed": "Gitee 和 GitHub 均不可用，请稍后重试。",
   "set_cacheBody": "只清缓存,不动已下载章节与书架数据。",
   "set_imgCache": "图片缓存",
   "set_imgCacheSub": "封面 / 章节图",

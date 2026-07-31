@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +8,7 @@ import '../../app/app_info.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
+import '../l10n/app_strings.dart';
 import '../log/app_log.dart';
 import 'update_asset_selector.dart';
 import 'update_downloader.dart';
@@ -78,186 +79,322 @@ class UpdateService {
       UpdateVersion.parse(a).compareTo(UpdateVersion.parse(b));
 }
 
-/// 弹出「发现新版本」对话框:版本 + 更新说明 + **应用内一键更新**(下载进度),
-/// 不支持自更新的平台 / 缺少对应附件时退回浏览器下载页。
-Future<void> showUpdateDialog(BuildContext context, UpdateCandidate info) {
+typedef UpdateDownloadCallback = Future<File> Function(
+  ResolvedUpdateAsset asset, {
+  required CancelToken cancelToken,
+  required void Function(double progress) onProgress,
+});
+
+typedef UpdateInstallCallback = Future<void> Function(
+  File package, {
+  Future<void> Function()? onBeforeExit,
+});
+
+typedef UpdateManualCallback = Future<void> Function(Uri uri);
+
+@immutable
+class UpdateDialogDependencies {
+  const UpdateDialogDependencies({
+    required this.download,
+    required this.install,
+    required this.openManual,
+  });
+
+  final UpdateDownloadCallback download;
+  final UpdateInstallCallback install;
+  final UpdateManualCallback openManual;
+
+  static UpdateDialogDependencies production() => UpdateDialogDependencies(
+        download: (
+          asset, {
+          required cancelToken,
+          required onProgress,
+        }) =>
+            UpdateDownloader().download(
+          asset,
+          cancelToken: cancelToken,
+          onProgress: onProgress,
+        ),
+        install: (package, {onBeforeExit}) => UpdateInstaller.install(
+          package,
+          onBeforeExit: onBeforeExit,
+        ),
+        openManual: (uri) async {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        },
+      );
+}
+
+enum _UpdateStage {
+  preparing,
+  idle,
+  downloading,
+  verifying,
+  launching,
+  complete,
+  error,
+}
+
+/// 弹出「发现新版本」对话框并在应用内完成下载、校验和安装器启动。
+Future<void> showUpdateDialog(
+  BuildContext context,
+  UpdateCandidate info, {
+  UpdateDialogDependencies? dependencies,
+}) {
   return showDialog<void>(
     context: context,
-    barrierDismissible: false, // 下载/安装中别被点外面误关(尤其 Windows 会自杀重启)
-    builder: (ctx) => _UpdateDialog(info: info),
+    barrierDismissible: false,
+    builder: (ctx) => _UpdateDialog(
+      info: info,
+      dependencies: dependencies ?? UpdateDialogDependencies.production(),
+    ),
   );
 }
 
 class _UpdateDialog extends StatefulWidget {
-  const _UpdateDialog({required this.info});
+  const _UpdateDialog({required this.info, required this.dependencies});
+
   final UpdateCandidate info;
+  final UpdateDialogDependencies dependencies;
 
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
 
 class _UpdateDialogState extends State<_UpdateDialog> {
-  double _progress = 0; // 0~1;-1 = 总量未知
-  bool _busy = false; // 正在下载/安装
-  bool _launched = false; // Android:安装器已打开
+  _UpdateStage _stage = _UpdateStage.preparing;
+  double _progress = 0;
+  ResolvedUpdateAsset? _asset;
   String? _error;
-  CancelToken? _cancel; // 下载取消令牌
+  CancelToken? _cancel;
 
-  bool get _canInApp =>
-      UpdateInstaller.supported &&
-      widget.info.integrity == UpdateIntegrity.manifest &&
-      widget.info.manifest != null;
+  bool get _busy => switch (_stage) {
+        _UpdateStage.downloading ||
+        _UpdateStage.verifying ||
+        _UpdateStage.launching =>
+          true,
+        _ => false,
+      };
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareAsset();
+  }
+
+  Future<void> _prepareAsset() async {
+    ResolvedUpdateAsset? selected;
+    if (UpdateInstaller.supported &&
+        widget.info.integrity == UpdateIntegrity.manifest &&
+        widget.info.manifest != null) {
+      final platform =
+          Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
+      try {
+        selected = await const UpdateAssetSelector().select(
+          platform: platform,
+          assets: widget.info.resolveAssets(platform),
+        );
+      } on FormatException {
+        selected = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _asset = selected;
+      _stage = _UpdateStage.idle;
+    });
+  }
 
   Future<void> _startUpdate() async {
-    final store = LibraryScope.read(context); // Windows exit(0) 前用它落盘
+    final asset = _asset;
+    if (asset == null) return;
     final cancel = _cancel = CancelToken();
     setState(() {
-      _busy = true;
+      _stage = _UpdateStage.downloading;
       _error = null;
       _progress = 0;
     });
     try {
-      final platform =
-          Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
-      final asset = await const UpdateAssetSelector().select(
-        platform: platform,
-        assets: widget.info.resolveAssets(platform),
-      );
-      if (asset == null) throw Exception('没有适用于当前设备的更新包');
-      final package = await UpdateDownloader().download(
+      final package = await widget.dependencies.download(
         asset,
         cancelToken: cancel,
         onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
+          if (!mounted) return;
+          setState(() {
+            _progress = p;
+            if (p >= 1) _stage = _UpdateStage.verifying;
+          });
         },
       );
-      await UpdateInstaller.install(
+      if (cancel.isCancelled) {
+        if (mounted) setState(() => _stage = _UpdateStage.idle);
+        return;
+      }
+      if (mounted) setState(() => _stage = _UpdateStage.launching);
+      await widget.dependencies.install(
         package,
-        onBeforeExit: () => store.flushPending(),
+        onBeforeExit: () => LibraryScope.read(context).flushPending(),
       );
-      // Android:到这 = 安装器已打开;Windows:静默安装前进程已退出,一般到不了这里。
       if (mounted) {
         setState(() {
-          _launched = true;
-          _busy = false;
+          _stage = _UpdateStage.complete;
         });
       }
     } on DioException catch (e) {
-      // 用户主动取消:不当错误,复位即可。
-      if (e.type != DioExceptionType.cancel && mounted) {
-        setState(() => _error = '$e');
-      }
-      if (mounted) setState(() => _busy = false);
+      if (!mounted) return;
+      setState(() {
+        if (e.type == DioExceptionType.cancel) {
+          _stage = _UpdateStage.idle;
+        } else {
+          _error = '$e';
+          _stage = _UpdateStage.error;
+        }
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = '$e';
-          _busy = false;
+          _stage = _UpdateStage.error;
         });
       }
     }
   }
 
-  void _openPage() {
-    launchUrl(Uri.parse(widget.info.pageUrl),
-        mode: LaunchMode.externalApplication);
-  }
+  Future<void> _openPage() =>
+      widget.dependencies.openManual(Uri.parse(widget.info.pageUrl));
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final l10n = context.l10n;
+    final screen = MediaQuery.sizeOf(context);
+    final contentWidth = (screen.width * 0.78).clamp(280.0, 480.0);
+    final contentHeight = (screen.height * 0.45).clamp(220.0, 320.0);
+    final sourceLabel = widget.info.source == UpdateSource.gitee
+        ? l10n.update_sourceGitee
+        : l10n.update_sourceGitHubFallback;
     return AlertDialog(
       backgroundColor: p.surface,
       title: Text(
-        '发现新版本 ${widget.info.tag}${widget.info.prerelease ? ' · 测试版' : ''}',
+        l10n.update_foundTitle(widget.info.tag),
         style: TextStyle(
             color: p.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
       ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Flexible(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 320),
+      content: SizedBox(
+        width: contentWidth,
+        height: contentHeight,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              sourceLabel,
+              style: TextStyle(
+                color: p.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
               child: SingleChildScrollView(
                 child: widget.info.notes.isEmpty
-                    ? Text('暂无更新说明。',
+                    ? Text(l10n.update_noNotes,
                         style: TextStyle(
                             color: p.textMuted, fontSize: 12.5, height: 1.5))
-                    // Release Note 是 Markdown,渲染成带样式的富文本。
                     : MarkdownView(widget.info.notes),
               ),
             ),
-          ),
-          if (_busy) ...[
-            const SizedBox(height: 16),
-            LinearProgressIndicator(
-              value: _progress >= 0 ? _progress : null,
-              backgroundColor: p.line,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _progress >= 1.0
-                  ? (Theme.of(context).platform == TargetPlatform.windows
-                      ? '下载完成 · 正在安装并重启…'
-                      : '下载完成 · 正在打开安装器…')
-                  : _progress >= 0
-                      ? '下载中 ${(_progress * 100).round()}%'
-                      : '下载中…',
-              style: TextStyle(color: p.textMuted, fontSize: 12),
-            ),
-          ],
-          if (_launched) ...[
             const SizedBox(height: 12),
-            Text('安装器已打开,按提示完成安装即可',
-                style: TextStyle(color: p.textPrimary, fontSize: 12.5)),
+            if (_busy) ...[
+              LinearProgressIndicator(
+                value: _progress,
+                backgroundColor: p.line,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _statusText(l10n),
+                style: TextStyle(color: p.textMuted, fontSize: 12),
+              ),
+            ] else if (_stage == _UpdateStage.complete)
+              Text(
+                l10n.update_installerOpened,
+                style: TextStyle(color: p.textPrimary, fontSize: 12.5),
+              )
+            else if (_stage == _UpdateStage.error)
+              Text(
+                l10n.update_failed(_error ?? ''),
+                style: TextStyle(color: p.statusFail, fontSize: 12),
+              )
+            else if (_stage == _UpdateStage.idle && _asset == null)
+              Text(
+                l10n.update_noCompatibleAsset,
+                style: TextStyle(color: p.textMuted, fontSize: 12),
+              )
+            else if (_stage == _UpdateStage.preparing)
+              Text(
+                l10n.update_preparing,
+                style: TextStyle(color: p.textMuted, fontSize: 12),
+              ),
           ],
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text('更新失败:$_error',
-                style: TextStyle(color: p.statusFail, fontSize: 12)),
-          ],
-        ],
+        ),
       ),
       actions: _actions(),
     );
   }
 
+  String _statusText(AppLocalizations l10n) => switch (_stage) {
+        _UpdateStage.downloading =>
+          l10n.update_downloadingProgress((_progress * 100).round()),
+        _UpdateStage.verifying => l10n.update_verifying,
+        _UpdateStage.launching => Platform.isWindows
+            ? l10n.update_launchingWindows
+            : l10n.update_launchingAndroid,
+        _ => '',
+      };
+
   List<Widget> _actions() {
-    if (_busy) {
-      // Windows 装好会自杀重启,没法「后台边用边更」→ 给「取消」(停下载、留在原版);
-      // Android 装完只是弹系统安装器、不动本进程 → 可「后台」继续下载。
+    final l10n = context.l10n;
+    if (_stage == _UpdateStage.downloading ||
+        _stage == _UpdateStage.verifying) {
       return [
-        Platform.isWindows
-            ? TextButton(
-                onPressed: () => _cancel?.cancel('user'),
-                child: const Text('取消'),
-              )
-            : TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('后台'),
-              ),
+        TextButton(
+          key: const Key('update-cancel'),
+          onPressed: () => _cancel?.cancel('user'),
+          child: Text(l10n.cancel),
+        ),
       ];
     }
-    if (_launched) {
+    if (_stage == _UpdateStage.launching) return const [];
+    if (_stage == _UpdateStage.complete) {
       return [
         TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('完成')),
+            child: Text(l10n.done)),
       ];
     }
     return [
       TextButton(
         onPressed: () => Navigator.of(context).pop(),
-        child: const Text('稍后'),
+        child: Text(l10n.later),
       ),
-      if (_error != null || !_canInApp)
-        TextButton(onPressed: _openPage, child: const Text('去下载页')),
-      if (_canInApp)
+      if (_stage == _UpdateStage.error ||
+          (_stage == _UpdateStage.idle && _asset == null))
+        TextButton(
+          key: const Key('update-manual'),
+          onPressed: _openPage,
+          child: Text(l10n.goDownloadPage),
+        ),
+      if (_stage == _UpdateStage.idle && _asset != null)
         FilledButton(
+          key: const Key('update-primary'),
           onPressed: _startUpdate,
-          child: Text(_error != null ? '重试' : '一键更新'),
+          child: Text(l10n.update_primary),
+        ),
+      if (_stage == _UpdateStage.error && _asset != null)
+        FilledButton(
+          key: const Key('update-retry'),
+          onPressed: _startUpdate,
+          child: Text(l10n.retry),
         ),
     ];
   }

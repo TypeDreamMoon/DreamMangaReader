@@ -63,237 +63,276 @@ class SettingsPage extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.only(top: topInset),
           child: AppScrollView(
-        padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
-        children: [
-          _group(l10n.secAppearance, [
-            _languageRow(context, l10n, lib),
-            _rowCard(AppSegmentedRow<AppThemeVariant>(
-              icon: Icons.palette_rounded,
-              title: l10n.theme,
-              segments: [
-                for (final v in AppThemeVariant.values)
-                  ButtonSegment(value: v, label: Text(v.shortLabel)),
-              ],
-              selected: {theme.variant},
-              onSelectionChanged: (s) => theme.variant = s.first,
-            )),
-            _sliderRow(Icons.crop_square_rounded, l10n.controlRadius,
-                lib.controlRadius, 0, 28, 28, (v) => lib.controlRadius = v),
-            _switch(
-                Icons.animation_rounded,
-                l10n.enableAnimations,
-                l10n.enableAnimationsSub,
-                lib.enableAnimations,
-                (v) => lib.enableAnimations = v),
-            _switch(
-                Icons.swipe_vertical_rounded,
-                l10n.scrollAnimations,
-                l10n.scrollAnimationsSub,
-                lib.scrollAnimations,
-                (v) => lib.scrollAnimations = v),
-          ]),
-          if (isDesktop)
-            _group(l10n.secDesktop, [
-              _sliderRow(Icons.zoom_out_map_rounded, l10n.uiScale, lib.uiScale,
-                  0.7, 1.6, 18, (v) => lib.uiScale = v, pct: true),
-              if (isWindows) _fontSelector(context, p, lib),
-            ]),
-          _group(l10n.secReading, [
-            _rowCard(AppSegmentedRow<ReaderMode>(
-              icon: Icons.menu_book_rounded,
-              title: l10n.reader_mode,
-              segments: [
-                ButtonSegment(
-                    value: ReaderMode.paged,
-                    label: Text(l10n.reader_modeNormal),
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 15)),
-                ButtonSegment(
-                    value: ReaderMode.pagedRtl,
-                    label: Text(l10n.reader_modeManga),
-                    icon: const Icon(Icons.arrow_back_rounded, size: 15)),
-                ButtonSegment(
-                    value: ReaderMode.webtoon,
-                    label: Text(l10n.reader_modeWebtoon),
-                    icon: const Icon(Icons.arrow_downward_rounded, size: 15)),
-              ],
-              selected: {lib.readerMode},
-              onSelectionChanged: (s) => lib.readerMode = s.first,
-            )),
-            _sliderRow(Icons.download_for_offline_rounded, l10n.set_preloadPages,
-                lib.preload.toDouble(), 0, 8, 8, (v) => lib.preload = v.round()),
-            _switch(Icons.auto_stories_rounded, l10n.set_doublePage,
-                l10n.set_doublePageSub,
-                lib.doublePage, (v) => lib.doublePage = v),
-            _switch(Icons.zoom_in_rounded, l10n.set_doubleTapZoom,
-                l10n.set_doubleTapZoomSub,
-                lib.doubleTapZoom, (v) => lib.doubleTapZoom = v),
-            _switch(Icons.pin_rounded, l10n.set_showPageNumber,
-                l10n.set_showPageNumberSub,
-                lib.showPageNumber, (v) => lib.showPageNumber = v),
-          ]),
-          _group(l10n.secBookshelf, [
-            _rowCard(AppSegmentedRow<int>(
-              icon: Icons.grid_view_rounded,
-              title: l10n.set_gridColumns,
-              subtitle: l10n.set_gridColumnsSub,
-              segments: [
-                ButtonSegment(value: 0, label: Text(l10n.set_colAuto)),
-                const ButtonSegment(value: 3, label: Text('3')),
-                const ButtonSegment(value: 4, label: Text('4')),
-                const ButtonSegment(value: 5, label: Text('5')),
-                const ButtonSegment(value: 6, label: Text('6')),
-              ],
-              selected: {lib.gridColumns},
-              onSelectionChanged: (s) => lib.gridColumns = s.first,
-            )),
-            _sliderRow(Icons.rounded_corner_rounded, l10n.set_coverRadius,
-                lib.coverRadius, 0, 24, 12, (v) => lib.coverRadius = v),
-            _rowCard(AppSegmentedRow<FeedLayout>(
-              icon: Icons.dashboard_customize_rounded,
-              title: l10n.set_coverLayout,
-              subtitle: l10n.set_coverLayoutSub,
-              segments: [
-                ButtonSegment(
-                    value: FeedLayout.masonry,
-                    label: Text(l10n.set_layoutMasonry)),
-                ButtonSegment(
-                    value: FeedLayout.grid, label: Text(l10n.set_layoutGrid)),
-                ButtonSegment(
-                    value: FeedLayout.list, label: Text(l10n.set_layoutList)),
-              ],
-              selected: {lib.feedLayout},
-              onSelectionChanged: (s) => lib.feedLayout = s.first,
-            )),
-            _switch(
-                Icons.source_rounded,
-                l10n.set_showSourcePicker,
-                l10n.set_showSourcePickerSub,
-                lib.showSourcePicker,
-                (v) => lib.showSourcePicker = v),
-          ]),
-          _group(l10n.set_secBackground, [
-            _tile(
-              Icons.wallpaper_rounded,
-              l10n.set_bgImage,
-              lib.bgImage.isEmpty
-                  ? l10n.set_bgImageEmpty
-                  : lib.bgImage.split(Platform.pathSeparator).last,
-              () => _pickBg(lib),
-            ),
-            if (lib.bgImage.isNotEmpty) ...[
-              _rowCard(AppListRow(
-                icon: Icons.close_rounded,
-                title: l10n.set_clearBg,
-                onTap: () => lib.bgImage = '',
-                showChevron: false,
-                contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              )),
-              _sliderRow(Icons.blur_on_rounded, l10n.set_bgBlur, lib.bgBlur, 0,
-                  40, 40, (v) => lib.bgBlur = v),
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                child: Row(
-                  children: [
-                    Icon(Icons.palette_rounded, size: 16, color: p.textMuted),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(l10n.set_bgTintHint,
-                          style: TextStyle(color: p.textMuted, fontSize: 11)),
-                    ),
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + bottomInset),
+            children: [
+              _group(l10n.secAppearance, [
+                _languageRow(context, l10n, lib),
+                _rowCard(AppSegmentedRow<AppThemeVariant>(
+                  icon: Icons.palette_rounded,
+                  title: l10n.theme,
+                  segments: [
+                    for (final v in AppThemeVariant.values)
+                      ButtonSegment(value: v, label: Text(v.shortLabel)),
                   ],
+                  selected: {theme.variant},
+                  onSelectionChanged: (s) => theme.variant = s.first,
+                )),
+                _sliderRow(Icons.crop_square_rounded, l10n.controlRadius,
+                    lib.controlRadius, 0, 28, 28, (v) => lib.controlRadius = v),
+                _switch(
+                    Icons.animation_rounded,
+                    l10n.enableAnimations,
+                    l10n.enableAnimationsSub,
+                    lib.enableAnimations,
+                    (v) => lib.enableAnimations = v),
+                _switch(
+                    Icons.swipe_vertical_rounded,
+                    l10n.scrollAnimations,
+                    l10n.scrollAnimationsSub,
+                    lib.scrollAnimations,
+                    (v) => lib.scrollAnimations = v),
+              ]),
+              if (isDesktop)
+                _group(l10n.secDesktop, [
+                  _sliderRow(Icons.zoom_out_map_rounded, l10n.uiScale,
+                      lib.uiScale, 0.7, 1.6, 18, (v) => lib.uiScale = v,
+                      pct: true),
+                  if (isWindows) _fontSelector(context, p, lib),
+                ]),
+              _group(l10n.secReading, [
+                _rowCard(AppSegmentedRow<ReaderMode>(
+                  icon: Icons.menu_book_rounded,
+                  title: l10n.reader_mode,
+                  segments: [
+                    ButtonSegment(
+                        value: ReaderMode.paged,
+                        label: Text(l10n.reader_modeNormal),
+                        icon:
+                            const Icon(Icons.arrow_forward_rounded, size: 15)),
+                    ButtonSegment(
+                        value: ReaderMode.pagedRtl,
+                        label: Text(l10n.reader_modeManga),
+                        icon: const Icon(Icons.arrow_back_rounded, size: 15)),
+                    ButtonSegment(
+                        value: ReaderMode.webtoon,
+                        label: Text(l10n.reader_modeWebtoon),
+                        icon:
+                            const Icon(Icons.arrow_downward_rounded, size: 15)),
+                  ],
+                  selected: {lib.readerMode},
+                  onSelectionChanged: (s) => lib.readerMode = s.first,
+                )),
+                _sliderRow(
+                    Icons.download_for_offline_rounded,
+                    l10n.set_preloadPages,
+                    lib.preload.toDouble(),
+                    0,
+                    8,
+                    8,
+                    (v) => lib.preload = v.round()),
+                _switch(
+                    Icons.auto_stories_rounded,
+                    l10n.set_doublePage,
+                    l10n.set_doublePageSub,
+                    lib.doublePage,
+                    (v) => lib.doublePage = v),
+                _switch(
+                    Icons.zoom_in_rounded,
+                    l10n.set_doubleTapZoom,
+                    l10n.set_doubleTapZoomSub,
+                    lib.doubleTapZoom,
+                    (v) => lib.doubleTapZoom = v),
+                _switch(
+                    Icons.pin_rounded,
+                    l10n.set_showPageNumber,
+                    l10n.set_showPageNumberSub,
+                    lib.showPageNumber,
+                    (v) => lib.showPageNumber = v),
+              ]),
+              _group(l10n.secBookshelf, [
+                _rowCard(AppSegmentedRow<int>(
+                  icon: Icons.grid_view_rounded,
+                  title: l10n.set_gridColumns,
+                  subtitle: l10n.set_gridColumnsSub,
+                  segments: [
+                    ButtonSegment(value: 0, label: Text(l10n.set_colAuto)),
+                    const ButtonSegment(value: 3, label: Text('3')),
+                    const ButtonSegment(value: 4, label: Text('4')),
+                    const ButtonSegment(value: 5, label: Text('5')),
+                    const ButtonSegment(value: 6, label: Text('6')),
+                  ],
+                  selected: {lib.gridColumns},
+                  onSelectionChanged: (s) => lib.gridColumns = s.first,
+                )),
+                _sliderRow(Icons.rounded_corner_rounded, l10n.set_coverRadius,
+                    lib.coverRadius, 0, 24, 12, (v) => lib.coverRadius = v),
+                _rowCard(AppSegmentedRow<FeedLayout>(
+                  icon: Icons.dashboard_customize_rounded,
+                  title: l10n.set_coverLayout,
+                  subtitle: l10n.set_coverLayoutSub,
+                  segments: [
+                    ButtonSegment(
+                        value: FeedLayout.masonry,
+                        label: Text(l10n.set_layoutMasonry)),
+                    ButtonSegment(
+                        value: FeedLayout.grid,
+                        label: Text(l10n.set_layoutGrid)),
+                    ButtonSegment(
+                        value: FeedLayout.list,
+                        label: Text(l10n.set_layoutList)),
+                  ],
+                  selected: {lib.feedLayout},
+                  onSelectionChanged: (s) => lib.feedLayout = s.first,
+                )),
+                _switch(
+                    Icons.source_rounded,
+                    l10n.set_showSourcePicker,
+                    l10n.set_showSourcePickerSub,
+                    lib.showSourcePicker,
+                    (v) => lib.showSourcePicker = v),
+              ]),
+              _group(l10n.set_secBackground, [
+                _tile(
+                  Icons.wallpaper_rounded,
+                  l10n.set_bgImage,
+                  lib.bgImage.isEmpty
+                      ? l10n.set_bgImageEmpty
+                      : lib.bgImage.split(Platform.pathSeparator).last,
+                  () => _pickBg(lib),
                 ),
-              ),
-              _sliderRow(Icons.opacity_rounded, l10n.set_bgTintAlpha,
-                  lib.bgTintAlpha, 0, 1, 20, (v) => lib.bgTintAlpha = v,
-                  pct: true),
-              _sliderRow(Icons.gradient_rounded, l10n.set_detailTint,
-                  lib.detailTintStrength, 0, 1, 20,
-                  (v) => lib.detailTintStrength = v, pct: true),
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                child: Text(l10n.set_detailTintHint,
-                    style: TextStyle(color: p.textMuted, fontSize: 11)),
-              ),
-              _switch(
-                  Icons.auto_stories_rounded,
-                  l10n.set_readerBg,
-                  l10n.set_readerBgSub,
-                  lib.readerBackground,
-                  (v) => lib.readerBackground = v),
+                if (lib.bgImage.isNotEmpty) ...[
+                  _rowCard(AppListRow(
+                    icon: Icons.close_rounded,
+                    title: l10n.set_clearBg,
+                    onTap: () => lib.bgImage = '',
+                    showChevron: false,
+                    contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                  )),
+                  _sliderRow(Icons.blur_on_rounded, l10n.set_bgBlur, lib.bgBlur,
+                      0, 40, 40, (v) => lib.bgBlur = v),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+                    child: Row(
+                      children: [
+                        Icon(Icons.palette_rounded,
+                            size: 16, color: p.textMuted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(l10n.set_bgTintHint,
+                              style:
+                                  TextStyle(color: p.textMuted, fontSize: 11)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _sliderRow(Icons.opacity_rounded, l10n.set_bgTintAlpha,
+                      lib.bgTintAlpha, 0, 1, 20, (v) => lib.bgTintAlpha = v,
+                      pct: true),
+                  _sliderRow(
+                      Icons.gradient_rounded,
+                      l10n.set_detailTint,
+                      lib.detailTintStrength,
+                      0,
+                      1,
+                      20,
+                      (v) => lib.detailTintStrength = v,
+                      pct: true),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+                    child: Text(l10n.set_detailTintHint,
+                        style: TextStyle(color: p.textMuted, fontSize: 11)),
+                  ),
+                  _switch(
+                      Icons.auto_stories_rounded,
+                      l10n.set_readerBg,
+                      l10n.set_readerBgSub,
+                      lib.readerBackground,
+                      (v) => lib.readerBackground = v),
+                ],
+              ]),
+              _group(l10n.set_secNetwork, [
+                _tile(
+                  Icons.vpn_lock_rounded,
+                  l10n.proxy_title,
+                  l10n.set_proxyCurrent(AppProxy.current ?? l10n.proxy_direct,
+                      AppProxy.sourceLabel),
+                  () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const ProxySettingsPage())),
+                ),
+                _tile(
+                  Icons.translate_rounded,
+                  l10n.trans_title,
+                  l10n.set_translateSubtitle(lib.translateProvider.label),
+                  () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const TranslateSettingsPage())),
+                ),
+                _switch(
+                    Icons.manage_search_rounded,
+                    l10n.set_translateSearch,
+                    l10n.set_translateSearchSub,
+                    lib.translateSearch,
+                    (v) => lib.translateSearch = v),
+              ]),
+              _group(l10n.set_secData, [
+                _tile(
+                    Icons.account_circle_rounded,
+                    l10n.sync_account,
+                    '哔哩哔哩 · 梦漫账号(云同步)',
+                    () => Navigator.of(context)
+                        .push(appRoute(const AccountPage()))),
+                _tile(
+                    Icons.source_rounded,
+                    l10n.srcmgmt_title,
+                    l10n.set_srcMgmtSub,
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const SourceManagementPage()))),
+                _tile(Icons.backup_rounded, l10n.set_backup, l10n.set_backupSub,
+                    () => _backup(context, lib)),
+                _tile(
+                    Icons.cloud_sync_rounded,
+                    l10n.set_sync,
+                    l10n.set_syncSub,
+                    () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SyncPage()))),
+                _tile(Icons.cleaning_services_rounded, l10n.set_clearCache,
+                    l10n.set_clearCacheSub, () => _showCacheSheet(context)),
+              ]),
+              _group(l10n.set_secUpdate, [
+                _updateSourceRow(context, l10n, lib),
+                _switch(
+                    Icons.system_update_rounded,
+                    l10n.set_autoCheckUpdate,
+                    l10n.set_autoCheckUpdateSub,
+                    lib.autoCheckUpdate,
+                    (v) => lib.autoCheckUpdate = v),
+                _switch(
+                    Icons.science_rounded,
+                    l10n.set_includeBeta,
+                    l10n.set_includeBetaSub,
+                    lib.updateIncludeBeta,
+                    (v) => lib.updateIncludeBeta = v),
+                _tile(
+                    Icons.refresh_rounded,
+                    l10n.set_checkNow,
+                    l10n.set_currentVersion(AppInfo.version),
+                    () => _checkUpdate(context, lib)),
+              ]),
+              _group(l10n.secOther, [
+                _tile(
+                  Icons.receipt_long_rounded,
+                  l10n.log_title,
+                  l10n.set_logSub,
+                  () => Navigator.of(context).push(appRoute(const LogPage())),
+                ),
+                _tile(
+                  Icons.info_outline_rounded,
+                  l10n.about,
+                  '${AppInfo.name} · v${AppInfo.version}',
+                  () => Navigator.of(context).push(appRoute(const AboutPage())),
+                ),
+              ]),
             ],
-          ]),
-          _group(l10n.set_secNetwork, [
-            _tile(
-              Icons.vpn_lock_rounded,
-              l10n.proxy_title,
-              l10n.set_proxyCurrent(
-                  AppProxy.current ?? l10n.proxy_direct, AppProxy.sourceLabel),
-              () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ProxySettingsPage())),
-            ),
-            _tile(
-              Icons.translate_rounded,
-              l10n.trans_title,
-              l10n.set_translateSubtitle(lib.translateProvider.label),
-              () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const TranslateSettingsPage())),
-            ),
-            _switch(
-                Icons.manage_search_rounded,
-                l10n.set_translateSearch,
-                l10n.set_translateSearchSub,
-                lib.translateSearch,
-                (v) => lib.translateSearch = v),
-          ]),
-          _group(l10n.set_secData, [
-            _tile(Icons.account_circle_rounded, l10n.sync_account,
-                '哔哩哔哩 · 梦漫账号(云同步)',
-                () => Navigator.of(context).push(appRoute(const AccountPage()))),
-            _tile(
-                Icons.source_rounded,
-                l10n.srcmgmt_title,
-                l10n.set_srcMgmtSub,
-                () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const SourceManagementPage()))),
-            _tile(Icons.backup_rounded, l10n.set_backup, l10n.set_backupSub,
-                () => _backup(context, lib)),
-            _tile(Icons.cloud_sync_rounded, l10n.set_sync,
-                l10n.set_syncSub,
-                () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SyncPage()))),
-            _tile(Icons.cleaning_services_rounded, l10n.set_clearCache,
-                l10n.set_clearCacheSub,
-                () => _showCacheSheet(context)),
-          ]),
-          _group(l10n.set_secUpdate, [
-            _updateSourceRow(context, l10n, lib),
-            _switch(Icons.system_update_rounded, l10n.set_autoCheckUpdate,
-                l10n.set_autoCheckUpdateSub,
-                lib.autoCheckUpdate, (v) => lib.autoCheckUpdate = v),
-            _switch(Icons.science_rounded, l10n.set_includeBeta,
-                l10n.set_includeBetaSub,
-                lib.updateIncludeBeta, (v) => lib.updateIncludeBeta = v),
-            _tile(Icons.refresh_rounded, l10n.set_checkNow,
-                l10n.set_currentVersion(AppInfo.version),
-                () => _checkUpdate(context, lib)),
-          ]),
-          _group(l10n.secOther, [
-            _tile(
-              Icons.receipt_long_rounded,
-              l10n.log_title,
-              l10n.set_logSub,
-              () => Navigator.of(context).push(appRoute(const LogPage())),
-            ),
-            _tile(
-              Icons.info_outline_rounded,
-              l10n.about,
-              '${AppInfo.name} · v${AppInfo.version}',
-              () => Navigator.of(context).push(
-                  appRoute(const AboutPage())),
-            ),
-          ]),
-        ],
-        ),
+          ),
         ),
       ),
     );
@@ -372,7 +411,7 @@ class SettingsPage extends StatelessWidget {
         showAppNotify(context, context.l10n.set_upToDate,
             kind: AppNotifyKind.success);
       case UpdateCheckState.failed:
-        showAppNotify(context, '检查更新失败：${result.error}',
+        showAppNotify(context, context.l10n.update_sourcesFailed,
             kind: AppNotifyKind.error);
     }
   }
@@ -492,12 +531,13 @@ class SettingsPage extends StatelessWidget {
 
   // 单个设置条目的独立描边卡(参照「开启动画」开关行:横向 + 边框)。
   // 每行自成一张 surface + line 描边卡,分组不再套外层大卡。
-  Widget _rowCard(Widget child, {EdgeInsetsGeometry padding = EdgeInsets.zero}) =>
+  Widget _rowCard(Widget child,
+          {EdgeInsetsGeometry padding = EdgeInsets.zero}) =>
       AppCard(width: double.infinity, padding: padding, child: child);
 
   // 复用 lib/ui 的 AppSliderRow(设置页/阅读设置共用同一形状),自带描边卡。
-  Widget _sliderRow(IconData icon, String label, double value,
-          double min, double max, int div, ValueChanged<double> onChanged,
+  Widget _sliderRow(IconData icon, String label, double value, double min,
+          double max, int div, ValueChanged<double> onChanged,
           {bool pct = false}) =>
       _rowCard(
         AppSliderRow(
@@ -514,8 +554,8 @@ class SettingsPage extends StatelessWidget {
       );
 
   // 开关行(复用 AppSwitchRow),自带描边卡。
-  Widget _switch(IconData icon, String title, String? sub,
-          bool value, ValueChanged<bool> onChanged) =>
+  Widget _switch(IconData icon, String title, String? sub, bool value,
+          ValueChanged<bool> onChanged) =>
       _rowCard(AppSwitchRow(
         icon: icon,
         title: title,
@@ -526,8 +566,7 @@ class SettingsPage extends StatelessWidget {
       ));
 
   /// 一个设置分类:小标题 + 一列「各自描边」的条目卡(参照「开启动画」样式)。
-  Widget _group(String label, List<Widget> children) =>
-      Padding(
+  Widget _group(String label, List<Widget> children) => Padding(
         padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -546,8 +585,8 @@ class SettingsPage extends StatelessWidget {
       );
 
   // 可点条目行(复用 AppListRow;onTap 非空自动补右箭头),自带描边卡。
-  Widget _tile(IconData icon, String title, String? subtitle,
-          VoidCallback onTap) =>
+  Widget _tile(
+          IconData icon, String title, String? subtitle, VoidCallback onTap) =>
       _rowCard(AppListRow(
         icon: icon,
         title: title,
@@ -626,14 +665,22 @@ class _CacheSheetState extends State<_CacheSheet> {
         Text(l10n.set_cacheBody,
             style: TextStyle(color: p.textMuted, fontSize: 12)),
         const SizedBox(height: 14),
-        _cacheRow(p, Icons.image_rounded, l10n.set_imgCache, l10n.set_imgCacheSub,
+        _cacheRow(
+            p,
+            Icons.image_rounded,
+            l10n.set_imgCache,
+            l10n.set_imgCacheSub,
             _fmt(_imgBytes),
             _busy
                 ? null
                 : () => _clear(clearImageCache, l10n.set_imgCacheCleared)),
         const SizedBox(height: 8),
-        _cacheRow(p, Icons.dataset_rounded, l10n.set_srcCache,
-            l10n.set_srcCacheSub, _fmt(_srcBytes),
+        _cacheRow(
+            p,
+            Icons.dataset_rounded,
+            l10n.set_srcCache,
+            l10n.set_srcCacheSub,
+            _fmt(_srcBytes),
             _busy
                 ? null
                 : () => _clear(SourceRepository.instance.clearCache,
