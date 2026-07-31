@@ -76,6 +76,101 @@ function Assert-GiteeTarget {
     return $true
 }
 
+function Assert-GiteeReleaseContract {
+    param(
+        [Parameter(Mandatory)][object]$Manifest,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$LocalFiles
+    )
+
+    $version = Normalize-ReleaseVersion ([string]$Manifest.version)
+    $requiredAssets = @(
+        'windows|x64|installer|DreamMangaReader-windows-x64-setup.exe',
+        'android|armeabi-v7a|installer|DreamMangaReader-android-armeabi-v7a.apk',
+        'android|arm64-v8a|installer|DreamMangaReader-android-arm64-v8a.apk',
+        'android|x86_64|installer|DreamMangaReader-android-x86_64.apk'
+    ) | Sort-Object
+    $actualAssets = @($Manifest.assets | ForEach-Object {
+        "$($_.platform)|$($_.arch)|$($_.kind)|$($_.fileName)"
+    }) | Sort-Object
+    $assetDifferences = @(Compare-Object -ReferenceObject $requiredAssets -DifferenceObject $actualAssets -CaseSensitive)
+    if ($actualAssets.Count -ne $requiredAssets.Count -or $assetDifferences.Count -ne 0) {
+        throw 'Gitee Release 必须同时包含 Windows x64 安装器和三个 Android ABI 分包，且不得使用通用 APK 代替。'
+    }
+
+    $hashFileName = "DreamMangaReader-v$version-sha256.txt"
+    $requiredFiles = @(
+        'dream-manga-reader-update.json',
+        $hashFileName,
+        'DreamMangaReader-windows-x64-setup.exe',
+        'DreamMangaReader-windows-x64.zip',
+        'DreamMangaReader-android-armeabi-v7a.apk',
+        'DreamMangaReader-android-arm64-v8a.apk',
+        'DreamMangaReader-android-x86_64.apk'
+    )
+
+    $filesByName = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+    foreach ($file in $LocalFiles) {
+        if ($null -eq $file -or
+            $null -eq $file.PSObject.Properties['Name'] -or
+            $null -eq $file.PSObject.Properties['Length'] -or
+            $null -eq $file.PSObject.Properties['FullName']) {
+            throw 'Gitee Release 附件必须提供 Name、Length 和 FullName。'
+        }
+        $name = Assert-SafeFileName ([string]$file.Name)
+        $fullName = [string]$file.FullName
+        if ([System.IO.Path]::GetFileName($fullName) -cne $name -or
+            !(Test-Path -LiteralPath $fullName -PathType Leaf)) {
+            throw "Gitee Release 附件路径无效：$name"
+        }
+        if ($filesByName.ContainsKey($name)) {
+            throw "Gitee Release 存在重复附件：$name"
+        }
+        $actualFile = Get-Item -LiteralPath $fullName
+        if ([long]$file.Length -ne $actualFile.Length) {
+            throw "Gitee Release 附件信息已失效：$name"
+        }
+        if ($actualFile.Length -le 0) {
+            throw "Gitee Release 附件为空：$name"
+        }
+        $filesByName.Add($name, $actualFile)
+    }
+
+    $actualFileNames = @($filesByName.Keys) | Sort-Object
+    $requiredFileNames = @($requiredFiles) | Sort-Object
+    $fileDifferences = @(Compare-Object -ReferenceObject $requiredFileNames -DifferenceObject $actualFileNames -CaseSensitive)
+    if ($actualFileNames.Count -ne $requiredFileNames.Count -or $fileDifferences.Count -ne 0) {
+        throw 'Gitee Release 本地附件必须精确等于完整 All 构建集合。'
+    }
+
+    $expectedHashNames = @($requiredFiles | Where-Object { $_ -cne $hashFileName }) | Sort-Object
+    $hashesByName = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
+    $hashPath = $filesByName[$hashFileName].FullName
+    foreach ($line in @(Get-Content -LiteralPath $hashPath -Encoding ASCII)) {
+        if ($line -notmatch '^([0-9a-fA-F]{64})  (.+)$') {
+            throw "Gitee SHA256 清单格式无效：$line"
+        }
+        $hash = $Matches[1].ToLowerInvariant()
+        $name = Assert-SafeFileName $Matches[2]
+        if ($hashesByName.ContainsKey($name)) {
+            throw "Gitee SHA256 清单存在重复条目：$name"
+        }
+        $hashesByName.Add($name, $hash)
+    }
+
+    $actualHashNames = @($hashesByName.Keys) | Sort-Object
+    $hashDifferences = @(Compare-Object -ReferenceObject $expectedHashNames -DifferenceObject $actualHashNames -CaseSensitive)
+    if ($actualHashNames.Count -ne $expectedHashNames.Count -or $hashDifferences.Count -ne 0) {
+        throw 'Gitee SHA256 清单必须精确覆盖除自身外的其他 6 个附件。'
+    }
+    foreach ($name in $expectedHashNames) {
+        $actualHash = Get-FileSha256 -Path $filesByName[$name].FullName
+        if ($hashesByName[$name] -cne $actualHash) {
+            throw "Gitee SHA256 校验失败：$name"
+        }
+    }
+    return $true
+}
+
 function Compare-RemoteAttachments {
     param(
         [Parameter(Mandatory)][object[]]$Local,

@@ -37,6 +37,114 @@ Assert-Throws { Get-AndroidUniversalBuildNumber -PubspecBuildNumber 0 } 'invalid
 Assert-Equal $true (Assert-GiteeTarget -Owner TypeDreamMoon -Repository DreamMangaReader) 'Gitee target'
 Assert-Throws { Assert-GiteeTarget -Owner someone -Repository DreamMangaReader } 'wrong Gitee owner'
 
+function Write-GiteeHashFile {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string[]]$FileNames)
+
+    $hashPath = Join-Path $Root 'DreamMangaReader-v1.3.1-sha256.txt'
+    $lines = $FileNames | Sort-Object | ForEach-Object {
+        "$(Get-FileSha256 -Path (Join-Path $Root $_))  $_"
+    }
+    $lines | Set-Content -LiteralPath $hashPath -Encoding ASCII
+}
+
+$fullGiteeManifest = [pscustomobject]@{
+    version = '1.3.1'
+    assets = @(
+        [pscustomobject]@{ platform='windows'; arch='x64'; kind='installer'; fileName='DreamMangaReader-windows-x64-setup.exe' },
+        [pscustomobject]@{ platform='android'; arch='armeabi-v7a'; kind='installer'; fileName='DreamMangaReader-android-armeabi-v7a.apk' },
+        [pscustomobject]@{ platform='android'; arch='arm64-v8a'; kind='installer'; fileName='DreamMangaReader-android-arm64-v8a.apk' },
+        [pscustomobject]@{ platform='android'; arch='x86_64'; kind='installer'; fileName='DreamMangaReader-android-x86_64.apk' }
+    )
+}
+$fullGiteeNames = @(
+    'dream-manga-reader-update.json',
+    'DreamMangaReader-v1.3.1-sha256.txt',
+    'DreamMangaReader-windows-x64-setup.exe',
+    'DreamMangaReader-windows-x64.zip',
+    'DreamMangaReader-android-armeabi-v7a.apk',
+    'DreamMangaReader-android-arm64-v8a.apk',
+    'DreamMangaReader-android-x86_64.apk'
+)
+$hashedGiteeNames = @($fullGiteeNames | Where-Object { $_ -cne 'DreamMangaReader-v1.3.1-sha256.txt' })
+$giteeTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-gitee-contract-tests-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $giteeTempRoot | Out-Null
+try {
+    foreach ($name in $hashedGiteeNames) {
+        [System.IO.File]::WriteAllText((Join-Path $giteeTempRoot $name), "fixture:$name", [System.Text.UTF8Encoding]::new($false))
+    }
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
+
+    $fullGiteeFiles = @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    Assert-Equal $true (Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles $fullGiteeFiles) 'full Gitee release contract'
+
+    foreach ($missingName in $fullGiteeNames) {
+        Assert-Throws {
+            Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @($fullGiteeFiles | Where-Object { $_.Name -cne $missingName })
+        } "Gitee release missing $missingName"
+    }
+
+    $manifestWithUniversal = [pscustomobject]@{
+        version = '1.3.1'
+        assets = @($fullGiteeManifest.assets) + @(
+            [pscustomobject]@{ platform='android'; arch='universal'; kind='installer'; fileName='DreamMangaReader-android-universal.apk' }
+        )
+    }
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $manifestWithUniversal -LocalFiles $fullGiteeFiles
+    } 'Gitee manifest with universal APK'
+
+    $extraPath = Join-Path $giteeTempRoot 'unexpected.txt'
+    [System.IO.File]::WriteAllText($extraPath, 'unexpected', [System.Text.UTF8Encoding]::new($false))
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    } 'Gitee release with unexpected attachment'
+    Remove-Item -LiteralPath $extraPath -Force
+
+    foreach ($emptyName in $fullGiteeNames) {
+        $emptyPath = Join-Path $giteeTempRoot $emptyName
+        $originalBytes = [System.IO.File]::ReadAllBytes($emptyPath)
+        try {
+            [System.IO.File]::WriteAllBytes($emptyPath, [byte[]]::new(0))
+            Assert-Throws {
+                Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+            } "Gitee release with empty $emptyName"
+        }
+        finally {
+            [System.IO.File]::WriteAllBytes($emptyPath, $originalBytes)
+        }
+    }
+
+    $hashPath = Join-Path $giteeTempRoot 'DreamMangaReader-v1.3.1-sha256.txt'
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames @($hashedGiteeNames | Select-Object -Skip 1)
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    } 'Gitee SHA256 file missing entry'
+
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
+    $duplicateLine = Get-Content -LiteralPath $hashPath -Encoding ASCII | Select-Object -First 1
+    Add-Content -LiteralPath $hashPath -Value $duplicateLine -Encoding ASCII
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    } 'Gitee SHA256 file with duplicate entry'
+
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
+    Add-Content -LiteralPath $hashPath -Value "$('f' * 64)  unexpected.txt" -Encoding ASCII
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    } 'Gitee SHA256 file with extra entry'
+
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
+    $hashLines = @(Get-Content -LiteralPath $hashPath -Encoding ASCII)
+    $hashLines[0] = "$('0' * 64)  $($hashLines[0].Substring(66))"
+    $hashLines | Set-Content -LiteralPath $hashPath -Encoding ASCII
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
+    } 'Gitee SHA256 file with wrong hash'
+}
+finally {
+    Remove-Item -LiteralPath $giteeTempRoot -Recurse -Force
+}
+
 $localAttachments = @(
     [pscustomobject]@{ Name = 'a.apk'; Length = 12 },
     [pscustomobject]@{ Name = 'b.exe'; Length = 34 }

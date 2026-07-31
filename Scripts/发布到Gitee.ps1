@@ -54,6 +54,7 @@ $version = Normalize-ReleaseVersion ([string]$manifest.version)
 $tag = "v$version"
 $localFiles = @(Get-ChildItem -LiteralPath $assetRootFull -File | Sort-Object Name)
 if ($localFiles.Count -eq 0) { throw 'Gitee 发布目录没有附件。' }
+[void](Assert-GiteeReleaseContract -Manifest $manifest -LocalFiles $localFiles)
 foreach ($file in $localFiles) {
     [void](Assert-SafeFileName $file.Name)
     if (!(Test-GiteeAttachmentSize -Bytes $file.Length)) {
