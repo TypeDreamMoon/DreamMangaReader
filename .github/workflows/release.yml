@@ -320,7 +320,12 @@ jobs:
           export GIT_ASKPASS="$askpass"
           export GIT_TERMINAL_PROMPT=0
           git remote add gitee 'https://gitee.com/TypeDreamMoon/DreamMangaReader.git'
-          git push gitee \
+          remote_tag=$(git ls-remote --refs --tags gitee "refs/tags/$tag" | awk 'NR == 1 { print $1 }')
+          if [[ -n "$remote_tag" && ! "$remote_tag" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Invalid Gitee tag object id: $remote_tag"
+            exit 1
+          fi
+          git push --force-with-lease="refs/tags/$tag:$remote_tag" gitee \
             'refs/remotes/origin/main:refs/heads/main' \
             "refs/tags/$tag:refs/tags/$tag"
       - uses: actions/download-artifact@v4
