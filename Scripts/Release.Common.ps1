@@ -195,6 +195,7 @@ function Assert-GiteeReleaseContract {
     }
     $requiredAssets = @(
         'windows|x64|installer|DreamMangaReader-windows-x64-setup.exe',
+        'android|universal|installer|DreamMangaReader-android-universal.apk',
         'android|armeabi-v7a|installer|DreamMangaReader-android-armeabi-v7a.apk',
         'android|arm64-v8a|installer|DreamMangaReader-android-arm64-v8a.apk',
         'android|x86_64|installer|DreamMangaReader-android-x86_64.apk'
@@ -204,7 +205,7 @@ function Assert-GiteeReleaseContract {
     }) | Sort-Object
     $assetDifferences = @(Compare-Object -ReferenceObject $requiredAssets -DifferenceObject $actualAssets -CaseSensitive)
     if ($actualAssets.Count -ne $requiredAssets.Count -or $assetDifferences.Count -ne 0) {
-        throw 'Gitee Release 必须同时包含 Windows x64 安装器和三个 Android ABI 分包，且不得使用通用 APK 代替。'
+        throw 'Gitee Release 必须同时包含 Windows x64 安装器、Android 通用 APK 和三个 ABI 分包。'
     }
 
     $hashFileName = "DreamMangaReader-v$version-sha256.txt"

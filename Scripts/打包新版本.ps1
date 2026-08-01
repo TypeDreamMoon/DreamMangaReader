@@ -207,7 +207,9 @@ try {
             $universalMetadata.CertificateSha256 -ne $expectedCert) {
             throw 'Android 通用 APK 的包名、版本号或签名不符合发布契约。'
         }
-        $githubAssets.Add([pscustomobject]@{ Platform='android'; Arch='universal'; Kind='installer'; FileName='DreamMangaReader-android-universal.apk'; Path=$universalWork; IncludeInManifest=$true })
+        $universalAsset = [pscustomobject]@{ Platform='android'; Arch='universal'; Kind='installer'; FileName='DreamMangaReader-android-universal.apk'; Path=$universalWork; IncludeInManifest=$true }
+        $githubAssets.Add($universalAsset)
+        $giteeAssets.Add($universalAsset)
 
         $splitMap = [ordered]@{
             'armeabi-v7a' = 'app-armeabi-v7a-release.apk'

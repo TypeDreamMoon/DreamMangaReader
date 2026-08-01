@@ -47,7 +47,7 @@ flutter run -d windows      # 或 -d <android 设备>
 
 推送形如 `v1.2.3`(或 `v1.2.3-beta.1`)的 tag 后，GitHub Actions 自动构建并发布 Windows + Android，再把 `main`、发布 tag、Release 名称/正文/预发布状态及兼容附件同步到 Gitee(见 [`.github/workflows/release.yml`](.github/workflows/release.yml))。仓库必须配置 Actions Secret `GITEE_TOKEN`；Token 仅通过运行环境传入，不会写入远端 URL、日志或 Git 提交。
 
-Universal APK 只发布到 GitHub Release。Gitee 使用独立的 schema 2 更新清单：超过 90 MiB 的安装器/APK 会切成可断点续传的分片，客户端逐片和整包校验后自动重组；超过 Gitee 单文件限制的 Windows 便携 ZIP 留在 GitHub。Gitee 最多保留 3 个 Release，始终保护最新 stable，并将 Release 附件预算控制在 850 MiB；容量不足时会进一步减少保留版本。本地 PowerShell 打包、预演和发布流程仍可独立使用。
+Universal APK 和三个 ABI 分包都会发布到 GitHub 与 Gitee。Gitee 使用独立的 schema 2 更新清单：超过 90 MiB 的安装器/APK 会切成可断点续传的分片，客户端逐片和整包校验后自动重组；超过 Gitee 单文件限制的 Windows 便携 ZIP 留在 GitHub。Gitee 最多保留 3 个 Release，始终保护最新 stable，并将 Release 附件预算控制在 850 MiB；容量不足时会进一步减少保留版本。本地 PowerShell 打包、预演和发布流程仍可独立使用。
 
 ```powershell
 # 只读检查，不安装工具、不显示 Token 内容

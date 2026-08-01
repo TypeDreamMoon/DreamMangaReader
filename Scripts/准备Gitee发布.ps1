@@ -32,6 +32,12 @@ $assets = @(
         IncludeInManifest = $false
     },
     [pscustomobject]@{
+        Platform = 'android'; Arch = 'universal'; Kind = 'installer'
+        FileName = 'DreamMangaReader-android-universal.apk'
+        Path = Join-Path $sourceRootFull 'DreamMangaReader-android-universal.apk'
+        IncludeInManifest = $true
+    },
+    [pscustomobject]@{
         Platform = 'android'; Arch = 'armeabi-v7a'; Kind = 'installer'
         FileName = 'DreamMangaReader-android-armeabi-v7a.apk'
         Path = Join-Path $sourceRootFull 'DreamMangaReader-android-armeabi-v7a.apk'
