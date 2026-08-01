@@ -81,40 +81,47 @@ class UpdateDownloader {
   }) async {
     final cache = await _resolveCacheDirectory();
     await cache.create(recursive: true);
-    final finalFile = File(
-      '${cache.path}${Platform.pathSeparator}${asset.fileName}',
-    );
+    final cacheName = '${asset.sha256.toLowerCase()}-${asset.fileName}';
+    final finalFile = File('${cache.path}${Platform.pathSeparator}$cacheName');
     final partialFile = File('${finalFile.path}.download');
 
     if (await finalFile.exists()) {
-      await UpdateFileVerifier.verify(
-        finalFile,
-        expectedSize: asset.sizeBytes,
-        expectedSha256: asset.sha256,
-      );
-      await UpdateCacheCleaner.cleanup(
-        cache,
-        activePaths: {...activePaths, finalFile.path},
-      );
-      onProgress?.call(1);
-      return finalFile;
+      try {
+        await UpdateFileVerifier.verify(
+          finalFile,
+          expectedSize: asset.sizeBytes,
+          expectedSha256: asset.sha256,
+        );
+        await UpdateCacheCleaner.cleanup(
+          cache,
+          activePaths: {...activePaths, finalFile.path},
+        );
+        onProgress?.call(1);
+        return finalFile;
+      } on UpdateIntegrityException {
+        // 校验器已经删除损坏缓存，继续重新下载。
+      }
     }
 
     var partialLength =
         await partialFile.exists() ? await partialFile.length() : 0;
     if (partialLength >= asset.sizeBytes) {
-      await UpdateFileVerifier.verify(
-        partialFile,
-        expectedSize: asset.sizeBytes,
-        expectedSha256: asset.sha256,
-      );
-      return _completeDownload(
-        partialFile,
-        finalFile,
-        cache,
-        activePaths: activePaths,
-        onProgress: onProgress,
-      );
+      try {
+        await UpdateFileVerifier.verify(
+          partialFile,
+          expectedSize: asset.sizeBytes,
+          expectedSha256: asset.sha256,
+        );
+        return _completeDownload(
+          partialFile,
+          finalFile,
+          cache,
+          activePaths: activePaths,
+          onProgress: onProgress,
+        );
+      } on UpdateIntegrityException {
+        partialLength = 0;
+      }
     }
 
     final requestedResume = partialLength > 0;

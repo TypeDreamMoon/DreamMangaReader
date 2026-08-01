@@ -176,7 +176,7 @@ class UpdateResolver {
           .map((attempt) => attempt.error)
           .whereType<UpdateSourceException>()
           .toList();
-      if (errors.length == attempts.length) {
+      if (errors.isNotEmpty) {
         throw UpdateResolutionException(errors);
       }
       return null;

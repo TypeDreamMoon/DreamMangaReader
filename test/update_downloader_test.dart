@@ -35,6 +35,9 @@ ResolvedUpdateAsset _asset() => const ResolvedUpdateAsset(
       sourceName: 'package.bin',
     );
 
+const _cacheName =
+    '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81-package.bin';
+
 String? _rangeHeader(RequestOptions options) {
   for (final entry in options.headers.entries) {
     if (entry.key.toLowerCase() == 'range') return '${entry.value}';
@@ -84,7 +87,7 @@ void main() {
 
   test('206 response appends after the correct Range header', () async {
     final partial = File(
-      '${temp.path}${Platform.pathSeparator}package.bin.download',
+      '${temp.path}${Platform.pathSeparator}$_cacheName.download',
     )..writeAsBytesSync([1, 2]);
     final dio = Dio()
       ..httpClientAdapter = _StubAdapter((options) {
@@ -109,7 +112,7 @@ void main() {
   });
 
   test('200 response to a resume attempt truncates and restarts', () async {
-    File('${temp.path}${Platform.pathSeparator}package.bin.download')
+    File('${temp.path}${Platform.pathSeparator}$_cacheName.download')
         .writeAsBytesSync([9, 9]);
     final dio = Dio()
       ..httpClientAdapter = _StubAdapter((options) {
@@ -128,6 +131,33 @@ void main() {
       cacheDirectory: temp,
     ).download(_asset());
 
+    expect(downloaded.readAsBytesSync(), [1, 2, 3]);
+  });
+
+  test('replaces a corrupt completed cache entry without a manual retry',
+      () async {
+    final cached = File('${temp.path}${Platform.pathSeparator}$_cacheName')
+      ..writeAsBytesSync([9, 9, 9]);
+    var requests = 0;
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        requests++;
+        return ResponseBody.fromBytes(
+          [1, 2, 3],
+          200,
+          headers: {
+            Headers.contentLengthHeader: ['3'],
+          },
+        );
+      });
+
+    final downloaded = await UpdateDownloader(
+      dio: dio,
+      cacheDirectory: temp,
+    ).download(_asset());
+
+    expect(requests, 1);
+    expect(downloaded.path, cached.path);
     expect(downloaded.readAsBytesSync(), [1, 2, 3]);
   });
 

@@ -31,6 +31,15 @@ ResponseBody _json(int status, Object body) => ResponseBody.fromString(
       },
     );
 
+ResponseBody _octetStreamJson(int status, Object body) =>
+    ResponseBody.fromString(
+      jsonEncode(body),
+      status,
+      headers: {
+        Headers.contentTypeHeader: ['application/octet-stream'],
+      },
+    );
+
 Dio _stubDio(ResponseBody Function(RequestOptions options) handler) =>
     Dio()..httpClientAdapter = _StubAdapter(handler);
 
@@ -135,6 +144,7 @@ void main() {
       dio: _stubDio((options) {
         requestedPaths.add(options.uri.path);
         if (options.uri.path.endsWith('/releases')) {
+          expect(options.queryParameters['direction'], 'desc');
           return _json(200, [
             {
               'id': 7,
@@ -187,6 +197,33 @@ void main() {
     });
 
     final manifest = await client.fetchManifest(release);
+    expect(manifest.version, '1.3.1');
+  });
+
+  test('decodes a manifest served as an octet stream', () async {
+    final client = GitHubReleaseClient(
+      dio: _stubDio((options) => _octetStreamJson(200, _manifest())),
+    );
+    final release = GitHubReleaseClient.parseRelease({
+      'tag_name': 'v1.3.1',
+      'html_url': 'https://example/release',
+      'prerelease': false,
+      'assets': [
+        {
+          'name': updateManifestAssetName,
+          'size': 200,
+          'browser_download_url': 'https://example/manifest.json',
+        },
+        {
+          'name': 'a.apk',
+          'size': 12,
+          'browser_download_url': 'https://example/a.apk',
+        },
+      ],
+    });
+
+    final manifest = await client.fetchManifest(release);
+
     expect(manifest.version, '1.3.1');
   });
 

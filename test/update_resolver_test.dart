@@ -239,13 +239,13 @@ void main() {
     expect(result.warnings.single, contains('GitHub'));
   });
 
-  test('returns null only when a source succeeds with no newer release',
-      () async {
-    final result = await _resolver(
-      gitee: [_release(UpdateSource.gitee, '1.3.0')],
-      githubError: _error(UpdateSource.github),
-    ).resolve(currentVersion: '1.3.0', preferred: UpdateSource.gitee);
-
-    expect(result, isNull);
+  test('does not report up to date when one source is unavailable', () async {
+    await expectLater(
+      _resolver(
+        gitee: [_release(UpdateSource.gitee, '1.3.0')],
+        githubError: _error(UpdateSource.github),
+      ).resolve(currentVersion: '1.3.0', preferred: UpdateSource.gitee),
+      throwsA(isA<UpdateResolutionException>()),
+    );
   });
 }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 import 'update_models.dart';
@@ -91,12 +93,14 @@ abstract class _DioReleaseClient implements UpdateReleaseClient {
     }
 
     final response = await get(manifestAsset.url);
-    final data = response.data;
-    if (data is! Map) {
-      throw UpdateSourceException(source, 'Invalid update manifest response');
-    }
     try {
-      final manifest = UpdateManifest.fromJson(Map<String, dynamic>.from(data));
+      final data = response.data;
+      final decoded = data is String ? jsonDecode(data) : data;
+      if (decoded is! Map) {
+        throw const FormatException('Invalid update manifest response');
+      }
+      final manifest =
+          UpdateManifest.fromJson(Map<String, dynamic>.from(decoded));
       final platforms = manifest.assets.map((asset) => asset.platform).toSet();
       for (final platform in platforms) {
         manifest.resolve(platform, loaded.assets);
@@ -228,8 +232,10 @@ class GiteeReleaseClient extends _DioReleaseClient {
 
   @override
   Future<List<RemoteRelease>> listReleases() async {
-    final response =
-        await get(releasesUrl, queryParameters: const {'per_page': 20});
+    final response = await get(
+      releasesUrl,
+      queryParameters: const {'per_page': 20, 'direction': 'desc'},
+    );
     final data = response.data;
     if (data is! List) {
       throw UpdateSourceException(source, 'Invalid Release list');
