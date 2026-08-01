@@ -174,7 +174,8 @@ function Assert-GiteeReleaseContract {
 function Compare-RemoteAttachments {
     param(
         [Parameter(Mandatory)][object[]]$Local,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Remote
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Remote,
+        [scriptblock]$GetRemoteSha256
     )
 
     $remoteByName = @{}
@@ -204,6 +205,19 @@ function Compare-RemoteAttachments {
         $remoteLength = [long]$remoteByName[$key].size
         if ($remoteLength -ne $length) {
             throw "远端同名附件大小冲突：$name（本地 $length，远端 $remoteLength）"
+        }
+        if ($null -ne $GetRemoteSha256) {
+            if ($null -eq $item.PSObject.Properties['FullName']) {
+                throw "本地附件缺少完整路径，无法执行远端 SHA-256 校验：$name"
+            }
+            $remoteHash = [string](& $GetRemoteSha256 $remoteByName[$key])
+            if (!(Test-Sha256 $remoteHash)) {
+                throw "远端附件 SHA-256 无效：$name"
+            }
+            $localHash = Get-FileSha256 -Path ([string]$item.FullName)
+            if ($remoteHash.ToLowerInvariant() -cne $localHash) {
+                throw "远端同名附件 SHA-256 冲突：$name"
+            }
         }
     }
     return $missing.ToArray()
@@ -244,8 +258,7 @@ function Assert-VersionAgreement {
         throw "AppInfo 缺少静态 version：$AppInfoPath"
     }
     $appInfoVersion = Normalize-ReleaseVersion $Matches[1]
-    $expectedBase = ($expected -split '-', 2)[0]
-    if ($pubspec.Version -ne $expectedBase -or $appInfoVersion -ne $expected) {
+    if ($pubspec.Version -ne $expected -or $appInfoVersion -ne $expected) {
         throw "版本不一致：请求=$expected pubspec=$($pubspec.Version) AppInfo=$appInfoVersion"
     }
     return $pubspec

@@ -178,9 +178,33 @@ try {
         Assert-VersionAgreement -Version '1.3.1' -PubspecPath $pubspecFixture -AppInfoPath $appInfoFixture
     } 'version disagreement'
 
+    "name: fixture`nversion: 1.3.2-beta.1+14`n" | Set-Content -LiteralPath $pubspecFixture -Encoding UTF8
+    "class AppInfo { static const version = '1.3.2-beta.1'; }`n" | Set-Content -LiteralPath $appInfoFixture -Encoding UTF8
+    $betaVersion = Assert-VersionAgreement -Version 'v1.3.2-beta.1' -PubspecPath $pubspecFixture -AppInfoPath $appInfoFixture
+    Assert-Equal '1.3.2-beta.1' $betaVersion.Version 'beta version agreement'
+    Assert-Equal 14 $betaVersion.BuildNumber 'beta build number'
+
     $assetPath = Join-Path $tempRoot 'package.apk'
     [System.IO.File]::WriteAllBytes($assetPath, [byte[]](1, 2, 3))
     Assert-Equal '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81' (Get-FileSha256 $assetPath) 'file SHA'
+
+    $localHashAttachments = @(Get-Item -LiteralPath $assetPath)
+    $matchingRemote = @([pscustomobject]@{
+        name = 'package.apk'
+        size = 3
+        sha256 = Get-FileSha256 $assetPath
+    })
+    Assert-Equal 0 @(Compare-RemoteAttachments -Local $localHashAttachments -Remote $matchingRemote -GetRemoteSha256 {
+        param($remote)
+        return $remote.sha256
+    }).Count 'matching remote SHA'
+    $matchingRemote[0].sha256 = 'f' * 64
+    Assert-Throws {
+        Compare-RemoteAttachments -Local $localHashAttachments -Remote $matchingRemote -GetRemoteSha256 {
+            param($remote)
+            return $remote.sha256
+        }
+    } 'same-size remote SHA conflict'
 
     $asset = [pscustomobject]@{
         Platform = 'android'

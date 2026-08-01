@@ -36,7 +36,34 @@ function Invoke-GiteeWriteApi {
 function Get-GiteeReleases {
     param([Parameter(Mandatory)][string]$BaseUri)
 
-    return @(Invoke-RestMethod -Method Get -Uri "$BaseUri/releases?per_page=100" -TimeoutSec 20)
+    return @(Invoke-RestMethod -Method Get -Uri "$BaseUri/releases?per_page=100&direction=desc" -TimeoutSec 20)
+}
+
+$script:RemoteAttachmentHashes = @{}
+function Get-GiteeAttachmentSha256 {
+    param([Parameter(Mandatory)][object]$Remote)
+
+    $downloadUrl = [string]$Remote.browser_download_url
+    $downloadUri = [Uri]$downloadUrl
+    if (!$downloadUri.IsAbsoluteUri -or
+        $downloadUri.Scheme -cne 'https' -or
+        ($downloadUri.Host -cne 'gitee.com' -and !$downloadUri.Host.EndsWith('.gitee.com', [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "Gitee 附件下载地址无效：$downloadUrl"
+    }
+    if ($script:RemoteAttachmentHashes.ContainsKey($downloadUrl)) {
+        return $script:RemoteAttachmentHashes[$downloadUrl]
+    }
+
+    $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-gitee-$([guid]::NewGuid().ToString('N')).download"
+    try {
+        $null = Invoke-WebRequest -Method Get -Uri $downloadUri -OutFile $tempPath -MaximumRedirection 10 -TimeoutSec 300
+        $hash = Get-FileSha256 -Path $tempPath
+        $script:RemoteAttachmentHashes[$downloadUrl] = $hash
+        return $hash
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force }
+    }
 }
 
 [void](Assert-GiteeTarget -Owner $Owner -Repository $Repository)
@@ -73,7 +100,10 @@ $remoteFiles = @()
 if ($sameTag.Count -gt 0) {
     $remoteFiles = @(Invoke-RestMethod -Method Get -Uri "$baseUri/releases/$($sameTag[0].id)/attach_files?per_page=100" -TimeoutSec 20)
 }
-$missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles)
+$missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles -GetRemoteSha256 {
+    param($remote)
+    Get-GiteeAttachmentSha256 -Remote $remote
+})
 
 Write-Host 'Gitee 发布计划（只允许此仓库）' -ForegroundColor Cyan
 Write-Host "目标：$Owner/$Repository / $TargetBranch"
@@ -121,7 +151,10 @@ try {
     }
 
     $verifiedRemote = @(Invoke-RestMethod -Method Get -Uri "$baseUri/releases/$($release.id)/attach_files?per_page=100" -TimeoutSec 20)
-    $stillMissing = @(Compare-RemoteAttachments -Local $localFiles -Remote $verifiedRemote)
+    $stillMissing = @(Compare-RemoteAttachments -Local $localFiles -Remote $verifiedRemote -GetRemoteSha256 {
+        param($remote)
+        Get-GiteeAttachmentSha256 -Remote $remote
+    })
     if ($stillMissing.Count -ne 0) { throw "Gitee 发布后仍缺少 $($stillMissing.Count) 个附件。" }
     $remoteManifest = @($verifiedRemote | Where-Object { [string]$_.name -ceq 'dream-manga-reader-update.json' } | Select-Object -First 1)
     if ($remoteManifest.Count -eq 0) { throw 'Gitee Release 缺少远端更新清单。' }
