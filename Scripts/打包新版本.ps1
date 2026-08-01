@@ -146,57 +146,6 @@ function Assert-VisualStudioAtlPresent {
     }
 }
 
-function New-ReleaseFolder {
-    param(
-        [Parameter(Mandatory)][string]$Destination,
-        [Parameter(Mandatory)][object[]]$Assets,
-        [Parameter(Mandatory)][string]$ReleaseVersion,
-        [Parameter(Mandatory)][string]$ReleaseChannel,
-        [Parameter(Mandatory)][bool]$Gitee
-    )
-
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $manifestAssets = [System.Collections.Generic.List[object]]::new()
-    foreach ($asset in $Assets) {
-        $name = Assert-SafeFileName ([string]$asset.FileName)
-        $destinationPath = Join-Path $Destination $name
-        Copy-Item -LiteralPath ([string]$asset.Path) -Destination $destinationPath -Force
-        if ($Gitee -and !(Test-GiteeAttachmentSize -Bytes (Get-Item -LiteralPath $destinationPath).Length)) {
-            throw "Gitee 附件超过 100 MiB：$name"
-        }
-        if ($asset.IncludeInManifest) {
-            $manifestAssets.Add([pscustomobject]@{
-                Platform = $asset.Platform
-                Arch = $asset.Arch
-                Kind = $asset.Kind
-                FileName = $name
-                Path = $destinationPath
-            })
-        }
-    }
-
-    $manifest = New-UpdateManifest -Version $ReleaseVersion -Channel $ReleaseChannel -Assets $manifestAssets.ToArray()
-    $manifestPath = Join-Path $Destination 'dream-manga-reader-update.json'
-    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-    [void](Test-ReleaseAssetSet -Manifest $manifest -AssetRoot $Destination)
-
-    $hashName = "DreamMangaReader-v$ReleaseVersion-sha256.txt"
-    $hashPath = Join-Path $Destination $hashName
-    $hashLines = Get-ChildItem -LiteralPath $Destination -File |
-        Where-Object { $_.Name -ne $hashName } |
-        Sort-Object Name |
-        ForEach-Object { "$(Get-FileSha256 -Path $_.FullName)  $($_.Name)" }
-    $hashLines | Set-Content -LiteralPath $hashPath -Encoding ASCII
-
-    if ($Gitee) {
-        foreach ($file in Get-ChildItem -LiteralPath $Destination -File) {
-            if (!(Test-GiteeAttachmentSize -Bytes $file.Length)) {
-                throw "Gitee 附件超过 100 MiB：$($file.Name)"
-            }
-        }
-    }
-}
-
 $normalizedVersion = Normalize-ReleaseVersion $Version
 $pubspecPath = Join-Path $repoRoot 'pubspec.yaml'
 $appInfoPath = Join-Path $repoRoot 'lib\app\app_info.dart'
@@ -328,8 +277,8 @@ try {
         $giteeAssets.Add($setupAsset); $giteeAssets.Add($zipAsset)
     }
 
-    New-ReleaseFolder -Destination (Join-Path $versionRoot 'github') -Assets $githubAssets.ToArray() -ReleaseVersion $normalizedVersion -ReleaseChannel $Channel -Gitee $false
-    New-ReleaseFolder -Destination (Join-Path $versionRoot 'gitee') -Assets $giteeAssets.ToArray() -ReleaseVersion $normalizedVersion -ReleaseChannel $Channel -Gitee $true
+    [void](New-ReleaseFolder -Destination (Join-Path $versionRoot 'github') -Assets $githubAssets.ToArray() -ReleaseVersion $normalizedVersion -ReleaseChannel $Channel -Gitee $false)
+    [void](New-ReleaseFolder -Destination (Join-Path $versionRoot 'gitee') -Assets $giteeAssets.ToArray() -ReleaseVersion $normalizedVersion -ReleaseChannel $Channel -Gitee $true)
 
     Remove-Item -LiteralPath $workRoot -Recurse -Force
     Write-Host "发布包已生成：$versionRoot" -ForegroundColor Green

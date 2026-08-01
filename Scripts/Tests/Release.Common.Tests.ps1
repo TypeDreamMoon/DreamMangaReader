@@ -48,6 +48,7 @@ function Write-GiteeHashFile {
 }
 
 $fullGiteeManifest = [pscustomobject]@{
+    schemaVersion = 2
     version = '1.3.1'
     assets = @(
         [pscustomobject]@{ platform='windows'; arch='x64'; kind='installer'; fileName='DreamMangaReader-windows-x64-setup.exe' },
@@ -77,11 +78,17 @@ try {
     $fullGiteeFiles = @(Get-ChildItem -LiteralPath $giteeTempRoot -File)
     Assert-Equal $true (Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles $fullGiteeFiles) 'full Gitee release contract'
 
-    foreach ($missingName in $fullGiteeNames) {
+    $requiredGiteeNames = @($fullGiteeNames | Where-Object { $_ -cne 'DreamMangaReader-windows-x64.zip' })
+    foreach ($missingName in $requiredGiteeNames) {
         Assert-Throws {
             Assert-GiteeReleaseContract -Manifest $fullGiteeManifest -LocalFiles @($fullGiteeFiles | Where-Object { $_.Name -cne $missingName })
         } "Gitee release missing $missingName"
     }
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames @($hashedGiteeNames | Where-Object { $_ -cne 'DreamMangaReader-windows-x64.zip' })
+    Assert-Equal $true (Assert-GiteeReleaseContract `
+        -Manifest $fullGiteeManifest `
+        -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File | Where-Object { $_.Name -cne 'DreamMangaReader-windows-x64.zip' })) 'Gitee release without optional portable ZIP'
+    Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
 
     $manifestWithUniversal = [pscustomobject]@{
         version = '1.3.1'
@@ -252,9 +259,105 @@ try {
     Assert-Throws {
         Test-ReleaseAssetSet -Manifest $manifest -AssetRoot (Join-Path $tempRoot 'missing')
     } 'missing asset root'
+
+    $bundleSource = Join-Path $tempRoot 'bundle-source'
+    $bundleDestination = Join-Path $tempRoot 'bundle-gitee'
+    New-Item -ItemType Directory -Path $bundleSource | Out-Null
+    $bundleFixtures = [ordered]@{
+        'DreamMangaReader-windows-x64-setup.exe' = [byte[]](1, 2, 3, 4, 5)
+        'DreamMangaReader-windows-x64.zip' = [byte[]](6)
+        'DreamMangaReader-android-armeabi-v7a.apk' = [byte[]](7)
+        'DreamMangaReader-android-arm64-v8a.apk' = [byte[]](8)
+        'DreamMangaReader-android-x86_64.apk' = [byte[]](9)
+    }
+    foreach ($fixture in $bundleFixtures.GetEnumerator()) {
+        [System.IO.File]::WriteAllBytes((Join-Path $bundleSource $fixture.Key), $fixture.Value)
+    }
+    $bundleAssets = @(
+        [pscustomobject]@{ Platform='windows'; Arch='x64'; Kind='installer'; FileName='DreamMangaReader-windows-x64-setup.exe'; Path=(Join-Path $bundleSource 'DreamMangaReader-windows-x64-setup.exe'); IncludeInManifest=$true },
+        [pscustomobject]@{ Platform='windows'; Arch='x64'; Kind='portable'; FileName='DreamMangaReader-windows-x64.zip'; Path=(Join-Path $bundleSource 'DreamMangaReader-windows-x64.zip'); IncludeInManifest=$false },
+        [pscustomobject]@{ Platform='android'; Arch='armeabi-v7a'; Kind='installer'; FileName='DreamMangaReader-android-armeabi-v7a.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-armeabi-v7a.apk'); IncludeInManifest=$true },
+        [pscustomobject]@{ Platform='android'; Arch='arm64-v8a'; Kind='installer'; FileName='DreamMangaReader-android-arm64-v8a.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-arm64-v8a.apk'); IncludeInManifest=$true },
+        [pscustomobject]@{ Platform='android'; Arch='x86_64'; Kind='installer'; FileName='DreamMangaReader-android-x86_64.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-x86_64.apk'); IncludeInManifest=$true }
+    )
+    $bundleManifest = New-ReleaseFolder `
+        -Destination $bundleDestination `
+        -Assets $bundleAssets `
+        -ReleaseVersion '1.3.1' `
+        -ReleaseChannel stable `
+        -Gitee $true `
+        -GiteePartSizeBytes 2
+    Assert-Equal 2 $bundleManifest.schemaVersion 'Gitee manifest schema'
+    $chunkedSetup = @($bundleManifest.assets | Where-Object { $_.fileName -ceq 'DreamMangaReader-windows-x64-setup.exe' })[0]
+    Assert-Equal 3 @($chunkedSetup.parts).Count 'Gitee setup part count'
+    Assert-Equal $false (Test-Path -LiteralPath (Join-Path $bundleDestination $chunkedSetup.fileName)) 'Gitee chunked logical file omitted'
+    Assert-Equal $true (Test-ReleaseAssetSet -Manifest $bundleManifest -AssetRoot $bundleDestination) 'Gitee chunked bundle integrity'
+    Assert-Equal $true (Assert-GiteeReleaseContract -Manifest $bundleManifest -LocalFiles @(Get-ChildItem -LiteralPath $bundleDestination -File)) 'Gitee chunked bundle contract'
+    $bundleManifestReadback = Get-Content -LiteralPath (Join-Path $bundleDestination 'dream-manga-reader-update.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal $true (Test-ReleaseAssetSet -Manifest $bundleManifestReadback -AssetRoot $bundleDestination) 'Gitee serialized chunked bundle integrity'
+
+    $preparedDestination = Join-Path $tempRoot 'prepared-gitee'
+    & (Join-Path $PSScriptRoot '..\准备Gitee发布.ps1') `
+        -SourceRoot $bundleSource `
+        -Destination $preparedDestination `
+        -Version '1.3.1' `
+        -Channel stable
+    $preparedManifest = Get-Content -LiteralPath (Join-Path $preparedDestination 'dream-manga-reader-update.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal 2 $preparedManifest.schemaVersion 'prepared Gitee manifest schema'
+    Assert-Equal $true (Assert-GiteeReleaseContract -Manifest $preparedManifest -LocalFiles @(Get-ChildItem -LiteralPath $preparedDestination -File)) 'prepared Gitee bundle contract'
 }
 finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force
 }
+
+$retentionFixtures = @(
+    [pscustomobject]@{ Id=1; Tag='v1.4.0-beta.2'; Prerelease=$true; SizeBytes=200MB },
+    [pscustomobject]@{ Id=2; Tag='v1.3.0'; Prerelease=$false; SizeBytes=200MB },
+    [pscustomobject]@{ Id=3; Tag='v1.2.0'; Prerelease=$false; SizeBytes=200MB }
+)
+$retention = Get-GiteeReleaseRetentionPlan `
+    -Releases $retentionFixtures `
+    -IncomingTag 'v1.4.0-beta.3' `
+    -IncomingPrerelease $true `
+    -IncomingSizeBytes 200MB
+Assert-Equal $true $retention.Fits 'retention fits default budget'
+Assert-Equal 3 @($retention.RetainedTags).Count 'retention keeps three releases'
+Assert-Equal $true ($retention.RetainedTags -contains 'v1.3.0') 'retention protects latest stable'
+Assert-Equal 1 @($retention.DeleteReleases).Count 'retention deletes oldest release'
+Assert-Equal 'v1.2.0' $retention.DeleteReleases[0].Tag 'retention oldest tag'
+
+$tightRetention = Get-GiteeReleaseRetentionPlan `
+    -Releases $retentionFixtures `
+    -IncomingTag 'v1.4.0-beta.3' `
+    -IncomingPrerelease $true `
+    -IncomingSizeBytes 200MB `
+    -BudgetBytes 450MB
+Assert-Equal $true $tightRetention.Fits 'retention shrinks under tight budget'
+Assert-Equal 2 @($tightRetention.RetainedTags).Count 'retention keeps incoming and stable'
+Assert-Equal 2 @($tightRetention.DeleteReleases).Count 'retention removes optional releases'
+
+$rerunRetention = Get-GiteeReleaseRetentionPlan `
+    -Releases (@($retentionFixtures) + @([pscustomobject]@{ Id=4; Tag='v1.4.0-beta.3'; Prerelease=$true; SizeBytes=100MB })) `
+    -IncomingTag 'v1.4.0-beta.3' `
+    -IncomingPrerelease $true `
+    -IncomingSizeBytes 200MB
+Assert-Equal $false (@($rerunRetention.DeleteReleases.Tag) -contains 'v1.4.0-beta.3') 'retention never deletes incoming tag'
+
+$protectedRetention = Get-GiteeReleaseRetentionPlan `
+    -Releases (@([pscustomobject]@{ Id=5; Tag='manual-release'; Prerelease=$false; SizeBytes=50MB }) + $retentionFixtures) `
+    -IncomingTag 'v1.4.0-beta.3' `
+    -IncomingPrerelease $true `
+    -IncomingSizeBytes 200MB
+Assert-Equal $true $protectedRetention.Fits 'retention preserves unknown release'
+Assert-Equal $true ($protectedRetention.RetainedTags -contains 'manual-release') 'unknown release remains retained'
+Assert-Equal $false (@($protectedRetention.DeleteReleases.Tag) -contains 'manual-release') 'unknown release is never deleted'
+
+$impossibleRetention = Get-GiteeReleaseRetentionPlan `
+    -Releases $retentionFixtures `
+    -IncomingTag 'v1.4.0-beta.3' `
+    -IncomingPrerelease $true `
+    -IncomingSizeBytes 200MB `
+    -BudgetBytes 350MB
+Assert-Equal $false $impossibleRetention.Fits 'retention rejects impossible budget'
 
 Write-Host 'Release.Common tests passed.'

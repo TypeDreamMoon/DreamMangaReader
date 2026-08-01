@@ -4,6 +4,8 @@ param(
     [string]$Repository = 'DreamMangaReader',
     [string]$TargetBranch = 'main',
     [string]$ReleaseMetadataPath = '',
+    [ValidateRange(1, 3)][int]$MaxRetainedReleases = 3,
+    [long]$ReleaseBudgetBytes = 850MB,
     [switch]$DryRun,
     [switch]$ConfirmPublish
 )
@@ -71,6 +73,21 @@ function Get-GiteeReleases {
     return @(Invoke-GiteeReadApi -Uri "$BaseUri/releases?per_page=100&direction=desc")
 }
 
+function Invoke-GiteeDeleteApi {
+    param([Parameter(Mandatory)][string]$Uri)
+
+    try {
+        $null = Invoke-RestMethod `
+            -Method Delete `
+            -Uri $Uri `
+            -Body @{ access_token = $script:GiteeToken } `
+            -ContentType 'application/x-www-form-urlencoded; charset=utf-8'
+    }
+    catch {
+        throw "Gitee API 删除失败：$Uri；$($_.Exception.Message)"
+    }
+}
+
 $script:RemoteAttachmentHashes = @{}
 function Get-GiteeAttachmentSha256 {
     param([Parameter(Mandatory)][object]$Remote)
@@ -129,10 +146,42 @@ if ([string]$repo.full_name -cne "$Owner/$Repository" -or [string]$repo.default_
     throw "Gitee 公开仓库身份不符：$($repo.full_name) / $($repo.default_branch)"
 }
 $releases = Get-GiteeReleases -BaseUri $baseUri
+$releaseRecords = [System.Collections.Generic.List[object]]::new()
+$remoteFilesByReleaseId = @{}
+foreach ($remoteRelease in $releases) {
+    $idProperty = $remoteRelease.PSObject.Properties['id']
+    $releaseId = [long]0
+    if ($null -eq $idProperty -or ![long]::TryParse([string]$idProperty.Value, [ref]$releaseId) -or $releaseId -le 0) {
+        throw "Gitee Release 缺少有效 id：$($remoteRelease.tag_name)"
+    }
+    $releaseFiles = @(Invoke-GiteeReadApi -Uri "$baseUri/releases/$releaseId/attach_files?per_page=100")
+    $remoteFilesByReleaseId[[string]$releaseId] = $releaseFiles
+    $releaseSizeBytes = [long]0
+    foreach ($releaseFile in $releaseFiles) { $releaseSizeBytes += [long]$releaseFile.size }
+    $releaseRecords.Add([pscustomobject]@{
+        Id = $releaseId
+        Tag = [string]$remoteRelease.tag_name
+        Prerelease = $remoteRelease.prerelease -eq $true
+        SizeBytes = $releaseSizeBytes
+        Remote = $remoteRelease
+    })
+}
+$localSizeBytes = [long]0
+foreach ($localFile in $localFiles) { $localSizeBytes += [long]$localFile.Length }
+$retentionPlan = Get-GiteeReleaseRetentionPlan `
+    -Releases $releaseRecords.ToArray() `
+    -IncomingTag $tag `
+    -IncomingPrerelease $releaseMetadata.Prerelease `
+    -IncomingSizeBytes $localSizeBytes `
+    -MaxReleaseCount $MaxRetainedReleases `
+    -BudgetBytes $ReleaseBudgetBytes
+if (!$retentionPlan.Fits) {
+    throw "Gitee Release 保留计划不可执行：$($retentionPlan.Reason)"
+}
 $sameTag = @($releases | Where-Object { [string]$_.tag_name -ceq $tag } | Select-Object -First 1)
 $remoteFiles = @()
 if ($sameTag.Count -gt 0) {
-    $remoteFiles = @(Invoke-GiteeReadApi -Uri "$baseUri/releases/$($sameTag[0].id)/attach_files?per_page=100")
+    $remoteFiles = @($remoteFilesByReleaseId[[string]$sameTag[0].id])
 }
 $missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles -GetRemoteSha256 {
     param($remote)
@@ -143,13 +192,20 @@ Write-Host 'Gitee 发布计划（只允许此仓库）' -ForegroundColor Cyan
 Write-Host "目标：$Owner/$Repository / $TargetBranch"
 Write-Host "标签：$tag / channel=$($manifest.channel)"
 Write-Host "Release：$($releaseMetadata.Name) / prerelease=$($releaseMetadata.Prerelease)"
+Write-Host ("保留：{0} / 预计附件 {1:N2} MiB / 预算 {2:N2} MiB" -f `
+    ($retentionPlan.RetainedTags -join ', '),
+    ($retentionPlan.ProjectedBytes / 1MB),
+    ($retentionPlan.BudgetBytes / 1MB))
+foreach ($oldRelease in $retentionPlan.DeleteReleases) {
+    Write-Host "- 待删除旧 Release：$($oldRelease.Tag) / $([Math]::Round($oldRelease.SizeBytes / 1MB, 2)) MiB"
+}
 foreach ($file in $localFiles) {
     $state = if ($remoteFiles | Where-Object { [string]$_.name -ieq $file.Name }) { '远端已有' } else { '待上传' }
     Write-Host ("- {0} / {1:N2} MiB / {2}" -f $file.Name, ($file.Length / 1MB), $state)
 }
 
 if ($DryRun) {
-    Write-Host "DryRun 完成：将创建或复用 $tag，并上传 $($missing.Count) 个缺失附件；未执行任何远端写入。" -ForegroundColor Green
+    Write-Host "DryRun 完成：将清理 $($retentionPlan.DeleteReleases.Count) 个旧 Release，创建或复用 $tag，并上传 $($missing.Count) 个缺失附件；未执行任何远端写入。" -ForegroundColor Green
     $script:GiteeToken = $null
     exit 0
 }
@@ -158,7 +214,7 @@ if ([string]::IsNullOrWhiteSpace($script:GiteeToken)) {
     throw '未找到 DREAMMANGAREADER_GITEE_TOKEN 或 GITEE_TOKEN。'
 }
 if (!$ConfirmPublish) {
-    $answer = Read-Host "确认写入 $Owner/$Repository 的 $tag Release？输入 Y 继续"
+    $answer = Read-Host "确认清理旧版本并写入 $Owner/$Repository 的 $tag Release？输入 Y 继续"
     if ($answer -cne 'Y') { throw '用户取消发布。' }
 }
 
@@ -167,6 +223,10 @@ $releaseBody = @{
     name = $releaseMetadata.Name
     body = $releaseMetadata.Body
     prerelease = $releaseMetadata.Prerelease.ToString().ToLowerInvariant()
+}
+
+foreach ($oldRelease in $retentionPlan.DeleteReleases) {
+    Invoke-GiteeDeleteApi -Uri "$baseUri/releases/$($oldRelease.Id)"
 }
 $release = if ($sameTag.Count -gt 0) {
     if ($releaseMetadata.External) {
@@ -205,7 +265,7 @@ try {
     if ($remoteManifest.Count -eq 0) { throw 'Gitee Release 缺少远端更新清单。' }
     $remoteManifestResponse = Invoke-WebRequest -Method Get -Uri ([string]$remoteManifest[0].browser_download_url) -TimeoutSec 30
     $remoteManifestJson = $remoteManifestResponse.Content | ConvertFrom-Json
-    if ([int]$remoteManifestJson.schemaVersion -ne 1 -or
+    if ([int]$remoteManifestJson.schemaVersion -notin @(1, 2) -or
         [string]$remoteManifestJson.appId -cne 'DreamMangaReader' -or
         [string]$remoteManifestJson.version -cne $version) {
         throw '公开下载的 Gitee 更新清单内容不符合本地发布版本。'
