@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 
 $script:DreamMangaReaderAppId = 'DreamMangaReader'
 $script:GiteeAttachmentLimitBytes = 100MB
-$script:GiteePartSizeBytes = 90MB
+$script:GiteePartSizeBytes = 48MB
 $script:GiteeReleaseBudgetBytes = 850MB
 $script:GiteeMaxReleaseCount = 3
 $script:ReleaseVersionPattern = '^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
@@ -378,6 +378,44 @@ function Compare-RemoteAttachments {
         }
     }
     return $missing.ToArray()
+}
+
+function Get-StaleRemoteAttachments {
+    param(
+        [Parameter(Mandatory)][object[]]$Local,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Remote
+    )
+
+    $localByName = @{}
+    foreach ($item in $Local) {
+        $name = if ($null -ne $item.PSObject.Properties['Name']) { [string]$item.Name } else { [string]$item.name }
+        $length = if ($null -ne $item.PSObject.Properties['Length']) { [long]$item.Length } else { [long]$item.size }
+        [void](Assert-SafeFileName $name)
+        if (!(Test-GiteeAttachmentSize -Bytes $length)) {
+            throw "Gitee 附件超过 100 MiB：$name"
+        }
+        $key = $name.ToLowerInvariant()
+        if ($localByName.ContainsKey($key)) {
+            throw "本地存在重复附件名：$name"
+        }
+        $localByName[$key] = $length
+    }
+
+    $remoteNames = @{}
+    $stale = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $Remote) {
+        $name = [string]$item.name
+        [void](Assert-SafeFileName $name)
+        $key = $name.ToLowerInvariant()
+        if ($remoteNames.ContainsKey($key)) {
+            throw "远端存在重复附件名：$name"
+        }
+        $remoteNames[$key] = $true
+        if (!$localByName.ContainsKey($key) -or [long]$item.size -ne $localByName[$key]) {
+            $stale.Add($item)
+        }
+    }
+    return $stale.ToArray()
 }
 
 function Read-ReleaseVersion {

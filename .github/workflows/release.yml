@@ -344,4 +344,5 @@ jobs:
           ./Scripts/发布到Gitee.ps1 `
             -AssetRoot (Join-Path $env:GITHUB_WORKSPACE 'gitee-release-assets') `
             -ReleaseMetadataPath (Join-Path $env:RUNNER_TEMP 'github-release.json') `
+            -UploadConcurrency 8 `
             -ConfirmPublish

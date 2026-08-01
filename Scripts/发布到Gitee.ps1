@@ -6,6 +6,7 @@ param(
     [string]$ReleaseMetadataPath = '',
     [ValidateRange(1, 3)][int]$MaxRetainedReleases = 3,
     [long]$ReleaseBudgetBytes = 850MB,
+    [ValidateRange(1, 16)][int]$UploadConcurrency = 8,
     [switch]$DryRun,
     [switch]$ConfirmPublish
 )
@@ -88,8 +89,7 @@ function Invoke-GiteeDeleteApi {
     }
 }
 
-$script:RemoteAttachmentHashes = @{}
-function Get-GiteeAttachmentSha256 {
+function Get-GiteeAttachmentDownloadUri {
     param([Parameter(Mandatory)][object]$Remote)
 
     $downloadUrl = [string]$Remote.browser_download_url
@@ -99,16 +99,20 @@ function Get-GiteeAttachmentSha256 {
         ($downloadUri.Host -cne 'gitee.com' -and !$downloadUri.Host.EndsWith('.gitee.com', [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "Gitee 附件下载地址无效：$downloadUrl"
     }
-    if ($script:RemoteAttachmentHashes.ContainsKey($downloadUrl)) {
-        return $script:RemoteAttachmentHashes[$downloadUrl]
-    }
+    return $downloadUri
+}
 
-    $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-gitee-$([guid]::NewGuid().ToString('N')).download"
+function Get-GiteeControlFileSha256 {
+    param([Parameter(Mandatory)][object]$Remote)
+
+    if ([long]$Remote.size -le 0 -or [long]$Remote.size -gt 1MB) {
+        throw "Gitee 校验附件大小无效：$($Remote.name)"
+    }
+    $downloadUri = Get-GiteeAttachmentDownloadUri -Remote $Remote
+    $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-gitee-control-$([guid]::NewGuid().ToString('N')).download"
     try {
-        $null = Invoke-WebRequest -Method Get -Uri $downloadUri -OutFile $tempPath -MaximumRedirection 10 -TimeoutSec 300
-        $hash = Get-FileSha256 -Path $tempPath
-        $script:RemoteAttachmentHashes[$downloadUrl] = $hash
-        return $hash
+        $null = Invoke-WebRequest -Method Get -Uri $downloadUri -OutFile $tempPath -MaximumRedirection 10 -TimeoutSec 60
+        return Get-FileSha256 -Path $tempPath
     }
     finally {
         if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force }
@@ -183,15 +187,29 @@ $remoteFiles = @()
 if ($sameTag.Count -gt 0) {
     $remoteFiles = @($remoteFilesByReleaseId[[string]$sameTag[0].id])
 }
-$missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles -GetRemoteSha256 {
-    param($remote)
-    Get-GiteeAttachmentSha256 -Remote $remote
-})
+$hashFileName = "DreamMangaReader-v$version-sha256.txt"
+$localHashFile = @($localFiles | Where-Object { $_.Name -ceq $hashFileName } | Select-Object -First 1)
+if ($localHashFile.Count -ne 1) { throw "Gitee 发布目录缺少唯一 SHA-256 清单：$hashFileName" }
+$remoteHashFiles = @($remoteFiles | Where-Object { [string]$_.name -ieq $hashFileName })
+if ($remoteHashFiles.Count -gt 1) { throw "Gitee Release 存在重复 SHA-256 清单：$hashFileName" }
+$canReuseRemoteFiles = $false
+if ($remoteHashFiles.Count -eq 1) {
+    $canReuseRemoteFiles = (Get-GiteeControlFileSha256 -Remote $remoteHashFiles[0]) -ceq (Get-FileSha256 -Path $localHashFile[0].FullName)
+}
+$staleRemoteFiles = if ($remoteFiles.Count -gt 0 -and !$canReuseRemoteFiles) {
+    @($remoteFiles)
+}
+else {
+    @(Get-StaleRemoteAttachments -Local $localFiles -Remote $remoteFiles)
+}
+$usableRemoteFiles = @($remoteFiles | Where-Object { $_ -notin $staleRemoteFiles })
+$missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $usableRemoteFiles)
 
 Write-Host 'Gitee 发布计划（只允许此仓库）' -ForegroundColor Cyan
 Write-Host "目标：$Owner/$Repository / $TargetBranch"
 Write-Host "标签：$tag / channel=$($manifest.channel)"
 Write-Host "Release：$($releaseMetadata.Name) / prerelease=$($releaseMetadata.Prerelease)"
+Write-Host "同标签附件复用：$canReuseRemoteFiles"
 Write-Host ("保留：{0} / 预计附件 {1:N2} MiB / 预算 {2:N2} MiB" -f `
     ($retentionPlan.RetainedTags -join ', '),
     ($retentionPlan.ProjectedBytes / 1MB),
@@ -199,13 +217,16 @@ Write-Host ("保留：{0} / 预计附件 {1:N2} MiB / 预算 {2:N2} MiB" -f `
 foreach ($oldRelease in $retentionPlan.DeleteReleases) {
     Write-Host "- 待删除旧 Release：$($oldRelease.Tag) / $([Math]::Round($oldRelease.SizeBytes / 1MB, 2)) MiB"
 }
+foreach ($staleFile in $staleRemoteFiles) {
+    Write-Host "- 待替换过期附件：$($staleFile.name) / $([Math]::Round([long]$staleFile.size / 1MB, 2)) MiB"
+}
 foreach ($file in $localFiles) {
-    $state = if ($remoteFiles | Where-Object { [string]$_.name -ieq $file.Name }) { '远端已有' } else { '待上传' }
+    $state = if ($usableRemoteFiles | Where-Object { [string]$_.name -ieq $file.Name }) { '远端已有' } else { '待上传' }
     Write-Host ("- {0} / {1:N2} MiB / {2}" -f $file.Name, ($file.Length / 1MB), $state)
 }
 
 if ($DryRun) {
-    Write-Host "DryRun 完成：将清理 $($retentionPlan.DeleteReleases.Count) 个旧 Release，创建或复用 $tag，并上传 $($missing.Count) 个缺失附件；未执行任何远端写入。" -ForegroundColor Green
+    Write-Host "DryRun 完成：将清理 $($retentionPlan.DeleteReleases.Count) 个旧 Release、替换 $($staleRemoteFiles.Count) 个过期附件，创建或复用 $tag，并上传 $($missing.Count) 个缺失附件；未执行任何远端写入。" -ForegroundColor Green
     $script:GiteeToken = $null
     exit 0
 }
@@ -241,41 +262,92 @@ else {
     Invoke-GiteeWriteApi -Method Post -Uri "$baseUri/releases" -Body $releaseBody
 }
 
-$responseFiles = [System.Collections.Generic.List[string]]::new()
+$responseRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-gitee-responses-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $responseRoot | Out-Null
 try {
+    foreach ($staleFile in $staleRemoteFiles) {
+        $attachmentId = [long]0
+        if ($null -eq $staleFile.PSObject.Properties['id'] -or
+            ![long]::TryParse([string]$staleFile.id, [ref]$attachmentId) -or
+            $attachmentId -le 0) {
+            throw "Gitee 过期附件缺少有效 id：$($staleFile.name)"
+        }
+        Invoke-GiteeDeleteApi -Uri "$baseUri/releases/$($release.id)/attach_files/$attachmentId"
+    }
+
     $curlCommand = Get-Command 'curl.exe', 'curl' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($missing.Count -gt 0 -and $null -eq $curlCommand) {
         throw 'PATH 中未找到 curl，无法上传 Gitee 附件。'
     }
-    foreach ($file in $missing) {
-        $responsePath = Join-Path $assetRootFull "$($file.BaseName).response.json"
-        $responseFiles.Add($responsePath)
+    if ($missing.Count -gt 0) {
+        $curlPath = $curlCommand.Source
         $uploadUri = "$baseUri/releases/$($release.id)/attach_files"
-        & $curlCommand.Source --fail-with-body --show-error --request POST --header 'Accept: application/json' --form "access_token=$script:GiteeToken" --form "file=@$($file.FullName);filename=$($file.Name)" --output $responsePath $uploadUri
-        if ($LASTEXITCODE -ne 0) { throw "Gitee 附件上传失败：$($file.Name)，curl exit code $LASTEXITCODE" }
+        $giteeToken = $script:GiteeToken
+        $actualConcurrency = [Math]::Min($UploadConcurrency, $missing.Count)
+        Write-Host "开始并发上传 $($missing.Count) 个附件，并发数：$actualConcurrency" -ForegroundColor Cyan
+        foreach ($file in $missing) {
+            Write-Host ("- 排队：{0} / {1:N2} MiB" -f $file.Name, ($file.Length / 1MB))
+        }
+
+        $uploadResults = @($missing | ForEach-Object -Parallel {
+            $ErrorActionPreference = 'Stop'
+            $PSNativeCommandUseErrorActionPreference = $false
+            $file = $_
+            $responsePath = Join-Path $using:responseRoot "$($file.Name).json"
+            $curl = $using:curlPath
+            $token = $using:giteeToken
+            $uri = $using:uploadUri
+            & $curl `
+                --fail-with-body `
+                --silent `
+                --show-error `
+                --connect-timeout 30 `
+                --max-time 7200 `
+                --request POST `
+                --header 'Accept: application/json' `
+                --form "access_token=$token" `
+                --form "file=@$($file.FullName);filename=$($file.Name)" `
+                --output $responsePath `
+                $uri
+            if ($LASTEXITCODE -ne 0) {
+                throw "Gitee 附件上传失败：$($file.Name)，curl exit code $LASTEXITCODE"
+            }
+            $response = Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$response.name -cne $file.Name -or [long]$response.size -ne $file.Length) {
+                throw "Gitee 附件上传响应不符：$($file.Name)"
+            }
+            [pscustomobject]@{ Name = $file.Name; Size = [long]$file.Length }
+        } -ThrottleLimit $actualConcurrency)
+        if ($uploadResults.Count -ne $missing.Count) {
+            throw "Gitee 附件上传结果数量不符：期望 $($missing.Count)，实际 $($uploadResults.Count)"
+        }
     }
 
     $verifiedRemote = @(Invoke-GiteeReadApi -Uri "$baseUri/releases/$($release.id)/attach_files?per_page=100")
-    $stillMissing = @(Compare-RemoteAttachments -Local $localFiles -Remote $verifiedRemote -GetRemoteSha256 {
-        param($remote)
-        Get-GiteeAttachmentSha256 -Remote $remote
-    })
+    $remainingStale = @(Get-StaleRemoteAttachments -Local $localFiles -Remote $verifiedRemote)
+    if ($remainingStale.Count -ne 0) { throw "Gitee 发布后仍存在 $($remainingStale.Count) 个过期附件。" }
+    $stillMissing = @(Compare-RemoteAttachments -Local $localFiles -Remote $verifiedRemote)
     if ($stillMissing.Count -ne 0) { throw "Gitee 发布后仍缺少 $($stillMissing.Count) 个附件。" }
     $remoteManifest = @($verifiedRemote | Where-Object { [string]$_.name -ceq 'dream-manga-reader-update.json' } | Select-Object -First 1)
     if ($remoteManifest.Count -eq 0) { throw 'Gitee Release 缺少远端更新清单。' }
-    $remoteManifestResponse = Invoke-WebRequest -Method Get -Uri ([string]$remoteManifest[0].browser_download_url) -TimeoutSec 30
+    $verifiedHashFile = @($verifiedRemote | Where-Object { [string]$_.name -ceq $hashFileName } | Select-Object -First 1)
+    if ($verifiedHashFile.Count -ne 1 -or
+        (Get-GiteeControlFileSha256 -Remote $verifiedHashFile[0]) -cne (Get-FileSha256 -Path $localHashFile[0].FullName)) {
+        throw '公开下载的 Gitee SHA-256 清单与本地发布不一致。'
+    }
+    $remoteManifestUri = Get-GiteeAttachmentDownloadUri -Remote $remoteManifest[0]
+    $remoteManifestResponse = Invoke-WebRequest -Method Get -Uri $remoteManifestUri -TimeoutSec 30
     $remoteManifestJson = $remoteManifestResponse.Content | ConvertFrom-Json
     if ([int]$remoteManifestJson.schemaVersion -notin @(1, 2) -or
         [string]$remoteManifestJson.appId -cne 'DreamMangaReader' -or
         [string]$remoteManifestJson.version -cne $version) {
         throw '公开下载的 Gitee 更新清单内容不符合本地发布版本。'
     }
+    [void](Assert-GiteeReleaseContract -Manifest $remoteManifestJson -LocalFiles $localFiles)
     $releaseUrl = "https://gitee.com/$Owner/$Repository/releases/tag/$tag"
     Write-Host "Gitee 发布验证完成：$releaseUrl" -ForegroundColor Green
 }
 finally {
-    foreach ($path in $responseFiles) {
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
-    }
+    if (Test-Path -LiteralPath $responseRoot) { Remove-Item -LiteralPath $responseRoot -Recurse -Force }
     $script:GiteeToken = $null
 }

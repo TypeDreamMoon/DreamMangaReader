@@ -29,6 +29,7 @@ Assert-Equal $false (Test-Sha256 '../bad') 'invalid SHA'
 Assert-Equal $true (Test-GiteeAttachmentSize -Bytes 99MB) 'under limit'
 Assert-Equal $true (Test-GiteeAttachmentSize -Bytes 100MB) 'at limit'
 Assert-Equal $false (Test-GiteeAttachmentSize -Bytes 101MB) 'over limit'
+Assert-Equal 48MB $script:GiteePartSizeBytes 'parallel-friendly Gitee part size'
 Assert-Equal 'package.apk' (Assert-SafeFileName 'package.apk') 'safe file name'
 Assert-Throws { Assert-SafeFileName '..\package.apk' } 'path traversal'
 Assert-Equal 5013 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 13) 'universal code'
@@ -174,6 +175,21 @@ Assert-Throws {
         [pscustomobject]@{ name = 'a.apk'; size = 99 }
     )
 } 'same-name size conflict'
+$staleAttachments = @(Get-StaleRemoteAttachments -Local $localAttachments -Remote @(
+    [pscustomobject]@{ id = 1; name = 'a.apk'; size = 99 },
+    [pscustomobject]@{ id = 2; name = 'obsolete.zip'; size = 56 }
+))
+Assert-Equal 2 $staleAttachments.Count 'size conflicts and extras are stale'
+Assert-Equal 0 @(Get-StaleRemoteAttachments -Local $localAttachments -Remote @(
+    [pscustomobject]@{ id = 1; name = 'A.APK'; size = 12 },
+    [pscustomobject]@{ id = 2; name = 'b.exe'; size = 34 }
+)).Count 'matching remote attachments are reusable'
+Assert-Throws {
+    Get-StaleRemoteAttachments -Local $localAttachments -Remote @(
+        [pscustomobject]@{ id = 1; name = 'a.apk'; size = 12 },
+        [pscustomobject]@{ id = 2; name = 'A.APK'; size = 12 }
+    )
+} 'duplicate remote attachment names'
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "DreamMangaReader-release-tests-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
