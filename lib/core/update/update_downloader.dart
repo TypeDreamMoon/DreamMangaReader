@@ -83,7 +83,6 @@ class UpdateDownloader {
     await cache.create(recursive: true);
     final cacheName = '${asset.sha256.toLowerCase()}-${asset.fileName}';
     final finalFile = File('${cache.path}${Platform.pathSeparator}$cacheName');
-    final partialFile = File('${finalFile.path}.download');
 
     if (await finalFile.exists()) {
       try {
@@ -103,22 +102,145 @@ class UpdateDownloader {
       }
     }
 
+    if (asset.isChunked) {
+      return _downloadChunked(
+        asset,
+        cache: cache,
+        finalFile: finalFile,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
+        activePaths: activePaths,
+      );
+    }
+
+    final url = asset.url;
+    if (url == null || url.isEmpty) {
+      throw const UpdateDownloadException('Update asset has no download URL');
+    }
+    final downloaded = await _downloadVerifiedRemote(
+      cache: cache,
+      fileName: asset.fileName,
+      url: url,
+      expectedSize: asset.sizeBytes,
+      expectedSha256: asset.sha256,
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+    await UpdateCacheCleaner.cleanup(
+      cache,
+      activePaths: {...activePaths, downloaded.path},
+    );
+    return downloaded;
+  }
+
+  Future<File> _downloadChunked(
+    ResolvedUpdateAsset asset, {
+    required Directory cache,
+    required File finalFile,
+    required void Function(double progress)? onProgress,
+    required CancelToken? cancelToken,
+    required Set<String> activePaths,
+  }) async {
+    final partFiles = <File>[];
+    var completedBytes = 0;
+    for (final part in asset.parts) {
+      final partFile = await _downloadVerifiedRemote(
+        cache: cache,
+        fileName: part.fileName,
+        url: part.url,
+        expectedSize: part.sizeBytes,
+        expectedSha256: part.sha256,
+        cancelToken: cancelToken,
+        onProgress: (progress) {
+          final received = completedBytes + (part.sizeBytes * progress);
+          onProgress?.call((received / asset.sizeBytes).clamp(0, 1));
+        },
+      );
+      partFiles.add(partFile);
+      completedBytes += part.sizeBytes;
+    }
+    onProgress?.call(1);
+
+    final assemblingFile = File('${finalFile.path}.assembling');
+    if (await assemblingFile.exists()) await assemblingFile.delete();
+    final sink = assemblingFile.openWrite(mode: FileMode.write);
+    try {
+      for (final partFile in partFiles) {
+        await for (final chunk in partFile.openRead()) {
+          final cancelError = cancelToken?.cancelError;
+          if (cancelError != null) throw cancelError;
+          sink.add(chunk);
+        }
+      }
+      await sink.flush();
+    } catch (_) {
+      await sink.close();
+      try {
+        if (await assemblingFile.exists()) await assemblingFile.delete();
+      } on FileSystemException {
+        // A later retry will replace the incomplete assembly.
+      }
+      rethrow;
+    }
+    await sink.close();
+
+    await UpdateFileVerifier.verify(
+      assemblingFile,
+      expectedSize: asset.sizeBytes,
+      expectedSha256: asset.sha256,
+    );
+    final completed = await assemblingFile.rename(finalFile.path);
+    for (final partFile in partFiles) {
+      try {
+        if (await partFile.exists()) await partFile.delete();
+      } on FileSystemException {
+        // Cache cleanup retries locked part files on a later update.
+      }
+    }
+    await UpdateCacheCleaner.cleanup(
+      cache,
+      activePaths: {...activePaths, completed.path},
+    );
+    return completed;
+  }
+
+  Future<File> _downloadVerifiedRemote({
+    required Directory cache,
+    required String fileName,
+    required String url,
+    required int expectedSize,
+    required String expectedSha256,
+    required void Function(double progress)? onProgress,
+    required CancelToken? cancelToken,
+  }) async {
+    final cacheName = '${expectedSha256.toLowerCase()}-$fileName';
+    final finalFile = File('${cache.path}${Platform.pathSeparator}$cacheName');
+    final partialFile = File('${finalFile.path}.download');
+
+    if (await finalFile.exists()) {
+      try {
+        await UpdateFileVerifier.verify(
+          finalFile,
+          expectedSize: expectedSize,
+          expectedSha256: expectedSha256,
+        );
+        onProgress?.call(1);
+        return finalFile;
+      } on UpdateIntegrityException {
+        // 校验器已经删除损坏缓存，继续重新下载。
+      }
+    }
+
     var partialLength =
         await partialFile.exists() ? await partialFile.length() : 0;
-    if (partialLength >= asset.sizeBytes) {
+    if (partialLength >= expectedSize) {
       try {
         await UpdateFileVerifier.verify(
           partialFile,
-          expectedSize: asset.sizeBytes,
-          expectedSha256: asset.sha256,
+          expectedSize: expectedSize,
+          expectedSha256: expectedSha256,
         );
-        return _completeDownload(
-          partialFile,
-          finalFile,
-          cache,
-          activePaths: activePaths,
-          onProgress: onProgress,
-        );
+        return _completePartial(partialFile, finalFile, onProgress);
       } on UpdateIntegrityException {
         partialLength = 0;
       }
@@ -126,7 +248,7 @@ class UpdateDownloader {
 
     final requestedResume = partialLength > 0;
     final response = await _dio.get<ResponseBody>(
-      asset.url,
+      url,
       cancelToken: cancelToken,
       options: Options(
         responseType: ResponseType.stream,
@@ -161,7 +283,7 @@ class UpdateDownloader {
         if (cancelError != null) throw cancelError;
         sink.add(chunk);
         received += chunk.length;
-        onProgress?.call((received / asset.sizeBytes).clamp(0, 1));
+        onProgress?.call((received / expectedSize).clamp(0, 1));
       }
       await sink.flush();
     } finally {
@@ -170,16 +292,10 @@ class UpdateDownloader {
 
     await UpdateFileVerifier.verify(
       partialFile,
-      expectedSize: asset.sizeBytes,
-      expectedSha256: asset.sha256,
+      expectedSize: expectedSize,
+      expectedSha256: expectedSha256,
     );
-    return _completeDownload(
-      partialFile,
-      finalFile,
-      cache,
-      activePaths: activePaths,
-      onProgress: onProgress,
-    );
+    return _completePartial(partialFile, finalFile, onProgress);
   }
 
   Future<Directory> _resolveCacheDirectory() async {
@@ -201,19 +317,13 @@ class UpdateDownloader {
     }
   }
 
-  static Future<File> _completeDownload(
+  static Future<File> _completePartial(
     File partialFile,
     File finalFile,
-    Directory cache, {
-    required Set<String> activePaths,
-    required void Function(double progress)? onProgress,
-  }) async {
+    void Function(double progress)? onProgress,
+  ) async {
     final completed = await partialFile.rename(finalFile.path);
     onProgress?.call(1);
-    await UpdateCacheCleaner.cleanup(
-      cache,
-      activePaths: {...activePaths, completed.path},
-    );
     return completed;
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:dream_manga_reader/core/update/update_downloader.dart';
 import 'package:dream_manga_reader/core/update/update_models.dart';
@@ -33,6 +34,33 @@ ResolvedUpdateAsset _asset() => const ResolvedUpdateAsset(
       sizeBytes: 3,
       url: 'https://example/package.bin',
       sourceName: 'package.bin',
+    );
+
+String _hash(List<int> bytes) => sha256.convert(bytes).toString();
+
+ResolvedUpdateAsset _chunkedAsset({String? finalSha256}) => ResolvedUpdateAsset(
+      platform: UpdatePlatform.windows,
+      arch: 'x64',
+      kind: 'installer',
+      fileName: 'package.bin',
+      sha256: finalSha256 ?? _hash([1, 2, 3]),
+      sizeBytes: 3,
+      parts: [
+        ResolvedUpdatePart(
+          fileName: 'package.bin.part001',
+          sha256: _hash([1, 2]),
+          sizeBytes: 2,
+          url: 'https://example/package.bin.part001',
+          sourceName: 'package.bin.part001',
+        ),
+        ResolvedUpdatePart(
+          fileName: 'package.bin.part002',
+          sha256: _hash([3]),
+          sizeBytes: 1,
+          url: 'https://example/package.bin.part002',
+          sourceName: 'package.bin.part002',
+        ),
+      ],
     );
 
 const _cacheName =
@@ -159,6 +187,81 @@ void main() {
     expect(requests, 1);
     expect(downloaded.path, cached.path);
     expect(downloaded.readAsBytesSync(), [1, 2, 3]);
+  });
+
+  test('downloads, verifies and assembles chunked assets', () async {
+    final requested = <String>[];
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        requested.add(options.uri.path);
+        final bytes = options.uri.path.endsWith('part001') ? [1, 2] : [3];
+        return ResponseBody.fromBytes(
+          bytes,
+          200,
+          headers: {
+            Headers.contentLengthHeader: ['${bytes.length}'],
+          },
+        );
+      });
+    final progress = <double>[];
+
+    final downloaded = await UpdateDownloader(
+      dio: dio,
+      cacheDirectory: temp,
+    ).download(_chunkedAsset(), onProgress: progress.add);
+
+    expect(requested, [
+      '/package.bin.part001',
+      '/package.bin.part002',
+    ]);
+    expect(downloaded.readAsBytesSync(), [1, 2, 3]);
+    expect(progress.last, 1);
+    expect(
+      temp.listSync().whereType<File>().map((file) => file.path),
+      everyElement(isNot(contains('.part00'))),
+    );
+  });
+
+  test('reuses verified chunk cache without network requests', () async {
+    final asset = _chunkedAsset();
+    for (var index = 0; index < asset.parts.length; index++) {
+      final part = asset.parts[index];
+      File(
+        '${temp.path}${Platform.pathSeparator}'
+        '${part.sha256}-${part.fileName}',
+      ).writeAsBytesSync(index == 0 ? [1, 2] : [3]);
+    }
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((_) {
+        fail('verified chunks should not be downloaded again');
+      });
+
+    final downloaded = await UpdateDownloader(
+      dio: dio,
+      cacheDirectory: temp,
+    ).download(asset);
+
+    expect(downloaded.readAsBytesSync(), [1, 2, 3]);
+  });
+
+  test('rejects an assembled file whose final checksum differs', () async {
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        final bytes = options.uri.path.endsWith('part001') ? [1, 2] : [3];
+        return ResponseBody.fromBytes(bytes, 200);
+      });
+
+    await expectLater(
+      UpdateDownloader(dio: dio, cacheDirectory: temp).download(
+        _chunkedAsset(finalSha256: 'f' * 64),
+      ),
+      throwsA(isA<UpdateIntegrityException>()),
+    );
+    expect(
+      File('${temp.path}${Platform.pathSeparator}${'f' * 64}-package.bin')
+          .existsSync(),
+      isFalse,
+    );
   });
 
   test('cache cleanup keeps newest two packages plus active paths', () async {

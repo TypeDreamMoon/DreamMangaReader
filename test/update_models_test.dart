@@ -13,6 +13,7 @@ void main() {
     String fileName = 'DreamMangaReader-setup.exe',
     String sha256 = checksum,
     int sizeBytes = 1024,
+    List<Map<String, Object>>? parts,
   }) =>
       {
         'schemaVersion': schemaVersion,
@@ -27,6 +28,7 @@ void main() {
             'fileName': fileName,
             'sha256': sha256,
             'sizeBytes': sizeBytes,
+            if (parts != null) 'parts': parts,
           },
         ],
       };
@@ -59,6 +61,54 @@ void main() {
     expect(resolved.url, 'https://downloads.example/setup.exe');
     expect(resolved.sourceName, 'DREAMMANGAREADER-SETUP.EXE');
     expect(resolved.sha256, checksum);
+  });
+
+  test('parses and binds schema 2 chunked assets', () {
+    final manifest = UpdateManifest.fromJson(
+      manifestJson(
+        schemaVersion: 2,
+        sizeBytes: 1536,
+        parts: const [
+          {
+            'fileName': 'DreamMangaReader-setup.exe.part001',
+            'sha256': checksum,
+            'sizeBytes': 1024,
+          },
+          {
+            'fileName': 'DreamMangaReader-setup.exe.part002',
+            'sha256': checksum,
+            'sizeBytes': 512,
+          },
+        ],
+      ),
+    );
+    final resolved = manifest.resolve(
+      UpdatePlatform.windows,
+      const [
+        RemoteAsset(
+          name: 'DREAMMANGAREADER-SETUP.EXE.PART001',
+          url: 'https://downloads.example/setup.part001',
+          size: 1024,
+        ),
+        RemoteAsset(
+          name: 'DreamMangaReader-setup.exe.part002',
+          url: 'https://downloads.example/setup.part002',
+          size: 512,
+        ),
+      ],
+    ).single;
+
+    expect(manifest.schemaVersion, 2);
+    expect(manifest.assets.single.isChunked, isTrue);
+    expect(resolved.isChunked, isTrue);
+    expect(resolved.url, isNull);
+    expect(
+      resolved.parts.map((part) => part.url),
+      [
+        'https://downloads.example/setup.part001',
+        'https://downloads.example/setup.part002',
+      ],
+    );
   });
 
   test('update sources expose display names and non-null fallbacks', () {
@@ -136,7 +186,89 @@ void main() {
 
   test('rejects unsupported schema versions', () {
     expect(
-      () => UpdateManifest.fromJson(manifestJson(schemaVersion: 2)),
+      () => UpdateManifest.fromJson(manifestJson(schemaVersion: 3)),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects parts in schema 1 manifests', () {
+    expect(
+      () => UpdateManifest.fromJson(
+        manifestJson(
+          sizeBytes: 1536,
+          parts: const [
+            {
+              'fileName': 'DreamMangaReader-setup.exe.part001',
+              'sha256': checksum,
+              'sizeBytes': 1024,
+            },
+            {
+              'fileName': 'DreamMangaReader-setup.exe.part002',
+              'sha256': checksum,
+              'sizeBytes': 512,
+            },
+          ],
+        ),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects chunk sizes that do not reconstruct the final asset', () {
+    expect(
+      () => UpdateManifest.fromJson(
+        manifestJson(
+          schemaVersion: 2,
+          sizeBytes: 1537,
+          parts: const [
+            {
+              'fileName': 'DreamMangaReader-setup.exe.part001',
+              'sha256': checksum,
+              'sizeBytes': 1024,
+            },
+            {
+              'fileName': 'DreamMangaReader-setup.exe.part002',
+              'sha256': checksum,
+              'sizeBytes': 512,
+            },
+          ],
+        ),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects a missing remote chunk', () {
+    final manifest = UpdateManifest.fromJson(
+      manifestJson(
+        schemaVersion: 2,
+        sizeBytes: 1536,
+        parts: const [
+          {
+            'fileName': 'DreamMangaReader-setup.exe.part001',
+            'sha256': checksum,
+            'sizeBytes': 1024,
+          },
+          {
+            'fileName': 'DreamMangaReader-setup.exe.part002',
+            'sha256': checksum,
+            'sizeBytes': 512,
+          },
+        ],
+      ),
+    );
+
+    expect(
+      () => manifest.resolve(
+        UpdatePlatform.windows,
+        const [
+          RemoteAsset(
+            name: 'DreamMangaReader-setup.exe.part001',
+            url: 'https://downloads.example/setup.part001',
+            size: 1024,
+          ),
+        ],
+      ),
       throwsFormatException,
     );
   });
