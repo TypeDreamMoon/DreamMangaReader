@@ -52,6 +52,8 @@ dependencies:
   archive: ^3.6.1 # zip 导入源:解压 index.json + 多脚本
   charset: ^2.0.1
   charset_converter: 2.3.0
+  # epubx 4 锁定 image 3,与图标工具的 image 4 冲突;epub_plus 是兼容 API 的 Dart 3 维护分支。
+  epub_plus: ^5.1.0
   shared_preferences: ^2.5.5
   # IAM 账号登录后 access/refresh token 的安全存储(Android Keystore / Windows DPAPI)。
   flutter_secure_storage: ^9.2.4
