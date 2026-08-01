@@ -290,6 +290,8 @@
   },
   "browse_sectionEmpty": "该板块暂无内容",
   "srcpick_title": "选择漫画源",
+  "srcpick_titleAnime": "选择番剧源",
+  "srcpick_titleNovel": "选择小说源",
   "srcpick_mixedGlyph": "混",
   "srcpick_mixedAllSources": "混合 · 全部源",
   "srcpick_mixedSubtitle": "同时搜索 / 浏览所有启用的源",
@@ -328,7 +330,7 @@
     }
   },
   "sync_title": "云同步",
-  "sync_intro": "把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源(源脚本+开关) / 源仓库配置 跨设备同步。上传=本地推到服务器,下载=服务器拉到本地(可选覆盖或追加)。不含每源登录态与下载文件。",
+  "sync_intro": "把 收藏 / 阅读进度 / 阅读设置 / 漫画源·番剧源·小说源(源脚本+开关) / 源仓库配置 跨设备同步。上传=本地推到服务器,下载=服务器拉到本地(可选覆盖或追加)。不含每源登录态与下载文件。",
   "sync_upload": "上传",
   "sync_download": "下载",
   "sync_testConnection": "测试连接",
@@ -376,6 +378,7 @@
   "sync_catAppSettings": "其它设置",
   "sync_catMangaSources": "漫画源",
   "sync_catAnimeSources": "番剧源",
+  "sync_catNovelSources": "小说源",
   "sync_catSourceRepo": "源仓库",
   "dl_downloadingN": "正在下载 {n} 话…",
   "@dl_downloadingN": {
@@ -608,6 +611,7 @@
   "srcmgmt_dotLegend": "圆点=可用性:绿=正常 · 黄=可达但返回空(限流/失效) · 红=不可用 · 灰=未测。点圆点看日志。",
   "srcmgmt_groupManga": "漫画源",
   "srcmgmt_groupAnime": "番剧源",
+  "srcmgmt_groupNovel": "小说源",
   "srcmgmt_repoTitle": "源仓库",
   "srcmgmt_repoStatus": "{n} 个源 · {status}",
   "@srcmgmt_repoStatus": {
@@ -860,7 +864,7 @@
   "set_translateSearch": "搜索翻译回退",
   "set_translateSearchSub": "搜不到时自动把关键词翻成 简 / 繁 / 英 / 日 再搜(默认开)",
   "set_secData": "数据",
-  "set_srcMgmtSub": "启用/禁用漫画源",
+  "set_srcMgmtSub": "启用/禁用漫画、番剧和小说源",
   "set_backup": "备份与恢复",
   "set_backupSub": "导出/导入书架与进度",
   "set_sync": "云同步 (WebDAV)",

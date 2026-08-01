@@ -365,15 +365,15 @@ class SyncController extends ChangeNotifier {
           for (final e in full.entries)
             if (SyncData.settingsCatOf(e.key) == c) e.key: e.value
         });
-    String srcSig(bool anime) {
+    String srcSig(String kind) {
       final disabled = ((full['disabledSources'] as List?) ?? const [])
           .map((e) => e.toString())
-          .where((id) => _srcIsAnime(id) == anime)
+          .where((id) => _srcKind(id) == kind)
           .toList()
         ..sort();
       final scripts = [
         for (final m in registeredSources)
-          if (m.isAnime == anime)
+          if (m.kind == kind)
             '${m.id}:${m.name}:${m.kind}:${m.experimental}:${m.useWebView}:'
                 '${m.imageReferer}:${m.needsLogin}:${_sig(m.script)}'
       ]..sort();
@@ -391,8 +391,9 @@ class SyncController extends ChangeNotifier {
         SyncCategory.uiSettings ||
         SyncCategory.appSettings =>
           setCatSig(c),
-        SyncCategory.mangaSources => srcSig(false),
-        SyncCategory.animeSources => srcSig(true),
+        SyncCategory.mangaSources => srcSig('manga'),
+        SyncCategory.animeSources => srcSig('anime'),
+        SyncCategory.novelSources => srcSig('novel'),
         SyncCategory.sourceRepo =>
           _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}|${repo.token ?? ''}'),
       };
@@ -400,11 +401,11 @@ class SyncController extends ChangeNotifier {
     return out;
   }
 
-  static bool _srcIsAnime(String id) {
+  static String _srcKind(String id) {
     for (final m in registeredSources) {
-      if (m.id == id) return m.isAnime;
+      if (m.id == id) return m.kind;
     }
-    return false;
+    return 'manga';
   }
 
   /// 勾选/取消一个同步内容类别。
@@ -666,8 +667,9 @@ class SyncController extends ChangeNotifier {
     if (lib is Map) {
       if (lib['favorites'] != null) parts.add('收藏 ${cnt(lib['favorites'])}');
       if (lib['history'] != null) parts.add('历史 ${cnt(lib['history'])}');
-      if (lib['mangaSources'] != null) parts.add('漫画源脚本');
-      if (lib['animeSources'] != null) parts.add('番剧源脚本');
+      if (lib['localSourcesManga'] != null) parts.add('漫画源脚本');
+      if (lib['localSourcesAnime'] != null) parts.add('番剧源脚本');
+      if (lib['localSourcesNovel'] != null) parts.add('小说源脚本');
     }
     if (d['sourceRepo'] != null) parts.add('源仓库配置');
     return parts.isEmpty ? '空' : parts.join(' · ');

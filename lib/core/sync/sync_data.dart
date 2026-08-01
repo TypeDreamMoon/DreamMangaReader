@@ -8,7 +8,7 @@ import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import '../source/title_match.dart' show sameCoreKey;
 
-/// 可选择同步的内容类别。源开关按内容类型拆成漫画源 / 番剧源两档;
+/// 可选择同步的内容类别。源开关按内容类型拆成漫画源 / 番剧源 / 小说源;
 /// 设置按用途拆成 阅读 / 界面外观 / 其它,搜索历史单独一类(是数据不是设置)。
 /// 旧版的整份「settings」类别在 [SyncController.load] 迁移成后四类。
 enum SyncCategory {
@@ -20,13 +20,14 @@ enum SyncCategory {
   appSettings, // 其它设置(更新检查/搜索翻译/Bangumi 绑定…)
   mangaSources, // 漫画源开关(disabledSources 中 kind=manga 的)
   animeSources, // 番剧源开关(disabledSources 中 kind=anime 的)
+  novelSources, // 小说源开关(disabledSources 中 kind=novel 的)
   sourceRepo, // 源仓库配置(repoUrl/localDir/token)
 }
 
 /// 云同步的数据 blob:书架数据(收藏/历史/设置/源开关)+ 源仓库配置。
 /// **不含**每源登录 token 与下载文件。
 ///
-/// - [build] 只放所选类别;源开关按 source kind 拆成 `disabledSourcesManga/Anime`。
+/// - [build] 只放所选类别;源开关按 source kind 分别存储,不改旧键。
 /// - [merge] 类别并集(自动双向同步用)。
 /// - [overlay] 把 over 的类别盖到 base 上(上传:本地覆盖服务器对应类别,保留其余)。
 /// - [apply] 把 blob 的所选类别写回本地;`append=false` 覆盖,`append=true` 追加
@@ -121,18 +122,18 @@ class SyncData {
     } catch (_) {}
   }
 
-  /// 源 id 是否为番剧源。未知(源已移除/未加载)按漫画处理。
-  static bool _isAnimeId(String id) {
-    for (final m in registeredSources) {
-      if (m.id == id) return m.isAnime;
+  /// 精确查询源类型。未知(源已移除/未加载)沿用历史行为,按漫画处理。
+  static String _kindOf(String id) {
+    for (final source in registeredSources) {
+      if (source.id == id) return source.kind;
     }
-    return false;
+    return 'manga';
   }
 
   /// 导出当前已加载的某类源的完整定义(含脚本正文 'code'),让源本身也能被同步。
-  static List<Map<String, dynamic>> _exportSources(bool anime) => [
+  static List<Map<String, dynamic>> _exportSources(String kind) => [
         for (final m in registeredSources)
-          if (m.isAnime == anime)
+          if (m.kind == kind)
             {
               'id': m.id,
               'name': m.name,
@@ -180,12 +181,18 @@ class SyncData {
     final allDisabled = _strList(full['disabledSources']);
     if (categories.contains(SyncCategory.mangaSources)) {
       outLib['disabledSourcesManga'] =
-          allDisabled.where((id) => !_isAnimeId(id)).toList();
-      outLib['localSourcesManga'] = _exportSources(false); // 源脚本本身
+          allDisabled.where((id) => _kindOf(id) == 'manga').toList();
+      outLib['localSourcesManga'] = _exportSources('manga'); // 源脚本本身
     }
     if (categories.contains(SyncCategory.animeSources)) {
-      outLib['disabledSourcesAnime'] = allDisabled.where(_isAnimeId).toList();
-      outLib['localSourcesAnime'] = _exportSources(true);
+      outLib['disabledSourcesAnime'] =
+          allDisabled.where((id) => _kindOf(id) == 'anime').toList();
+      outLib['localSourcesAnime'] = _exportSources('anime');
+    }
+    if (categories.contains(SyncCategory.novelSources)) {
+      outLib['disabledSourcesNovel'] =
+          allDisabled.where((id) => _kindOf(id) == 'novel').toList();
+      outLib['localSourcesNovel'] = _exportSources('novel');
     }
     final blob = <String, dynamic>{
       'v': 1,
@@ -382,6 +389,7 @@ class SyncData {
     final blib = _map(blob['library']);
     final mangaMode = modes[SyncCategory.mangaSources];
     final animeMode = modes[SyncCategory.animeSources];
+    final novelMode = modes[SyncCategory.novelSources];
 
     // 源脚本:先导入(importLocalSources 会 reload 刷新 registeredSources),后面 toggle 的
     // kind 判断才准。覆盖(false)= 替换该类本地源;追加(true)= 合并保留。
@@ -392,6 +400,10 @@ class SyncData {
     if (animeMode != null && blib['localSourcesAnime'] is List) {
       await repo.importLocalSources(_entryList(blib['localSourcesAnime']),
           restrictKind: 'anime', replace: animeMode == false);
+    }
+    if (novelMode != null && blib['localSourcesNovel'] is List) {
+      await repo.importLocalSources(_entryList(blib['localSourcesNovel']),
+          restrictKind: 'novel', replace: novelMode == false);
     }
 
     final full = lib.exportData(); // 当前本地态:供追加合并 + 源开关重建
@@ -439,15 +451,27 @@ class SyncData {
         mangaMode != null && blib.containsKey('disabledSourcesManga');
     final wantAnime =
         animeMode != null && blib.containsKey('disabledSourcesAnime');
-    if (wantManga || wantAnime) {
+    final wantNovel =
+        novelMode != null && blib.containsKey('disabledSourcesNovel');
+    if (wantManga || wantAnime || wantNovel) {
       final result = Set<String>.from(_strList(full['disabledSources']));
       if (wantManga) {
-        if (mangaMode == false) result.removeWhere((id) => !_isAnimeId(id));
+        if (mangaMode == false) {
+          result.removeWhere((id) => _kindOf(id) == 'manga');
+        }
         result.addAll(_strList(blib['disabledSourcesManga']));
       }
       if (wantAnime) {
-        if (animeMode == false) result.removeWhere(_isAnimeId);
+        if (animeMode == false) {
+          result.removeWhere((id) => _kindOf(id) == 'anime');
+        }
         result.addAll(_strList(blib['disabledSourcesAnime']));
+      }
+      if (wantNovel) {
+        if (novelMode == false) {
+          result.removeWhere((id) => _kindOf(id) == 'novel');
+        }
+        result.addAll(_strList(blib['disabledSourcesNovel']));
       }
       toImport['disabledSources'] = result.toList();
     }
@@ -486,5 +510,6 @@ class SyncData {
       c == SyncCategory.history ||
       c == SyncCategory.searchHistory ||
       c == SyncCategory.mangaSources ||
-      c == SyncCategory.animeSources;
+      c == SyncCategory.animeSources ||
+      c == SyncCategory.novelSources;
 }

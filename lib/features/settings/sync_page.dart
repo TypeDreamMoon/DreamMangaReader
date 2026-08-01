@@ -21,6 +21,7 @@ String kCatLabel(BuildContext context, SyncCategory c) {
     SyncCategory.appSettings => l.sync_catAppSettings,
     SyncCategory.mangaSources => l.sync_catMangaSources,
     SyncCategory.animeSources => l.sync_catAnimeSources,
+    SyncCategory.novelSources => l.sync_catNovelSources,
     SyncCategory.sourceRepo => l.sync_catSourceRepo,
   };
 }

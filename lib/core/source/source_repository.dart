@@ -275,6 +275,7 @@ class SourceRepository {
     final entry = <String, dynamic>{
       'id': id,
       'name': (meta['name'] as String?) ?? id,
+      'kind': (meta['kind'] as String?) ?? 'manga',
       'experimental': (meta['experimental'] as bool?) ?? true,
       'useWebView': (meta['useWebView'] as bool?) ?? false,
       'imageReferer': meta['imageReferer'],

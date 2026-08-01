@@ -62,10 +62,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
 
   /// 源列表变了:把当前选中源修正到仍存在的源(此前为空、或选中项被移除时)。
   void _revalidate(SourceController sc) {
-    if (registeredSources.isEmpty) return; // 保持空,UI 走空态
-    final cur = sc.current;
-    if (cur == null || !registeredSources.any((s) => s.id == cur.id)) {
-      sc.current = registeredSources.first;
+    for (final kind in const ['manga', 'anime', 'novel']) {
+      final current = sc.currentFor(kind);
+      if (current != null) sc.selectFor(kind, current);
     }
   }
 
@@ -334,10 +333,12 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5),
               ),
             ),
-            // 漫画源、番剧源分开成两组,别缠在一起。
-            ..._group(context.l10n.srcmgmt_groupManga, registeredSources.where((s) => !s.isAnime).toList(),
+            // 各内容类型独立成组,避免小说源混进旧的漫画兜底分支。
+            ..._group(context.l10n.srcmgmt_groupManga, registeredSources.where((s) => s.isManga).toList(),
                 p, store, sc, auth),
             ..._group(context.l10n.srcmgmt_groupAnime, registeredSources.where((s) => s.isAnime).toList(),
+                p, store, sc, auth),
+            ..._group(context.l10n.srcmgmt_groupNovel, registeredSources.where((s) => s.isNovel).toList(),
                 p, store, sc, auth),
           ],
         ],
@@ -345,7 +346,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     );
   }
 
-  /// 一组同类源(漫画 / 番剧):标题 + 若干行;组为空则整组不渲染。
+  /// 一组同类源:标题 + 若干行;组为空则整组不渲染。
   List<Widget> _group(String title, List<SourceMeta> list, AppPalette p,
       LibraryStore store, SourceController sc, AuthStore auth) {
     if (list.isEmpty) return const [];
@@ -546,10 +547,11 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
             value: enabled,
             onChanged: (v) {
               store.setSourceEnabled(s.id, v, registeredSources.length);
-              if (!store.isSourceEnabled(s.id) && sc.current?.id == s.id) {
+              if (!store.isSourceEnabled(s.id) &&
+                  sc.currentFor(s.kind)?.id == s.id) {
                 for (final x in registeredSources) {
-                  if (store.isSourceEnabled(x.id)) {
-                    sc.current = x;
+                  if (x.kind == s.kind && store.isSourceEnabled(x.id)) {
+                    sc.selectFor(s.kind, x);
                     break;
                   }
                 }
