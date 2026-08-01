@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
@@ -46,31 +47,9 @@ class TxtNovelImporter {
       bytes,
       forcedEncoding: forcedEncoding,
     );
-    final parsed = TxtChapterParser.parse(decoded.text);
-    final title = parsed.metadata.title ?? _filenameWithoutExtension(source);
-    final authors = parsed.metadata.author == null
-        ? const <String>[]
-        : <String>[parsed.metadata.author!];
-    final chapters = parsed.chapters
-        .map(
-          (chapter) => NovelChapter(
-            id: chapter.id,
-            title: chapter.title,
-            number: chapter.number?.toDouble(),
-            volumeId: chapter.volumeId,
-            volumeTitle: chapter.volumeTitle,
-          ),
-        )
-        .toList(growable: false);
-
-    return TxtNovelImportPreview(
-      sha256: sha256.convert(bytes).toString(),
-      title: title,
-      authors: List.unmodifiable(authors),
-      chapters: List.unmodifiable(chapters),
-      encoding: decoded.encoding,
-      normalizedText: parsed.normalizedText,
-      parsed: parsed,
+    final fallbackTitle = _filenameWithoutExtension(source);
+    return Isolate.run(
+      () => _buildPreview(bytes, decoded, fallbackTitle),
     );
   }
 
@@ -154,10 +133,43 @@ class TxtNovelImporter {
   }
 }
 
+TxtNovelImportPreview _buildPreview(
+  List<int> bytes,
+  DecodedNovelText decoded,
+  String fallbackTitle,
+) {
+  final parsed = TxtChapterParser.parse(decoded.text);
+  final title = parsed.metadata.title ?? fallbackTitle;
+  final authors = parsed.metadata.author == null
+      ? const <String>[]
+      : <String>[parsed.metadata.author!];
+  final chapters = parsed.chapters
+      .map(
+        (chapter) => NovelChapter(
+          id: chapter.id,
+          title: chapter.title,
+          number: chapter.number?.toDouble(),
+          volumeId: chapter.volumeId,
+          volumeTitle: chapter.volumeTitle,
+        ),
+      )
+      .toList(growable: false);
+
+  return TxtNovelImportPreview(
+    sha256: sha256.convert(bytes).toString(),
+    title: title,
+    authors: List.unmodifiable(authors),
+    chapters: List.unmodifiable(chapters),
+    encoding: decoded.encoding,
+    normalizedText: parsed.normalizedText,
+    parsed: parsed,
+  );
+}
+
 String _filenameWithoutExtension(File source) {
   final name = source.uri.pathSegments.isEmpty
       ? source.path
-      : Uri.decodeComponent(source.uri.pathSegments.last);
+      : source.uri.pathSegments.last;
   return name.toLowerCase().endsWith('.txt')
       ? name.substring(0, name.length - 4)
       : name;

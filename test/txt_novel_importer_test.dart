@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -15,6 +16,20 @@ class StubLegacyDecoder implements LegacyCharsetDecoder {
 
   @override
   Future<String> decode(String encoding, Uint8List bytes) async => text;
+}
+
+class ControlledNovelTextDecoder extends NovelTextDecoder {
+  final called = Completer<void>();
+  final release = Completer<DecodedNovelText>();
+
+  @override
+  Future<DecodedNovelText> decode(
+    List<int> input, {
+    String? forcedEncoding,
+  }) {
+    called.complete();
+    return release.future;
+  }
 }
 
 void main() {
@@ -70,6 +85,36 @@ void main() {
 
     expect(preview.encoding, 'gb18030');
     expect(preview.title, '旧书');
+  });
+
+  test('preview yields after decoding before parsing a large TXT', () async {
+    final source = File('${sandbox.path}${Platform.pathSeparator}large.txt');
+    await source.writeAsBytes([0x61]);
+    final decoder = ControlledNovelTextDecoder();
+    final importer = TxtNovelImporter(
+      applicationSupportDirectory: () async => supportDirectory,
+      decoder: decoder,
+    );
+    var completed = false;
+    final previewFuture = importer.preview(source).whenComplete(() {
+      completed = true;
+    });
+
+    await decoder.called.future;
+    final text = List.generate(
+      50000,
+      (index) => '第${index + 1}章 测试\n正文。',
+      growable: false,
+    ).join('\n\n');
+    decoder.release.complete(
+      DecodedNovelText(text: text, encoding: 'utf-8', confidence: 1),
+    );
+
+    await Future<void>.delayed(Duration.zero);
+
+    expect(completed, isFalse);
+    final preview = await previewFuture;
+    expect(preview.chapters, hasLength(50000));
   });
 
   test('importPreview atomically installs normalized text and index JSON',
