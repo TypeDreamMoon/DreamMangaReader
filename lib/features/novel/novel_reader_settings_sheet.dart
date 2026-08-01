@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 
 Future<void> showNovelReaderSettings({
   required BuildContext context,
@@ -51,19 +52,22 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
         child: ListView(
           padding: EdgeInsets.fromLTRB(20, 0, 20, 20 + bottom),
           children: [
-            Text('阅读设置', style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              context.l10n.reader_settings,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 16),
             SegmentedButton<NovelReaderMode>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: NovelReaderMode.paged,
-                  icon: Icon(Icons.menu_book_rounded),
-                  label: Text('分页阅读'),
+                  icon: const Icon(Icons.menu_book_rounded),
+                  label: Text(context.l10n.novel_readerPaged),
                 ),
                 ButtonSegment(
                   value: NovelReaderMode.scroll,
-                  icon: Icon(Icons.view_stream_rounded),
-                  label: Text('连续滚动'),
+                  icon: const Icon(Icons.view_stream_rounded),
+                  label: Text(context.l10n.novel_readerScroll),
                 ),
               ],
               selected: {_value.mode},
@@ -77,17 +81,25 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     initialValue: _value.fontFamily,
-                    decoration: const InputDecoration(labelText: '字体'),
-                    items: const [
-                      DropdownMenuItem(value: '', child: Text('系统默认')),
-                      DropdownMenuItem(value: 'serif', child: Text('衬线字体')),
+                    decoration: InputDecoration(
+                      labelText: context.l10n.novel_readerFont,
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: '',
+                        child: Text(context.l10n.novel_readerSystemDefault),
+                      ),
+                      DropdownMenuItem(
+                        value: 'serif',
+                        child: Text(context.l10n.novel_readerSerif),
+                      ),
                       DropdownMenuItem(
                         value: 'sans-serif',
-                        child: Text('无衬线字体'),
+                        child: Text(context.l10n.novel_readerSansSerif),
                       ),
                       DropdownMenuItem(
                         value: 'monospace',
-                        child: Text('等宽字体'),
+                        child: Text(context.l10n.novel_readerMonospace),
                       ),
                     ],
                     onChanged: (value) {
@@ -101,23 +113,25 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                 Expanded(
                   child: DropdownButtonFormField<NovelReaderTheme>(
                     initialValue: _value.theme,
-                    decoration: const InputDecoration(labelText: '页面主题'),
-                    items: const [
+                    decoration: InputDecoration(
+                      labelText: context.l10n.novel_readerTheme,
+                    ),
+                    items: [
                       DropdownMenuItem(
                         value: NovelReaderTheme.sepia,
-                        child: Text('护眼'),
+                        child: Text(context.l10n.novel_readerThemeSepia),
                       ),
                       DropdownMenuItem(
                         value: NovelReaderTheme.white,
-                        child: Text('白色'),
+                        child: Text(context.l10n.novel_readerThemeWhite),
                       ),
                       DropdownMenuItem(
                         value: NovelReaderTheme.dark,
-                        child: Text('深色'),
+                        child: Text(context.l10n.novel_readerThemeDark),
                       ),
                       DropdownMenuItem(
                         value: NovelReaderTheme.black,
-                        child: Text('纯黑'),
+                        child: Text(context.l10n.novel_readerThemeBlack),
                       ),
                     ],
                     onChanged: (value) {
@@ -131,7 +145,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             const SizedBox(height: 14),
             _SettingSlider(
-              label: '字号',
+              label: context.l10n.novel_readerFontSize,
               value: _value.fontSize,
               min: 12,
               max: 32,
@@ -139,7 +153,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) => _update(_value.copyWith(fontSize: value)),
             ),
             _SettingSlider(
-              label: '行高',
+              label: context.l10n.novel_readerLineHeight,
               value: _value.lineHeight,
               min: 1.2,
               max: 2.4,
@@ -147,7 +161,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) => _update(_value.copyWith(lineHeight: value)),
             ),
             _SettingSlider(
-              label: '段落间距',
+              label: context.l10n.novel_readerParagraphSpacing,
               value: _value.paragraphSpacing,
               min: 0,
               max: 30,
@@ -156,7 +170,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                   _update(_value.copyWith(paragraphSpacing: value)),
             ),
             _SettingSlider(
-              label: '左右边距',
+              label: context.l10n.novel_readerHorizontalMargin,
               value: _value.horizontalMargin,
               min: 8,
               max: 56,
@@ -166,7 +180,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('阅读时保持屏幕常亮'),
+              title: Text(context.l10n.novel_readerKeepScreenOn),
               value: _value.keepScreenOn,
               onChanged: (value) =>
                   _update(_value.copyWith(keepScreenOn: value)),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/source_registry.dart';
 import 'novel_cover.dart';
@@ -29,7 +30,10 @@ class LocalNovelBook {
   final List<NovelChapter> chapters;
   final Map<String, Map<String, dynamic>> _chapterData;
 
-  static Future<LocalNovelBook> open(Directory directory) async {
+  static Future<LocalNovelBook> open(
+    Directory directory, {
+    String untitledTitle = 'Untitled novel',
+  }) async {
     final indexFile = File(_join(directory.path, 'index.json'));
     final decoded = jsonDecode(await indexFile.readAsString(encoding: utf8));
     if (decoded is! Map) {
@@ -72,7 +76,7 @@ class LocalNovelBook {
       origin: origin,
       novel: Novel(
         id: index['sha256'] as String? ?? directory.uri.pathSegments.last,
-        title: title.isEmpty ? '未命名小说' : title,
+        title: title.isEmpty ? untitledTitle : title,
         authors: List<String>.unmodifiable(
           (index['authors'] as List? ?? const [])
               .map((value) => value.toString()),
@@ -166,10 +170,10 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                 child: TextField(
                   controller: _search,
                   onChanged: (value) => setState(() => _query = value.trim()),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     isDense: true,
-                    hintText: '搜索小说书架',
-                    prefixIcon: Icon(Icons.search_rounded),
+                    hintText: context.l10n.novel_librarySearchHint,
+                    prefixIcon: const Icon(Icons.search_rounded),
                   ),
                 ),
               ),
@@ -185,12 +189,18 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                   children: [
                     if (continued.isNotEmpty) ...[
-                      _sectionTitle('继续阅读', continued.length),
+                      _sectionTitle(
+                        context.l10n.novel_continueReading,
+                        continued.length,
+                      ),
                       for (final entry in continued)
                         _entryTile(context, store, entry, continuing: true),
                       const SizedBox(height: 14),
                     ],
-                    _sectionTitle('小说书架', entries.length),
+                    _sectionTitle(
+                      context.l10n.novel_libraryTitle,
+                      entries.length,
+                    ),
                     for (final entry in entries)
                       _entryTile(context, store, entry),
                   ],
@@ -209,7 +219,11 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
           children: [
             const Icon(Icons.menu_book_rounded, size: 46),
             const SizedBox(height: 12),
-            Text(_query.isEmpty ? '小说书架还是空的' : '没有匹配的小说'),
+            Text(
+              _query.isEmpty
+                  ? context.l10n.novel_libraryEmpty
+                  : context.l10n.novel_libraryNoMatch,
+            ),
           ],
         ),
       ),
@@ -220,7 +234,7 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
       child: Text(
-        '$title  $count',
+        context.l10n.novel_sectionCount(title, count),
         style: Theme.of(context).textTheme.titleMedium,
       ),
     );
@@ -275,12 +289,16 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                       const SizedBox(height: 3),
                       Text(
                         !entry.available
-                            ? '文件缺失'
+                            ? context.l10n.novel_fileMissing
                             : progress != null
-                                ? '读到 ${progress.chapterId}'
+                                ? context.l10n.novel_readTo(progress.chapterId)
                                 : entry.isLocal
-                                    ? '本地 ${entry.origin == NovelOrigin.localTxt ? 'TXT' : 'EPUB'}'
-                                    : '在线小说',
+                                    ? context.l10n.novel_localFormat(
+                                        entry.origin == NovelOrigin.localTxt
+                                            ? 'TXT'
+                                            : 'EPUB',
+                                      )
+                                    : context.l10n.novel_online,
                         style: TextStyle(
                           color: !entry.available
                               ? Theme.of(context).colorScheme.error
@@ -297,7 +315,9 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                     compact: true,
                   ),
                 IconButton(
-                  tooltip: entry.isLocal ? '删除本地小说' : '取消收藏',
+                  tooltip: entry.isLocal
+                      ? context.l10n.novel_deleteLocal
+                      : context.l10n.novel_removeFavorite,
                   onPressed: () => entry.isLocal
                       ? _confirmDelete(context, store, entry)
                       : store.toggleRemoteFavorite(entry),
@@ -323,20 +343,20 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除本地小说'),
+        title: Text(dialogContext.l10n.novel_deleteLocalTitle),
         content: Text(
           entry.available
-              ? '将删除《${entry.title}》在 App 私有目录中的副本和阅读记录。原始导入文件不受影响。'
-              : '《${entry.title}》的私有副本已缺失，将移除书架记录和阅读记录。',
+              ? dialogContext.l10n.novel_deleteLocalConfirm(entry.title)
+              : dialogContext.l10n.novel_deleteMissingConfirm(entry.title),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(dialogContext.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除'),
+            child: Text(dialogContext.l10n.delete),
           ),
         ],
       ),
@@ -351,7 +371,7 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('删除失败：$error')),
+        SnackBar(content: Text(context.l10n.novel_deleteFailed('$error'))),
       );
     }
   }
@@ -371,7 +391,10 @@ Future<void> openNovelLibraryEntry(
     final path = entry.privatePath;
     if (path == null) return;
     try {
-      final book = await LocalNovelBook.open(Directory(path));
+      final book = await LocalNovelBook.open(
+        Directory(path),
+        untitledTitle: context.l10n.novel_unnamed,
+      );
       if (!context.mounted) return;
       final saved = NovelLibraryScope.read(context).progressFor(entry.key);
       final initialIndex = saved == null
@@ -389,7 +412,7 @@ Future<void> openNovelLibraryEntry(
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('打开小说失败：$error')),
+        SnackBar(content: Text(context.l10n.novel_openFailed('$error'))),
       );
     }
     return;
@@ -404,7 +427,7 @@ Future<void> openNovelLibraryEntry(
   }
   if (meta == null || entry.novelId == null) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('原小说源已不可用')),
+      SnackBar(content: Text(context.l10n.novel_sourceUnavailable)),
     );
     return;
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/novel_download_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
@@ -21,12 +22,12 @@ class NovelDownloadsView extends StatelessWidget {
       return EmptyState(
         icon: Icons.menu_book_rounded,
         iconSize: 48,
-        title: '暂无小说离线章节',
+        title: context.l10n.novel_downloadsEmpty,
         titleSize: 16,
         dense: true,
         message: store.activeCount > 0
-            ? '正在下载 ${store.activeCount} 个章节'
-            : '在小说详情页下载章节后会显示在这里',
+            ? context.l10n.novel_downloadsActive(store.activeCount)
+            : context.l10n.novel_downloadsHint,
       );
     }
     return ListView(
@@ -46,7 +47,7 @@ class NovelDownloadsView extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '正在下载 ${store.activeCount} 个章节',
+                  context.l10n.novel_downloadsActive(store.activeCount),
                   style: TextStyle(color: palette.textMuted, fontSize: 12),
                 ),
               ],
@@ -71,10 +72,13 @@ class NovelDownloadsView extends StatelessWidget {
     final failureCount = group.failures.length;
     final activeCount = group.activities.length;
     final parts = <String>[
-      '$chapterCount 章',
-      _formatBytes(bytes),
-      if (activeCount > 0) '$activeCount 个下载中',
-      if (failureCount > 0) '$failureCount 项失败',
+      context.l10n.novel_downloadsSummary(
+        chapterCount,
+        _formatBytes(bytes),
+      ),
+      if (activeCount > 0) context.l10n.novel_downloadsActive(activeCount),
+      if (failureCount > 0)
+        context.l10n.novel_downloadsFailures(failureCount),
     ];
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -134,10 +138,10 @@ class NovelDownloadsView extends StatelessWidget {
                       }
                     },
                     icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('重试'),
+                    label: Text(context.l10n.retry),
                   ),
                 IconButton(
-                  tooltip: '删除小说离线章节',
+                  tooltip: context.l10n.novel_deleteOfflineTooltip,
                   onPressed: () => _confirmDelete(context, store, group),
                   icon: Icon(
                     Icons.delete_outline_rounded,
@@ -172,7 +176,9 @@ class NovelDownloadsView extends StatelessWidget {
     }
     if (group.completed.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('原小说源已不可用，且没有完成的离线章节')),
+        SnackBar(
+          content: Text(context.l10n.novel_sourceUnavailableNoOffline),
+        ),
       );
       return;
     }
@@ -189,18 +195,21 @@ class NovelDownloadsView extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除小说离线内容'),
+        title: Text(dialogContext.l10n.novel_deleteOfflineTitle),
         content: Text(
-          '删除《${group.novel.title}》的 ${group.completed.length} 个离线章节，并取消等待或失败的任务？',
+          dialogContext.l10n.novel_deleteOfflineConfirm(
+            group.novel.title,
+            group.completed.length,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(dialogContext.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除'),
+            child: Text(dialogContext.l10n.delete),
           ),
         ],
       ),
@@ -249,6 +258,7 @@ class _OfflineNovelPage extends StatelessWidget {
   ) async {
     final chapters =
         records.map((record) => record.chapter).toList(growable: false);
+    final offlineDeletedMessage = context.l10n.novel_offlineChapterDeleted;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: group.novel,
@@ -261,7 +271,9 @@ class _OfflineNovelPage extends StatelessWidget {
             group.novel.id,
             chapter.id,
           );
-          if (cached == null) throw StateError('离线章节已被删除');
+          if (cached == null) {
+            throw StateError(offlineDeletedMessage);
+          }
           return NovelDocument(
             format: NovelDocumentFormat.html,
             content: cached.html,

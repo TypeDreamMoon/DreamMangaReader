@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
 import '../../core/source/chinese_fold.dart';
@@ -216,7 +217,7 @@ class NovelBrowserState extends State<NovelBrowser> {
         _hasNext = _mixedSources.any((cursor) => cursor.hasNext);
         if (_results.isEmpty &&
             _failedSources.length == _enabledSources.length) {
-          _error = StateError('所有小说源均加载失败');
+          _error = StateError(context.l10n.novel_browserAllSourcesFailed);
         }
       });
     } else {
@@ -380,7 +381,9 @@ class NovelBrowserState extends State<NovelBrowser> {
   Widget build(BuildContext context) {
     final library = LibraryScope.of(context);
     final scheme = Theme.of(context).colorScheme;
-    if (_enabledSources.isEmpty) return const Center(child: Text('还没有可用的小说源'));
+    if (_enabledSources.isEmpty) {
+      return Center(child: Text(context.l10n.novel_browserNoSources));
+    }
     return Column(
       children: [
         if (library.showSourcePicker)
@@ -389,7 +392,9 @@ class NovelBrowserState extends State<NovelBrowser> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: SourcePickerPill(
-                label: _mixed ? '混合 · 全部小说源' : (_meta?.name ?? '小说源'),
+                label: _mixed
+                    ? context.l10n.novel_browserAllSources
+                    : (_meta?.name ?? context.l10n.novel_browserSource),
                 icon: Icons.auto_stories_rounded,
                 onTap: _pickSource,
               ),
@@ -403,7 +408,10 @@ class NovelBrowserState extends State<NovelBrowser> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              '「$_originalQuery」没搜到，已用译名「$_query」',
+              context.l10n.novel_browserTranslatedQuery(
+                _originalQuery,
+                _query,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall,
@@ -418,7 +426,9 @@ class NovelBrowserState extends State<NovelBrowser> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '${_failedSources.length} 个源加载失败，已显示其他来源结果',
+                    context.l10n.novel_browserPartialFailure(
+                      _failedSources.length,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -466,18 +476,21 @@ class NovelBrowserState extends State<NovelBrowser> {
             children: [
               Icon(Icons.cloud_off_rounded, size: 42, color: scheme.error),
               const SizedBox(height: 12),
-              Text('加载失败\n$_error', textAlign: TextAlign.center),
+              Text(
+                context.l10n.novel_browserLoadFailed('$_error'),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 14),
               FilledButton.icon(
                 onPressed: _reset,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text('重试'),
+                label: Text(context.l10n.retry),
               ),
             ],
           ),
         );
       }
-      return const Center(child: Text('没有找到小说'));
+      return Center(child: Text(context.l10n.novel_browserNoResults));
     }
     return GridView.builder(
       controller: _scroll,
@@ -521,7 +534,9 @@ class NovelBrowserState extends State<NovelBrowser> {
                               vertical: 3,
                             ),
                             child: Text(
-                              '${result.sourceIds.length} 个来源',
+                              context.l10n.novel_browserSourceCount(
+                                result.sourceIds.length,
+                              ),
                               style: TextStyle(
                                 color: scheme.onPrimary,
                                 fontSize: 10,

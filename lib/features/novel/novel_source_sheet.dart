@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
 import '../../core/source/source_registry.dart';
@@ -100,7 +101,7 @@ class _NovelSourceSheetState extends State<_NovelSourceSheet> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
               child: Text(
-                '切换小说来源',
+                context.l10n.novel_switchSourceTitle,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -118,9 +119,9 @@ class _NovelSourceSheetState extends State<_NovelSourceSheet> {
                   }
                   final matches = snapshot.data ?? const [];
                   if (matches.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Text('其他已启用小说源中没有找到同名作品',
+                    return Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text(context.l10n.novel_noSameTitleInSources,
                           textAlign: TextAlign.center),
                     );
                   }

@@ -10,6 +10,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/downloads/downloads_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_downloads_view.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,13 +127,18 @@ void main() {
 
     await tester.pumpWidget(_harness(store));
 
-    expect(find.textContaining('1 项失败'), findsOneWidget);
+    expect(find.textContaining('1 个失败'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
   });
 
   testWidgets('download kind switch never mixes manga and novel records',
       (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: _SwitchHarness()));
+    await tester.pumpWidget(const MaterialApp(
+      locale: Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: _SwitchHarness(),
+    ));
 
     expect(find.text('漫画下载'), findsOneWidget);
     expect(find.text('小说下载'), findsNothing);
@@ -146,6 +152,9 @@ void main() {
 Widget _harness(NovelDownloadStore store) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
+    locale: const Locale('zh'),
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: NovelDownloadScope(
       store: store,
       child: const Scaffold(body: NovelDownloadsView()),

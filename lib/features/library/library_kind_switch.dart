@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
+
 enum LibraryKind { manga, novel }
 
 class LibraryKindSwitch extends StatelessWidget {
@@ -15,9 +17,15 @@ class LibraryKindSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SegmentedButton<LibraryKind>(
-      segments: const [
-        ButtonSegment(value: LibraryKind.manga, label: Text('漫画')),
-        ButtonSegment(value: LibraryKind.novel, label: Text('小说')),
+      segments: [
+        ButtonSegment(
+          value: LibraryKind.manga,
+          label: Text(context.l10n.content_manga),
+        ),
+        ButtonSegment(
+          value: LibraryKind.novel,
+          label: Text(context.l10n.content_novel),
+        ),
       ],
       selected: {selected},
       onSelectionChanged: (values) => onSelected(values.single),

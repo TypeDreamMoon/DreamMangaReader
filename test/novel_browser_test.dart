@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/core/source/chinese_fold.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/novel/novel_browser.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -98,6 +99,9 @@ void main() {
         };
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: LibraryScope(
         store: library,
         child: SourceScope(

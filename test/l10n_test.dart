@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dream_manga_reader/core/l10n/app_locale.dart';
 import 'package:dream_manga_reader/core/l10n/app_strings.dart';
 import 'package:flutter/material.dart';
@@ -15,7 +18,127 @@ Widget _app(Locale locale) => MaterialApp(
       ),
     );
 
+const _requiredNovelKeys = {
+  'content_manga',
+  'content_novel',
+  'novel_browserNoSources',
+  'novel_browserAllSources',
+  'novel_browserSource',
+  'novel_browserAllSourcesFailed',
+  'novel_browserTranslatedQuery',
+  'novel_browserPartialFailure',
+  'novel_browserLoadFailed',
+  'novel_browserNoResults',
+  'novel_browserSourceCount',
+  'novel_openInBrowser',
+  'novel_addFavorite',
+  'novel_removeFavorite',
+  'novel_switchSource',
+  'novel_directory',
+  'novel_chaptersN',
+  'novel_noChapters',
+  'novel_downloadChapter',
+  'novel_retryDownload',
+  'novel_loadFailed',
+  'novel_statusOngoing',
+  'novel_statusCompleted',
+  'novel_statusHiatus',
+  'novel_statusCancelled',
+  'novel_statusUnknown',
+  'novel_switchSourceTitle',
+  'novel_noSameTitleInSources',
+  'novel_importLocal',
+  'novel_onlyTxtEpub',
+  'novel_parseFailed',
+  'novel_importPreview',
+  'novel_bookTitle',
+  'novel_author',
+  'novel_currentEncoding',
+  'novel_operationFailed',
+  'novel_confirmImport',
+  'novel_unknownImportFormat',
+  'novel_librarySearchHint',
+  'novel_continueReading',
+  'novel_libraryTitle',
+  'novel_libraryEmpty',
+  'novel_libraryNoMatch',
+  'novel_sectionCount',
+  'novel_fileMissing',
+  'novel_readTo',
+  'novel_localFormat',
+  'novel_online',
+  'novel_deleteLocal',
+  'novel_deleteLocalTitle',
+  'novel_deleteLocalConfirm',
+  'novel_deleteMissingConfirm',
+  'novel_deleteFailed',
+  'novel_openFailed',
+  'novel_sourceUnavailable',
+  'novel_unnamed',
+  'novel_historyEmpty',
+  'novel_historyTooltip',
+  'novel_downloadsEmpty',
+  'novel_downloadsActive',
+  'novel_downloadsHint',
+  'novel_downloadsSummary',
+  'novel_downloadsFailures',
+  'novel_deleteOfflineTooltip',
+  'novel_sourceUnavailableNoOffline',
+  'novel_deleteOfflineTitle',
+  'novel_deleteOfflineConfirm',
+  'novel_offlineChapterDeleted',
+  'novel_readerMissingRenderer',
+  'novel_readerLoadFailed',
+  'novel_readerBack',
+  'novel_readerPreviousPage',
+  'novel_readerNextPage',
+  'novel_readerProgress',
+  'novel_readerPaged',
+  'novel_readerScroll',
+  'novel_readerFont',
+  'novel_readerSystemDefault',
+  'novel_readerSerif',
+  'novel_readerSansSerif',
+  'novel_readerMonospace',
+  'novel_readerTheme',
+  'novel_readerThemeSepia',
+  'novel_readerThemeWhite',
+  'novel_readerThemeDark',
+  'novel_readerThemeBlack',
+  'novel_readerFontSize',
+  'novel_readerLineHeight',
+  'novel_readerParagraphSpacing',
+  'novel_readerHorizontalMargin',
+  'novel_readerKeepScreenOn',
+};
+
 void main() {
+  test('four ARB files keep key parity and complete novel copy', () {
+    final files = [
+      'lib/l10n/app_zh.arb',
+      'lib/l10n/app_zh_Hant.arb',
+      'lib/l10n/app_en.arb',
+      'lib/l10n/app_ja.arb',
+    ];
+    final keysByFile = <String, Set<String>>{};
+    for (final path in files) {
+      final json = jsonDecode(File(path).readAsStringSync()) as Map;
+      final keys = json.keys
+          .whereType<String>()
+          .where((key) => !key.startsWith('@'))
+          .toSet();
+      keysByFile[path] = keys;
+      expect(keys, containsAll(_requiredNovelKeys), reason: path);
+      for (final key in _requiredNovelKeys) {
+        expect((json[key] as String?)?.trim(), isNotEmpty, reason: '$path:$key');
+      }
+    }
+    final template = keysByFile[files.first]!;
+    for (final path in files.skip(1)) {
+      expect(keysByFile[path], template, reason: path);
+    }
+  });
+
   test('AppLocale code 往返 + 系统 Locale 匹配', () {
     for (final l in AppLocale.values) {
       expect(AppLocale.fromCode(l.code), l);

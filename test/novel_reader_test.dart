@@ -2,6 +2,7 @@ import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,6 +60,9 @@ Future<Widget> _readerHarness(_FakeController controller) async {
   final store = NovelLibraryStore();
   await store.load();
   return MaterialApp(
+    locale: const Locale('zh'),
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: NovelLibraryScope(
       store: store,
       child: NovelReaderPage(

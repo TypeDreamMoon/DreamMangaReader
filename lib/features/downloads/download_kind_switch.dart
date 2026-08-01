@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
+
 enum DownloadKind { manga, novel }
 
 class DownloadKindSwitch extends StatelessWidget {
@@ -15,9 +17,15 @@ class DownloadKindSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SegmentedButton<DownloadKind>(
-      segments: const [
-        ButtonSegment(value: DownloadKind.manga, label: Text('漫画')),
-        ButtonSegment(value: DownloadKind.novel, label: Text('小说')),
+      segments: [
+        ButtonSegment(
+          value: DownloadKind.manga,
+          label: Text(context.l10n.content_manga),
+        ),
+        ButtonSegment(
+          value: DownloadKind.novel,
+          label: Text(context.l10n.content_novel),
+        ),
       ],
       selected: {selected},
       onSelectionChanged: (values) => onSelected(values.single),

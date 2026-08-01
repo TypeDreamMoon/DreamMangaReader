@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/platform/reader_keys.dart';
 import 'novel_document_view.dart';
@@ -256,7 +257,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     if (controller is WebNovelDocumentController) {
       return NovelDocumentView(controller: controller);
     }
-    return const Center(child: Text('缺少小说正文渲染器'));
+    return Center(child: Text(context.l10n.novel_readerMissingRenderer));
   }
 
   @override
@@ -288,12 +289,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                       children: [
                         const Icon(Icons.error_outline_rounded, size: 42),
                         const SizedBox(height: 12),
-                        Text('正文加载失败\n$_error', textAlign: TextAlign.center),
+                        Text(
+                          context.l10n.novel_readerLoadFailed('$_error'),
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 16),
                         FilledButton.icon(
                           onPressed: _loadChapter,
                           icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('重试'),
+                          label: Text(context.l10n.retry),
                         ),
                       ],
                     ),
@@ -316,7 +320,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                         child: Row(
                           children: [
                             IconButton(
-                              tooltip: '返回',
+                              tooltip: context.l10n.novel_readerBack,
                               onPressed: () => Navigator.maybePop(context),
                               icon: const Icon(Icons.arrow_back_rounded),
                             ),
@@ -344,14 +348,14 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                             ),
                             IconButton(
                               key: const Key('novel-reader-directory'),
-                              tooltip: '目录',
+                              tooltip: context.l10n.novel_directory,
                               onPressed: _openDirectory,
                               icon: const Icon(
                                   Icons.format_list_bulleted_rounded),
                             ),
                             IconButton(
                               key: const Key('novel-reader-settings'),
-                              tooltip: '阅读设置',
+                              tooltip: context.l10n.reader_settings,
                               onPressed: _openSettings,
                               icon: const Icon(Icons.text_fields_rounded),
                             ),
@@ -379,20 +383,24 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                         child: Row(
                           children: [
                             IconButton(
-                              tooltip: '上一页',
+                              tooltip: context.l10n.novel_readerPreviousPage,
                               onPressed: _previous,
                               icon: const Icon(Icons.chevron_left_rounded),
                             ),
                             Expanded(
                               child: Text(
-                                '${_chapterIndex + 1} / ${widget.chapters.length}  ${_chapter.title}',
+                                context.l10n.novel_readerProgress(
+                                  _chapterIndex + 1,
+                                  widget.chapters.length,
+                                  _chapter.title,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 textAlign: TextAlign.center,
                               ),
                             ),
                             IconButton(
-                              tooltip: '下一页',
+                              tooltip: context.l10n.novel_readerNextPage,
                               onPressed: _next,
                               icon: const Icon(Icons.chevron_right_rounded),
                             ),

@@ -85,7 +85,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       _row(context, p, mangaStore, mangaHistory[i]),
                 )
           : novelHistory.isEmpty
-              ? const EmptyState(title: '暂无小说阅读历史')
+              ? EmptyState(title: context.l10n.novel_historyEmpty)
               : AppScrollView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
                   itemCount: novelHistory.length,
@@ -142,8 +142,10 @@ class _HistoryPageState extends State<HistoryPage> {
                   const SizedBox(height: 3),
                   Text(
                     entry.available
-                        ? '读到 ${progress.locator.chapterId}'
-                        : '文件缺失',
+                        ? context.l10n.novel_readTo(
+                            progress.locator.chapterId,
+                          )
+                        : context.l10n.novel_fileMissing,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: p.accentSoft, fontSize: 11.5),

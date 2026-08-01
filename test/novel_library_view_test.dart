@@ -27,7 +27,12 @@ void main() {
 
   testWidgets('library kind switch never renders manga and novel together',
       (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: _SwitchHarness()));
+    await tester.pumpWidget(const MaterialApp(
+      locale: Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: _SwitchHarness(),
+    ));
 
     expect(find.text('漫画甲'), findsOneWidget);
     expect(find.text('小说乙'), findsNothing);
@@ -144,6 +149,9 @@ void main() {
     ));
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: NovelLibraryScope(
         store: store,
         child: const Scaffold(body: NovelLibraryView()),

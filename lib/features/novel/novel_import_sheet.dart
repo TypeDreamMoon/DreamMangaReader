@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/import/epub_novel_importer.dart';
 import '../../core/novel/import/txt_novel_importer.dart';
 import '../../core/novel/models.dart';
@@ -63,7 +64,7 @@ class NovelImportButton extends StatelessWidget {
   Widget build(BuildContext context) {
     if (compact) {
       return IconButton(
-        tooltip: '导入本地小说',
+        tooltip: context.l10n.novel_importLocal,
         onPressed: () => _startImport(context),
         icon: const Icon(Icons.file_open_rounded),
       );
@@ -71,7 +72,7 @@ class NovelImportButton extends StatelessWidget {
     return FilledButton.icon(
       onPressed: () => _startImport(context),
       icon: const Icon(Icons.file_open_rounded),
-      label: const Text('导入本地小说'),
+      label: Text(context.l10n.novel_importLocal),
     );
   }
 
@@ -83,7 +84,7 @@ class NovelImportButton extends StatelessWidget {
     final extension = file.path.split('.').last.toLowerCase();
     if (extension != 'txt' && extension != 'epub') {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('只支持 TXT 和 EPUB 文件')),
+        SnackBar(content: Text(context.l10n.novel_onlyTxtEpub)),
       );
       return;
     }
@@ -208,7 +209,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
         directory = (await widget.services.importEpub(edited)).directory;
         origin = NovelOrigin.localEpub;
       } else {
-        throw StateError('未知的小说导入格式');
+        throw StateError(context.l10n.novel_unknownImportFormat);
       }
       if (!mounted) return;
       widget.store.addLocal(NovelLibraryEntry.local(
@@ -257,12 +258,15 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
         children: [
           const Icon(Icons.error_outline_rounded, size: 40),
           const SizedBox(height: 12),
-          Text('文件解析失败\n$_error', textAlign: TextAlign.center),
+          Text(
+            context.l10n.novel_parseFailed('$_error'),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: _loadPreview,
             icon: const Icon(Icons.refresh_rounded),
-            label: const Text('重试'),
+            label: Text(context.l10n.retry),
           ),
         ],
       ),
@@ -277,7 +281,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '导入预览',
+            context.l10n.novel_importPreview,
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 16),
@@ -285,21 +289,25 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
             key: const Key('novel-import-title'),
             controller: _title,
             enabled: !_installing,
-            decoration: const InputDecoration(labelText: '书名'),
+            decoration: InputDecoration(
+              labelText: context.l10n.novel_bookTitle,
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
             key: const Key('novel-import-author'),
             controller: _author,
             enabled: !_installing,
-            decoration: const InputDecoration(labelText: '作者'),
+            decoration: InputDecoration(
+              labelText: context.l10n.novel_author,
+            ),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
               const Icon(Icons.format_list_numbered_rounded, size: 18),
               const SizedBox(width: 8),
-              Text('${preview.chapters.length} 章'),
+              Text(context.l10n.novel_chaptersN(preview.chapters.length)),
               if (preview.origin == NovelOrigin.localEpub) ...[
                 const SizedBox(width: 16),
                 const Text('EPUB'),
@@ -308,7 +316,11 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           ),
           if (_txtPreview case final txt?) ...[
             const SizedBox(height: 16),
-            Text('当前编码：${_encodingLabel(txt.encoding)}'),
+            Text(
+              context.l10n.novel_currentEncoding(
+                _encodingLabel(txt.encoding),
+              ),
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -323,7 +335,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(
-              '操作失败：$_error',
+              context.l10n.novel_operationFailed('$_error'),
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
@@ -333,7 +345,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
             children: [
               TextButton(
                 onPressed: _installing ? null : () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(context.l10n.cancel),
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
@@ -344,7 +356,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.check_rounded),
-                label: const Text('确认导入'),
+                label: Text(context.l10n.novel_confirmImport),
               ),
             ],
           ),

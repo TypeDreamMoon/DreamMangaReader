@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/novel_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
 import '../../core/source/source_registry.dart';
@@ -197,12 +198,14 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
         actions: [
           if (_novel.url != null)
             IconButton(
-              tooltip: '在浏览器打开',
+              tooltip: context.l10n.novel_openInBrowser,
               onPressed: _openBrowser,
               icon: const Icon(Icons.open_in_new_rounded),
             ),
           IconButton(
-            tooltip: favorite ? '取消收藏' : '收藏',
+            tooltip: favorite
+                ? context.l10n.novel_removeFavorite
+                : context.l10n.novel_addFavorite,
             onPressed: _toggleFavorite,
             icon: Icon(
               favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
@@ -210,7 +213,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
           ),
           IconButton(
             key: const Key('novel-change-source'),
-            tooltip: '切换来源',
+            tooltip: context.l10n.novel_switchSource,
             onPressed: _loading ? null : _changeSource,
             icon: const Icon(Icons.swap_horiz_rounded),
           ),
@@ -229,10 +232,10 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                     child: Row(
                       children: [
-                        Text('目录',
+                        Text(context.l10n.novel_directory,
                             style: Theme.of(context).textTheme.titleMedium),
                         const Spacer(),
-                        Text('${_chapters.length} 章',
+                        Text(context.l10n.novel_chaptersN(_chapters.length),
                             style: Theme.of(context).textTheme.bodySmall),
                       ],
                     ),
@@ -244,9 +247,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     child: Center(child: CircularProgressIndicator()),
                   )
                 else if (_chapters.isEmpty)
-                  const SliverFillRemaining(
+                  SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(child: Text('暂无章节')),
+                    child: Center(child: Text(context.l10n.novel_noChapters)),
                   )
                 else
                   SliverList.builder(
@@ -296,7 +299,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                         maxLines: 2, overflow: TextOverflow.ellipsis),
                   ],
                   const SizedBox(height: 6),
-                  Text(_statusLabel(_novel.status)),
+                  Text(_statusLabel(context, _novel.status)),
                   if (genres.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(
@@ -375,7 +378,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
               final failure =
                   downloads.failureOf(_meta.id, _novel.id, chapter.id);
               return IconButton(
-                tooltip: failure == null ? '下载本章' : '重试下载',
+                tooltip: failure == null
+                    ? context.l10n.novel_downloadChapter
+                    : context.l10n.novel_retryDownload,
                 onPressed: failure == null
                     ? () => _downloadChapter(chapter)
                     : () => downloads.retry(_meta.id, _novel.id, chapter.id),
@@ -414,12 +419,15 @@ class _ErrorView extends StatelessWidget {
           children: [
             const Icon(Icons.cloud_off_rounded, size: 42),
             const SizedBox(height: 12),
-            Text('加载失败\n$error', textAlign: TextAlign.center),
+            Text(
+              context.l10n.novel_loadFailed('$error'),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重试'),
+              label: Text(context.l10n.retry),
             ),
           ],
         ),
@@ -428,10 +436,10 @@ class _ErrorView extends StatelessWidget {
   }
 }
 
-String _statusLabel(NovelStatus status) => switch (status) {
-      NovelStatus.ongoing => '连载中',
-      NovelStatus.completed => '已完结',
-      NovelStatus.hiatus => '暂停更新',
-      NovelStatus.cancelled => '已取消',
-      NovelStatus.unknown => '状态未知',
+String _statusLabel(BuildContext context, NovelStatus status) => switch (status) {
+      NovelStatus.ongoing => context.l10n.novel_statusOngoing,
+      NovelStatus.completed => context.l10n.novel_statusCompleted,
+      NovelStatus.hiatus => context.l10n.novel_statusHiatus,
+      NovelStatus.cancelled => context.l10n.novel_statusCancelled,
+      NovelStatus.unknown => context.l10n.novel_statusUnknown,
     };

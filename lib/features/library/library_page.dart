@@ -57,9 +57,9 @@ class _NovelLibraryPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text(
-          '书架',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+        title: Text(
+          context.l10n.navBookshelf,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
         ),
         actions: [
           LibraryKindSwitch(
@@ -67,7 +67,7 @@ class _NovelLibraryPage extends StatelessWidget {
             onSelected: onKindChanged,
           ),
           IconButton(
-            tooltip: '小说阅读历史',
+            tooltip: context.l10n.novel_historyTooltip,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => const HistoryPage(showNovelInitially: true),

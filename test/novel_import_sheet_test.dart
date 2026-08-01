@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/core/novel/import/txt_chapter_parser.dart';
 import 'package:dream_manga_reader/core/novel/import/txt_novel_importer.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/features/novel/novel_import_sheet.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,6 +127,9 @@ void main() {
 
 Widget _harness(NovelLibraryStore store, NovelImportServices services) {
   return MaterialApp(
+    locale: const Locale('zh'),
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: NovelLibraryScope(
       store: store,
       child: Scaffold(
