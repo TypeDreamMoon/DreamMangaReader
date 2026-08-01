@@ -24,6 +24,7 @@ import '../detail/detail_page.dart';
 import 'browse_page.dart';
 import '../library/manga_cover.dart';
 import '../library/masonry_feed.dart';
+import '../novel/novel_browser.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 /// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
@@ -55,7 +56,7 @@ class DiscoveryPage extends StatefulWidget {
 }
 
 class _DiscoveryPageState extends State<DiscoveryPage> {
-  ContentKind _kind = ContentKind.manga; // 内容类型:番剧/小说为预留占位
+  ContentKind _kind = ContentKind.manga;
   SourceController? _sc;
   SourceMeta? _meta;
   MangaSource? _source;
@@ -90,6 +91,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   // 番剧档:顶栏搜索复用漫画那套 UI,执行时经由此 key 转交给 AnimeBrowser。
   final GlobalKey<AnimeBrowserState> _animeKey = GlobalKey<AnimeBrowserState>();
+  final GlobalKey<NovelBrowserState> _novelKey = GlobalKey<NovelBrowserState>();
   bool _showSearch = false;
   String _query = ''; // 非空 = 搜索模式(可能是 _origQuery 的译名)
   bool _translating = false; // 正在翻译搜索词
@@ -143,7 +145,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _meta = _mixedMeta;
       final store = LibraryScope.read(context);
       for (final s in registeredSources) {
-        if (store.isSourceEnabled(s.id)) {
+        if (s.isManga && store.isSourceEnabled(s.id)) {
           _mixedSources.add(_MixedCursor(s, buildSource(s)));
         }
       }
@@ -210,6 +212,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _origQuery = q;
       });
       _animeKey.currentState?.runSearch(q);
+      return;
+    }
+    if (_kind == ContentKind.novel) {
+      setState(() {
+        _query = q;
+        _origQuery = q;
+      });
+      _novelKey.currentState?.runSearch(q);
       return;
     }
     if (q == _query && q == _origQuery) return;
@@ -409,8 +419,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         title: Text(context.l10n.navDiscover,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
-          // 搜索:漫画 + 番剧共用顶栏这一个入口(番剧搜索经 _animeKey 转交)。
-          if (_kind == ContentKind.manga || _kind == ContentKind.anime)
+          // 三类内容共用顶栏搜索入口，番剧和小说转交各自的 browser。
+          if (_kind.available)
             IconButton(
               tooltip: context.l10n.disc_searchTooltip,
               onPressed: () => setState(() {
@@ -486,6 +496,15 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                     ? _recentSearches(p, store)
                     : const SizedBox(width: double.infinity)),
             Expanded(child: AnimeBrowser(key: _animeKey)),
+          ] else if (_kind == ContentKind.novel) ...[
+            _animExpand(_showSearch
+                ? _searchField(p)
+                : const SizedBox(width: double.infinity)),
+            _animExpand(
+                (_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
+                    ? _recentSearches(p, store)
+                    : const SizedBox(width: double.infinity)),
+            Expanded(child: NovelBrowser(key: _novelKey)),
           ] else
             Expanded(child: _comingSoon(p, _kind)),
         ],
@@ -495,7 +514,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     );
   }
 
-  // 内容类型切换:漫画(现用)/ 番剧 / 小说(预留占位)。
+  // 内容类型切换:漫画 / 番剧 / 小说。
   Widget _kindSwitcher(AppPalette p) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
         child: Row(
@@ -637,9 +656,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             isDense: true,
             hintText: context.l10n.disc_searchHint(_kind == ContentKind.anime
                 ? '番剧'
-                : (_mixed
-                    ? context.l10n.disc_mixedAllSources
-                    : (_meta?.name ?? ''))),
+                : _kind == ContentKind.novel
+                    ? '小说'
+                    : (_mixed
+                        ? context.l10n.disc_mixedAllSources
+                        : (_meta?.name ?? ''))),
             hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
             prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             suffixIcon: _query.isNotEmpty

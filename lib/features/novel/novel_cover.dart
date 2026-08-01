@@ -13,12 +13,14 @@ class NovelCover extends StatelessWidget {
     this.headers = const {},
     this.localCoverPath,
     this.radius = 8,
+    this.compactGeneratedTitle = false,
   });
 
   final Novel novel;
   final Map<String, String> headers;
   final String? localCoverPath;
   final double radius;
+  final bool compactGeneratedTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +33,7 @@ class NovelCover extends StatelessWidget {
         File(localPath),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _GeneratedNovelCover(
-          title: novel.title,
+          title: _generatedLabel,
           colors: colors,
         ),
       );
@@ -44,16 +46,16 @@ class NovelCover extends StatelessWidget {
         httpHeaders: headers,
         fit: BoxFit.cover,
         placeholder: (_, __) => _GeneratedNovelCover(
-          title: novel.title,
+          title: _generatedLabel,
           colors: colors,
         ),
         errorWidget: (_, __, ___) => _GeneratedNovelCover(
-          title: novel.title,
+          title: _generatedLabel,
           colors: colors,
         ),
       );
     } else {
-      image = _GeneratedNovelCover(title: novel.title, colors: colors);
+      image = _GeneratedNovelCover(title: _generatedLabel, colors: colors);
     }
 
     return AspectRatio(
@@ -63,6 +65,12 @@ class NovelCover extends StatelessWidget {
         child: ColoredBox(color: colors.background, child: image),
       ),
     );
+  }
+
+  String get _generatedLabel {
+    final title = novel.title.trim();
+    if (!compactGeneratedTitle || title.isEmpty) return title;
+    return title.characters.first;
   }
 }
 

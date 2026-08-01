@@ -3,8 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dream_manga_reader/app/app.dart';
+import 'package:dream_manga_reader/app/content_kind.dart';
 
 void main() {
+  test('novel discovery content kind is available', () {
+    expect(ContentKind.novel.available, isTrue);
+  });
+
   testWidgets('App boots to the library shell', (WidgetTester tester) async {
     // 用手机竖屏尺寸,让响应式外壳走底部 NavigationBar(宽屏 >=640 会换成左侧 Rail)。
     tester.view.physicalSize = const Size(400, 800);
