@@ -115,9 +115,9 @@ jobs:
             local badging line package code name signing digest
             badging=$("$tools/aapt2" dump badging "$apk")
             line=${badging%%$'\n'*}
-            package=$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<<"$line")
-            code=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$line")
-            name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$line")
+            package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$line")
+            code=$(sed -n "s/^package: name='[^']*' versionCode='\([0-9]*\)'.*/\1/p" <<<"$line")
+            name=$(sed -n "s/^package: name='[^']*' versionCode='[0-9]*' versionName='\([^']*\)'.*/\1/p" <<<"$line")
             signing=$("$tools/apksigner" verify --print-certs "$apk")
             digest=$(sed -n 's/.*certificate SHA-256 digest: //p' <<<"$signing")
             if [[ "$package" != 'com.dreammoon.dream_manga_reader' ]]; then
