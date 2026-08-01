@@ -1,6 +1,7 @@
 import '../bili/bili_source.dart';
 import '../net/dio_http_service.dart';
 import '../net/webview_fetch.dart';
+import '../novel/novel_source.dart';
 import '../script/js_engine.dart';
 import '../script/script_source.dart';
 import 'source.dart';
@@ -84,15 +85,24 @@ List<SourceMeta> registeredSources = <SourceMeta>[];
 MangaSource buildSource(SourceMeta meta) {
   // 原生番剧源(B站):走引擎内置实现,不经脚本引擎。
   if (meta.id == kBiliSourceId) return BiliSource();
-  return ScriptSource(
-    engine: JsEngine(),
-    http: meta.useWebView
-        ? WebViewHttpService(userAgent: _mobileUa)
-        : DioHttpService(),
-    webHttp: WebViewHttpService(userAgent: _desktopUa),
-    scriptCode: meta.script,
-  );
+  return _buildScriptSource(meta);
 }
+
+NovelSource buildNovelSource(SourceMeta meta) {
+  if (!meta.isNovel) {
+    throw ArgumentError.value(meta.kind, 'meta.kind', 'expected novel');
+  }
+  return _buildScriptSource(meta);
+}
+
+ScriptSource _buildScriptSource(SourceMeta meta) => ScriptSource(
+      engine: JsEngine(),
+      http: meta.useWebView
+          ? WebViewHttpService(userAgent: _mobileUa)
+          : DioHttpService(),
+      webHttp: WebViewHttpService(userAgent: _desktopUa),
+      scriptCode: meta.script,
+    );
 
 /// 内置原生源的元数据(启动时无条件并入 [registeredSources],除非用户手动隐藏)。
 const SourceMeta kBiliSourceMeta = SourceMeta(
