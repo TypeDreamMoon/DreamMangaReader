@@ -413,6 +413,38 @@ class NovelLibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void removeLocal(String key, {bool removeHistory = false}) {
+    final entry = _entries[key];
+    if (entry == null) return;
+    if (!entry.isLocal) {
+      throw ArgumentError.value(key, 'key', 'expected local novel');
+    }
+    _entries.remove(key);
+    if (removeHistory) _history.remove(key);
+    _persistLibrary();
+    if (removeHistory) _persistHistory();
+    notifyListeners();
+  }
+
+  void removeHistory(String key) {
+    if (_history.remove(key) == null) return;
+    _persistHistory();
+    notifyListeners();
+  }
+
+  void clearHistory() {
+    if (_history.isEmpty) return;
+    _history.clear();
+    _persistHistory();
+    notifyListeners();
+  }
+
+  List<MapEntry<String, NovelReadingProgress>> get history {
+    final values = _history.entries.toList(growable: false);
+    values.sort((a, b) => b.value.updatedAt.compareTo(a.value.updatedAt));
+    return List.unmodifiable(values);
+  }
+
   void toggleRemoteFavorite(NovelLibraryEntry entry) {
     if (entry.origin != NovelOrigin.remote) {
       throw ArgumentError.value(entry.key, 'entry', 'expected remote novel');

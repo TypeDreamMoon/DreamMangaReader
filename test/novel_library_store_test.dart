@@ -202,6 +202,65 @@ void main() {
     restored.dispose();
   });
 
+  test('reimporting a fingerprint reattaches its path without losing progress',
+      () async {
+    final first = Directory('${sandbox.path}${Platform.pathSeparator}first');
+    final second = Directory('${sandbox.path}${Platform.pathSeparator}second');
+    await first.create();
+    await second.create();
+    final store = NovelLibraryStore();
+    await store.load();
+    store.addLocal(NovelLibraryEntry.local(
+      sha256: 'same-book',
+      title: '旧书名',
+      privatePath: first.path,
+      origin: NovelOrigin.localTxt,
+    ));
+    store.saveProgress(
+      'local:same-book',
+      const NovelLocator(chapterId: 'c9', fraction: .65),
+      updatedAt: 99,
+    );
+
+    store.addLocal(NovelLibraryEntry.local(
+      sha256: 'same-book',
+      title: '新书名',
+      privatePath: second.path,
+      origin: NovelOrigin.localTxt,
+    ));
+
+    expect(store.entries, hasLength(1));
+    expect(store.entryFor('local:same-book')?.privatePath, second.path);
+    expect(store.entryFor('local:same-book')?.title, '新书名');
+    expect(store.progressFor('local:same-book')?.chapterId, 'c9');
+    expect(store.progressStateFor('local:same-book')?.updatedAt, 99);
+    store.dispose();
+  });
+
+  test('removing local entry can also remove only its novel history',
+      () async {
+    final directory = Directory('${sandbox.path}${Platform.pathSeparator}book');
+    await directory.create();
+    final store = NovelLibraryStore();
+    await store.load();
+    store.addLocal(NovelLibraryEntry.local(
+      sha256: 'remove-me',
+      title: '待删除',
+      privatePath: directory.path,
+      origin: NovelOrigin.localTxt,
+    ));
+    store.saveProgress(
+      'local:remove-me',
+      const NovelLocator(chapterId: 'c1'),
+    );
+
+    store.removeLocal('local:remove-me', removeHistory: true);
+
+    expect(store.entryFor('local:remove-me'), isNull);
+    expect(store.progressFor('local:remove-me'), isNull);
+    store.dispose();
+  });
+
   test('progress waits for the debounce flush before persistence', () async {
     final store = NovelLibraryStore();
     await store.load();
