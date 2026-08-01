@@ -92,6 +92,20 @@ class NovelDownloadFailure {
   String get message => error.toString();
 }
 
+class NovelDownloadActivity {
+  const NovelDownloadActivity({
+    required this.source,
+    required this.novel,
+    required this.chapter,
+    required this.progress,
+  });
+
+  final SourceMeta source;
+  final Novel novel;
+  final NovelChapter chapter;
+  final double progress;
+}
+
 class _NovelDownloadJob {
   const _NovelDownloadJob(
     this.source,
@@ -143,6 +157,23 @@ class NovelDownloadStore extends ChangeNotifier {
 
   List<NovelDownloadFailure> get failures =>
       List.unmodifiable(_failures.values);
+
+  List<NovelDownloadActivity> get activities {
+    final jobs = <_NovelDownloadJob>[
+      if (_activeJob != null) _activeJob!,
+      ..._queue,
+    ];
+    return List.unmodifiable([
+      for (final job in jobs)
+        if (_progress[job.key] case final progress?)
+          NovelDownloadActivity(
+            source: job.source,
+            novel: job.novel,
+            chapter: job.chapter,
+            progress: progress,
+          ),
+    ]);
+  }
 
   int get activeCount => _progress.length;
 

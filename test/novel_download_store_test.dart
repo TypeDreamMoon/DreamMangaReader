@@ -200,4 +200,27 @@ void main() {
     expect(second.disposed, isTrue);
     store.dispose();
   });
+
+  test('active downloads expose their novel and chapter metadata', () async {
+    final started = Completer<void>();
+    final release = Completer<void>();
+    source
+      ..documentStarted = started
+      ..documentGate = release.future;
+    final store = makeStore();
+    await store.load();
+
+    store.enqueue(meta, novel, chapter);
+    await started.future;
+
+    expect(store.activities, hasLength(1));
+    expect(store.activities.single.novel.title, '测试小说');
+    expect(store.activities.single.chapter.title, '第一章');
+    expect(store.activities.single.progress, .2);
+
+    release.complete();
+    await store.idle;
+    expect(store.activities, isEmpty);
+    store.dispose();
+  });
 }
