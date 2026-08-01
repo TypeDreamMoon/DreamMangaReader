@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/library_store.dart';
+import '../../app/novel_library_store.dart';
 import '../log/app_log.dart';
 import '../net/iam_auth.dart';
 import '../source/source_registry.dart' show registeredSources;
@@ -190,6 +191,7 @@ class SyncController extends ChangeNotifier {
   // 变化(还在去抖/节流窗口里),下次启动能对出差异接着传,不会被吞。
 
   LibraryStore? _upLib;
+  NovelLibraryStore? _upNovels;
   SourceRepository? _upRepo;
   Timer? _upTimer;
   int _upTimerDueAt = 0; // 当前定时器到点时刻(比较「谁更早」用)
@@ -217,8 +219,13 @@ class SyncController extends ChangeNotifier {
 
   /// app 启动(书架读档完成后)挂上变化监听。基线优先用上次持久化的(能接着传
   /// 上次退出前漏掉的变化);首次使用则取挂载时刻的本地状态。
-  Future<void> attachAutoUpload(LibraryStore lib, SourceRepository repo) async {
+  Future<void> attachAutoUpload(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo,
+  ) async {
     _upLib = lib;
+    _upNovels = novels;
     _upRepo = repo;
     final saved = (await _p).getStringList(_kAutoUpBase) ?? const [];
     final savedMap = <String, String>{
@@ -243,6 +250,7 @@ class SyncController extends ChangeNotifier {
       }
     }
     lib.addListener(_onLocalChanged);
+    novels.addListener(_onLocalChanged);
     repo.onChanged = _onLocalChanged;
     if (savedMap.isEmpty) {
       _persistBase(); // 首次:把当前基线落盘
@@ -277,8 +285,9 @@ class SyncController extends ChangeNotifier {
     _upTimer = null;
     _upFirstDirtyAt = 0; // 本轮检查消化当前积累;之后的新变化重新起算
     final lib = _upLib;
+    final novels = _upNovels;
     final repo = _upRepo;
-    if (lib == null || repo == null) return;
+    if (lib == null || novels == null || repo == null) return;
     if (autoUploadOn.isEmpty || !configured) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_syncing) {
@@ -305,7 +314,7 @@ class SyncController extends ChangeNotifier {
         AppLog.i.info(
             LogCat.sync, '本地变化 · 自动上传 ${ready.map((c) => c.name).join(', ')}');
         // 基线由 uploadNow 用「打快照时刻」的签名重置,上传期间的新变化下轮还能测到。
-        await uploadNow(lib, repo, categories: ready);
+        await uploadNow(lib, novels, repo, categories: ready);
         _upFailAt = 0;
         for (final c in ready) {
           _upLastAt[c] = now;
@@ -357,13 +366,21 @@ class SyncController extends ChangeNotifier {
   /// 每个源的 meta(名称/开关/防盗链等,同步载荷里都带)+ 脚本内容」。
   Map<SyncCategory, String> _localSigs(Set<SyncCategory> cats) {
     final lib = _upLib;
+    final novels = _upNovels;
     final repo = _upRepo;
-    if (lib == null || repo == null) return const {};
+    if (lib == null || novels == null || repo == null) return const {};
     final full = lib.exportData();
+    final fullNovels = novels.exportData();
+    final novelEntries = (fullNovels['entries'] as List? ?? const [])
+        .whereType<Map>()
+        .toList(growable: false);
+    final novelHistory = fullNovels['history'] as Map? ?? const {};
     String enc(Object? v) => _sig(jsonEncode(v ?? ''));
     String setCatSig(SyncCategory c) => enc({
           for (final e in full.entries)
-            if (SyncData.settingsCatOf(e.key) == c) e.key: e.value
+            if (SyncData.settingsCatOf(e.key) == c) e.key: e.value,
+          if (c == SyncCategory.readerSettings)
+            'novels': fullNovels['settings'],
         });
     String srcSig(String kind) {
       final disabled = ((full['disabledSources'] as List?) ?? const [])
@@ -383,9 +400,19 @@ class SyncController extends ChangeNotifier {
     final out = <SyncCategory, String>{};
     for (final c in cats) {
       out[c] = switch (c) {
-        SyncCategory.favorites => enc(full['favorites']),
-        SyncCategory.history =>
-          _sig('${enc(full['history'])}|${enc(full['workProgress'])}'),
+        SyncCategory.favorites => _sig(
+            '${enc(full['favorites'])}|${enc([
+                  for (final entry in novelEntries)
+                    if (entry['favorite'] == true) entry,
+                ])}',
+          ),
+        SyncCategory.history => _sig(
+            '${enc(full['history'])}|${enc(full['workProgress'])}|'
+            '${enc(novelHistory)}|${enc([
+                  for (final entry in novelEntries)
+                    if (novelHistory.containsKey(entry['key'])) entry,
+                ])}',
+          ),
         SyncCategory.searchHistory => enc(full['searchHistory']),
         SyncCategory.readerSettings ||
         SyncCategory.uiSettings ||
@@ -479,7 +506,11 @@ class SyncController extends ChangeNotifier {
   Future<(bool, String)> testConnection() => _backend().test();
 
   /// 双向同步一次。成功返回合并后条目概况;失败抛异常(带人话信息)。
-  Future<String> syncNow(LibraryStore lib, SourceRepository repo) async {
+  Future<String> syncNow(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo,
+  ) async {
     if (!configured) {
       throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
     }
@@ -496,7 +527,7 @@ class SyncController extends ChangeNotifier {
       final backend = _backend();
       AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 类别 ${_catLabel(sel)}',
           detail: '类别:${sel.map((c) => c.name).join(', ')}');
-      final local = SyncData.build(lib, repo, categories: sel);
+      final local = SyncData.build(lib, novels, repo, categories: sel);
       AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
       AppLog.i.debug(LogCat.sync,
@@ -505,7 +536,7 @@ class SyncController extends ChangeNotifier {
       if (remote != null) {
         AppLog.i.debug(LogCat.sync, '合并本地+远端 · ${_dataSummary(merged)}');
       }
-      await SyncData.apply(merged, lib, repo, modes: applyModes);
+      await SyncData.apply(merged, lib, novels, repo, modes: applyModes);
       AppLog.i.debug(LogCat.sync, '已应用合并结果到本地');
       // 基线签名取「写回完成时刻」:推送期间的新变化对不上签名,之后照样能自动上传。
       var preSigs = _localSigs(sel);
@@ -525,7 +556,7 @@ class SyncController extends ChangeNotifier {
           AppLog.i.warn(LogCat.sync, '推送遇并发冲突,重合并后重试(第 $attempt 次)');
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
-            await SyncData.apply(merged, lib, repo, modes: applyModes);
+            await SyncData.apply(merged, lib, novels, repo, modes: applyModes);
             preSigs = _localSigs(sel);
           }
         }
@@ -534,8 +565,13 @@ class SyncController extends ChangeNotifier {
       lastSyncedAt = (merged['syncedAt'] as num).toInt();
       await (await _p).setInt(_kLastAt, lastSyncedAt);
       _rebaselineWith(preSigs); // 合并结果已两边一致,别让「同步写回」再触发自动上传
-      final favN = ((merged['library'] as Map)['favorites'] as List?)?.length ?? 0;
-      final hisN = ((merged['library'] as Map)['history'] as Map?)?.length ?? 0;
+      final mergedNovels = merged['novels'] as Map?;
+      final favN =
+          (((merged['library'] as Map)['favorites'] as List?)?.length ?? 0) +
+              ((mergedNovels?['favorites'] as List?)?.length ?? 0);
+      final hisN =
+          (((merged['library'] as Map)['history'] as Map?)?.length ?? 0) +
+              ((mergedNovels?['history'] as Map?)?.length ?? 0);
       status = '已同步 · 收藏 $favN · 进度 $hisN';
       AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
       return status;
@@ -550,8 +586,12 @@ class SyncController extends ChangeNotifier {
 
   /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
   /// [categories] 不传 = 用设置里勾选的 [syncCategories];自动上传只传变化的类别。
-  Future<String> uploadNow(LibraryStore lib, SourceRepository repo,
-      {Set<SyncCategory>? categories}) async {
+  Future<String> uploadNow(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo, {
+    Set<SyncCategory>? categories,
+  }) async {
     final cats = categories ?? syncCategories;
     if (!configured) {
       throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
@@ -567,7 +607,7 @@ class SyncController extends ChangeNotifier {
       final backend = _backend();
       AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(cats)}',
           detail: '类别:${cats.map((c) => c.name).join(', ')}');
-      final local = SyncData.build(lib, repo, categories: cats);
+      final local = SyncData.build(lib, novels, repo, categories: cats);
       // 基线签名与快照同刻采集:推送期间的新变化对不上签名,之后照样能自动上传。
       final preSigs = _localSigs(cats);
       AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
@@ -605,6 +645,7 @@ class SyncController extends ChangeNotifier {
   /// 下载:服务器 → 本地。[modes] 逐类别指定方式(false=覆盖 · true=追加;不在 map=不下载)。
   Future<String> downloadNow(
     LibraryStore lib,
+    NovelLibraryStore novels,
     SourceRepository repo, {
     required Map<SyncCategory, bool> modes,
   }) async {
@@ -632,7 +673,7 @@ class SyncController extends ChangeNotifier {
         return status;
       }
       AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
-      await SyncData.apply(remote, lib, repo, modes: modes);
+      await SyncData.apply(remote, lib, novels, repo, modes: modes);
       AppLog.i.debug(LogCat.sync, '已写入本地(${modes.length} 项)');
       final preSigs = _localSigs(modes.keys.toSet()); // 写回完成时刻的签名
       await _stampSynced();
@@ -671,15 +712,28 @@ class SyncController extends ChangeNotifier {
       if (lib['localSourcesAnime'] != null) parts.add('番剧源脚本');
       if (lib['localSourcesNovel'] != null) parts.add('小说源脚本');
     }
+    final novels = d['novels'];
+    if (novels is Map) {
+      if (novels['favorites'] != null) {
+        parts.add('小说收藏 ${cnt(novels['favorites'])}');
+      }
+      if (novels['history'] != null) {
+        parts.add('小说历史 ${cnt(novels['history'])}');
+      }
+    }
     if (d['sourceRepo'] != null) parts.add('源仓库配置');
     return parts.isEmpty ? '空' : parts.join(' · ');
   }
 
   /// 启动时自动同步(开了自动 + 当前后端已就绪才跑);best-effort,失败只记状态不抛。
-  Future<void> autoSyncOnStart(LibraryStore lib, SourceRepository repo) async {
+  Future<void> autoSyncOnStart(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo,
+  ) async {
     if (!auto || !configured) return;
     try {
-      await syncNow(lib, repo);
+      await syncNow(lib, novels, repo);
     } catch (e) {
       status = '自动同步失败:$e';
       notifyListeners();

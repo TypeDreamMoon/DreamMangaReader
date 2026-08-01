@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
+import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_repository.dart';
@@ -143,13 +144,18 @@ class _SyncPageState extends State<SyncPage> {
   /// 上传:本地(勾选的类别)→ 服务器。
   Future<void> _upload() async {
     final lib = LibraryScope.of(context);
+    final novels = NovelLibraryScope.read(context);
     setState(() {
       _busy = true;
       _result = '';
     });
     await _persist();
     try {
-      final s = await _sync.uploadNow(lib, SourceRepository.instance);
+      final s = await _sync.uploadNow(
+        lib,
+        novels,
+        SourceRepository.instance,
+      );
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -169,6 +175,7 @@ class _SyncPageState extends State<SyncPage> {
   /// 下载:弹窗逐类别选 跳过/覆盖/追加 → 服务器 → 本地。
   Future<void> _download() async {
     final lib = LibraryScope.of(context);
+    final novels = NovelLibraryScope.read(context);
     final modes = await showDialog<Map<SyncCategory, bool>>(
       context: context,
       builder: (_) => _DownloadDialog(initial: _sync.syncCategories),
@@ -180,8 +187,12 @@ class _SyncPageState extends State<SyncPage> {
     });
     await _persist();
     try {
-      final s = await _sync.downloadNow(lib, SourceRepository.instance,
-          modes: modes);
+      final s = await _sync.downloadNow(
+        lib,
+        novels,
+        SourceRepository.instance,
+        modes: modes,
+      );
       if (!mounted) return;
       setState(() {
         _busy = false;

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_info.dart';
 import '../../app/backup.dart';
 import '../../app/library_store.dart';
+import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/theme_controller.dart';
@@ -298,6 +299,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _backup(BuildContext context, LibraryStore lib) async {
+    final novels = NovelLibraryScope.read(context);
     final path = await backupPath();
     if (!context.mounted) return;
     final p = context.palette;
@@ -322,7 +324,7 @@ class SettingsPage extends StatelessWidget {
               onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
           TextButton(
             onPressed: () async {
-              final ok = await importBackup(lib);
+              final ok = await importBackup(lib, novels);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
                 showAppNotify(
@@ -334,7 +336,7 @@ class SettingsPage extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () async {
-              final out = await exportBackup(lib);
+              final out = await exportBackup(lib, novels);
               if (ctx.mounted) Navigator.pop(ctx);
               if (context.mounted) {
                 showAppNotify(context, l10n.set_exported(out),

@@ -499,6 +499,59 @@ class NovelLibraryStore extends ChangeNotifier {
         'settings': preferences.toJson(),
       };
 
+  Future<void> importData(
+    Map<String, dynamic> data, {
+    bool replaceEntries = true,
+    bool replaceHistory = true,
+    bool replaceSettings = true,
+  }) async {
+    if (replaceEntries && data['entries'] is List) {
+      final incoming = <String, NovelLibraryEntry>{};
+      for (final value in data['entries'] as List) {
+        if (value is! Map) continue;
+        try {
+          final entry = NovelLibraryEntry.fromJson(
+            value.cast<String, dynamic>(),
+          );
+          incoming[entry.key] = _reattachLocalPath(entry, _entries[entry.key]);
+        } catch (_) {}
+      }
+      for (final entry in _entries.values) {
+        if (entry.isLocal) incoming.putIfAbsent(entry.key, () => entry);
+      }
+      _entries
+        ..clear()
+        ..addAll(incoming);
+      _persistLibrary();
+    }
+
+    if (replaceHistory && data['history'] is Map) {
+      final incoming = <String, NovelReadingProgress>{};
+      for (final item in (data['history'] as Map).entries) {
+        if (item.key is! String || item.value is! Map) continue;
+        try {
+          incoming[item.key as String] = NovelReadingProgress.fromJson(
+            (item.value as Map).cast<String, dynamic>(),
+          );
+        } catch (_) {}
+      }
+      _history
+        ..clear()
+        ..addAll(incoming);
+      _persistHistory();
+    }
+
+    if (replaceSettings && data['settings'] is Map) {
+      try {
+        preferencesNotifier.value = NovelReaderPreferences.fromJson(
+          (data['settings'] as Map).cast<String, dynamic>(),
+        );
+        _persistSettings();
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
   Future<void> flushPending() async {
     _progressTimer?.cancel();
     _progressTimer = null;
@@ -596,4 +649,20 @@ bool _pathExists(String path) {
 bool _isShareSafeCover(String cover) {
   final uri = Uri.tryParse(cover);
   return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+}
+
+NovelLibraryEntry _reattachLocalPath(
+  NovelLibraryEntry incoming,
+  NovelLibraryEntry? current,
+) {
+  if (!incoming.isLocal || current?.privatePath == null) return incoming;
+  return NovelLibraryEntry.local(
+    sha256: incoming.fingerprint!,
+    title: incoming.title,
+    authors: incoming.authors,
+    cover: incoming.cover,
+    privatePath: current!.privatePath!,
+    origin: incoming.origin,
+    addedAt: incoming.addedAt,
+  );
 }

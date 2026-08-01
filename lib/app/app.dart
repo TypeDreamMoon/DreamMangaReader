@@ -49,9 +49,17 @@ class _AppState extends State<App> {
     ]).then((_) async {
       if (!mounted) return;
       final sync = SyncController.instance;
-      await sync.attachAutoUpload(_library, SourceRepository.instance);
+      await sync.attachAutoUpload(
+        _library,
+        _novelLibrary,
+        SourceRepository.instance,
+      );
       if (!mounted) return;
-      await sync.autoSyncOnStart(_library, SourceRepository.instance);
+      await sync.autoSyncOnStart(
+        _library,
+        _novelLibrary,
+        SourceRepository.instance,
+      );
     });
     _downloads.load();
     _novelDownloads.load();
