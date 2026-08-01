@@ -51,7 +51,7 @@ jobs:
               exit 1
             }
           fi
-          echo "version=$app build=$build universal=$((10000+build)) splitBase=$((10000+build))"
+          echo "version=$app build=$build universal=$((5000+build)) splitBase=$build"
 
   build-android:
     name: Build verified Android APKs
@@ -78,11 +78,11 @@ jobs:
           pub=$(grep -oE '^version:\s*[^[:space:]]+' pubspec.yaml | awk '{print $2}')
           version=${pub%%+*}
           build=${pub##*+}
-          base=$((10000+build))
-          flutter build apk --release --build-name="$version" --build-number="$base"
+          universal_code=$((5000+build))
+          flutter build apk --release --build-name="$version" --build-number="$universal_code"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/DreamMangaReader-android-universal.apk
-          flutter build apk --release --split-per-abi --build-name="$version" --build-number="$base"
+          flutter build apk --release --split-per-abi --build-name="$version" --build-number="$build"
           for abi in armeabi-v7a arm64-v8a x86_64; do
             cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/DreamMangaReader-android-$abi.apk"
           done
@@ -93,23 +93,55 @@ jobs:
           pub=$(grep -oE '^version:\s*[^[:space:]]+' pubspec.yaml | awk '{print $2}')
           version=${pub%%+*}
           build=${pub##*+}
-          base=$((10000+build))
-          tools=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          expected_cert=$(keytool -list -v -keystore android/app/dmr-release.jks -storepass dreammangareader -alias dmr | sed -n 's/.*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f' | head -1)
-          cert=''
-          for apk in dist/*.apk; do
-            line=$("$tools/aapt2" dump badging "$apk" | head -1)
+          tools=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | sed -n '$p')
+          if [[ ! -x "$tools/aapt2" || ! -x "$tools/apksigner" ]]; then
+            echo "::error::Android SDK build-tools 缺少 aapt2 或 apksigner"
+            exit 1
+          fi
+          keystore_info=$(keytool -list -v -keystore android/app/dmr-release.jks -storepass dreammangareader -alias dmr)
+          expected_cert=$(sed -n 's/.*SHA256: //p' <<<"$keystore_info" | tr -d ':' | tr 'A-F' 'a-f')
+          if [[ ! "$expected_cert" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::无法读取发布 keystore 的 SHA-256 证书指纹"
+            exit 1
+          fi
+          verify_apk() {
+            local file=$1
+            local expected_code=$2
+            local apk="dist/$file"
+            if [[ ! -f "$apk" ]]; then
+              echo "::error title=APK verification failed::$file: file is missing"
+              exit 1
+            fi
+            local badging line package code name signing digest
+            badging=$("$tools/aapt2" dump badging "$apk")
+            line=${badging%%$'\n'*}
             package=$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<<"$line")
             code=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$line")
             name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$line")
-            digest=$("$tools/apksigner" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
-            test "$package" = 'com.dreammoon.dream_manga_reader'
-            test "$name" = "$version"
-            if [[ "$apk" == *universal* ]]; then test "$code" -eq "$base"; else test "$code" -gt "$base"; fi
-            test "$digest" = "$expected_cert"
-            if [ -z "$cert" ]; then cert="$digest"; else test "$digest" = "$cert"; fi
-            echo "$(basename "$apk") versionCode=$code cert=$digest"
-          done
+            signing=$("$tools/apksigner" verify --print-certs "$apk")
+            digest=$(sed -n 's/.*certificate SHA-256 digest: //p' <<<"$signing")
+            if [[ "$package" != 'com.dreammoon.dream_manga_reader' ]]; then
+              echo "::error title=APK verification failed::$file: package expected=com.dreammoon.dream_manga_reader actual=$package"
+              exit 1
+            fi
+            if [[ "$name" != "$version" ]]; then
+              echo "::error title=APK verification failed::$file: versionName expected=$version actual=$name"
+              exit 1
+            fi
+            if [[ "$code" != "$expected_code" ]]; then
+              echo "::error title=APK verification failed::$file: versionCode expected=$expected_code actual=$code"
+              exit 1
+            fi
+            if [[ "$digest" != "$expected_cert" ]]; then
+              echo "::error title=APK verification failed::$file: certificate SHA-256 mismatch"
+              exit 1
+            fi
+            echo "$file package=$package versionName=$name versionCode=$code cert=$digest"
+          }
+          verify_apk DreamMangaReader-android-universal.apk "$((5000+build))"
+          verify_apk DreamMangaReader-android-armeabi-v7a.apk "$((1000+build))"
+          verify_apk DreamMangaReader-android-arm64-v8a.apk "$((2000+build))"
+          verify_apk DreamMangaReader-android-x86_64.apk "$((4000+build))"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apks

@@ -92,13 +92,29 @@ function Get-AndroidUniversalBuildNumber {
     if ($PubspecBuildNumber -le 0 -or $PubspecBuildNumber -ge 1000) {
         throw "pubspec build number 必须在 1..999：$PubspecBuildNumber"
     }
-    return 10000 + $PubspecBuildNumber
+    return 5000 + $PubspecBuildNumber
 }
 
 function Get-AndroidSplitBaseBuildNumber {
     param([Parameter(Mandatory)][int]$PubspecBuildNumber)
 
-    return Get-AndroidUniversalBuildNumber -PubspecBuildNumber $PubspecBuildNumber
+    [void](Get-AndroidUniversalBuildNumber -PubspecBuildNumber $PubspecBuildNumber)
+    return $PubspecBuildNumber
+}
+
+function Get-AndroidSplitBuildNumber {
+    param(
+        [Parameter(Mandatory)][int]$PubspecBuildNumber,
+        [Parameter(Mandatory)][ValidateSet('armeabi-v7a', 'arm64-v8a', 'x86_64')][string]$Abi
+    )
+
+    $base = Get-AndroidSplitBaseBuildNumber -PubspecBuildNumber $PubspecBuildNumber
+    $offset = switch ($Abi) {
+        'armeabi-v7a' { 1000 }
+        'arm64-v8a' { 2000 }
+        'x86_64' { 4000 }
+    }
+    return $offset + $base
 }
 
 function Assert-SafeFileName {

@@ -223,9 +223,12 @@ try {
             $path = Join-Path $workRoot $name
             Copy-Item -LiteralPath $source -Destination $path -Force
             $metadata = Get-ApkMetadata -Path $path
+            $expectedVersionCode = Get-AndroidSplitBuildNumber `
+                -PubspecBuildNumber $versionInfo.BuildNumber `
+                -Abi $entry.Key
             if ($metadata.PackageName -ne 'com.dreammoon.dream_manga_reader' -or
                 $metadata.VersionName -ne $normalizedVersion -or
-                $metadata.VersionCode -le $universalCode -or
+                $metadata.VersionCode -ne $expectedVersionCode -or
                 $metadata.CertificateSha256 -ne $expectedCert) {
                 throw "Android 分架构 APK 不满足升级或签名要求：$name"
             }
