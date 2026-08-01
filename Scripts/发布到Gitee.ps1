@@ -3,6 +3,7 @@ param(
     [string]$Owner = 'TypeDreamMoon',
     [string]$Repository = 'DreamMangaReader',
     [string]$TargetBranch = 'main',
+    [string]$ReleaseMetadataPath = '',
     [switch]$DryRun,
     [switch]$ConfirmPublish
 )
@@ -14,19 +15,50 @@ Set-StrictMode -Version Latest
 function Get-GiteeToken {
     foreach ($name in @('DREAMMANGAREADER_GITEE_TOKEN', 'GITEE_TOKEN')) {
         foreach ($scope in @('Process', 'User', 'Machine')) {
-            $value = [Environment]::GetEnvironmentVariable($name, $scope)
+            try {
+                $value = [Environment]::GetEnvironmentVariable($name, $scope)
+            }
+            catch [System.PlatformNotSupportedException] {
+                $value = $null
+            }
             if (![string]::IsNullOrWhiteSpace($value)) { return $value.Trim() }
         }
     }
     return ''
 }
 
+function Invoke-GiteeReadApi {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [int]$TimeoutSec = 20
+    )
+
+    $request = @{
+        Method = 'Get'
+        Uri = $Uri
+        TimeoutSec = $TimeoutSec
+    }
+    if (![string]::IsNullOrWhiteSpace($script:GiteeToken)) {
+        $request['Headers'] = @{ Authorization = "token $script:GiteeToken" }
+    }
+    try {
+        return Invoke-RestMethod @request
+    }
+    catch {
+        throw "Gitee API 读取失败：$Uri；$($_.Exception.Message)"
+    }
+}
+
 function Invoke-GiteeWriteApi {
-    param([Parameter(Mandatory)][string]$Uri, [Parameter(Mandatory)][hashtable]$Body)
+    param(
+        [Parameter(Mandatory)][ValidateSet('Post', 'Patch')][string]$Method,
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][hashtable]$Body
+    )
 
     $Body['access_token'] = $script:GiteeToken
     try {
-        return Invoke-RestMethod -Method Post -Uri $Uri -Body $Body -ContentType 'application/x-www-form-urlencoded; charset=utf-8'
+        return Invoke-RestMethod -Method $Method -Uri $Uri -Body $Body -ContentType 'application/x-www-form-urlencoded; charset=utf-8'
     }
     catch {
         throw "Gitee API 写入失败：$Uri；$($_.Exception.Message)"
@@ -36,7 +68,7 @@ function Invoke-GiteeWriteApi {
 function Get-GiteeReleases {
     param([Parameter(Mandatory)][string]$BaseUri)
 
-    return @(Invoke-RestMethod -Method Get -Uri "$BaseUri/releases?per_page=100&direction=desc" -TimeoutSec 20)
+    return @(Invoke-GiteeReadApi -Uri "$BaseUri/releases?per_page=100&direction=desc")
 }
 
 $script:RemoteAttachmentHashes = @{}
@@ -79,6 +111,7 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | Convert
 [void](Test-ReleaseAssetSet -Manifest $manifest -AssetRoot $assetRootFull)
 $version = Normalize-ReleaseVersion ([string]$manifest.version)
 $tag = "v$version"
+$releaseMetadata = Resolve-GiteeReleaseMetadata -Version $version -Channel ([string]$manifest.channel) -MetadataPath $ReleaseMetadataPath
 $localFiles = @(Get-ChildItem -LiteralPath $assetRootFull -File | Sort-Object Name)
 if ($localFiles.Count -eq 0) { throw 'Gitee 发布目录没有附件。' }
 [void](Assert-GiteeReleaseContract -Manifest $manifest -LocalFiles $localFiles)
@@ -89,8 +122,9 @@ foreach ($file in $localFiles) {
     }
 }
 
+$script:GiteeToken = Get-GiteeToken
 $baseUri = "https://gitee.com/api/v5/repos/$Owner/$Repository"
-$repo = Invoke-RestMethod -Method Get -Uri $baseUri -TimeoutSec 20
+$repo = Invoke-GiteeReadApi -Uri $baseUri
 if ([string]$repo.full_name -cne "$Owner/$Repository" -or [string]$repo.default_branch -cne $TargetBranch) {
     throw "Gitee 公开仓库身份不符：$($repo.full_name) / $($repo.default_branch)"
 }
@@ -98,7 +132,7 @@ $releases = Get-GiteeReleases -BaseUri $baseUri
 $sameTag = @($releases | Where-Object { [string]$_.tag_name -ceq $tag } | Select-Object -First 1)
 $remoteFiles = @()
 if ($sameTag.Count -gt 0) {
-    $remoteFiles = @(Invoke-RestMethod -Method Get -Uri "$baseUri/releases/$($sameTag[0].id)/attach_files?per_page=100" -TimeoutSec 20)
+    $remoteFiles = @(Invoke-GiteeReadApi -Uri "$baseUri/releases/$($sameTag[0].id)/attach_files?per_page=100")
 }
 $missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles -GetRemoteSha256 {
     param($remote)
@@ -108,6 +142,7 @@ $missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $remoteFiles -
 Write-Host 'Gitee 发布计划（只允许此仓库）' -ForegroundColor Cyan
 Write-Host "目标：$Owner/$Repository / $TargetBranch"
 Write-Host "标签：$tag / channel=$($manifest.channel)"
+Write-Host "Release：$($releaseMetadata.Name) / prerelease=$($releaseMetadata.Prerelease)"
 foreach ($file in $localFiles) {
     $state = if ($remoteFiles | Where-Object { [string]$_.name -ieq $file.Name }) { '远端已有' } else { '待上传' }
     Write-Host ("- {0} / {1:N2} MiB / {2}" -f $file.Name, ($file.Length / 1MB), $state)
@@ -115,10 +150,10 @@ foreach ($file in $localFiles) {
 
 if ($DryRun) {
     Write-Host "DryRun 完成：将创建或复用 $tag，并上传 $($missing.Count) 个缺失附件；未执行任何远端写入。" -ForegroundColor Green
+    $script:GiteeToken = $null
     exit 0
 }
 
-$script:GiteeToken = Get-GiteeToken
 if ([string]::IsNullOrWhiteSpace($script:GiteeToken)) {
     throw '未找到 DREAMMANGAREADER_GITEE_TOKEN 或 GITEE_TOKEN。'
 }
@@ -127,30 +162,40 @@ if (!$ConfirmPublish) {
     if ($answer -cne 'Y') { throw '用户取消发布。' }
 }
 
+$releaseBody = @{
+    tag_name = $tag
+    name = $releaseMetadata.Name
+    body = $releaseMetadata.Body
+    prerelease = $releaseMetadata.Prerelease.ToString().ToLowerInvariant()
+}
 $release = if ($sameTag.Count -gt 0) {
-    $sameTag[0]
+    if ($releaseMetadata.External) {
+        Invoke-GiteeWriteApi -Method Patch -Uri "$baseUri/releases/$($sameTag[0].id)" -Body $releaseBody
+    }
+    else {
+        $sameTag[0]
+    }
 }
 else {
-    Invoke-GiteeWriteApi -Uri "$baseUri/releases" -Body @{
-        tag_name = $tag
-        name = "DreamMangaReader $tag"
-        body = "DreamMangaReader $tag"
-        prerelease = ([string]$manifest.channel -ne 'stable').ToString().ToLowerInvariant()
-        target_commitish = $TargetBranch
-    }
+    $releaseBody['target_commitish'] = $TargetBranch
+    Invoke-GiteeWriteApi -Method Post -Uri "$baseUri/releases" -Body $releaseBody
 }
 
 $responseFiles = [System.Collections.Generic.List[string]]::new()
 try {
+    $curlCommand = Get-Command 'curl.exe', 'curl' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($missing.Count -gt 0 -and $null -eq $curlCommand) {
+        throw 'PATH 中未找到 curl，无法上传 Gitee 附件。'
+    }
     foreach ($file in $missing) {
         $responsePath = Join-Path $assetRootFull "$($file.BaseName).response.json"
         $responseFiles.Add($responsePath)
         $uploadUri = "$baseUri/releases/$($release.id)/attach_files"
-        & curl.exe --fail-with-body --show-error --request POST --header 'Accept: application/json' --form "access_token=$script:GiteeToken" --form "file=@$($file.FullName);filename=$($file.Name)" --output $responsePath $uploadUri
+        & $curlCommand.Source --fail-with-body --show-error --request POST --header 'Accept: application/json' --form "access_token=$script:GiteeToken" --form "file=@$($file.FullName);filename=$($file.Name)" --output $responsePath $uploadUri
         if ($LASTEXITCODE -ne 0) { throw "Gitee 附件上传失败：$($file.Name)，curl exit code $LASTEXITCODE" }
     }
 
-    $verifiedRemote = @(Invoke-RestMethod -Method Get -Uri "$baseUri/releases/$($release.id)/attach_files?per_page=100" -TimeoutSec 20)
+    $verifiedRemote = @(Invoke-GiteeReadApi -Uri "$baseUri/releases/$($release.id)/attach_files?per_page=100")
     $stillMissing = @(Compare-RemoteAttachments -Local $localFiles -Remote $verifiedRemote -GetRemoteSha256 {
         param($remote)
         Get-GiteeAttachmentSha256 -Remote $remote
@@ -158,7 +203,8 @@ try {
     if ($stillMissing.Count -ne 0) { throw "Gitee 发布后仍缺少 $($stillMissing.Count) 个附件。" }
     $remoteManifest = @($verifiedRemote | Where-Object { [string]$_.name -ceq 'dream-manga-reader-update.json' } | Select-Object -First 1)
     if ($remoteManifest.Count -eq 0) { throw 'Gitee Release 缺少远端更新清单。' }
-    $remoteManifestJson = Invoke-RestMethod -Method Get -Uri ([string]$remoteManifest[0].browser_download_url) -TimeoutSec 30
+    $remoteManifestResponse = Invoke-WebRequest -Method Get -Uri ([string]$remoteManifest[0].browser_download_url) -TimeoutSec 30
+    $remoteManifestJson = $remoteManifestResponse.Content | ConvertFrom-Json
     if ([int]$remoteManifestJson.schemaVersion -ne 1 -or
         [string]$remoteManifestJson.appId -cne 'DreamMangaReader' -or
         [string]$remoteManifestJson.version -cne $version) {

@@ -45,9 +45,9 @@ flutter run -d windows      # 或 -d <android 设备>
 
 ## 构建发布
 
-打形如 `v1.2.3`(或 `v1.2.3-beta.1`)的 tag,GitHub Actions 自动构建并发布 Windows + Android(见 [`.github/workflows/release.yml`](.github/workflows/release.yml))。
+推送形如 `v1.2.3`(或 `v1.2.3-beta.1`)的 tag 后，GitHub Actions 自动构建并发布 Windows + Android，再把 `main`、发布 tag、Release 名称/正文/预发布状态及兼容附件同步到 Gitee(见 [`.github/workflows/release.yml`](.github/workflows/release.yml))。仓库必须配置 Actions Secret `GITEE_TOKEN`；Token 仅通过运行环境传入，不会写入远端 URL、日志或 Git 提交。
 
-双源更新的发布职责分开：维护者只使用仓库内的 PowerShell 脚本打包并发布到作者授权的 Gitee 仓库；作者审核合并后，自行推送 GitHub tag 并由 Actions 发布 GitHub Release。迁移到双源更新时，`v1.3.1` 桥接版必须先由作者发布到 GitHub，旧版客户端升级到桥接版后，后续版本才会默认使用 Gitee，并在 Gitee 不可用时回退 GitHub。
+Universal APK 暂时只发布到 GitHub Release；Gitee Release 发布 Windows 安装器/便携包和三个 Android ABI 分包，并使用不含 Universal APK 的独立更新清单。本地 PowerShell 打包、预演和发布流程仍可独立使用。
 
 ```powershell
 # 只读检查，不安装工具、不显示 Token 内容
@@ -59,11 +59,11 @@ pwsh -NoProfile -File Scripts/打包新版本.ps1 -Version 1.3.1 -Platform All
 # 预演 Gitee 发布，不产生远端写入
 pwsh -NoProfile -File Scripts/发布到Gitee.ps1 -AssetRoot ReleaseOutput/v1.3.1/gitee -DryRun
 
-# 正式发布前在环境变量 DREAMMANGAREADER_GITEE_TOKEN 或 GITEE_TOKEN 中配置授权
+# 本地正式发布前在环境变量 DREAMMANGAREADER_GITEE_TOKEN 或 GITEE_TOKEN 中配置授权
 pwsh -NoProfile -File Scripts/打包并发布Gitee.ps1 -Version 1.3.1
 ```
 
-本地脚本只允许目标 `TypeDreamMoon/DreamMangaReader`，不会写入 GitHub。Token 不写入配置文件、清单、日志或 Git 提交。
+本地脚本只允许目标 `TypeDreamMoon/DreamMangaReader`，不会写入 GitHub。
 
 ## 许可
 

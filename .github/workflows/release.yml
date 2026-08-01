@@ -1,4 +1,4 @@
-# 自动构建并发布作者 GitHub Release。Gitee 仅由本地脚本发布。
+# 自动构建 GitHub Release，并同步代码、Tag、Release 元数据及兼容附件到 Gitee。
 name: Build & Release
 
 on:
@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify tag, AppInfo and pubspec
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
           app=$(grep -oP "static const version = '\K[^']+" lib/app/app_info.dart)
@@ -41,7 +43,7 @@ jobs:
             echo "::error::pubspec build number 必须在 1..999"
             exit 1
           }
-          tag="${{ github.event.inputs.tag }}"
+          tag="$RELEASE_TAG"
           if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
           if [[ "$tag" == v* ]]; then
             test "${tag#v}" = "$app" || {
@@ -118,6 +120,9 @@ jobs:
     name: Build Windows x64
     needs: check-version
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh -NoProfile -File {0}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -126,19 +131,19 @@ jobs:
           channel: stable
           cache: true
       - name: Prepare Windows build tools
-        shell: pwsh
+        shell: pwsh -NoProfile -File {0}
         run: choco install nuget.commandline innosetup --no-progress -y
       - run: flutter config --no-analytics
       - run: flutter pub get
       - name: Build Windows Release
-        shell: pwsh
+        shell: pwsh -NoProfile -File {0}
         run: |
           $pub = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1).Matches.Groups[1].Value
           $parts = $pub.Split('+')
           flutter build windows --release --build-name=$($parts[0]) --build-number=$($parts[1])
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Bundle VC runtime, portable ZIP and installer
-        shell: pwsh
+        shell: pwsh -NoProfile -File {0}
         run: |
           $pub = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1).Matches.Groups[1].Value
           $version = $pub.Split('+')[0]
@@ -167,6 +172,8 @@ jobs:
     name: Publish GitHub bridge release
     needs: [build-android, build-windows]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
@@ -177,9 +184,11 @@ jobs:
       - name: Build release manifest and hashes
         id: meta
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag }}"
+          tag="$RELEASE_TAG"
           if [ -z "$tag" ]; then tag="$GITHUB_REF_NAME"; fi
           version=${tag#v}
           channel=stable
@@ -187,7 +196,7 @@ jobs:
           if grep -qiE '(-beta|-rc|-alpha)' <<<"$version"; then channel=beta; prerelease=true; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          mkdir release-assets
+          mkdir release-assets gitee-release-assets
           find artifacts -type f \( -name '*.apk' -o -name '*.zip' -o -name '*.exe' \) -exec cp {} release-assets/ \;
           cd release-assets
           for required in DreamMangaReader-windows-x64-setup.exe DreamMangaReader-windows-x64.zip DreamMangaReader-android-universal.apk DreamMangaReader-android-armeabi-v7a.apk DreamMangaReader-android-arm64-v8a.apk DreamMangaReader-android-x86_64.apk; do
@@ -205,6 +214,30 @@ jobs:
           ))
           jq -n --arg version "$version" --arg channel "$channel" --argjson assets "$assets" '{schemaVersion:1,appId:"DreamMangaReader",version:$version,channel:$channel,assets:$assets}' > dream-manga-reader-update.json
           sha256sum DreamMangaReader-* dream-manga-reader-update.json > "DreamMangaReader-$tag-sha256.txt"
+          cd ..
+          for file in \
+            DreamMangaReader-windows-x64-setup.exe \
+            DreamMangaReader-windows-x64.zip \
+            DreamMangaReader-android-armeabi-v7a.apk \
+            DreamMangaReader-android-arm64-v8a.apk \
+            DreamMangaReader-android-x86_64.apk; do
+            cp "release-assets/$file" gitee-release-assets/
+          done
+          cd gitee-release-assets
+          assets=$(jq -s '.' < <(
+            asset windows x64 DreamMangaReader-windows-x64-setup.exe
+            asset android armeabi-v7a DreamMangaReader-android-armeabi-v7a.apk
+            asset android arm64-v8a DreamMangaReader-android-arm64-v8a.apk
+            asset android x86_64 DreamMangaReader-android-x86_64.apk
+          ))
+          jq -n --arg version "$version" --arg channel "$channel" --argjson assets "$assets" '{schemaVersion:1,appId:"DreamMangaReader",version:$version,channel:$channel,assets:$assets}' > dream-manga-reader-update.json
+          sha256sum DreamMangaReader-* dream-manga-reader-update.json > "DreamMangaReader-$tag-sha256.txt"
+      - name: Upload Gitee-compatible release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitee-release-assets
+          path: gitee-release-assets/*
+          if-no-files-found: error
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -213,3 +246,74 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-assets/*
+
+  sync-gitee:
+    name: Sync code and release to Gitee
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require Gitee token
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::error::Repository secret GITEE_TOKEN is required for Gitee synchronization."
+            exit 1
+          fi
+      - name: Sync main and release tag
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Invalid release tag: $tag"
+            exit 1
+          fi
+          git fetch --no-tags origin 'refs/heads/main:refs/remotes/origin/main'
+          git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+          askpass="$RUNNER_TEMP/gitee-askpass.sh"
+          trap 'rm -f "$askpass"' EXIT
+          cat > "$askpass" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' 'TypeDreamMoon' ;;
+            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass"
+          export GIT_TERMINAL_PROMPT=0
+          git remote add gitee 'https://gitee.com/TypeDreamMoon/DreamMangaReader.git'
+          git push gitee \
+            'refs/remotes/origin/main:refs/heads/main' \
+            "refs/tags/$tag:refs/tags/$tag"
+      - uses: actions/download-artifact@v4
+        with:
+          name: gitee-release-assets
+          path: gitee-release-assets
+      - name: Fetch finalized GitHub Release metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > "$RUNNER_TEMP/github-release.json"
+      - name: Publish Gitee Release
+        shell: pwsh -NoProfile -File {0}
+        env:
+          DREAMMANGAREADER_GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          ./Scripts/发布到Gitee.ps1 `
+            -AssetRoot (Join-Path $env:GITHUB_WORKSPACE 'gitee-release-assets') `
+            -ReleaseMetadataPath (Join-Path $env:RUNNER_TEMP 'github-release.json') `
+            -ConfirmPublish

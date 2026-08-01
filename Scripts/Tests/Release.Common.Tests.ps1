@@ -184,6 +184,28 @@ try {
     Assert-Equal '1.3.2-beta.1' $betaVersion.Version 'beta version agreement'
     Assert-Equal 14 $betaVersion.BuildNumber 'beta build number'
 
+    $defaultMetadata = Resolve-GiteeReleaseMetadata -Version '1.3.2' -Channel stable
+    Assert-Equal 'v1.3.2' $defaultMetadata.Tag 'default release metadata tag'
+    Assert-Equal 'DreamMangaReader v1.3.2' $defaultMetadata.Name 'default release metadata name'
+    Assert-Equal $false $defaultMetadata.Prerelease 'default release metadata prerelease'
+    Assert-Equal $false $defaultMetadata.External 'default release metadata source'
+
+    $metadataPath = Join-Path $tempRoot 'github-release.json'
+    [System.IO.File]::WriteAllText($metadataPath, (@{
+        tag_name = 'v1.3.2-beta.1'
+        name = 'DreamMangaReader beta'
+        body = "First line`nSecond line"
+        prerelease = $true
+    } | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    $githubMetadata = Resolve-GiteeReleaseMetadata -Version '1.3.2-beta.1' -Channel beta -MetadataPath $metadataPath
+    Assert-Equal 'DreamMangaReader beta' $githubMetadata.Name 'GitHub release metadata name'
+    Assert-Equal "First line`nSecond line" $githubMetadata.Body 'GitHub release metadata body'
+    Assert-Equal $true $githubMetadata.Prerelease 'GitHub release metadata prerelease'
+    Assert-Equal $true $githubMetadata.External 'GitHub release metadata source'
+    Assert-Throws {
+        Resolve-GiteeReleaseMetadata -Version '1.3.2' -Channel stable -MetadataPath $metadataPath
+    } 'release metadata tag mismatch'
+
     $assetPath = Join-Path $tempRoot 'package.apk'
     [System.IO.File]::WriteAllBytes($assetPath, [byte[]](1, 2, 3))
     Assert-Equal '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81' (Get-FileSha256 $assetPath) 'file SHA'

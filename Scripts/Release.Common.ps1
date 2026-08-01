@@ -76,6 +76,60 @@ function Assert-GiteeTarget {
     return $true
 }
 
+function Resolve-GiteeReleaseMetadata {
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][ValidateSet('stable', 'beta')][string]$Channel,
+        [AllowEmptyString()][string]$MetadataPath = ''
+    )
+
+    $normalizedVersion = Normalize-ReleaseVersion $Version
+    $tag = "v$normalizedVersion"
+    $name = "DreamMangaReader $tag"
+    $body = $name
+    $prerelease = $Channel -ne 'stable'
+    $external = $false
+
+    if (![string]::IsNullOrWhiteSpace($MetadataPath)) {
+        $metadataPathFull = [System.IO.Path]::GetFullPath($MetadataPath)
+        if (!(Test-Path -LiteralPath $metadataPathFull -PathType Leaf)) {
+            throw "找不到 Release 元数据：$metadataPathFull"
+        }
+        try {
+            $metadata = Get-Content -LiteralPath $metadataPathFull -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            throw "Release 元数据不是有效 JSON：$($_.Exception.Message)"
+        }
+        foreach ($property in @('tag_name', 'name', 'body', 'prerelease')) {
+            if ($null -eq $metadata.PSObject.Properties[$property]) {
+                throw "Release 元数据缺少字段：$property"
+            }
+        }
+        if ([string]$metadata.tag_name -cne $tag) {
+            throw "Release 元数据标签不一致：$($metadata.tag_name) / $tag"
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$metadata.name)) {
+            throw 'Release 元数据名称不能为空。'
+        }
+        if ($metadata.prerelease -isnot [bool]) {
+            throw 'Release 元数据 prerelease 必须是布尔值。'
+        }
+        $name = [string]$metadata.name
+        $body = [string]$metadata.body
+        $prerelease = [bool]$metadata.prerelease
+        $external = $true
+    }
+
+    return [pscustomobject]@{
+        Tag = $tag
+        Name = $name
+        Body = $body
+        Prerelease = $prerelease
+        External = $external
+    }
+}
+
 function Assert-GiteeReleaseContract {
     param(
         [Parameter(Mandatory)][object]$Manifest,
