@@ -54,13 +54,13 @@ Universal APK 和三个 ABI 分包都会发布到 GitHub 与 Gitee。Gitee 使�
 pwsh -NoProfile -File Scripts/检查发布环境.ps1 -Platform All
 
 # 只打包，不发布
-pwsh -NoProfile -File Scripts/打包新版本.ps1 -Version 1.3.1 -Platform All
+pwsh -NoProfile -File Scripts/打包新版本.ps1 -Version 1.3.1-beta.1 -Channel beta -Platform All
 
 # 预演 Gitee 发布，不产生远端写入
-pwsh -NoProfile -File Scripts/发布到Gitee.ps1 -AssetRoot ReleaseOutput/v1.3.1/gitee -DryRun
+pwsh -NoProfile -File Scripts/发布到Gitee.ps1 -AssetRoot ReleaseOutput/v1.3.1-beta.1/gitee -DryRun
 
 # 本地正式发布前在环境变量 DREAMMANGAREADER_GITEE_TOKEN 或 GITEE_TOKEN 中配置授权
-pwsh -NoProfile -File Scripts/打包并发布Gitee.ps1 -Version 1.3.1
+pwsh -NoProfile -File Scripts/打包并发布Gitee.ps1 -Version 1.3.1-beta.1 -Channel beta
 ```
 
 本地脚本只允许目标 `TypeDreamMoon/DreamMangaReader`，不会写入 GitHub。

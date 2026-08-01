@@ -1,14 +1,13 @@
 /// App 元信息(关于页 / 调试页共用)。
 ///
 /// [version] = 用户可见的发布版本(含预发布后缀,与 git tag 对齐);
-/// pubspec.yaml 的 `version:` 保持纯数字 `x.y.z+n`(驱动 versionCode / Windows 版本号,
-/// 不能带 `-beta`)。两者语义不同,别强行同步。
+/// pubspec.yaml 的 `version:` 使用相同 SemVer，并追加 `+n` build number。
 class AppInfo {
   AppInfo._();
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.3.1';
+  static const version = '1.3.1-beta.1';
   static const tagline = '跨平台漫画 + 番剧 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
