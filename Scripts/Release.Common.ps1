@@ -418,6 +418,26 @@ function Get-StaleRemoteAttachments {
     return $stale.ToArray()
 }
 
+function Select-ReusableRemoteAttachments {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Remote,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Stale
+    )
+
+    $staleNames = @{}
+    foreach ($item in $Stale) {
+        $name = [string]$item.name
+        [void](Assert-SafeFileName $name)
+        $staleNames[$name.ToLowerInvariant()] = $true
+    }
+
+    return @($Remote | Where-Object {
+        $name = [string]$_.name
+        [void](Assert-SafeFileName $name)
+        !$staleNames.ContainsKey($name.ToLowerInvariant())
+    })
+}
+
 function Read-ReleaseVersion {
     param([Parameter(Mandatory)][string]$PubspecPath)
 

@@ -180,6 +180,16 @@ $staleAttachments = @(Get-StaleRemoteAttachments -Local $localAttachments -Remot
     [pscustomobject]@{ id = 2; name = 'obsolete.zip'; size = 56 }
 ))
 Assert-Equal 2 $staleAttachments.Count 'size conflicts and extras are stale'
+Assert-Equal 0 @(Select-ReusableRemoteAttachments `
+    -Remote $staleAttachments `
+    -Stale $staleAttachments).Count 'all stale attachments are excluded'
+$mixedRemoteAttachments = @(
+    [pscustomobject]@{ id = 1; name = 'a.apk'; size = 99 },
+    [pscustomobject]@{ id = 2; name = 'b.exe'; size = 34 }
+)
+Assert-Equal 'b.exe' @(Select-ReusableRemoteAttachments `
+    -Remote $mixedRemoteAttachments `
+    -Stale @($mixedRemoteAttachments[0]))[0].name 'reusable attachments are selected by name'
 Assert-Equal 0 @(Get-StaleRemoteAttachments -Local $localAttachments -Remote @(
     [pscustomobject]@{ id = 1; name = 'A.APK'; size = 12 },
     [pscustomobject]@{ id = 2; name = 'b.exe'; size = 34 }

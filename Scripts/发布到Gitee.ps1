@@ -202,7 +202,7 @@ $staleRemoteFiles = if ($remoteFiles.Count -gt 0 -and !$canReuseRemoteFiles) {
 else {
     @(Get-StaleRemoteAttachments -Local $localFiles -Remote $remoteFiles)
 }
-$usableRemoteFiles = @($remoteFiles | Where-Object { $_ -notin $staleRemoteFiles })
+$usableRemoteFiles = @(Select-ReusableRemoteAttachments -Remote $remoteFiles -Stale $staleRemoteFiles)
 $missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $usableRemoteFiles)
 
 Write-Host 'Gitee 发布计划（只允许此仓库）' -ForegroundColor Cyan
