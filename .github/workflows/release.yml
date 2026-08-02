@@ -308,7 +308,10 @@ jobs:
             exit 1
           fi
           git fetch --no-tags origin 'refs/heads/main:refs/remotes/origin/main'
-          git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+          # --force 不可省：checkout 已在本地建好该 tag 引用，附注标签的对象 id
+          # 与 checkout 落下的引用不一致时，非强制 fetch 会以 "would clobber
+          # existing tag" 失败。这里的本地引用是一次性 checkout 的，覆盖它是安全的。
+          git fetch --no-tags --force origin "refs/tags/$tag:refs/tags/$tag"
           askpass="$RUNNER_TEMP/gitee-askpass.sh"
           trap 'rm -f "$askpass"' EXIT
           cat > "$askpass" <<'EOF'
