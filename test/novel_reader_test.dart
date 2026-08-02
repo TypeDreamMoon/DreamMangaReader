@@ -135,8 +135,21 @@ void main() {
     ));
 
     expect(html, contains('Content-Security-Policy'));
+    expect(html, contains("connect-src 'none'"));
     expect(html, isNot(contains('onclick')));
     expect(html, isNot(contains('<script>bad()')));
     expect(text, contains('&lt;script&gt;只是文字&lt;/script&gt;'));
+    expect(
+      novelReaderBridgeScript,
+      contains('calc((100vw - 760px) / 2)'),
+    );
+    expect(
+        novelReaderBridgeScript, contains('img{max-width:100%;height:auto}'));
+    expect(
+      novelReaderBridgeScript,
+      contains("closest?.('a,button,input,textarea,select,[contenteditable]')"),
+    );
+    expect(novelReaderBridgeScript, contains("addEventListener('wheel'"));
+    expect(novelReaderBridgeScript, contains('{passive:false}'));
   });
 }
