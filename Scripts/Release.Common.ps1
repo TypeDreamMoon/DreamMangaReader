@@ -209,9 +209,10 @@ function Assert-GiteeReleaseContract {
     if ($schemaVersion -notin @(1, 2)) {
         throw "Gitee Release 清单 schemaVersion 无效：$schemaVersion"
     }
+    # 通用 APK 不在 Gitee 契约内：与三个 ABI 包内容重复，占 44% 体积，
+    # 而更新器按 ABI 命中专用包，命中不了会自动换到 GitHub 源。
     $requiredAssets = @(
         'windows|x64|installer|DreamMangaReader-windows-x64-setup.exe',
-        'android|universal|installer|DreamMangaReader-android-universal.apk',
         'android|armeabi-v7a|installer|DreamMangaReader-android-armeabi-v7a.apk',
         'android|arm64-v8a|installer|DreamMangaReader-android-arm64-v8a.apk',
         'android|x86_64|installer|DreamMangaReader-android-x86_64.apk'
@@ -221,7 +222,7 @@ function Assert-GiteeReleaseContract {
     }) | Sort-Object
     $assetDifferences = @(Compare-Object -ReferenceObject $requiredAssets -DifferenceObject $actualAssets -CaseSensitive)
     if ($actualAssets.Count -ne $requiredAssets.Count -or $assetDifferences.Count -ne 0) {
-        throw 'Gitee Release 必须同时包含 Windows x64 安装器、Android 通用 APK 和三个 ABI 分包。'
+        throw 'Gitee Release 必须同时包含 Windows x64 安装器和三个 Android ABI 分包。'
     }
 
     $hashFileName = "DreamMangaReader-v$version-sha256.txt"

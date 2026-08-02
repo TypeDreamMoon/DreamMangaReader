@@ -25,14 +25,12 @@ $assets = @(
         Path = Join-Path $sourceRootFull 'DreamMangaReader-windows-x64-setup.exe'
         IncludeInManifest = $true
     },
-    # 便携版 ZIP 不进 Gitee：更新器在 Windows 上只会选安装器，
-    # 而这 36 MiB 要走跨境链路，是纯粹的浪费。GitHub Release 仍然带它。
-    [pscustomobject]@{
-        Platform = 'android'; Arch = 'universal'; Kind = 'installer'
-        FileName = 'DreamMangaReader-android-universal.apk'
-        Path = Join-Path $sourceRootFull 'DreamMangaReader-android-universal.apk'
-        IncludeInManifest = $true
-    },
+    # 便携版 ZIP 不进 Gitee：更新器在 Windows 上只会选安装器，这 36 MiB 是纯浪费。
+    #
+    # 通用 APK 也不进 Gitee：它 109 MiB、要切成 3 片，内容与下面三个 ABI 包重复，
+    # 占 Gitee 附件总量的 44%。更新器按设备 ABI 逐个匹配，真机永远命中 ABI 专用包；
+    # 匹配不上时（冷门 ABI，或平台通道给不出 ABI）会自动换到 GitHub 源取通用包。
+    # 两者 GitHub Release 都仍然完整提供。
     [pscustomobject]@{
         Platform = 'android'; Arch = 'armeabi-v7a'; Kind = 'installer'
         FileName = 'DreamMangaReader-android-armeabi-v7a.apk'

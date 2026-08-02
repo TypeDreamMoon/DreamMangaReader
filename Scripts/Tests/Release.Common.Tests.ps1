@@ -56,7 +56,6 @@ $fullGiteeManifest = [pscustomobject]@{
     version = '1.3.1'
     assets = @(
         [pscustomobject]@{ platform='windows'; arch='x64'; kind='installer'; fileName='DreamMangaReader-windows-x64-setup.exe' },
-        [pscustomobject]@{ platform='android'; arch='universal'; kind='installer'; fileName='DreamMangaReader-android-universal.apk' },
         [pscustomobject]@{ platform='android'; arch='armeabi-v7a'; kind='installer'; fileName='DreamMangaReader-android-armeabi-v7a.apk' },
         [pscustomobject]@{ platform='android'; arch='arm64-v8a'; kind='installer'; fileName='DreamMangaReader-android-arm64-v8a.apk' },
         [pscustomobject]@{ platform='android'; arch='x86_64'; kind='installer'; fileName='DreamMangaReader-android-x86_64.apk' }
@@ -67,7 +66,6 @@ $fullGiteeNames = @(
     'DreamMangaReader-v1.3.1-sha256.txt',
     'DreamMangaReader-windows-x64-setup.exe',
     'DreamMangaReader-windows-x64.zip',
-    'DreamMangaReader-android-universal.apk',
     'DreamMangaReader-android-armeabi-v7a.apk',
     'DreamMangaReader-android-arm64-v8a.apk',
     'DreamMangaReader-android-x86_64.apk'
@@ -96,14 +94,26 @@ try {
         -LocalFiles @(Get-ChildItem -LiteralPath $giteeTempRoot -File | Where-Object { $_.Name -cne 'DreamMangaReader-windows-x64.zip' })) 'Gitee release without optional portable ZIP'
     Write-GiteeHashFile -Root $giteeTempRoot -FileNames $hashedGiteeNames
 
-    $manifestWithoutUniversal = [pscustomobject]@{
+    # 通用 APK 不属于 Gitee 契约：混进来会让本地附件集合与清单对不上。
+    $manifestWithUniversal = [pscustomobject]@{
         schemaVersion = 2
         version = '1.3.1'
-        assets = @($fullGiteeManifest.assets | Where-Object { $_.arch -cne 'universal' })
+        assets = @($fullGiteeManifest.assets) + @(
+            [pscustomobject]@{ platform='android'; arch='universal'; kind='installer'; fileName='DreamMangaReader-android-universal.apk' }
+        )
     }
     Assert-Throws {
-        Assert-GiteeReleaseContract -Manifest $manifestWithoutUniversal -LocalFiles $fullGiteeFiles
-    } 'Gitee manifest without universal APK'
+        Assert-GiteeReleaseContract -Manifest $manifestWithUniversal -LocalFiles $fullGiteeFiles
+    } 'Gitee manifest with universal APK'
+
+    $manifestWithoutArm64 = [pscustomobject]@{
+        schemaVersion = 2
+        version = '1.3.1'
+        assets = @($fullGiteeManifest.assets | Where-Object { $_.arch -cne 'arm64-v8a' })
+    }
+    Assert-Throws {
+        Assert-GiteeReleaseContract -Manifest $manifestWithoutArm64 -LocalFiles $fullGiteeFiles
+    } 'Gitee manifest without arm64-v8a APK'
 
     $extraPath = Join-Path $giteeTempRoot 'unexpected.txt'
     [System.IO.File]::WriteAllText($extraPath, 'unexpected', [System.Text.UTF8Encoding]::new($false))
@@ -307,7 +317,6 @@ try {
     $bundleAssets = @(
         [pscustomobject]@{ Platform='windows'; Arch='x64'; Kind='installer'; FileName='DreamMangaReader-windows-x64-setup.exe'; Path=(Join-Path $bundleSource 'DreamMangaReader-windows-x64-setup.exe'); IncludeInManifest=$true },
         [pscustomobject]@{ Platform='windows'; Arch='x64'; Kind='portable'; FileName='DreamMangaReader-windows-x64.zip'; Path=(Join-Path $bundleSource 'DreamMangaReader-windows-x64.zip'); IncludeInManifest=$false },
-        [pscustomobject]@{ Platform='android'; Arch='universal'; Kind='installer'; FileName='DreamMangaReader-android-universal.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-universal.apk'); IncludeInManifest=$true },
         [pscustomobject]@{ Platform='android'; Arch='armeabi-v7a'; Kind='installer'; FileName='DreamMangaReader-android-armeabi-v7a.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-armeabi-v7a.apk'); IncludeInManifest=$true },
         [pscustomobject]@{ Platform='android'; Arch='arm64-v8a'; Kind='installer'; FileName='DreamMangaReader-android-arm64-v8a.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-arm64-v8a.apk'); IncludeInManifest=$true },
         [pscustomobject]@{ Platform='android'; Arch='x86_64'; Kind='installer'; FileName='DreamMangaReader-android-x86_64.apk'; Path=(Join-Path $bundleSource 'DreamMangaReader-android-x86_64.apk'); IncludeInManifest=$true }
@@ -323,9 +332,7 @@ try {
     $chunkedSetup = @($bundleManifest.assets | Where-Object { $_.fileName -ceq 'DreamMangaReader-windows-x64-setup.exe' })[0]
     Assert-Equal 3 @($chunkedSetup.parts).Count 'Gitee setup part count'
     Assert-Equal $false (Test-Path -LiteralPath (Join-Path $bundleDestination $chunkedSetup.fileName)) 'Gitee chunked logical file omitted'
-    $chunkedUniversal = @($bundleManifest.assets | Where-Object { $_.fileName -ceq 'DreamMangaReader-android-universal.apk' })[0]
-    Assert-Equal 3 @($chunkedUniversal.parts).Count 'Gitee universal APK part count'
-    Assert-Equal $false (Test-Path -LiteralPath (Join-Path $bundleDestination $chunkedUniversal.fileName)) 'Gitee chunked universal APK omitted'
+    Assert-Equal 0 @($bundleManifest.assets | Where-Object { $_.arch -ceq 'universal' }).Count 'Gitee bundle omits the universal APK'
     Assert-Equal $true (Test-ReleaseAssetSet -Manifest $bundleManifest -AssetRoot $bundleDestination) 'Gitee chunked bundle integrity'
     Assert-Equal $true (Assert-GiteeReleaseContract -Manifest $bundleManifest -LocalFiles @(Get-ChildItem -LiteralPath $bundleDestination -File)) 'Gitee chunked bundle contract'
     $bundleManifestReadback = Get-Content -LiteralPath (Join-Path $bundleDestination 'dream-manga-reader-update.json') -Raw -Encoding UTF8 | ConvertFrom-Json
