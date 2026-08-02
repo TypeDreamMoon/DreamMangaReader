@@ -153,8 +153,7 @@ void main() {
     expect(selected, isNull);
   });
 
-  test('ABI provider returns empty list for arbitrary channel exception',
-      () async {
+  test('ABI provider surfaces arbitrary channel exceptions', () async {
     const channel = MethodChannel('dream_manga_reader/platform');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMessageHandler(channel.name, (_) => throw StateError('failed'));
@@ -163,13 +162,13 @@ void main() {
           .setMockMessageHandler(channel.name, null),
     );
 
-    final abis = await const MethodChannelAndroidAbiProvider().supportedAbis();
-
-    expect(abis, isEmpty);
+    expect(
+      const MethodChannelAndroidAbiProvider().supportedAbis(),
+      throwsA(isA<AndroidAbiUnavailableException>()),
+    );
   });
 
-  test('ABI provider returns empty list for unexpected channel values',
-      () async {
+  test('ABI provider surfaces unexpected channel values', () async {
     const channel = MethodChannel('dream_manga_reader/platform');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (_) async => ['arm64-v8a', 42]);
@@ -178,9 +177,46 @@ void main() {
           .setMockMethodCallHandler(channel, null),
     );
 
-    final abis = await const MethodChannelAndroidAbiProvider().supportedAbis();
+    expect(
+      const MethodChannelAndroidAbiProvider().supportedAbis(),
+      throwsA(isA<AndroidAbiUnavailableException>()),
+    );
+  });
 
-    expect(abis, isEmpty);
+  test('ABI provider surfaces an empty channel result', () async {
+    const channel = MethodChannel('dream_manga_reader/platform');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async => <String>[]);
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+
+    expect(
+      const MethodChannelAndroidAbiProvider().supportedAbis(),
+      throwsA(isA<AndroidAbiUnavailableException>()),
+    );
+  });
+
+  test('an explicitly empty ABI list still falls back to universal', () async {
+    final selected = await selector.select(
+      platform: UpdatePlatform.android,
+      assets: [armV7, arm64, universal],
+      supportedAbis: const [],
+    );
+
+    expect(selected, same(universal));
+  });
+
+  test('an explicitly empty ABI list finds nothing without universal',
+      () async {
+    final selected = await selector.select(
+      platform: UpdatePlatform.android,
+      assets: [armV7, arm64],
+      supportedAbis: const [],
+    );
+
+    expect(selected, isNull);
   });
 
   test('ABI provider decodes a valid string list', () async {
@@ -209,8 +245,9 @@ void main() {
           .setMockMethodCallHandler(channel, null),
     );
 
-    final abis = await const MethodChannelAndroidAbiProvider().supportedAbis();
-
-    expect(abis, isEmpty);
+    expect(
+      const MethodChannelAndroidAbiProvider().supportedAbis(),
+      throwsA(isA<AndroidAbiUnavailableException>()),
+    );
   });
 }
