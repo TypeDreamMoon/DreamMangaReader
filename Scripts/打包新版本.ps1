@@ -207,9 +207,10 @@ try {
             $universalMetadata.CertificateSha256 -ne $expectedCert) {
             throw 'Android 通用 APK 的包名、版本号或签名不符合发布契约。'
         }
+        # 通用包只进 GitHub：Gitee 的契约只要 Windows 安装器 + 三个 ABI 分包，
+        # 更新器匹配不到本机架构时会自动换到 GitHub 源取通用包。
         $universalAsset = [pscustomobject]@{ Platform='android'; Arch='universal'; Kind='installer'; FileName='DreamMangaReader-android-universal.apk'; Path=$universalWork; IncludeInManifest=$true }
         $githubAssets.Add($universalAsset)
-        $giteeAssets.Add($universalAsset)
 
         $splitMap = [ordered]@{
             'armeabi-v7a' = 'app-armeabi-v7a-release.apk'

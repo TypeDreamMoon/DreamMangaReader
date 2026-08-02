@@ -32,12 +32,34 @@ Assert-Equal $false (Test-GiteeAttachmentSize -Bytes 101MB) 'over limit'
 Assert-Equal 48MB $script:GiteePartSizeBytes 'parallel-friendly Gitee part size'
 Assert-Equal 'package.apk' (Assert-SafeFileName 'package.apk') 'safe file name'
 Assert-Throws { Assert-SafeFileName '..\package.apk' } 'path traversal'
-Assert-Equal 5013 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 13) 'universal code'
-Assert-Equal 13 (Get-AndroidSplitBaseBuildNumber -PubspecBuildNumber 13) 'split base'
-Assert-Equal 1013 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi armeabi-v7a) 'armeabi-v7a code'
-Assert-Equal 2013 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi arm64-v8a) 'arm64-v8a code'
-Assert-Equal 4013 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi x86_64) 'x86_64 code'
+Assert-Equal 65000 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 13) 'universal code'
+Assert-Equal 65000 (Get-AndroidSplitBaseBuildNumber -PubspecBuildNumber 13) 'split base'
+Assert-Equal 66000 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi armeabi-v7a) 'armeabi-v7a code'
+Assert-Equal 67000 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi arm64-v8a) 'arm64-v8a code'
+Assert-Equal 69000 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 13 -Abi x86_64) 'x86_64 code'
 Assert-Throws { Get-AndroidUniversalBuildNumber -PubspecBuildNumber 0 } 'invalid Android build number'
+Assert-Throws { Get-AndroidUniversalBuildNumber -PubspecBuildNumber 1000 } 'Android build number upper bound'
+
+# 新方案必须让「任意架构的旧版本」都能升到「任意架构的新版本」，
+# 即 build N 的最大 versionCode 严格小于 build N+1 的最小 versionCode。
+$allAbis = @('armeabi-v7a', 'arm64-v8a', 'x86_64')
+# 从 2 起校验:build 1 会算出 5000,压在旧方案上限 5999 之下。build 号只增不减,
+# 项目已经到 14,这一格永远不会再被使用,不值得为它把公式弄复杂。
+foreach ($build in 2..30) {
+    $codes = @(Get-AndroidUniversalBuildNumber -PubspecBuildNumber $build) +
+        @($allAbis | ForEach-Object { Get-AndroidSplitBuildNumber -PubspecBuildNumber $build -Abi $_ })
+    $nextCodes = @(Get-AndroidUniversalBuildNumber -PubspecBuildNumber ($build + 1)) +
+        @($allAbis | ForEach-Object { Get-AndroidSplitBuildNumber -PubspecBuildNumber ($build + 1) -Abi $_ })
+    if ((($codes | Measure-Object -Maximum).Maximum) -ge (($nextCodes | Measure-Object -Minimum).Minimum)) {
+        throw "build $build 的最大 versionCode 未低于 build $($build + 1) 的最小值,跨架构升级会被判降级。"
+    }
+    # 旧方案最高 5000+999=5999,新取值必须全部越过它,否则救不回装了旧通用包的用户。
+    if ((($codes | Measure-Object -Minimum).Minimum) -le 5999) {
+        throw "build $build 的 versionCode 未越过旧方案上限 5999。"
+    }
+}
+Assert-Equal 4995000 (Get-AndroidUniversalBuildNumber -PubspecBuildNumber 999) 'largest universal code stays in int32'
+Assert-Equal 4999000 (Get-AndroidSplitBuildNumber -PubspecBuildNumber 999 -Abi x86_64) 'largest split code stays in int32'
 Assert-Equal $true (Assert-GiteeTarget -Owner TypeDreamMoon -Repository DreamMangaReader) 'Gitee target'
 Assert-Throws { Assert-GiteeTarget -Owner someone -Repository DreamMangaReader } 'wrong Gitee owner'
 

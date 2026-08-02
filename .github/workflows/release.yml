@@ -51,7 +51,7 @@ jobs:
               exit 1
             }
           fi
-          echo "version=$app build=$build universal=$((5000+build)) splitBase=$build"
+          echo "version=$app build=$build universal=$((5000*build)) splitBase=$((5000*build))"
 
   build-android:
     name: Build verified Android APKs
@@ -78,11 +78,15 @@ jobs:
           pub=$(grep -oE '^version:\s*[^[:space:]]+' pubspec.yaml | awk '{print $2}')
           version=${pub%%+*}
           build=${pub##*+}
-          universal_code=$((5000+build))
-          flutter build apk --release --build-name="$version" --build-number="$universal_code"
+          # versionCode = build * 5000 + ABI 偏移(通用 0 / armeabi-v7a 1000 /
+          # arm64-v8a 2000 / x86_64 4000，偏移由 Flutter 的 --split-per-abi 叠加)。
+          # 步长 5000 保证 build N 的最大值低于 build N+1 的最小值，任意架构之间
+          # 都能互升；详见 Scripts/Release.Common.ps1 的同名说明。
+          code_base=$((5000*build))
+          flutter build apk --release --build-name="$version" --build-number="$code_base"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/DreamMangaReader-android-universal.apk
-          flutter build apk --release --split-per-abi --build-name="$version" --build-number="$build"
+          flutter build apk --release --split-per-abi --build-name="$version" --build-number="$code_base"
           for abi in armeabi-v7a arm64-v8a x86_64; do
             cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/DreamMangaReader-android-$abi.apk"
           done
@@ -138,10 +142,11 @@ jobs:
             fi
             echo "$file package=$package versionName=$name versionCode=$code cert=$digest"
           }
-          verify_apk DreamMangaReader-android-universal.apk "$((5000+build))"
-          verify_apk DreamMangaReader-android-armeabi-v7a.apk "$((1000+build))"
-          verify_apk DreamMangaReader-android-arm64-v8a.apk "$((2000+build))"
-          verify_apk DreamMangaReader-android-x86_64.apk "$((4000+build))"
+          code_base=$((5000*build))
+          verify_apk DreamMangaReader-android-universal.apk "$code_base"
+          verify_apk DreamMangaReader-android-armeabi-v7a.apk "$((code_base+1000))"
+          verify_apk DreamMangaReader-android-arm64-v8a.apk "$((code_base+2000))"
+          verify_apk DreamMangaReader-android-x86_64.apk "$((code_base+4000))"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apks

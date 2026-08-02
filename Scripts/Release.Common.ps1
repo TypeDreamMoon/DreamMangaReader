@@ -86,20 +86,33 @@ function Test-GiteeAttachmentSize {
     return $Bytes -ge 0 -and $Bytes -le $script:GiteeAttachmentLimitBytes
 }
 
+# Android versionCode = build * 5000 + ABI 偏移。
+#
+# 偏移(通用 0 / armeabi-v7a 1000 / arm64-v8a 2000 / x86_64 4000)由 Flutter 的
+# --split-per-abi 自行叠加，项目 build.gradle 不参与。步长取 5000 是为了让
+# 「build N 的最大值(N*5000+4000) < build N+1 的最小值((N+1)*5000)」恒成立 ——
+# 于是任意架构的旧版本都能升到任意架构的新版本，用户不再被锁死在某个轨道上。
+#
+# 旧方案是通用 5000+build、分包 {1000,2000,4000}+build，通用包(≥5001)永远高于
+# 任何分包(≤4999)，装过通用包就再也升不到分包。新方案的取值全部大于 5999，
+# 顺带把这批用户救回来。
+$script:AndroidVersionCodeStride = 5000
+
 function Get-AndroidUniversalBuildNumber {
     param([Parameter(Mandatory)][int]$PubspecBuildNumber)
 
     if ($PubspecBuildNumber -le 0 -or $PubspecBuildNumber -ge 1000) {
         throw "pubspec build number 必须在 1..999：$PubspecBuildNumber"
     }
-    return 5000 + $PubspecBuildNumber
+    return $script:AndroidVersionCodeStride * $PubspecBuildNumber
 }
 
 function Get-AndroidSplitBaseBuildNumber {
     param([Parameter(Mandatory)][int]$PubspecBuildNumber)
 
-    [void](Get-AndroidUniversalBuildNumber -PubspecBuildNumber $PubspecBuildNumber)
-    return $PubspecBuildNumber
+    # 传给 flutter build apk --split-per-abi --build-number 的基数；
+    # Flutter 会在其上叠加 ABI 偏移，所以基数与通用包的 versionCode 相同。
+    return Get-AndroidUniversalBuildNumber -PubspecBuildNumber $PubspecBuildNumber
 }
 
 function Get-AndroidSplitBuildNumber {
