@@ -9,10 +9,9 @@ import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _MangaHealthSource implements MangaSource {
-  _MangaHealthSource({this.items = const [], this.error, this.pending = false});
+  _MangaHealthSource({this.items = const [], this.pending = false});
 
   final List<Manga> items;
-  final Object? error;
   final bool pending;
   bool disposed = false;
   int discoveryCalls = 0;
@@ -37,7 +36,6 @@ class _MangaHealthSource implements MangaSource {
   Future<Paged<Manga>> getDiscovery(int page, {Map<String, Object?>? filters}) {
     discoveryCalls++;
     if (pending) return Completer<Paged<Manga>>().future;
-    if (error != null) return Future<Paged<Manga>>.error(error!);
     return Future.value(Paged(items));
   }
 
@@ -68,11 +66,10 @@ class _MangaHealthSource implements MangaSource {
 }
 
 class _NovelHealthSource implements NovelSource {
-  _NovelHealthSource({this.items = const [], this.error, this.pending = false});
+  _NovelHealthSource({this.items = const [], this.error});
 
   final List<Novel> items;
   final Object? error;
-  final bool pending;
   bool disposed = false;
   int discoveryCalls = 0;
 
@@ -88,7 +85,6 @@ class _NovelHealthSource implements NovelSource {
   Future<Paged<Novel>> getNovelDiscovery(int page,
       {Map<String, Object?>? filters}) {
     discoveryCalls++;
-    if (pending) return Completer<Paged<Novel>>().future;
     if (error != null) return Future<Paged<Novel>>.error(error!);
     return Future.value(Paged(items));
   }
@@ -174,6 +170,34 @@ void main() {
     expect(novelBuilderCalled, isFalse);
   });
 
+  test('checks anime metadata through manga discovery', () async {
+    const anime = SourceMeta(
+      id: 'anime',
+      name: '番剧源',
+      script: '/* anime */',
+      kind: 'anime',
+    );
+    final source = _MangaHealthSource(
+      items: const [Manga(id: '1', title: '番剧', cover: 'https://cover/1')],
+    );
+    var novelBuilderCalled = false;
+
+    final result = await checkSourceHealth(
+      anime,
+      mangaBuilder: (_) => source,
+      novelBuilder: (_) {
+        novelBuilderCalled = true;
+        throw StateError('novel builder must not run');
+      },
+    );
+
+    expect(result.status, SourceHealthStatus.ok);
+    expect(result.log, contains('测试:getDiscovery(1)'));
+    expect(source.discoveryCalls, 1);
+    expect(source.disposed, isTrue);
+    expect(novelBuilderCalled, isFalse);
+  });
+
   test('rejects unknown metadata kind before building a source', () async {
     var mangaBuilderCalled = false;
     var novelBuilderCalled = false;
@@ -198,6 +222,7 @@ void main() {
 
     expect(result.status, SourceHealthStatus.fail);
     expect(result.log, contains('expected manga, anime, or novel'));
+    expect(result.log, isNot(contains('测试:')));
     expect(mangaBuilderCalled, isFalse);
     expect(novelBuilderCalled, isFalse);
   });

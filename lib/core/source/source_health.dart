@@ -1,11 +1,32 @@
 import 'source.dart';
-import 'models.dart';
-import '../novel/models.dart';
 import '../novel/novel_source.dart';
 import 'source_registry.dart';
 
 typedef MangaHealthSourceBuilder = MangaSource Function(SourceMeta);
 typedef NovelHealthSourceBuilder = NovelSource Function(SourceMeta);
+
+class _HealthSummary {
+  const _HealthSummary({
+    required this.count,
+    required this.sample,
+    required this.withCover,
+  });
+
+  final int count;
+  final String sample;
+  final int withCover;
+}
+
+_HealthSummary _summarizeHealthItems<T>(
+  List<T> items, {
+  required String Function(T) titleOf,
+  required String? Function(T) coverOf,
+}) =>
+    _HealthSummary(
+      count: items.length,
+      sample: items.take(5).map(titleOf).join('、'),
+      withCover: items.where((item) => (coverOf(item) ?? '').isNotEmpty).length,
+    );
 
 /// 源可用性状态。
 enum SourceHealthStatus {
@@ -40,32 +61,40 @@ Future<SourceHealthResult> checkSourceHealth(
   NovelHealthSourceBuilder novelBuilder = buildNovelSource,
 }) async {
   final sw = Stopwatch()..start();
-  final discoveryName = meta.isNovel ? 'getNovelDiscovery' : 'getDiscovery';
+  final discoveryName = meta.isManga || meta.isAnime
+      ? 'getDiscovery'
+      : meta.isNovel
+          ? 'getNovelDiscovery'
+          : null;
   final b = StringBuffer()
     ..writeln('源:${meta.name}  (id: ${meta.id})')
     ..writeln('传输:${meta.useWebView ? 'WebView' : 'dio'}'
-        '${meta.experimental ? ' · 实验性' : ''}')
-    ..writeln('测试:$discoveryName(1)  超时 ${timeout.inSeconds}s')
-    ..writeln('──────────');
+        '${meta.experimental ? ' · 实验性' : ''}');
+  if (discoveryName != null) {
+    b.writeln('测试:$discoveryName(1)  超时 ${timeout.inSeconds}s');
+  }
+  b.writeln('──────────');
   void Function()? dispose;
   try {
-    late final List<Object> items;
-    late final String Function(Object) titleOf;
-    late final String? Function(Object) coverOf;
+    late final _HealthSummary summary;
     if (meta.isManga || meta.isAnime) {
       final src = mangaBuilder(meta);
       dispose = src.dispose;
       final page = await src.getDiscovery(1).timeout(timeout);
-      items = page.items;
-      titleOf = (item) => (item as Manga).title;
-      coverOf = (item) => (item as Manga).cover;
+      summary = _summarizeHealthItems(
+        page.items,
+        titleOf: (item) => item.title,
+        coverOf: (item) => item.cover,
+      );
     } else if (meta.isNovel) {
       final src = novelBuilder(meta);
       dispose = src.dispose;
       final page = await src.getNovelDiscovery(1).timeout(timeout);
-      items = page.items;
-      titleOf = (item) => (item as Novel).title;
-      coverOf = (item) => (item as Novel).cover;
+      summary = _summarizeHealthItems(
+        page.items,
+        titleOf: (item) => item.title,
+        coverOf: (item) => item.cover,
+      );
     } else {
       throw ArgumentError.value(
         meta.kind,
@@ -74,17 +103,13 @@ Future<SourceHealthResult> checkSourceHealth(
       );
     }
     sw.stop();
-    final n = items.length;
     b.writeln('耗时:${sw.elapsedMilliseconds} ms');
-    if (n > 0) {
-      final sample = items.take(5).map(titleOf).join('、');
-      final withCover =
-          items.where((item) => (coverOf(item) ?? '').isNotEmpty).length;
+    if (summary.count > 0) {
       b
-        ..writeln('结果:✓ 发现 $n 部(其中 $withCover 部带封面)')
-        ..writeln('示例:$sample');
+        ..writeln('结果:✓ 发现 ${summary.count} 部(其中 ${summary.withCover} 部带封面)')
+        ..writeln('示例:${summary.sample}');
       return SourceHealthResult(SourceHealthStatus.ok, b.toString().trimRight(),
-          elapsedMs: sw.elapsedMilliseconds, count: n);
+          elapsedMs: sw.elapsedMilliseconds, count: summary.count);
     }
     b
       ..writeln('结果:⚠ 发现 0 部')
