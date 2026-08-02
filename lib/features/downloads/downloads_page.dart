@@ -9,10 +9,73 @@ import '../../ui/ui.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
 import '../library/manga_cover.dart';
+import '../novel/novel_downloads_view.dart';
+import 'download_kind_switch.dart';
+
+export 'download_kind_switch.dart';
 
 /// 下载:已下载漫画(按本地分组),点进详情离线读,可删除。
-class DownloadsPage extends StatelessWidget {
+class DownloadsPage extends StatefulWidget {
   const DownloadsPage({super.key});
+
+  @override
+  State<DownloadsPage> createState() => _DownloadsPageState();
+}
+
+class _DownloadsPageState extends State<DownloadsPage> {
+  DownloadKind _kind = DownloadKind.manga;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (_kind) {
+      DownloadKind.manga => _MangaDownloadsPage(
+          onKindChanged: (value) => setState(() => _kind = value),
+        ),
+      DownloadKind.novel => _NovelDownloadsPage(
+          onKindChanged: (value) => setState(() => _kind = value),
+        ),
+    };
+  }
+}
+
+class _NovelDownloadsPage extends StatelessWidget {
+  const _NovelDownloadsPage({required this.onKindChanged});
+
+  final ValueChanged<DownloadKind> onKindChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
+        title: Text(
+          context.l10n.navDownloads,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+        ),
+        actions: [
+          DownloadKindSwitch(
+            selected: DownloadKind.novel,
+            onSelected: onKindChanged,
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: const NovelDownloadsView(),
+        ),
+      ),
+    );
+  }
+}
+
+class _MangaDownloadsPage extends StatelessWidget {
+  const _MangaDownloadsPage({required this.onKindChanged});
+
+  final ValueChanged<DownloadKind> onKindChanged;
 
   SourceMeta? _metaById(String id) {
     for (final s in registeredSources) {
@@ -36,6 +99,13 @@ class DownloadsPage extends StatelessWidget {
       appBar: GlassTitleBar(
         title: Text(context.l10n.navDownloads,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+        actions: [
+          DownloadKindSwitch(
+            selected: DownloadKind.manga,
+            onSelected: onKindChanged,
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: EntranceSlide(
         begin: const Offset(0, 0.06),

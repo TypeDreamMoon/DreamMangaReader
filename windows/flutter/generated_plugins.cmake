@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  charset_converter
   desktop_webview_window
   flutter_inappwebview_windows
   flutter_js

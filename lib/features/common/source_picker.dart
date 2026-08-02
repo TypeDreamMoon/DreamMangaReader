@@ -65,6 +65,11 @@ Future<String?> showSourcePicker(
   String kind = 'manga', // 只列该内容类型的源(漫画/番剧分开选)
 }) {
   final store = LibraryScope.read(context);
+  final title = switch (kind) {
+    'anime' => context.l10n.srcpick_titleAnime,
+    'novel' => context.l10n.srcpick_titleNovel,
+    _ => context.l10n.srcpick_title,
+  };
   final sources = [
     for (final s in registeredSources)
       if (s.kind == kind && (store.isSourceEnabled(s.id) || s.id == currentId))
@@ -74,7 +79,7 @@ Future<String?> showSourcePicker(
   // 源数量少(≤ 全部启用源),随内容自适应即可,无需固定限高。
   return showAppSheet<String>(
     context,
-    title: context.l10n.srcpick_title,
+    title: title,
     titleIcon: Icons.dashboard_rounded,
     showDragHandle: true,
     glass: true,

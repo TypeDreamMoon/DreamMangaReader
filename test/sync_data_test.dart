@@ -117,6 +117,22 @@ void main() {
     expect((m['sourceRepo'] as Map)['repoUrl'], 'a');
   });
 
+  test('小说源类别支持追加且保留独立序列化键', () {
+    expect(SyncData.supportsAppend(SyncCategory.novelSources), true);
+    final merged = SyncData.merge(
+      blob(100, {
+        'disabledSourcesNovel': ['n1'],
+        'localSourcesNovel': [
+          {'id': 'n1', 'kind': 'novel'}
+        ],
+      }),
+      blob(50, {}),
+    );
+    final lib = merged['library'] as Map;
+    expect(lib['disabledSourcesNovel'], ['n1']);
+    expect((lib['localSourcesNovel'] as List).single['kind'], 'novel');
+  });
+
   test('overlay(上传):over 的类别覆盖 base,base 其余保留', () {
     final base = blob(1, {
       'favorites': [fav('x', '1', 1)],

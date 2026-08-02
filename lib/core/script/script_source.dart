@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../novel/models.dart';
+import '../novel/novel_source.dart';
 import '../source/auth_token.dart';
 import '../source/models.dart';
 import '../source/source.dart';
@@ -25,7 +27,7 @@ import 'lz_host.dart';
 ///   // prepareChapterList/handleChapterList, prepareChapter/handleChapter …
 /// };
 /// ```
-class ScriptSource implements MangaSource {
+class ScriptSource implements MangaSource, NovelSource {
   ScriptSource({
     required JsEngine engine,
     required HttpService http,
@@ -199,6 +201,70 @@ class ScriptSource implements MangaSource {
           (j) => Paged(_mangaList(j)));
 
   @override
+  Future<Paged<Novel>> getNovelDiscovery(int page,
+          {Map<String, Object?>? filters}) =>
+      _run('prepareDiscovery', [page, filters ?? {}], 'handleDiscovery', (j) {
+        final items = _novelList(j);
+        return Paged(items, hasNext: items.isNotEmpty);
+      });
+
+  @override
+  Future<Paged<Novel>> getNovelSection(String sectionId, int page) =>
+      _run('prepareSection', [sectionId, page], 'handleDiscovery', (j) {
+        final items = _novelList(j);
+        return Paged(items, hasNext: items.isNotEmpty);
+      });
+
+  @override
+  Future<Paged<Novel>> getNovelSearch(String query, int page,
+          {Map<String, Object?>? filters}) =>
+      _run('prepareSearch', [query, page, filters ?? {}], 'handleSearch',
+          (j) => Paged(_novelList(j)));
+
+  @override
+  Future<Novel> getNovelDetail(String novelId) => _run(
+        'prepareMangaInfo',
+        [novelId],
+        'handleMangaInfo',
+        (j) => _toNovel((j as Map).cast<String, dynamic>()),
+      );
+
+  @override
+  Future<Paged<NovelChapter>> getNovelChapters(String novelId, {int? page}) =>
+      _run(
+        'prepareChapterList',
+        [novelId, page ?? 1],
+        'handleChapterList',
+        (j) => Paged([
+          for (final m in (j as List).cast<Map<String, dynamic>>())
+            _toNovelChapter(m),
+        ]),
+      );
+
+  @override
+  Future<NovelDocument> getNovelDocument(
+    String novelId,
+    String chapterId,
+  ) =>
+      _run(
+        'prepareChapter',
+        [novelId, chapterId],
+        'handleChapter',
+        (json) {
+          final map = (json as Map).cast<String, dynamic>();
+          return NovelDocument(
+            format: map['format'] == 'text'
+                ? NovelDocumentFormat.text
+                : NovelDocumentFormat.html,
+            content: map['content'] as String,
+            baseUrl: map['baseUrl'] as String?,
+            resources:
+                (map['resources'] as Map?)?.cast<String, String>() ?? const {},
+          );
+        },
+      );
+
+  @override
   Future<Manga> getMangaDetail(String mangaId) => _run(
         'prepareMangaInfo',
         [mangaId],
@@ -273,6 +339,9 @@ class ScriptSource implements MangaSource {
   List<Manga> _mangaList(Object? j) =>
       [for (final m in (j as List).cast<Map<String, dynamic>>()) _toManga(m)];
 
+  List<Novel> _novelList(Object? j) =>
+      [for (final m in (j as List).cast<Map<String, dynamic>>()) _toNovel(m)];
+
   Manga _toManga(Map<String, dynamic> m) => Manga(
         id: m['id'] as String,
         title: (m['title'] as String?) ?? '',
@@ -298,6 +367,43 @@ class ScriptSource implements MangaSource {
         return MangaStatus.unknown;
     }
   }
+
+  Novel _toNovel(Map<String, dynamic> m) => Novel(
+        id: m['id'] as String,
+        title: (m['title'] as String?) ?? '',
+        url: m['url'] as String?,
+        cover: m['cover'] as String?,
+        authors: (m['authors'] as List?)?.cast<String>() ?? const [],
+        genres: (m['genres'] as List?)?.cast<String>() ?? const [],
+        description: m['description'] as String?,
+        status: _parseNovelStatus(m['status'] as String?),
+        updatedAt: (m['updatedAt'] as num?)?.toInt(),
+      );
+
+  NovelStatus _parseNovelStatus(String? s) {
+    switch (s) {
+      case 'ongoing':
+        return NovelStatus.ongoing;
+      case 'completed':
+        return NovelStatus.completed;
+      case 'hiatus':
+        return NovelStatus.hiatus;
+      case 'cancelled':
+        return NovelStatus.cancelled;
+      default:
+        return NovelStatus.unknown;
+    }
+  }
+
+  NovelChapter _toNovelChapter(Map<String, dynamic> m) => NovelChapter(
+        id: m['id'] as String,
+        title: (m['title'] as String?) ?? (m['name'] as String?) ?? '',
+        number: (m['number'] as num?)?.toDouble(),
+        publishedAt: (m['publishedAt'] as num?)?.toInt(),
+        volumeId: m['volumeId'] as String?,
+        volumeTitle: m['volumeTitle'] as String?,
+        epubAnchor: m['epubAnchor'] as String?,
+      );
 
   Chapter _toChapter(Map<String, dynamic> m) => Chapter(
         id: m['id'] as String,

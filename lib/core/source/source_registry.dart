@@ -1,6 +1,7 @@
 import '../bili/bili_source.dart';
 import '../net/dio_http_service.dart';
 import '../net/webview_fetch.dart';
+import '../novel/novel_source.dart';
 import '../script/js_engine.dart';
 import '../script/script_source.dart';
 import 'source.dart';
@@ -25,7 +26,7 @@ class SourceMeta {
     required this.id,
     required this.name,
     required this.script,
-    this.kind = 'manga', // 'manga' | 'anime' —— 决定按内容类型归入书架/发现哪一档
+    this.kind = 'manga', // 'manga' | 'anime' | 'novel' —— 决定按内容类型分档
     this.experimental = false,
     this.useWebView = false, // 站点拦裸 HTTP 时走隐藏 WebView 抓取
     this.imageReferer, // 图片(封面/页面)加载所需的 Referer
@@ -49,9 +50,11 @@ class SourceMeta {
   final String name;
   final String script;
 
-  /// 内容类型:'manga'(默认)或 'anime'(番剧)。
+  /// 内容类型:'manga'(默认)、'anime'(番剧)或 'novel'(小说)。
   final String kind;
   bool get isAnime => kind == 'anime';
+  bool get isNovel => kind == 'novel';
+  bool get isManga => kind == 'manga';
 
   final bool experimental;
   final bool useWebView;
@@ -82,15 +85,24 @@ List<SourceMeta> registeredSources = <SourceMeta>[];
 MangaSource buildSource(SourceMeta meta) {
   // 原生番剧源(B站):走引擎内置实现,不经脚本引擎。
   if (meta.id == kBiliSourceId) return BiliSource();
-  return ScriptSource(
-    engine: JsEngine(),
-    http: meta.useWebView
-        ? WebViewHttpService(userAgent: _mobileUa)
-        : DioHttpService(),
-    webHttp: WebViewHttpService(userAgent: _desktopUa),
-    scriptCode: meta.script,
-  );
+  return _buildScriptSource(meta);
 }
+
+NovelSource buildNovelSource(SourceMeta meta) {
+  if (!meta.isNovel) {
+    throw ArgumentError.value(meta.kind, 'meta.kind', 'expected novel');
+  }
+  return _buildScriptSource(meta);
+}
+
+ScriptSource _buildScriptSource(SourceMeta meta) => ScriptSource(
+      engine: JsEngine(),
+      http: meta.useWebView
+          ? WebViewHttpService(userAgent: _mobileUa)
+          : DioHttpService(),
+      webHttp: WebViewHttpService(userAgent: _desktopUa),
+      scriptCode: meta.script,
+    );
 
 /// 内置原生源的元数据(启动时无条件并入 [registeredSources],除非用户手动隐藏)。
 const SourceMeta kBiliSourceMeta = SourceMeta(

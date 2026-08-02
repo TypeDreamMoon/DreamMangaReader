@@ -15,12 +15,15 @@ import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
+import '../novel/novel_library_view.dart';
 import 'history_page.dart';
+import 'library_kind_switch.dart';
 import 'manga_cover.dart';
 import 'masonry_feed.dart';
 import 'recommend_controller.dart';
 
-/// 书架:置顶「继续阅读」+「收藏」(本地持久化),下面是**当前源**的最新更新;顶部可切换源。
+export 'library_kind_switch.dart';
+
 class LibraryPage extends StatefulWidget {
   const LibraryPage({super.key});
 
@@ -29,6 +32,68 @@ class LibraryPage extends StatefulWidget {
 }
 
 class _LibraryPageState extends State<LibraryPage> {
+  LibraryKind _kind = LibraryKind.manga;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (_kind) {
+      LibraryKind.manga => _MangaLibraryPage(
+          onKindChanged: (value) => setState(() => _kind = value),
+        ),
+      LibraryKind.novel => _NovelLibraryPage(
+          onKindChanged: (value) => setState(() => _kind = value),
+        ),
+    };
+  }
+}
+
+class _NovelLibraryPage extends StatelessWidget {
+  const _NovelLibraryPage({required this.onKindChanged});
+
+  final ValueChanged<LibraryKind> onKindChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 20,
+        title: Text(
+          context.l10n.navBookshelf,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+        ),
+        actions: [
+          LibraryKindSwitch(
+            selected: LibraryKind.novel,
+            onSelected: onKindChanged,
+          ),
+          IconButton(
+            tooltip: context.l10n.novel_historyTooltip,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const HistoryPage(showNovelInitially: true),
+              ),
+            ),
+            icon: const Icon(Icons.history_rounded),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: const NovelLibraryView(),
+    );
+  }
+}
+
+/// 漫画书架原有内容。小说书架由 [NovelLibraryView] 独立持有。
+class _MangaLibraryPage extends StatefulWidget {
+  const _MangaLibraryPage({required this.onKindChanged});
+
+  final ValueChanged<LibraryKind> onKindChanged;
+
+  @override
+  State<_MangaLibraryPage> createState() => _MangaLibraryPageState();
+}
+
+class _MangaLibraryPageState extends State<_MangaLibraryPage> {
   SourceController? _sc;
 
   // ---- 底部「推荐」浏览区(默认混合源;开了「显示源选择器」= 单源可切)----
@@ -454,6 +519,10 @@ class _LibraryPageState extends State<LibraryPage> {
         title: Text(context.l10n.navBookshelf,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
+          LibraryKindSwitch(
+            selected: LibraryKind.manga,
+            onSelected: widget.onKindChanged,
+          ),
           IconButton(
             tooltip: context.l10n.shelf_searchInFavsTooltip,
             onPressed: () => setState(() {
