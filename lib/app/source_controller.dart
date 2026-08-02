@@ -29,9 +29,12 @@ class SourceController extends ChangeNotifier {
   SourceMeta? currentFor(String kind) {
     _requireKind(kind);
     final current = _currentByKind[kind];
-    if (current != null &&
-        registeredSources.any((s) => s.id == current.id && s.kind == kind)) {
-      return current;
+    if (current != null) {
+      for (final source in registeredSources) {
+        if (source.id == current.id && source.kind == kind) {
+          return source;
+        }
+      }
     }
     return _firstFor(kind);
   }
@@ -41,9 +44,12 @@ class SourceController extends ChangeNotifier {
     if (meta.kind != kind) {
       throw ArgumentError.value(meta.kind, 'meta.kind', 'expected $kind');
     }
-    if (_currentByKind[kind]?.id == meta.id) return;
+    final previous = _currentByKind[kind];
+    if (identical(previous, meta)) return;
     _currentByKind[kind] = meta;
-    _prefs?.setString('$_kSource.$kind', meta.id);
+    if (previous?.id != meta.id) {
+      _prefs?.setString('$_kSource.$kind', meta.id);
+    }
     notifyListeners();
   }
 
@@ -62,7 +68,7 @@ class SourceController extends ChangeNotifier {
       if (id == null) continue;
       for (final source in registeredSources) {
         if (source.id == id && source.kind == kind) {
-          if (_currentByKind[kind]?.id != source.id) {
+          if (!identical(_currentByKind[kind], source)) {
             _currentByKind[kind] = source;
             changed = true;
           }
