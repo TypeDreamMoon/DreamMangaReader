@@ -8,7 +8,7 @@ param(
     [long]$ReleaseBudgetBytes = 850MB,
     [ValidateRange(1, 16)][int]$UploadConcurrency = 8,
     [ValidateRange(1, 8)][int]$UploadAttempts = 4,
-    [ValidateRange(60, 3600)][int]$UploadMaxSeconds = 1800,
+    [ValidateRange(60, 7200)][int]$UploadMaxSeconds = 3600,
     [ValidateRange(1, 600)][int]$UploadStallSeconds = 60,
     [switch]$DryRun,
     [switch]$ConfirmPublish
@@ -148,8 +148,10 @@ function Invoke-GiteeAttachmentUpload {
         [Parameter(Mandatory)][string]$ResponseRoot,
         [int]$Attempts = 4,
         [int]$ConnectTimeoutSec = 30,
-        [int]$MaxTimeSec = 1800,
-        [int]$StallBytesPerSecond = 4096,
+        [int]$MaxTimeSec = 3600,
+        # 失速阈值压到 1 KB/s：真正断掉的连接照样在 StallSeconds 内被判死，
+        # 而慢但仍在推进的传输不该被误杀——之前 4 KB/s 的阈值离实测速率太近。
+        [int]$StallBytesPerSecond = 1024,
         [int]$StallSeconds = 60
     )
 
@@ -192,24 +194,35 @@ function Invoke-GiteeAttachmentUpload {
         }
 
         $responsePath = Join-Path $ResponseRoot "$($File.Name).attempt$attempt.json"
+        $stderrPath = "$responsePath.stderr"
         $startedAt = [datetime]::UtcNow
         Write-Host ("↑ {0} / {1:N2} MiB / 第 {2}/{3} 次" -f $File.Name, $sizeMiB, $attempt, $Attempts)
-        & $CurlPath `
-            --fail-with-body `
-            --silent `
-            --show-error `
-            --connect-timeout $ConnectTimeoutSec `
-            --max-time $MaxTimeSec `
-            --speed-limit $StallBytesPerSecond `
-            --speed-time $StallSeconds `
-            --request POST `
-            --header 'Accept: application/json' `
-            --header 'Expect:' `
-            --form "access_token=$Token" `
-            --form "file=@$($File.FullName);filename=$($File.Name)" `
-            --output $responsePath `
-            $AttachFilesUri
-        $exitCode = $LASTEXITCODE
+        # --show-error 让 curl 往 stderr 写；在 $ErrorActionPreference='Stop' 下 PowerShell
+        # 会把原生命令的 stderr 转成终止性错误，抢在下面的重试逻辑之前掀掉整条并发管道，
+        # 结果就是重试形同虚设。这里临时降级并把 stderr 落盘，失败原因照样保留。
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $CurlPath `
+                --fail-with-body `
+                --silent `
+                --show-error `
+                --connect-timeout $ConnectTimeoutSec `
+                --max-time $MaxTimeSec `
+                --speed-limit $StallBytesPerSecond `
+                --speed-time $StallSeconds `
+                --request POST `
+                --header 'Accept: application/json' `
+                --header 'Expect:' `
+                --form "access_token=$Token" `
+                --form "file=@$($File.FullName);filename=$($File.Name)" `
+                --output $responsePath `
+                $AttachFilesUri 2> $stderrPath
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
         $elapsedSeconds = [Math]::Max(([datetime]::UtcNow - $startedAt).TotalSeconds, 0.001)
 
         if ($exitCode -eq 0) {
@@ -222,10 +235,15 @@ function Invoke-GiteeAttachmentUpload {
             return [pscustomobject]@{ Name = [string]$File.Name; Size = [long]$File.Length }
         }
 
+        $curlStderr = ''
+        if (Test-Path -LiteralPath $stderrPath) {
+            $curlStderr = ((Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ').Trim()
+        }
         $lastError = switch ($exitCode) {
-            28 { "curl exit 28：连接超时或传输速率低于 $StallBytesPerSecond B/s 持续 $StallSeconds 秒" }
+            28 { "curl exit 28：连接超时，或传输速率低于 $StallBytesPerSecond B/s 持续 $StallSeconds 秒，或总耗时超过 $MaxTimeSec 秒" }
             default { "curl exit $exitCode" }
         }
+        if ($curlStderr) { $lastError = "$lastError；$curlStderr" }
         Write-Host ("× {0} / 第 {1}/{2} 次失败 / {3:N0} 秒 / {4}" -f `
             $File.Name, $attempt, $Attempts, $elapsedSeconds, $lastError) -ForegroundColor Yellow
     }
