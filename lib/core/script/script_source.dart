@@ -28,6 +28,8 @@ import 'lz_host.dart';
 /// };
 /// ```
 class ScriptSource implements MangaSource, NovelSource {
+  static const int _maxContinuationRequests = 100;
+
   ScriptSource({
     required JsEngine engine,
     required HttpService http,
@@ -96,7 +98,10 @@ class ScriptSource implements MangaSource, NovelSource {
           options: [
             for (final o in ((f['options'] as List?) ?? const [])
                 .cast<Map<String, dynamic>>())
-              (value: (o['value'] as String?) ?? '', label: (o['label'] as String?) ?? '')
+              (
+                value: (o['value'] as String?) ?? '',
+                label: (o['label'] as String?) ?? ''
+              )
           ],
         ),
     ];
@@ -138,49 +143,120 @@ class ScriptSource implements MangaSource, NovelSource {
     String handleFn,
     T Function(Object? json) decode,
   ) async {
-    // 每次运行前把该源当前登录 token 注入 JS 全局,需要登录的源据此给请求带 Authorization。
-    // 源脚本是纯函数沙箱、拿不到 App 状态,这是喂「登录态」进去的唯一通道。
+    _injectSourceToken();
+    final request = _prepareRequest(prepareFn, prepareArgs);
+    final response = await _fetchRequest(request);
+    return decode(_handleResponse(handleFn, response, prepareArgs));
+  }
+
+  void _injectSourceToken() {
+    // 源脚本是纯函数沙箱、拿不到 App 状态,每次调用前由宿主注入登录 token。
     _js.evalSync(
         'globalThis.__sourceToken = ${jsonEncode(SourceAuth.tokenFor(id) ?? '')};');
+  }
 
-    final reqJson = _js.evalSync(
+  Map<String, dynamic> _prepareRequest(
+    String prepareFn,
+    List<Object?> prepareArgs,
+  ) {
+    final requestJson = _js.evalSync(
       'JSON.stringify(__source.$prepareFn(${_encodeArgs(prepareArgs)}))',
     );
-    final req = jsonDecode(reqJson) as Map<String, dynamic>;
+    return (jsonDecode(requestJson) as Map).cast<String, dynamic>();
+  }
 
-    // 传输选择:req.webview==true 且注入了 WebView 服务 → 走 WebView(cookie/代理/
-    // 页面内 JS);否则走主传输(通常 dio)。
+  Future<HostResponse> _fetchRequest(Map<String, dynamic> request) {
     final web = _webHttp;
-    final service = (req['webview'] == true && web != null) ? web : _http;
-
-    final resp = await service.fetch(HostRequest(
-      req['url'] as String,
-      method: (req['method'] as String?) ?? 'GET',
-      headers: (req['headers'] as Map?)?.map(
-            (k, v) => MapEntry(k.toString(), v.toString()),
+    final service = (request['webview'] == true && web != null) ? web : _http;
+    return service.fetch(HostRequest(
+      request['url'] as String,
+      method: (request['method'] as String?) ?? 'GET',
+      headers: (request['headers'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
           ) ??
           const {},
-      body: req['body'] as String?,
-      rawHtml: req['raw'] == true,
-      pageJs: req['pageJs'] as String?,
+      body: request['body'] as String?,
+      rawHtml: request['raw'] == true,
+      pageJs: request['pageJs'] as String?,
     ));
+  }
 
-    // 把响应体作为 JSON 字符串字面量安全注入(jsonEncode 负责转义),
-    // 并把 prepare 的参数(mangaId/chapterId 等)接在后面 —— handleChapterList/
-    // handleMangaInfo 需要 mangaId;多余参数 JS 会忽略。
+  Object? _handleResponse(
+    String handleFn,
+    HostResponse response,
+    List<Object?> prepareArgs,
+  ) {
+    // 把响应体作为 JSON 字符串字面量安全注入,并保留最初的 prepare 参数。
     final handleTail =
         prepareArgs.isEmpty ? '' : ', ${_encodeArgs(prepareArgs)}';
-    final outJson = _js.evalSync(
-      'JSON.stringify(__source.$handleFn(${jsonEncode(resp.body)}$handleTail))',
-    );
-    _html.reset(); // 清空本次解析产生的节点 id 表
-    return decode(jsonDecode(outJson));
+    try {
+      final outputJson = _js.evalSync(
+        'JSON.stringify(__source.$handleFn(${jsonEncode(response.body)}$handleTail))',
+      );
+      return jsonDecode(outputJson);
+    } finally {
+      _html.reset();
+    }
+  }
+
+  Future<List<Object?>> _runCollection(
+    String prepareFn,
+    List<Object?> prepareArgs,
+    String handleFn,
+  ) async {
+    _injectSourceToken();
+    var request = _prepareRequest(prepareFn, prepareArgs);
+    final items = <Object?>[];
+    final seenRequests = <String>{};
+
+    for (var completed = 0; completed < _maxContinuationRequests; completed++) {
+      final method = ((request['method'] as String?) ?? 'GET').toUpperCase();
+      final fingerprint =
+          '$method\n${request['url']}\n${request['body'] ?? ''}';
+      if (!seenRequests.add(fingerprint)) {
+        throw StateError('源连续请求重复，已停止以避免无限循环');
+      }
+
+      Object? output;
+      try {
+        output = _handleResponse(
+          handleFn,
+          await _fetchRequest(request),
+          prepareArgs,
+        );
+      } catch (error) {
+        if (completed == 0) rethrow;
+        throw Exception('源连续请求失败（已完成 $completed 页）：$error');
+      }
+      if (output is List) {
+        items.addAll(output);
+        return items;
+      }
+      if (output is! Map || output['items'] is! List) {
+        throw const FormatException('源连续请求必须返回数组或 {items, next}');
+      }
+
+      final envelope = output.cast<String, dynamic>();
+      items.addAll(envelope['items'] as List);
+      final next = envelope['next'];
+      if (next == null) return items;
+      if (next is! Map || next['url'] is! String) {
+        throw const FormatException('源连续请求的 next 不是有效请求描述');
+      }
+      if (completed + 1 >= _maxContinuationRequests) {
+        throw StateError('源连续请求超过 100 次，已停止');
+      }
+      request = next.cast<String, dynamic>();
+    }
+
+    throw StateError('源连续请求异常终止');
   }
 
   String _encodeArgs(List<Object?> args) => args.map(jsonEncode).join(', ');
 
   @override
-  Future<Paged<Manga>> getDiscovery(int page, {Map<String, Object?>? filters}) =>
+  Future<Paged<Manga>> getDiscovery(int page,
+          {Map<String, Object?>? filters}) =>
       _run('prepareDiscovery', [page, filters ?? {}], 'handleDiscovery', (j) {
         final items = _mangaList(j);
         return Paged(items, hasNext: items.isNotEmpty); // 有内容就假定还有下一页
@@ -279,32 +355,44 @@ class ScriptSource implements MangaSource, NovelSource {
       );
 
   @override
-  Future<Paged<Chapter>> getChapters(String mangaId, {int? page}) => _run(
-        'prepareChapterList',
-        [mangaId, page ?? 1],
-        'handleChapterList',
-        (j) => Paged([
-          for (final m in (j as List).cast<Map<String, dynamic>>())
-            _toChapter(m),
-        ]),
-      );
+  Future<Paged<Chapter>> getChapters(String mangaId, {int? page}) async {
+    final values = await _runCollection(
+      'prepareChapterList',
+      [mangaId, page ?? 1],
+      'handleChapterList',
+    );
+    final seen = <String>{};
+    final chapters = <Chapter>[];
+    for (final value in values) {
+      final chapter = _toChapter((value as Map).cast<String, dynamic>());
+      if (seen.add(chapter.id)) chapters.add(chapter);
+    }
+    return Paged(chapters);
+  }
 
   @override
-  Future<List<PageImage>> getPages(String mangaId, String chapterId) => _run(
-        'prepareChapter',
-        [mangaId, chapterId],
-        'handleChapter',
-        (j) => [
-          for (final m in (j as List).cast<Map<String, dynamic>>())
-            PageImage(
-              index: m['index'] as int,
-              url: m['url'] as String,
-              // 每图可带 Referer/UA(防盗链);与 VideoTrack 一致,源脚本可选返回。
-              headers: (m['headers'] as Map?)
-                  ?.map((k, v) => MapEntry(k.toString(), v.toString())),
-            ),
-        ],
+  Future<List<PageImage>> getPages(String mangaId, String chapterId) async {
+    final values = await _runCollection(
+      'prepareChapter',
+      [mangaId, chapterId],
+      'handleChapter',
+    );
+    final pagesByIndex = <int, PageImage>{};
+    for (final value in values) {
+      final map = (value as Map).cast<String, dynamic>();
+      final page = PageImage(
+        index: map['index'] as int,
+        url: map['url'] as String,
+        // 每图可带 Referer/UA(防盗链);与 VideoTrack 一致,源脚本可选返回。
+        headers: (map['headers'] as Map?)
+            ?.map((key, value) => MapEntry(key.toString(), value.toString())),
       );
+      pagesByIndex.putIfAbsent(page.index, () => page);
+    }
+    final pages = pagesByIndex.values.toList()
+      ..sort((left, right) => left.index.compareTo(right.index));
+    return pages;
+  }
 
   @override
   Future<List<VideoTrack>> getVideo(String animeId, String episodeId) => _run(
@@ -316,10 +404,10 @@ class ScriptSource implements MangaSource, NovelSource {
             VideoTrack(
               url: m['url'] as String,
               quality: (m['quality'] as String?) ?? '',
-              headers: (m['headers'] as Map?)?.map(
-                  (k, v) => MapEntry(k.toString(), v.toString())),
-              hls: (m['hls'] as bool?) ??
-                  (m['url'] as String).contains('.m3u8'),
+              headers: (m['headers'] as Map?)
+                  ?.map((k, v) => MapEntry(k.toString(), v.toString())),
+              hls:
+                  (m['hls'] as bool?) ?? (m['url'] as String).contains('.m3u8'),
             ),
         ],
       );
