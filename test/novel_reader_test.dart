@@ -237,6 +237,17 @@ void main() {
       novelReaderBridgeScript,
       contains('calc((100vw - 760px) / 2)'),
     );
+    expect(novelReaderBridgeScript, contains('--dmr-side:max('));
+    expect(
+      novelReaderBridgeScript,
+      contains(
+        'column-width:calc(100vw - var(--dmr-side) - var(--dmr-side))',
+      ),
+    );
+    expect(
+      novelReaderBridgeScript,
+      contains('column-gap:calc(var(--dmr-side) + var(--dmr-side))'),
+    );
     expect(
         novelReaderBridgeScript, contains('img{max-width:100%;height:auto}'));
     expect(

@@ -349,9 +349,9 @@ const novelReaderBridgeScript = r'''
     const family = String(p.fontFamily || '').replace(/["'\\]/g, '');
     document.getElementById('dmr-style').textContent = `
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
-      body{margin:0;padding:22px max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere}
+      body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:22px var(--dmr-side);font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere}
       p{margin:0 0 ${p.paragraphSpacing}px} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
-      html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:100vw;column-gap:0;column-fill:auto;overflow:visible}
+      html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;
   };
