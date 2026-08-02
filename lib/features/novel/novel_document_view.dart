@@ -275,6 +275,13 @@ String buildNovelReaderHtml(NovelDocument document, {String? chapterId}) {
   return _htmlShell(content, chapterId: chapterId);
 }
 
+/// 正文外壳。CSP 里 `img-src` 只给 `file:`/`data:` 是有意的:WebView 一律不碰
+/// 网络(`connect-src 'none'`),远程图片由 [NovelDocumentCache] 在 Dart 侧下载后
+/// 重写成本地相对路径,离线阅读才显示。
+///
+/// 因此 sanitizer 必须保留远程 `<img src>` —— 缓存层正是在 sanitize 之后的 HTML
+/// 里扫描这些 URL 再做替换,提前剥掉会让离线图片全部丢失。在线阅读时这些 src
+/// 会被 CSP 拦下不加载,这是预期行为,不是漏配。
 String _htmlShell(String body, {String? chapterId}) {
   const escape = HtmlEscape(HtmlEscapeMode.attribute);
   final chapter = escape.convert(chapterId ?? '');

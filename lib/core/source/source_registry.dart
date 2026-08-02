@@ -85,6 +85,12 @@ List<SourceMeta> registeredSources = <SourceMeta>[];
 MangaSource buildSource(SourceMeta meta) {
   // 原生番剧源(B站):走引擎内置实现,不经脚本引擎。
   if (meta.id == kBiliSourceId) return BiliSource();
+  // 与 buildNovelSource 对称拦一道:两个接口复用同一批 JS 入口
+  // (prepareDiscovery/handleDiscovery 等),小说源被当漫画源用不会报错,
+  // 只会解出「看起来合理但语义错误」的条目,不拦就查不出来。
+  if (meta.isNovel) {
+    throw ArgumentError.value(meta.kind, 'meta.kind', 'expected manga or anime');
+  }
   return _buildScriptSource(meta);
 }
 

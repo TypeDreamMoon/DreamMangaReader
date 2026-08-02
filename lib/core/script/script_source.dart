@@ -252,11 +252,17 @@ class ScriptSource implements MangaSource, NovelSource {
         'handleChapter',
         (json) {
           final map = (json as Map).cast<String, dynamic>();
+          // 源脚本是用户可安装的,畸形返回值要走已有的错误处理，
+          // 而不是以裸 TypeError 崩掉。
+          final content = map['content'];
+          if (content is! String) {
+            throw const FormatException('novel chapter content must be a string');
+          }
           return NovelDocument(
             format: map['format'] == 'text'
                 ? NovelDocumentFormat.text
                 : NovelDocumentFormat.html,
-            content: map['content'] as String,
+            content: content,
             baseUrl: map['baseUrl'] as String?,
             resources:
                 (map['resources'] as Map?)?.cast<String, String>() ?? const {},
