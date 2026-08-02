@@ -52,6 +52,22 @@ var __source = {
 };
 ''';
 
+const timestampScript = r'''
+var __source = {
+  meta: { id: 'timestamp', name: 'Timestamp', baseUrl: 'https://example.test' },
+  prepareDiscovery: function () {
+    return { url: 'https://example.test/discovery' };
+  },
+  handleDiscovery: function () {
+    return [{
+      id: 'm1',
+      title: '人物图集',
+      updatedAt: 1785600000000
+    }];
+  }
+};
+''';
+
 const continuationScript = r'''
 var __source = {
   meta: { id: 'paging', name: 'Paging', baseUrl: 'https://example.test' },
@@ -109,6 +125,19 @@ void main() {
     final result = await source.getChapters('m1');
 
     expect(result.items.map((item) => item.id), ['c1']);
+  });
+
+  test('manga decoding preserves script timestamps', () async {
+    final source = ScriptSource(
+      engine: JsEngine(),
+      http: RoutingHttp((_) => jsonResponse({'unused': true})),
+      scriptCode: timestampScript,
+    );
+    addTearDown(source.dispose);
+
+    final result = await source.getDiscovery(1);
+
+    expect(result.items.single.updatedAt, 1785600000000);
   });
 
   test('legacy chapter arrays still execute one request', () async {

@@ -25,6 +25,7 @@ import 'browse_page.dart';
 import '../library/manga_cover.dart';
 import '../library/masonry_feed.dart';
 import '../novel/novel_browser.dart';
+import 'manga_identity_tracker.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 /// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
@@ -82,6 +83,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   int _loadGen = 0;
 
   final List<_Result> _results = [];
+  final MangaIdentityTracker _identityTracker = MangaIdentityTracker();
   int _page = 1;
   bool _loading = false;
   bool _hasNext = true;
@@ -183,6 +185,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
     _titleSeen.clear();
     _titleSrcIds.clear();
+    _identityTracker.clear();
     _mixedError = null;
     setState(() {
       _results.clear();
@@ -248,9 +251,15 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           ? await _source!.getSearch(_query, _page)
           : await _source!.getDiscovery(_page, filters: _activeFilters());
       if (!mounted || gen != _loadGen) return; // 已被新一轮取代:丢弃陈旧结果
+      final sourceMeta = meta!;
       setState(() {
         // 单源:保持源自身的返回顺序(站点通常已按相关度排)。
-        _results.addAll(page.items.map((m) => (manga: m, meta: meta!, rank: 0)));
+        final freshItems = [
+          for (final manga in page.items)
+            if (_identityTracker.add(sourceMeta.id, manga.id)) manga,
+        ];
+        _results.addAll(freshItems
+            .map((manga) => (manga: manga, meta: sourceMeta, rank: 0)));
         _hasNext = page.hasNext && page.items.isNotEmpty;
         _page++;
         _loading = false;

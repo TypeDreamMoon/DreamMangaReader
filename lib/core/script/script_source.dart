@@ -451,6 +451,7 @@ class ScriptSource implements MangaSource, NovelSource {
         genres: (m['genres'] as List?)?.cast<String>() ?? const [],
         description: m['description'] as String?,
         status: _parseStatus(m['status'] as String?),
+        updatedAt: (m['updatedAt'] as num?)?.toInt(),
       );
 
   MangaStatus _parseStatus(String? s) {
