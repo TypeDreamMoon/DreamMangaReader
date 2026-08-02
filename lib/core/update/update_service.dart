@@ -10,6 +10,7 @@ import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
 import '../l10n/app_strings.dart';
 import '../log/app_log.dart';
+import 'android_abi.dart';
 import 'update_asset_selector.dart';
 import 'update_downloader.dart';
 import 'update_installer.dart';
@@ -168,6 +169,9 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   String? _error;
   CancelToken? _cancel;
 
+  /// 实际选中安装包的那个来源。换源后对话框的标题、说明和下载页都跟着走。
+  late UpdateCandidate _active = widget.info;
+
   bool get _busy => switch (_stage) {
         _UpdateStage.downloading ||
         _UpdateStage.verifying ||
@@ -183,26 +187,71 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   Future<void> _prepareAsset() async {
+    var active = widget.info;
     ResolvedUpdateAsset? selected;
-    if (UpdateInstaller.supported &&
-        widget.info.integrity == UpdateIntegrity.manifest &&
-        widget.info.manifest != null) {
+    if (UpdateInstaller.supported) {
       final platform =
           Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
-      try {
-        selected = await const UpdateAssetSelector().select(
-          platform: platform,
-          assets: widget.info.resolveAssets(platform),
+      // 首选来源挑不出本机架构的包时依次试备选来源,而不是直接让用户去下载页。
+      for (final candidate in [widget.info, ...widget.info.alternates]) {
+        if (candidate.integrity != UpdateIntegrity.manifest ||
+            candidate.manifest == null) {
+          continue;
+        }
+        final resolved = await _select(candidate, platform);
+        if (resolved == null) continue;
+        active = candidate;
+        selected = resolved;
+        break;
+      }
+      if (selected != null && active.source != widget.info.source) {
+        AppLog.i.warn(
+          LogCat.update,
+          '${widget.info.source.displayName} 没有本机架构的安装包,'
+          '改用 ${active.source.displayName}',
         );
-      } on FormatException {
-        selected = null;
       }
     }
     if (!mounted) return;
     setState(() {
+      _active = active;
       _asset = selected;
       _stage = _UpdateStage.idle;
     });
+  }
+
+  Future<ResolvedUpdateAsset?> _select(
+    UpdateCandidate candidate,
+    UpdatePlatform platform,
+  ) async {
+    const selector = UpdateAssetSelector();
+    final List<ResolvedUpdateAsset> assets;
+    try {
+      assets = candidate.resolveAssets(platform);
+    } on FormatException catch (error) {
+      AppLog.i.warn(
+        LogCat.update,
+        '${candidate.source.displayName} 的更新清单无法绑定附件',
+        detail: '$error',
+      );
+      return null;
+    }
+    try {
+      return await selector.select(platform: platform, assets: assets);
+    } on AndroidAbiUnavailableException catch (error) {
+      // 架构未知时通用包功能上是对的(它含全部 ABI),但这必须是一个被记录的
+      // 显式决定 —— 以前靠一个空列表默默走到这里,通道坏了都没人知道。
+      AppLog.i.err(
+        LogCat.update,
+        '无法识别设备 ABI,改用通用安装包',
+        detail: '$error',
+      );
+      return selector.select(
+        platform: platform,
+        assets: assets,
+        supportedAbis: const [],
+      );
+    }
   }
 
   Future<void> _startUpdate() async {
@@ -261,7 +310,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   Future<void> _openPage() =>
-      widget.dependencies.openManual(Uri.parse(widget.info.pageUrl));
+      widget.dependencies.openManual(Uri.parse(_active.pageUrl));
 
   @override
   Widget build(BuildContext context) {
@@ -270,13 +319,13 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     final screen = MediaQuery.sizeOf(context);
     final contentWidth = (screen.width * 0.78).clamp(280.0, 480.0);
     final contentHeight = (screen.height * 0.45).clamp(220.0, 320.0);
-    final sourceLabel = widget.info.source == UpdateSource.gitee
+    final sourceLabel = _active.source == UpdateSource.gitee
         ? l10n.update_sourceGitee
         : l10n.update_sourceGitHubFallback;
     return AlertDialog(
       backgroundColor: p.surface,
       title: Text(
-        l10n.update_foundTitle(widget.info.tag),
+        l10n.update_foundTitle(_active.tag),
         style: TextStyle(
             color: p.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
       ),
@@ -297,11 +346,11 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             const SizedBox(height: 12),
             Expanded(
               child: SingleChildScrollView(
-                child: widget.info.notes.isEmpty
+                child: _active.notes.isEmpty
                     ? Text(l10n.update_noNotes,
                         style: TextStyle(
                             color: p.textMuted, fontSize: 12.5, height: 1.5))
-                    : MarkdownView(widget.info.notes),
+                    : MarkdownView(_active.notes),
               ),
             ),
             const SizedBox(height: 12),

@@ -17,6 +17,7 @@ const _sha256 =
 UpdateCandidate _candidate({
   UpdateSource source = UpdateSource.gitee,
   bool compatible = true,
+  List<UpdateCandidate> alternates = const [],
 }) {
   const fileName = 'DreamMangaReader-windows-x64-setup.exe';
   final manifest = UpdateManifest(
@@ -51,6 +52,7 @@ UpdateCandidate _candidate({
     ],
     integrity: UpdateIntegrity.manifest,
     manifest: manifest,
+    alternates: alternates,
   );
 }
 
@@ -225,11 +227,45 @@ void main() {
     expect(find.byKey(const Key('update-manual')), findsOneWidget);
   });
 
-  testWidgets('no compatible asset offers manual download only',
+  testWidgets('switches to the alternate source when the preferred one has no '
+      'compatible asset', (tester) async {
+    var downloads = 0;
+    await _openDialog(
+      tester,
+      _candidate(
+        compatible: false,
+        alternates: [_candidate(source: UpdateSource.github)],
+      ),
+      UpdateDialogDependencies(
+        download: (asset, {required cancelToken, required onProgress}) async {
+          downloads++;
+          onProgress(1);
+          return package;
+        },
+        install: (file, {onBeforeExit}) async {},
+        openManual: (_) async {},
+      ),
+    );
+
+    // 换源后标题、说明和下载页都要跟着走,不能只换下载地址。
+    expect(find.text('GitHub / 备用源'), findsOneWidget);
+    expect(find.byKey(const Key('update-manual')), findsNothing);
+    expect(find.byKey(const Key('update-primary')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('update-primary')));
+    await tester.pumpAndSettle();
+
+    expect(downloads, 1);
+  });
+
+  testWidgets('no compatible asset in any source offers manual download only',
       (tester) async {
     await _openDialog(
       tester,
-      _candidate(compatible: false),
+      _candidate(
+        compatible: false,
+        alternates: [_candidate(source: UpdateSource.github, compatible: false)],
+      ),
       UpdateDialogDependencies(
         download: (asset, {required cancelToken, required onProgress}) async =>
             package,

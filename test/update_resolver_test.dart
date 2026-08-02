@@ -137,6 +137,27 @@ void main() {
     expect(result.integrity, UpdateIntegrity.manifest);
   });
 
+  test('same version keeps the other source as an alternate', () async {
+    final result = await _resolver(
+      gitee: [_release(UpdateSource.gitee, '1.3.1')],
+      github: [_release(UpdateSource.github, '1.3.1')],
+    ).resolve(currentVersion: '1.3.0', preferred: UpdateSource.gitee);
+
+    expect(result!.source, UpdateSource.gitee);
+    expect(result.alternates.map((c) => c.source), [UpdateSource.github]);
+    expect(result.alternates.single.version, '1.3.1');
+  });
+
+  test('a single available source has no alternate', () async {
+    final result = await _resolver(
+      gitee: [_release(UpdateSource.gitee, '1.3.1')],
+      githubError: _error(UpdateSource.github),
+    ).resolve(currentVersion: '1.3.0', preferred: UpdateSource.gitee);
+
+    expect(result!.source, UpdateSource.gitee);
+    expect(result.alternates, isEmpty);
+  });
+
   test('higher GitHub version wins even when Gitee is preferred', () async {
     final result = await _resolver(
       gitee: [_release(UpdateSource.gitee, '1.3.1')],
@@ -145,6 +166,8 @@ void main() {
 
     expect(result!.source, UpdateSource.github);
     expect(result.version, '1.3.2');
+    // 版本不同不能当备选:换过去会安装到比对话框标注的更旧的版本。
+    expect(result.alternates, isEmpty);
   });
 
   test('same version follows an explicit GitHub preference', () async {

@@ -96,6 +96,7 @@ class UpdateCandidate {
     required this.integrity,
     this.manifest,
     this.warnings = const [],
+    this.alternates = const [],
   });
 
   final UpdateSource source;
@@ -109,13 +110,23 @@ class UpdateCandidate {
   final UpdateManifest? manifest;
   final List<String> warnings;
 
+  /// 同一版本在其他来源的候选,按优先级排列。
+  ///
+  /// 首选来源的清单里没有本机架构的安装包时(例如 Gitee 为省跨境流量不再提供
+  /// 通用包),调用方可以就地换源,而不是把用户丢到下载页手动找。
+  final List<UpdateCandidate> alternates;
+
   List<ResolvedUpdateAsset> resolveAssets(UpdatePlatform platform) {
     final currentManifest = manifest;
     if (currentManifest == null) return const [];
     return currentManifest.resolve(platform, assets);
   }
 
-  UpdateCandidate withWarnings(List<String> value) => UpdateCandidate(
+  UpdateCandidate _copyWith({
+    List<String>? warnings,
+    List<UpdateCandidate>? alternates,
+  }) =>
+      UpdateCandidate(
         source: source,
         version: version,
         tag: tag,
@@ -125,8 +136,15 @@ class UpdateCandidate {
         assets: assets,
         integrity: integrity,
         manifest: manifest,
-        warnings: List.unmodifiable(value),
+        warnings: warnings ?? this.warnings,
+        alternates: alternates ?? this.alternates,
       );
+
+  UpdateCandidate withWarnings(List<String> value) =>
+      _copyWith(warnings: List.unmodifiable(value));
+
+  UpdateCandidate withAlternates(List<UpdateCandidate> value) =>
+      _copyWith(alternates: List.unmodifiable(value));
 }
 
 class UpdateResolutionException implements Exception {
@@ -191,12 +209,23 @@ class UpdateResolver {
         best = candidate;
       }
     }
+    // 只把「同一版本」的其他来源留作备选:版本不同就换源会让对话框展示的
+    // tag 和更新说明对不上实际安装的包。
+    final bestVersion = UpdateVersion.parse(best.version);
+    final alternates = candidates
+        .where((candidate) =>
+            !identical(candidate, best) &&
+            UpdateVersion.parse(candidate.version).compareTo(bestVersion) == 0)
+        .toList();
     final warnings = attempts
         .map((attempt) => attempt.error)
         .whereType<UpdateSourceException>()
         .map((error) => error.toString())
         .toList();
-    return warnings.isEmpty ? best : best.withWarnings(warnings);
+    var result = best;
+    if (alternates.isNotEmpty) result = result.withAlternates(alternates);
+    if (warnings.isNotEmpty) result = result.withWarnings(warnings);
+    return result;
   }
 
   Future<_SourceAttempt> _attempt(
