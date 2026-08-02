@@ -29,6 +29,9 @@ import 'lz_host.dart';
 /// ```
 class ScriptSource implements MangaSource, NovelSource {
   static const int _maxContinuationRequests = 100;
+  static const Map<String, int> _sourceCapabilities = {
+    'collectionContinuation': 1,
+  };
 
   ScriptSource({
     required JsEngine engine,
@@ -143,16 +146,19 @@ class ScriptSource implements MangaSource, NovelSource {
     String handleFn,
     T Function(Object? json) decode,
   ) async {
-    _injectSourceToken();
+    _injectSourceContext();
     final request = _prepareRequest(prepareFn, prepareArgs);
     final response = await _fetchRequest(request);
     return decode(_handleResponse(handleFn, response, prepareArgs));
   }
 
-  void _injectSourceToken() {
-    // 源脚本是纯函数沙箱、拿不到 App 状态,每次调用前由宿主注入登录 token。
+  void _injectSourceContext() {
+    // 源脚本是纯函数沙箱、拿不到 App 状态,每次调用前由宿主注入登录 token 和能力版本。
     _js.evalSync(
-        'globalThis.__sourceToken = ${jsonEncode(SourceAuth.tokenFor(id) ?? '')};');
+      'globalThis.__sourceToken = ${jsonEncode(SourceAuth.tokenFor(id) ?? '')};'
+      'globalThis.__sourceCapabilities = '
+      'Object.freeze(${jsonEncode(_sourceCapabilities)});',
+    );
   }
 
   Map<String, dynamic> _prepareRequest(
@@ -204,7 +210,7 @@ class ScriptSource implements MangaSource, NovelSource {
     List<Object?> prepareArgs,
     String handleFn,
   ) async {
-    _injectSourceToken();
+    _injectSourceContext();
     var request = _prepareRequest(prepareFn, prepareArgs);
     final items = <Object?>[];
     final seenRequests = <String>{};

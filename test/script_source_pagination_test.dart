@@ -36,6 +36,22 @@ var __source = {
 };
 ''';
 
+const capabilityScript = r'''
+var __source = {
+  meta: { id: 'capability', name: 'Capability', baseUrl: 'https://example.test' },
+  prepareChapterList: function () {
+    if (!globalThis.__sourceCapabilities ||
+        globalThis.__sourceCapabilities.collectionContinuation !== 1) {
+      throw new Error('collection continuation capability unavailable');
+    }
+    return { url: 'https://example.test/capability' };
+  },
+  handleChapterList: function () {
+    return [{ id: 'c1', name: '第一话', number: 1 }];
+  }
+};
+''';
+
 const continuationScript = r'''
 var __source = {
   meta: { id: 'paging', name: 'Paging', baseUrl: 'https://example.test' },
@@ -80,6 +96,20 @@ var __source = {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('source context exposes versioned collection continuation capability',
+      () async {
+    final source = ScriptSource(
+      engine: JsEngine(),
+      http: RoutingHttp((_) => jsonResponse({'unused': true})),
+      scriptCode: capabilityScript,
+    );
+    addTearDown(source.dispose);
+
+    final result = await source.getChapters('m1');
+
+    expect(result.items.map((item) => item.id), ['c1']);
+  });
 
   test('legacy chapter arrays still execute one request', () async {
     final http = RoutingHttp((_) => jsonResponse({'unused': true}));
