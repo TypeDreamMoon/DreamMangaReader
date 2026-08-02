@@ -25,12 +25,8 @@ $assets = @(
         Path = Join-Path $sourceRootFull 'DreamMangaReader-windows-x64-setup.exe'
         IncludeInManifest = $true
     },
-    [pscustomobject]@{
-        Platform = 'windows'; Arch = 'x64'; Kind = 'portable'
-        FileName = 'DreamMangaReader-windows-x64.zip'
-        Path = Join-Path $sourceRootFull 'DreamMangaReader-windows-x64.zip'
-        IncludeInManifest = $false
-    },
+    # 便携版 ZIP 不进 Gitee：更新器在 Windows 上只会选安装器，
+    # 而这 36 MiB 要走跨境链路，是纯粹的浪费。GitHub Release 仍然带它。
     [pscustomobject]@{
         Platform = 'android'; Arch = 'universal'; Kind = 'installer'
         FileName = 'DreamMangaReader-android-universal.apk'

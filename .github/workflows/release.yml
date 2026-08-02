@@ -279,6 +279,9 @@ jobs:
     name: Sync code and release to Gitee
     needs: release
     runs-on: ubuntu-latest
+    # 跨境上传失速时不再挂到 6 小时的默认上限等人手动取消；
+    # 干净失败后重跑本 job 会复用远端已传完的附件。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
