@@ -278,8 +278,11 @@ jobs:
   sync-gitee:
     name: Sync code and release to Gitee
     needs: release
-    runs-on: ubuntu-latest
-    # 跨境上传失速时不再挂到 6 小时的默认上限等人手动取消；
+    # 跑在国内自托管 runner 上：GitHub 托管 runner 传 Gitee 实测只有 16 KB/s，
+    # 244 MiB 要 37 分钟且极易中断；境内机器上传是内网速度。
+    # 该机器需具备 git / curl / gh / pwsh（见 Docker 镜像定义）。
+    runs-on: [self-hosted, china]
+    # 失速时不再挂到 6 小时的默认上限等人手动取消；
     # 干净失败后重跑本 job 会复用远端已传完的附件。
     timeout-minutes: 45
     steps:
@@ -325,6 +328,9 @@ jobs:
           chmod 700 "$askpass"
           export GIT_ASKPASS="$askpass"
           export GIT_TERMINAL_PROMPT=0
+          # 自托管 runner 的工作目录跨 job 复用，checkout 的 git clean 不会清掉
+          # .git/config 里的 remote，所以第二次发版 git remote add 会直接失败。
+          git remote remove gitee 2>/dev/null || true
           git remote add gitee 'https://gitee.com/TypeDreamMoon/DreamMangaReader.git'
           remote_tag=$(git ls-remote --refs --tags gitee "refs/tags/$tag" | awk 'NR == 1 { print $1 }')
           if [[ -n "$remote_tag" && ! "$remote_tag" =~ ^[0-9a-f]{40,64}$ ]]; then
