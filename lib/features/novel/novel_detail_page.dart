@@ -184,12 +184,51 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     NovelDownloadScope.read(context).enqueue(_meta, _novel, chapter);
   }
 
+  Future<void> _downloadAll() async {
+    final downloads = NovelDownloadScope.read(context);
+    final pending = _chapters
+        .where((chapter) => !downloads.isDownloaded(
+              _meta.id,
+              _novel.id,
+              chapter.id,
+            ))
+        .toList(growable: false);
+    if (pending.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.l10n.detail_downloadAll),
+        content: Text(context.l10n.detail_downloadNConfirm(pending.length)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(context.l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(context.l10n.detail_download),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    for (final chapter in pending) {
+      downloads.enqueue(_meta, _novel, chapter);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final favorite =
-        NovelLibraryScope.read(context).entryFor(_libraryKey)?.favorite == true;
+    final novelLibrary = NovelLibraryScope.of(context);
+    final favorite = novelLibrary.entryFor(_libraryKey)?.favorite == true;
+    final activeId = novelLibrary.progressFor(_libraryKey)?.chapterId;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: scheme.onPrimary,
         title: Text(
           _novel.title,
           maxLines: 1,
@@ -221,118 +260,355 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
       ),
       body: _error != null
           ? _ErrorView(error: _error!, onRetry: () => _load(_meta, _novel))
-          : CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-                  sliver: SliverToBoxAdapter(child: _header(context)),
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    scheme.primary.withValues(alpha: .16),
+                    Colors.transparent,
+                  ],
+                  stops: const [0, .55],
                 ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: Row(
-                      children: [
-                        Text(context.l10n.novel_directory,
-                            style: Theme.of(context).textTheme.titleMedium),
-                        const Spacer(),
-                        Text(context.l10n.novel_chaptersN(_chapters.length),
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ],
-                    ),
-                  ),
-                ),
-                if (_loading)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (_chapters.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: Text(context.l10n.novel_noChapters)),
-                  )
-                else
-                  SliverList.builder(
-                    itemCount: _chapters.length,
-                    itemBuilder: (context, index) =>
-                        _chapterRow(context, index),
-                  ),
-                const SliverToBoxAdapter(child: SizedBox(height: 28)),
-              ],
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) => constraints.maxWidth >= 760
+                    ? _wideBody(context, favorite, activeId)
+                    : _narrowBody(context, favorite, activeId),
+              ),
             ),
     );
   }
 
-  Widget _header(BuildContext context) {
-    final authors = _novel.authors.where((value) => value.trim().isNotEmpty);
-    final genres = _novel.genres.where((value) => value.trim().isNotEmpty);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
+  Widget _narrowBody(
+    BuildContext context,
+    bool favorite,
+    String? activeId,
+  ) {
+    return Center(
+      child: ConstrainedBox(
+        key: const Key('novel-detail-narrow'),
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _hero(context)),
+            SliverToBoxAdapter(child: _actions(context, favorite)),
+            SliverToBoxAdapter(child: _description(context)),
+            ..._directorySlivers(context, activeId),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _wideBody(
+    BuildContext context,
+    bool favorite,
+    String? activeId,
+  ) {
+    final topInset = MediaQuery.paddingOf(context).top + kToolbarHeight;
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: ConstrainedBox(
+        key: const Key('novel-detail-wide'),
+        constraints: const BoxConstraints(maxWidth: 1180),
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 112,
-              child: NovelCover(
-                novel: _novel,
-                headers: imageHeadersOf(_meta),
+              width: 380,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 28),
+                child: Column(
+                  children: [
+                    _hero(context),
+                    _actions(context, favorite),
+                    _description(context),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(width: 16),
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: scheme.outlineVariant,
+            ),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _novel.title,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(_meta.name,
-                      style: Theme.of(context).textTheme.labelLarge),
-                  if (authors.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(authors.join(' / '),
-                        maxLines: 2, overflow: TextOverflow.ellipsis),
-                  ],
-                  const SizedBox(height: 6),
-                  Text(_statusLabel(context, _novel.status)),
-                  if (genres.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final genre in genres.take(5))
-                          Chip(
-                            visualDensity: VisualDensity.compact,
-                            label: Text(genre),
-                          ),
-                      ],
-                    ),
-                  ],
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(child: SizedBox(height: topInset)),
+                  ..._directorySlivers(context, activeId),
                 ],
               ),
             ),
           ],
         ),
-        if ((_novel.description ?? '').trim().isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            _novel.description!.trim(),
-            maxLines: 8,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ],
-      ],
+      ),
     );
   }
 
-  Widget _chapterRow(BuildContext context, int index) {
+  Widget _hero(BuildContext context) {
+    final authors = _novel.authors.where((value) => value.trim().isNotEmpty);
+    final genres = _novel.genres.where((value) => value.trim().isNotEmpty);
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      key: const Key('novel-detail-hero'),
+      height: 292,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [scheme.primary, scheme.tertiary],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: .12),
+                  Colors.black.withValues(alpha: .72),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 94,
+                  child: NovelCover(
+                    novel: _novel,
+                    headers: imageHeadersOf(_meta),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .34),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          child: Text(
+                            _meta.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        _novel.title,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          height: 1.2,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      if (authors.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          authors.join(' / '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          Text(
+                            _statusLabel(context, _novel.status),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                          for (final genre in genres.take(3))
+                            Text(
+                              genre,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actions(BuildContext context, bool favorite) {
+    final progress = NovelLibraryScope.read(context).progressFor(_libraryKey);
+    final activeIndex = progress == null
+        ? -1
+        : _chapters.indexWhere((chapter) => chapter.id == progress.chapterId);
+    final startIndex = activeIndex < 0 ? 0 : activeIndex;
+    final canRead = !_loading && _chapters.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: canRead ? () => _openChapter(startIndex) : null,
+              icon: Icon(
+                progress == null
+                    ? Icons.play_arrow_rounded
+                    : Icons.play_circle_fill_rounded,
+              ),
+              label: Text(
+                context.l10n.novel_continueReading,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(46),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            tooltip: favorite
+                ? context.l10n.novel_removeFavorite
+                : context.l10n.novel_addFavorite,
+            onPressed: _toggleFavorite,
+            icon: Icon(
+              favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton.filledTonal(
+            tooltip: context.l10n.detail_downloadAll,
+            onPressed: canRead ? _downloadAll : null,
+            icon: const Icon(Icons.download_rounded),
+          ),
+          if (_novel.url != null) ...[
+            const SizedBox(width: 4),
+            IconButton.filledTonal(
+              tooltip: context.l10n.novel_openInBrowser,
+              onPressed: _openBrowser,
+              icon: const Icon(Icons.open_in_browser_rounded),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _description(BuildContext context) {
+    final description = (_novel.description ?? '').trim();
+    if (description.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+      child: Text(
+        description,
+        maxLines: 10,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              height: 1.55,
+              letterSpacing: 0,
+            ),
+      ),
+    );
+  }
+
+  List<Widget> _directorySlivers(BuildContext context, String? activeId) {
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          key: const Key('novel-detail-directory'),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+          child: Row(
+            children: [
+              Text(
+                context.l10n.novel_directory,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const Spacer(),
+              Text(
+                context.l10n.novel_chaptersN(_chapters.length),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (_loading)
+        const SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else if (_chapters.isEmpty)
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: Text(context.l10n.novel_noChapters)),
+        )
+      else
+        SliverList.builder(
+          itemCount: _chapters.length,
+          itemBuilder: (context, index) => _chapterRow(
+            context,
+            index,
+            activeId: activeId,
+          ),
+        ),
+      const SliverToBoxAdapter(child: SizedBox(height: 28)),
+    ];
+  }
+
+  Widget _chapterRow(
+    BuildContext context,
+    int index, {
+    required String? activeId,
+  }) {
     final chapter = _chapters[index];
     final previous = index == 0 ? null : _chapters[index - 1];
     final showVolume = chapter.volumeId != null &&
@@ -350,6 +626,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             ),
           ),
         ListTile(
+          key:
+              chapter.id == activeId ? const Key('novel-chapter-active') : null,
+          selected: chapter.id == activeId,
           leading: SizedBox(
             width: 42,
             child: Text('${index + 1}', textAlign: TextAlign.center),
@@ -436,7 +715,8 @@ class _ErrorView extends StatelessWidget {
   }
 }
 
-String _statusLabel(BuildContext context, NovelStatus status) => switch (status) {
+String _statusLabel(BuildContext context, NovelStatus status) =>
+    switch (status) {
       NovelStatus.ongoing => context.l10n.novel_statusOngoing,
       NovelStatus.completed => context.l10n.novel_statusCompleted,
       NovelStatus.hiatus => context.l10n.novel_statusHiatus,

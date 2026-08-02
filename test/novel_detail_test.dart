@@ -174,6 +174,49 @@ void main() {
     expect(find.text('B1'), findsNothing);
   });
 
+  testWidgets('novel detail uses manga-style wide split layout',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-wide')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(find.text('A1'), findsOneWidget);
+  });
+
+  testWidgets('novel detail uses manga-style narrow layout', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-narrow')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('saved chapter is highlighted in the lazy directory',
+      (tester) async {
+    novelLibrary.saveProgress(
+      NovelIdentity.remote(sourceA.id, novelA.id).key,
+      const NovelLocator(chapterId: 'a2', fraction: .4),
+    );
+    await novelLibrary.flushPending();
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final active = find.byKey(const Key('novel-chapter-active'));
+    expect(active, findsOneWidget);
+    expect(
+      find.descendant(of: active, matching: find.text('A2')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('manual source switch replaces the directory', (tester) async {
     await tester.pumpWidget(harness());
     await tester.pumpAndSettle();
