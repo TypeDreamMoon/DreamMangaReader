@@ -309,12 +309,15 @@ $canReuseRemoteFiles = $false
 if ($remoteHashFiles.Count -eq 1) {
     $canReuseRemoteFiles = (Get-GiteeControlFileSha256 -Remote $remoteHashFiles[0]) -ceq (Get-FileSha256 -Path $localHashFile[0].FullName)
 }
-$staleRemoteFiles = if ($remoteFiles.Count -gt 0 -and !$canReuseRemoteFiles) {
+# 整个 if 必须包在 @() 里：空数组作为语句输出会被枚举成零个对象，
+# 于是 $staleRemoteFiles 会变成 $null 而不是空集合，
+# 后面 -Stale 的 Mandatory 参数就会拒绝绑定。远端已全部对齐时正是这条路径。
+$staleRemoteFiles = @(if ($remoteFiles.Count -gt 0 -and !$canReuseRemoteFiles) {
     @($remoteFiles)
 }
 else {
     @(Get-StaleRemoteAttachments -Local $localFiles -Remote $remoteFiles)
-}
+})
 $usableRemoteFiles = @(Select-ReusableRemoteAttachments -Remote $remoteFiles -Stale $staleRemoteFiles)
 $missing = @(Compare-RemoteAttachments -Local $localFiles -Remote $usableRemoteFiles)
 
