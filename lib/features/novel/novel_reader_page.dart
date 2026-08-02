@@ -9,7 +9,9 @@ import '../../app/novel_library_store.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/platform/reader_keys.dart';
+import 'novel_book_progress.dart';
 import 'novel_document_view.dart';
+import 'novel_reader_chrome.dart';
 import 'novel_reader_settings_sheet.dart';
 
 typedef NovelDocumentLoader = Future<NovelDocument> Function(
@@ -55,9 +57,13 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'novel-reader');
 
   Future<void> _settingsQueue = Future.value();
-  bool _showControls = true;
+  Timer? _controlsTimer;
+  bool _showControls = false;
+  bool _controlsPaused = false;
   bool _loading = true;
   bool _wakeActive = false;
+  double _chapterFraction = 0;
+  double? _progressPreview;
   Object? _error;
 
   NovelChapter get _chapter => widget.chapters[_chapterIndex];
@@ -70,7 +76,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       final index = widget.chapters.indexWhere(
         (chapter) => chapter.id == saved.chapterId,
       );
-      if (index >= 0) _chapterIndex = index;
+      if (index >= 0) {
+        _chapterIndex = index;
+        _chapterFraction = saved.fraction;
+      }
     }
     _controller.onCommand = _onCommand;
     _controller.onLocatorChanged = _saveLocator;
@@ -82,10 +91,12 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       });
       unawaited(ReaderKeys.setActive(true));
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadChapter());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_loadChapter());
+    });
   }
 
-  Future<void> _loadChapter({NovelLocator? restore}) async {
+  Future<bool> _loadChapter({NovelLocator? restore}) async {
     if (mounted) {
       setState(() {
         _loading = true;
@@ -95,20 +106,77 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     final chapter = _chapter;
     try {
       final document = await widget.loadDocument(chapter);
-      if (!mounted || chapter.id != _chapter.id) return;
+      if (!mounted || chapter.id != _chapter.id) return false;
       await _controller.loadChapter(chapter.id, document, _preferences);
       final locator = restore ?? _library.progressFor(widget.libraryKey);
       if (locator != null && locator.chapterId == chapter.id) {
         await _controller.restoreLocator(locator);
       }
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _chapterFraction =
+              locator?.chapterId == chapter.id ? locator!.fraction : 0;
+        });
+      }
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _loading = false;
         _error = error;
       });
+      return false;
     }
+  }
+
+  double get _bookProgress => novelBookProgress(
+        chapterIndex: _chapterIndex,
+        chapterFraction: _chapterFraction,
+        chapterCount: widget.chapters.length,
+      );
+
+  void _showReaderControls() {
+    _controlsTimer?.cancel();
+    if (!mounted) return;
+    if (!_showControls) setState(() => _showControls = true);
+    _scheduleControlsHide();
+  }
+
+  void _hideReaderControls() {
+    _controlsTimer?.cancel();
+    if (mounted && _showControls) setState(() => _showControls = false);
+  }
+
+  void _toggleReaderControls() {
+    if (_showControls) {
+      _hideReaderControls();
+    } else {
+      _showReaderControls();
+    }
+  }
+
+  void _scheduleControlsHide() {
+    _controlsTimer?.cancel();
+    final seconds = _preferences.toolbarAutoHideSeconds;
+    if (!_showControls || _controlsPaused || seconds == 0) return;
+    _controlsTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted && !_controlsPaused) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _pauseControls() {
+    _controlsTimer?.cancel();
+    _controlsPaused = true;
+  }
+
+  void _resumeControls() {
+    _controlsPaused = false;
+    if (!mounted) return;
+    _focusNode.requestFocus();
+    _showReaderControls();
   }
 
   void _onCommand(NovelReaderCommand command) {
@@ -118,31 +186,50 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       case NovelReaderCommand.next:
         _next();
       case NovelReaderCommand.toggleControls:
-        if (mounted) setState(() => _showControls = !_showControls);
+        _toggleReaderControls();
     }
   }
 
   Future<void> _previous() async {
-    if (await _controller.previousPage()) return;
+    if (await _controller.previousPage()) {
+      _hideReaderControls();
+      return;
+    }
     if (_chapterIndex == 0 || !mounted) return;
-    setState(() => _chapterIndex--);
+    setState(() {
+      _chapterIndex--;
+      _chapterFraction = 1;
+      _progressPreview = null;
+    });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id, fraction: 1),
     );
+    _hideReaderControls();
   }
 
   Future<void> _next() async {
-    if (await _controller.nextPage()) return;
+    if (await _controller.nextPage()) {
+      _hideReaderControls();
+      return;
+    }
     if (_chapterIndex >= widget.chapters.length - 1 || !mounted) return;
-    setState(() => _chapterIndex++);
+    setState(() {
+      _chapterIndex++;
+      _chapterFraction = 0;
+      _progressPreview = null;
+    });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id),
     );
+    _hideReaderControls();
   }
 
   void _saveLocator(NovelLocator locator) {
     if (locator.chapterId.isEmpty) return;
     _library.saveProgress(widget.libraryKey, locator);
+    if (mounted && locator.chapterId == _chapter.id) {
+      setState(() => _chapterFraction = locator.fraction);
+    }
   }
 
   void _queuePreferences(NovelReaderPreferences preferences) {
@@ -155,7 +242,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       await _controller.applyPreferences(preferences);
       await Future<void>.delayed(const Duration(milliseconds: 32));
       await _controller.restoreLocator(locator);
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _scheduleControlsHide();
+      }
     }).catchError((_) {});
   }
 
@@ -186,68 +276,198 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.escape) {
-      setState(() => _showControls = !_showControls);
-      return KeyEventResult.handled;
+      if (_showControls) {
+        _hideReaderControls();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
     }
     return KeyEventResult.ignored;
   }
 
   Future<void> _openDirectory() async {
-    final selected = await showModalBottomSheet<int>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 640),
-          child: ListView.builder(
-            itemCount: widget.chapters.length,
-            itemBuilder: (context, index) {
-              final chapter = widget.chapters[index];
-              final previousVolume =
-                  index == 0 ? null : widget.chapters[index - 1].volumeId;
-              final showVolume = chapter.volumeId != null &&
-                  chapter.volumeId != previousVolume;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (showVolume)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                      child: Text(
-                        chapter.volumeTitle ?? '',
-                        style: Theme.of(context).textTheme.labelLarge,
+    _pauseControls();
+    int? selected;
+    try {
+      selected = await showModalBottomSheet<int>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 640),
+            child: ListView.builder(
+              itemCount: widget.chapters.length,
+              itemBuilder: (context, index) {
+                final chapter = widget.chapters[index];
+                final previousVolume =
+                    index == 0 ? null : widget.chapters[index - 1].volumeId;
+                final showVolume = chapter.volumeId != null &&
+                    chapter.volumeId != previousVolume;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (showVolume)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                        child: Text(
+                          chapter.volumeTitle ?? '',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
                       ),
+                    ListTile(
+                      selected: index == _chapterIndex,
+                      leading: SizedBox(
+                        width: 38,
+                        child: Text(
+                          '${index + 1}',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      title: Text(chapter.title),
+                      onTap: () => Navigator.pop(context, index),
                     ),
-                  ListTile(
-                    selected: index == _chapterIndex,
-                    leading: SizedBox(
-                      width: 38,
-                      child: Text('${index + 1}', textAlign: TextAlign.center),
-                    ),
-                    title: Text(chapter.title),
-                    onTap: () => Navigator.pop(context, index),
-                  ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _resumeControls();
+    }
     if (selected == null || selected == _chapterIndex || !mounted) return;
-    setState(() => _chapterIndex = selected);
+    setState(() {
+      _chapterIndex = selected!;
+      _chapterFraction = 0;
+      _progressPreview = null;
+    });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id),
     );
   }
 
-  void _openSettings() {
-    showNovelReaderSettings(
-      context: context,
-      value: _preferences,
-      onChanged: _queuePreferences,
+  Future<void> _openSettings() async {
+    _pauseControls();
+    try {
+      await showNovelReaderSettings(
+        context: context,
+        value: _preferences,
+        onChanged: _queuePreferences,
+      );
+    } finally {
+      _resumeControls();
+    }
+  }
+
+  Future<void> _openTheme() async {
+    _pauseControls();
+    NovelReaderTheme? selected;
+    try {
+      selected = await showModalBottomSheet<NovelReaderTheme>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Wrap(
+              runSpacing: 8,
+              children: [
+                for (final theme in NovelReaderTheme.values)
+                  ListTile(
+                    selected: theme == _preferences.theme,
+                    leading: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: _themeColor(theme),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                    ),
+                    title: Text(_themeLabel(context, theme)),
+                    trailing: theme == _preferences.theme
+                        ? const Icon(Icons.check_rounded)
+                        : null,
+                    onTap: () => Navigator.pop(context, theme),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } finally {
+      _resumeControls();
+    }
+    if (selected != null && selected != _preferences.theme) {
+      _queuePreferences(_preferences.copyWith(theme: selected));
+    }
+  }
+
+  void _onProgressChanged(double value) {
+    if (mounted) setState(() => _progressPreview = value.clamp(0, 1));
+  }
+
+  void _onProgressChangeEnd(double value) {
+    unawaited(_seekBookProgress(value));
+  }
+
+  Future<void> _seekBookProgress(double value) async {
+    final previousIndex = _chapterIndex;
+    final previousFraction = _chapterFraction;
+    final captured = await _controller.captureLocator();
+    if (!mounted) return;
+    final previousLocator = captured.chapterId == _chapter.id
+        ? captured
+        : NovelLocator(
+            chapterId: _chapter.id,
+            fraction: previousFraction,
+          );
+    final target = novelProgressTarget(
+      progress: value,
+      chapterCount: widget.chapters.length,
     );
+    final targetChapter = widget.chapters[target.chapterIndex];
+    final targetLocator = NovelLocator(
+      chapterId: targetChapter.id,
+      fraction: target.chapterFraction,
+    );
+    setState(() {
+      _chapterIndex = target.chapterIndex;
+      _chapterFraction = target.chapterFraction;
+      _progressPreview = null;
+    });
+    final loaded = await _loadChapter(restore: targetLocator);
+    if (loaded) {
+      _saveLocator(targetLocator);
+      _hideReaderControls();
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _chapterIndex = previousIndex;
+      _chapterFraction = previousFraction;
+      _progressPreview = null;
+    });
+    await _loadChapter(restore: previousLocator);
+  }
+
+  String _progressLabel(BuildContext context) {
+    final value = _progressPreview ?? _bookProgress;
+    final target = novelProgressTarget(
+      progress: value,
+      chapterCount: widget.chapters.length,
+    );
+    final chapter = widget.chapters[target.chapterIndex];
+    return '${(value * 100).round()}%  '
+        '${context.l10n.novel_readerProgress(
+      target.chapterIndex + 1,
+      widget.chapters.length,
+      chapter.title,
+    )}';
   }
 
   Widget _documentView() {
@@ -304,113 +524,19 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                   ),
                 ),
               ),
-            IgnorePointer(
-              ignoring: !_showControls,
-              child: AnimatedOpacity(
-                opacity: _showControls ? 1 : 0,
-                duration: const Duration(milliseconds: 160),
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: Material(
-                    color: scheme.surface.withValues(alpha: .96),
-                    child: SafeArea(
-                      bottom: false,
-                      child: SizedBox(
-                        height: 56,
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: context.l10n.novel_readerBack,
-                              onPressed: () => Navigator.maybePop(context),
-                              icon: const Icon(Icons.arrow_back_rounded),
-                            ),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    widget.novel.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.titleSmall,
-                                  ),
-                                  Text(
-                                    _chapter.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              key: const Key('novel-reader-directory'),
-                              tooltip: context.l10n.novel_directory,
-                              onPressed: _openDirectory,
-                              icon: const Icon(
-                                  Icons.format_list_bulleted_rounded),
-                            ),
-                            IconButton(
-                              key: const Key('novel-reader-settings'),
-                              tooltip: context.l10n.reader_settings,
-                              onPressed: _openSettings,
-                              icon: const Icon(Icons.text_fields_rounded),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            IgnorePointer(
-              ignoring: !_showControls,
-              child: AnimatedOpacity(
-                opacity: _showControls ? 1 : 0,
-                duration: const Duration(milliseconds: 160),
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Material(
-                    color: scheme.surface.withValues(alpha: .96),
-                    child: SafeArea(
-                      top: false,
-                      child: SizedBox(
-                        height: 58,
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: context.l10n.novel_readerPreviousPage,
-                              onPressed: _previous,
-                              icon: const Icon(Icons.chevron_left_rounded),
-                            ),
-                            Expanded(
-                              child: Text(
-                                context.l10n.novel_readerProgress(
-                                  _chapterIndex + 1,
-                                  widget.chapters.length,
-                                  _chapter.title,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: context.l10n.novel_readerNextPage,
-                              onPressed: _next,
-                              icon: const Icon(Icons.chevron_right_rounded),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+            NovelReaderChrome(
+              visible: _showControls,
+              bookTitle: widget.novel.title,
+              chapterTitle: _chapter.title,
+              progress: _progressPreview ?? _bookProgress,
+              previewLabel: _progressLabel(context),
+              onBack: () => Navigator.maybePop(context),
+              onDirectory: () => unawaited(_openDirectory()),
+              onTheme: () => unawaited(_openTheme()),
+              onSettings: () => unawaited(_openSettings()),
+              onProgressChanged: _onProgressChanged,
+              onProgressChangeEnd: _onProgressChangeEnd,
+              onInteraction: _scheduleControlsHide,
             ),
           ],
         ),
@@ -420,6 +546,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   @override
   void dispose() {
+    _controlsTimer?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;
     unawaited(_library.flushPending());
@@ -432,3 +559,18 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     super.dispose();
   }
 }
+
+Color _themeColor(NovelReaderTheme theme) => switch (theme) {
+      NovelReaderTheme.sepia => const Color(0xfff2e8cf),
+      NovelReaderTheme.white => Colors.white,
+      NovelReaderTheme.dark => const Color(0xff292b2f),
+      NovelReaderTheme.black => const Color(0xff050505),
+    };
+
+String _themeLabel(BuildContext context, NovelReaderTheme theme) =>
+    switch (theme) {
+      NovelReaderTheme.sepia => context.l10n.novel_readerThemeSepia,
+      NovelReaderTheme.white => context.l10n.novel_readerThemeWhite,
+      NovelReaderTheme.dark => context.l10n.novel_readerThemeDark,
+      NovelReaderTheme.black => context.l10n.novel_readerThemeBlack,
+    };

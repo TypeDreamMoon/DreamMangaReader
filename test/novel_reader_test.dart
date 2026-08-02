@@ -16,6 +16,7 @@ class _FakeController implements NovelDocumentController {
   NovelLocator? lastRestored;
   String? loadedChapterId;
   NovelReaderPreferences? appliedPreferences;
+  final List<String> loadedChapterIds = [];
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -38,6 +39,7 @@ class _FakeController implements NovelDocumentController {
     NovelReaderPreferences preferences,
   ) async {
     loadedChapterId = chapterId;
+    loadedChapterIds.add(chapterId);
     if (locator.chapterId != chapterId) {
       locator = NovelLocator(chapterId: chapterId);
     }
@@ -56,10 +58,15 @@ class _FakeController implements NovelDocumentController {
   }
 }
 
-Future<Widget> _readerHarness(_FakeController controller) async {
+Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
+  _FakeController controller, {
+  NovelReaderPreferences preferences = const NovelReaderPreferences(),
+}) async {
   final store = NovelLibraryStore();
   await store.load();
-  return MaterialApp(
+  store.setPreferences(preferences);
+  await store.flushPending();
+  final widget = MaterialApp(
     locale: const Locale('zh'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -82,6 +89,7 @@ Future<Widget> _readerHarness(_FakeController controller) async {
       ),
     ),
   );
+  return (widget: widget, store: store);
 }
 
 void main() {
@@ -97,9 +105,13 @@ void main() {
         fraction: .3,
       ),
     );
-    await tester.pumpWidget(await _readerHarness(controller));
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
     await tester.pumpAndSettle();
 
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('novel-reader-settings')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('连续滚动'));
@@ -112,16 +124,98 @@ void main() {
 
   testWidgets('directory selection loads the selected chapter', (tester) async {
     final controller = _FakeController();
-    await tester.pumpWidget(await _readerHarness(controller));
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
     await tester.pumpAndSettle();
     expect(controller.loadedChapterId, 'c1');
 
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('novel-reader-directory')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('第二章'));
     await tester.pumpAndSettle();
 
     expect(controller.loadedChapterId, 'c2');
+  });
+
+  testWidgets('reader starts immersive and center command reveals chrome',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+  });
+
+  testWidgets('reader auto-hides chrome after configured delay',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 1),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2));
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+  });
+
+  testWidgets('zero auto-hide keeps revealed chrome visible', (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 1));
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+  });
+
+  testWidgets('whole-book slider seeks once on release and restores fraction',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    final slider = tester.widget<Slider>(
+      find.byKey(const Key('novel-reader-progress-slider')),
+    );
+    final loadsBefore = controller.loadedChapterIds.length;
+    slider.onChanged!(.75);
+    await tester.pump();
+    expect(controller.loadedChapterIds.length, loadsBefore);
+
+    slider.onChangeEnd!(.75);
+    await tester.pumpAndSettle();
+    expect(controller.loadedChapterIds.length, loadsBefore + 1);
+    expect(controller.loadedChapterId, 'c2');
+    expect(controller.lastRestored?.chapterId, 'c2');
+    expect(controller.lastRestored?.fraction, .5);
   });
 
   test('reader HTML shell sanitizes HTML and escapes plain text', () {
