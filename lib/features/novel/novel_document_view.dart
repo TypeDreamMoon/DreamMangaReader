@@ -370,6 +370,9 @@ const novelReaderBridgeScript = r'''
     report();
     return true;
   };
+  const isInteractiveTarget = (target) => Boolean(
+    target?.closest?.('a,button,input,textarea,select,[contenteditable]')
+  );
   document.addEventListener('click', (event) => {
     const anchor = event.target.closest?.('a[href]');
     if (anchor) {
@@ -378,14 +381,14 @@ const novelReaderBridgeScript = r'''
       if (href.startsWith('#')) document.getElementById(href.slice(1))?.scrollIntoView();
       return;
     }
-    const interactive = event.target.closest?.('a,button,input,textarea,select,[contenteditable]');
-    if (interactive) return;
+    if (isInteractiveTarget(event.target)) return;
     const ratio = event.clientX / innerWidth;
     const command = ratio < .25 ? 'previous' : ratio > .75 ? 'next' : 'toggle';
     window.flutter_inappwebview?.callHandler('dmrCommand', command);
   });
   let lastWheelTurn = 0;
   document.addEventListener('wheel', (event) => {
+    if (isInteractiveTarget(event.target)) return;
     if (mode !== 'paged' || Math.abs(event.deltaY) < 12) return;
     event.preventDefault();
     const now = Date.now();
@@ -396,11 +399,16 @@ const novelReaderBridgeScript = r'''
       event.deltaY > 0 ? 'next' : 'previous'
     );
   }, {passive:false});
-  let touchX = 0, touchY = 0;
+  let touchX = 0, touchY = 0, touchInteractive = false;
   document.addEventListener('touchstart', (event) => {
+    touchInteractive = isInteractiveTarget(event.target);
+    if (touchInteractive) return;
     touchX = event.changedTouches[0].clientX; touchY = event.changedTouches[0].clientY;
   }, {passive:true});
   document.addEventListener('touchend', (event) => {
+    const blocked = touchInteractive || isInteractiveTarget(event.target);
+    touchInteractive = false;
+    if (blocked) return;
     if (mode !== 'paged') return;
     const dx = event.changedTouches[0].clientX - touchX;
     const dy = event.changedTouches[0].clientY - touchY;

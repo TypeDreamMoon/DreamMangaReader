@@ -57,6 +57,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'novel-reader');
 
   Future<void> _settingsQueue = Future.value();
+  int _settingsGeneration = 0;
   Timer? _controlsTimer;
   bool _showControls = false;
   bool _controlsPaused = false;
@@ -233,19 +234,23 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   }
 
   void _queuePreferences(NovelReaderPreferences preferences) {
+    if (!mounted) return;
+    final generation = ++_settingsGeneration;
+    _preferences = preferences;
+    _library.setPreferences(preferences);
+    _setWakeLock(preferences.keepScreenOn);
+    setState(() {});
     _settingsQueue = _settingsQueue.then((_) async {
-      if (!mounted) return;
+      if (!mounted || generation != _settingsGeneration) return;
       final locator = await _controller.captureLocator();
-      _preferences = preferences;
-      _library.setPreferences(preferences);
-      _setWakeLock(preferences.keepScreenOn);
+      if (!mounted || generation != _settingsGeneration) return;
       await _controller.applyPreferences(preferences);
+      if (!mounted || generation != _settingsGeneration) return;
       await Future<void>.delayed(const Duration(milliseconds: 32));
+      if (!mounted || generation != _settingsGeneration) return;
       await _controller.restoreLocator(locator);
-      if (mounted) {
-        setState(() {});
-        _scheduleControlsHide();
-      }
+      if (!mounted || generation != _settingsGeneration) return;
+      _scheduleControlsHide();
     }).catchError((_) {});
   }
 
@@ -289,51 +294,56 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     _pauseControls();
     int? selected;
     try {
-      selected = await showModalBottomSheet<int>(
-        context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
-        builder: (context) => SafeArea(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 640),
-            child: ListView.builder(
-              itemCount: widget.chapters.length,
-              itemBuilder: (context, index) {
-                final chapter = widget.chapters[index];
-                final previousVolume =
-                    index == 0 ? null : widget.chapters[index - 1].volumeId;
-                final showVolume = chapter.volumeId != null &&
-                    chapter.volumeId != previousVolume;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (showVolume)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                        child: Text(
-                          chapter.volumeTitle ?? '',
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                      ),
-                    ListTile(
-                      selected: index == _chapterIndex,
-                      leading: SizedBox(
-                        width: 38,
-                        child: Text(
-                          '${index + 1}',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      title: Text(chapter.title),
-                      onTap: () => Navigator.pop(context, index),
-                    ),
-                  ],
-                );
-              },
+      if (MediaQuery.sizeOf(context).width >= 700) {
+        selected = await showGeneralDialog<int>(
+          context: context,
+          barrierDismissible: true,
+          barrierLabel:
+              MaterialLocalizations.of(context).modalBarrierDismissLabel,
+          barrierColor: Colors.black54,
+          transitionDuration: const Duration(milliseconds: 220),
+          pageBuilder: (context, _, __) => Align(
+            alignment: Alignment.centerRight,
+            child: SafeArea(
+              child: SizedBox(
+                key: const Key('novel-reader-directory-panel-wide'),
+                width: 420,
+                height: double.infinity,
+                child: Material(
+                  elevation: 12,
+                  color: Theme.of(context).colorScheme.surface,
+                  child: _directoryPanel(context),
+                ),
+              ),
             ),
           ),
-        ),
-      );
+          transitionBuilder: (context, animation, _, child) => SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1, 0),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOut),
+            ),
+            child: child,
+          ),
+        );
+      } else {
+        final height = (MediaQuery.sizeOf(context).height * .82)
+            .clamp(320, 640)
+            .toDouble();
+        selected = await showModalBottomSheet<int>(
+          context: context,
+          showDragHandle: true,
+          isScrollControlled: true,
+          builder: (context) => SafeArea(
+            child: SizedBox(
+              key: const Key('novel-reader-directory-panel-narrow'),
+              height: height,
+              child: _directoryPanel(context),
+            ),
+          ),
+        );
+      }
     } finally {
       _resumeControls();
     }
@@ -345,6 +355,68 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id),
+    );
+  }
+
+  Widget _directoryPanel(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.l10n.novel_directory,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: widget.chapters.length,
+            itemBuilder: (context, index) {
+              final chapter = widget.chapters[index];
+              final previousVolume =
+                  index == 0 ? null : widget.chapters[index - 1].volumeId;
+              final showVolume = chapter.volumeId != null &&
+                  chapter.volumeId != previousVolume;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (showVolume)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Text(
+                        chapter.volumeTitle ?? '',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                  ListTile(
+                    selected: index == _chapterIndex,
+                    leading: SizedBox(
+                      width: 38,
+                      child: Text(
+                        '${index + 1}',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    title: Text(chapter.title),
+                    onTap: () => Navigator.pop(context, index),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -546,6 +618,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   @override
   void dispose() {
+    _settingsGeneration++;
     _controlsTimer?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;

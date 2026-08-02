@@ -16,7 +16,7 @@ class NovelReaderPreferences {
     this.mode = NovelReaderMode.paged,
     this.fontFamily = '',
     this.fontSize = 18,
-    this.lineHeight = 1.65,
+    this.lineHeight = 1.7,
     this.paragraphSpacing = 10,
     this.horizontalMargin = 22,
     this.theme = NovelReaderTheme.sepia,
@@ -79,7 +79,7 @@ class NovelReaderPreferences {
       ),
       fontFamily: json['fontFamily'] as String? ?? '',
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
-      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.65,
+      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.7,
       paragraphSpacing: (json['paragraphSpacing'] as num?)?.toDouble() ?? 10,
       horizontalMargin: (json['horizontalMargin'] as num?)?.toDouble() ?? 22,
       theme: NovelReaderTheme.values.firstWhere(

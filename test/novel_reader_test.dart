@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/script/js_engine.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
+import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +22,8 @@ class _FakeController implements NovelDocumentController {
   String? loadedChapterId;
   NovelReaderPreferences? appliedPreferences;
   final List<String> loadedChapterIds = [];
+  Completer<void>? captureGate;
+  int applyPreferenceCalls = 0;
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -26,11 +33,15 @@ class _FakeController implements NovelDocumentController {
 
   @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
+    applyPreferenceCalls++;
     appliedPreferences = preferences;
   }
 
   @override
-  Future<NovelLocator> captureLocator() async => locator;
+  Future<NovelLocator> captureLocator() async {
+    await captureGate?.future;
+    return locator;
+  }
 
   @override
   Future<void> loadChapter(
@@ -138,6 +149,86 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.loadedChapterId, 'c2');
+  });
+
+  testWidgets('wide reader directory opens as a side panel', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _FakeController();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-directory')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('novel-reader-directory-panel-wide')),
+      findsOneWidget,
+    );
+    expect(find.text('第二章'), findsOneWidget);
+  });
+
+  testWidgets('latest rapid reader setting persists when reader closes',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontSize: 24, lineHeight: 1.9),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontSize: 26, lineHeight: 2.1),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 33));
+    await harness.store.flushPending();
+    final restored = NovelLibraryStore();
+    addTearDown(restored.dispose);
+    await restored.load();
+
+    expect(restored.preferences.fontSize, 26);
+    expect(restored.preferences.lineHeight, 2.1);
+  });
+
+  testWidgets('closing reader cancels pending controller preference work',
+      (tester) async {
+    final controller = _FakeController()..captureGate = Completer<void>();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(const NovelReaderPreferences(fontSize: 25));
+    await tester.pump();
+    expect(controller.applyPreferenceCalls, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.captureGate!.complete();
+    await tester.pump();
+
+    expect(controller.applyPreferenceCalls, 0);
   });
 
   testWidgets('reader starts immersive and center command reveals chrome',
@@ -256,5 +347,76 @@ void main() {
     );
     expect(novelReaderBridgeScript, contains("addEventListener('wheel'"));
     expect(novelReaderBridgeScript, contains('{passive:false}'));
+  });
+
+  test('interactive elements block wheel and touch page commands', () {
+    final engine = JsEngine();
+    addTearDown(engine.dispose);
+    engine.evalSync(r'''
+      const listeners = {};
+      const commands = [];
+      globalThis.window = globalThis;
+      globalThis.innerWidth = 1000;
+      globalThis.innerHeight = 800;
+      globalThis.CSS = {escape: (value) => value};
+      globalThis.document = {
+        scrollingElement: {
+          scrollLeft: 0, scrollTop: 0,
+          scrollWidth: 3000, scrollHeight: 3000,
+          scrollTo: () => {}
+        },
+        documentElement: {dataset: {}},
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        getElementById: () => ({textContent: ''}),
+        addEventListener: (type, listener) => { listeners[type] = listener; }
+      };
+      globalThis.addEventListener = () => {};
+      window.flutter_inappwebview = {
+        callHandler: (channel, command) => commands.push([channel, command])
+      };
+    ''');
+    engine.evalSync(novelReaderBridgeScript);
+
+    final result = jsonDecode(engine.evalSync(r'''
+      const interactive = {closest: () => ({})};
+      const plain = {closest: () => null};
+      const touch = (target, x, y) => ({
+        target,
+        changedTouches: [{clientX: x, clientY: y}]
+      });
+      let prevented = 0;
+      listeners.wheel({
+        target: interactive,
+        deltaY: 100,
+        preventDefault: () => { prevented++; }
+      });
+      const interactiveWheelCalls = commands.length;
+      listeners.wheel({
+        target: plain,
+        deltaY: 100,
+        preventDefault: () => { prevented++; }
+      });
+      const plainWheelCalls = commands.length;
+      commands.length = 0;
+      listeners.touchstart(touch(interactive, 800, 100));
+      listeners.touchend(touch(plain, 100, 100));
+      const interactiveTouchCalls = commands.length;
+      listeners.touchstart(touch(plain, 800, 100));
+      listeners.touchend(touch(plain, 100, 100));
+      const plainTouchCalls = commands.length;
+      JSON.stringify({
+        interactiveWheelCalls,
+        plainWheelCalls,
+        interactiveTouchCalls,
+        plainTouchCalls,
+        prevented
+      });
+    ''')) as Map<String, dynamic>;
+
+    expect(result['interactiveWheelCalls'], 0);
+    expect(result['plainWheelCalls'], 1);
+    expect(result['interactiveTouchCalls'], 0);
+    expect(result['plainTouchCalls'], 1);
   });
 }

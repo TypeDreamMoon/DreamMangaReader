@@ -146,6 +146,11 @@ void main() {
     await store.load();
 
     expect(store.preferences.toolbarAutoHideSeconds, 4);
+    expect(store.preferences.lineHeight, 1.7);
+    expect(
+      NovelReaderPreferences.fromJson(const {}).lineHeight,
+      1.7,
+    );
     expect(
       NovelReaderPreferences.fromJson(
         {'toolbarAutoHideSeconds': -3},

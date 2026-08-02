@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/library_store.dart';
@@ -39,6 +40,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
   List<NovelChapter> _chapters = const [];
   Object? _error;
   bool _loading = true;
+  bool _descriptionExpanded = false;
   int _loadGeneration = 0;
 
   String get _libraryKey => NovelIdentity.remote(_meta.id, _novel.id).key;
@@ -61,6 +63,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
         _chapters = const [];
         _error = null;
         _loading = true;
+        _descriptionExpanded = false;
       });
     }
 
@@ -295,7 +298,16 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             SliverToBoxAdapter(child: _hero(context)),
             SliverToBoxAdapter(child: _actions(context, favorite)),
             SliverToBoxAdapter(child: _description(context)),
-            ..._directorySlivers(context, activeId),
+            SliverToBoxAdapter(
+              child: _directoryPane(
+                context,
+                activeId,
+                height: (MediaQuery.sizeOf(context).height * .72)
+                    .clamp(460, 680)
+                    .toDouble(),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 28)),
           ],
         ),
       ),
@@ -335,11 +347,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
               color: scheme.outlineVariant,
             ),
             Expanded(
-              child: CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(child: SizedBox(height: topInset)),
-                  ..._directorySlivers(context, activeId),
-                ],
+              child: Padding(
+                padding: EdgeInsets.only(top: topInset),
+                child: _directoryPane(context, activeId),
               ),
             ),
           ],
@@ -546,24 +556,59 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
   Widget _description(BuildContext context) {
     final description = (_novel.description ?? '').trim();
     if (description.isEmpty) return const SizedBox.shrink();
+    final canExpand = description.runes.length > 140;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-      child: Text(
-        description,
-        maxLines: 10,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              height: 1.55,
-              letterSpacing: 0,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            description,
+            key: const Key('novel-detail-description'),
+            maxLines: _descriptionExpanded ? null : 10,
+            overflow: _descriptionExpanded
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  height: 1.55,
+                  letterSpacing: 0,
+                ),
+          ),
+          if (canExpand)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(
+                  () => _descriptionExpanded = !_descriptionExpanded,
+                ),
+                icon: Icon(
+                  _descriptionExpanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                ),
+                label: Text(
+                  _descriptionExpanded
+                      ? context.l10n.detail_collapse
+                      : context.l10n.detail_expandAll,
+                ),
+              ),
             ),
+        ],
       ),
     );
   }
 
-  List<Widget> _directorySlivers(BuildContext context, String? activeId) {
-    return [
-      SliverToBoxAdapter(
-        child: Padding(
+  Widget _directoryPane(
+    BuildContext context,
+    String? activeId, {
+    double? height,
+  }) {
+    final activeIndex = activeId == null
+        ? -1
+        : _chapters.indexWhere((chapter) => chapter.id == activeId);
+    final content = Column(
+      children: [
+        Padding(
           key: const Key('novel-detail-directory'),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
           child: Row(
@@ -580,28 +625,33 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             ],
           ),
         ),
-      ),
-      if (_loading)
-        const SliverFillRemaining(
-          hasScrollBody: false,
-          child: Center(child: CircularProgressIndicator()),
-        )
-      else if (_chapters.isEmpty)
-        SliverFillRemaining(
-          hasScrollBody: false,
-          child: Center(child: Text(context.l10n.novel_noChapters)),
-        )
-      else
-        SliverList.builder(
-          itemCount: _chapters.length,
-          itemBuilder: (context, index) => _chapterRow(
-            context,
-            index,
-            activeId: activeId,
+        if (_loading)
+          const Expanded(child: Center(child: CircularProgressIndicator()))
+        else if (_chapters.isEmpty)
+          Expanded(
+            child: Center(child: Text(context.l10n.novel_noChapters)),
+          )
+        else
+          Expanded(
+            child: ScrollablePositionedList.builder(
+              key: ValueKey(
+                'novel-directory-${_meta.id}-${_novel.id}-'
+                '${_chapters.length}-$activeIndex',
+              ),
+              initialScrollIndex: activeIndex < 0 ? 0 : activeIndex,
+              initialAlignment: activeIndex < 0 ? 0 : .18,
+              itemCount: _chapters.length,
+              itemBuilder: (context, index) => _chapterRow(
+                context,
+                index,
+                activeId: activeId,
+              ),
+            ),
           ),
-        ),
-      const SliverToBoxAdapter(child: SizedBox(height: 28)),
-    ];
+      ],
+    );
+    if (height == null) return content;
+    return SizedBox(height: height, child: content);
   }
 
   Widget _chapterRow(
