@@ -15,6 +15,7 @@ import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
+import '../novel/novel_import_sheet.dart';
 import '../novel/novel_library_view.dart';
 import 'history_page.dart';
 import 'library_kind_switch.dart';
@@ -47,16 +48,30 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 }
 
-class _NovelLibraryPage extends StatelessWidget {
+/// 小说书架页。外壳(毛玻璃标题栏 / 入场动画 / 搜索开关)与 [_MangaLibraryPage] 保持
+/// 同一副长相 —— 两边靠顶部分段器互切,壳不一样切过去会「换了个 App」。
+///
+/// 唯一的动作差异是漫画那边的刷新键:它重拉的是底部混合源浏览区,小说书架只有本地
+/// 导入 + 收藏(store 变更自动重建),没有可刷新的东西,那个位置改放导入。
+class _NovelLibraryPage extends StatefulWidget {
   const _NovelLibraryPage({required this.onKindChanged});
 
   final ValueChanged<LibraryKind> onKindChanged;
 
   @override
+  State<_NovelLibraryPage> createState() => _NovelLibraryPageState();
+}
+
+class _NovelLibraryPageState extends State<_NovelLibraryPage> {
+  bool _showShelfSearch = false;
+
+  @override
   Widget build(BuildContext context) {
+    // 与漫画书架同构:内容延伸到毛玻璃标题栏之后,body 手动留出顶部内边距。
+    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
+      extendBodyBehindAppBar: true,
+      appBar: GlassTitleBar(
         title: Text(
           context.l10n.navBookshelf,
           style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
@@ -64,8 +79,17 @@ class _NovelLibraryPage extends StatelessWidget {
         actions: [
           LibraryKindSwitch(
             selected: LibraryKind.novel,
-            onSelected: onKindChanged,
+            onSelected: widget.onKindChanged,
           ),
+          IconButton(
+            tooltip: context.l10n.novel_librarySearchHint,
+            onPressed: () =>
+                setState(() => _showShelfSearch = !_showShelfSearch),
+            icon: Icon(
+              _showShelfSearch ? Icons.search_off_rounded : Icons.search_rounded,
+            ),
+          ),
+          const NovelImportButton(compact: true),
           IconButton(
             tooltip: context.l10n.novel_historyTooltip,
             onPressed: () => Navigator.of(context).push(
@@ -78,7 +102,14 @@ class _NovelLibraryPage extends StatelessWidget {
           const SizedBox(width: 8),
         ],
       ),
-      body: const NovelLibraryView(),
+      // 内容自下而上升起(标题栏则自上而下落,合成「上下对开」入场)。
+      body: EntranceSlide(
+        begin: const Offset(0, 0.06),
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: NovelLibraryView(searchVisible: _showShelfSearch),
+        ),
+      ),
     );
   }
 }
