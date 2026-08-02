@@ -619,5 +619,9 @@
   "novel_readerLineHeight": "行高",
   "novel_readerParagraphSpacing": "段落間距",
   "novel_readerHorizontalMargin": "左右邊距",
-  "novel_readerKeepScreenOn": "閱讀時保持螢幕常亮"
+  "novel_readerKeepScreenOn": "閱讀時保持螢幕常亮",
+  "novel_readerAutoHide": "工具列自動隱藏",
+  "novel_readerAutoHideOff": "關閉",
+  "novel_readerSeconds": "{seconds} 秒",
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
 }

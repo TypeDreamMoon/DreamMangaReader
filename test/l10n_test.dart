@@ -110,6 +110,9 @@ const _requiredNovelKeys = {
   'novel_readerParagraphSpacing',
   'novel_readerHorizontalMargin',
   'novel_readerKeepScreenOn',
+  'novel_readerAutoHide',
+  'novel_readerAutoHideOff',
+  'novel_readerSeconds',
 };
 
 void main() {
@@ -130,7 +133,8 @@ void main() {
       keysByFile[path] = keys;
       expect(keys, containsAll(_requiredNovelKeys), reason: path);
       for (final key in _requiredNovelKeys) {
-        expect((json[key] as String?)?.trim(), isNotEmpty, reason: '$path:$key');
+        expect((json[key] as String?)?.trim(), isNotEmpty,
+            reason: '$path:$key');
       }
     }
     final template = keysByFile[files.first]!;
@@ -181,8 +185,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('本棚'), findsOneWidget);
 
-    await tester.pumpWidget(_app(
-        const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant')));
+    await tester.pumpWidget(
+        _app(const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant')));
     await tester.pumpAndSettle();
     expect(find.text('書架'), findsOneWidget);
   });

@@ -619,5 +619,9 @@
   "novel_readerLineHeight": "行間",
   "novel_readerParagraphSpacing": "段落間隔",
   "novel_readerHorizontalMargin": "左右の余白",
-  "novel_readerKeepScreenOn": "読書中は画面を点灯したままにする"
+  "novel_readerKeepScreenOn": "読書中は画面を点灯したままにする",
+  "novel_readerAutoHide": "ツールバーを自動的に隠す",
+  "novel_readerAutoHideOff": "オフ",
+  "novel_readerSeconds": "{seconds} 秒",
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
 }

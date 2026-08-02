@@ -619,5 +619,9 @@
   "novel_readerLineHeight": "Line height",
   "novel_readerParagraphSpacing": "Paragraph spacing",
   "novel_readerHorizontalMargin": "Horizontal margins",
-  "novel_readerKeepScreenOn": "Keep screen on while reading"
+  "novel_readerKeepScreenOn": "Keep screen on while reading",
+  "novel_readerAutoHide": "Auto-hide toolbar",
+  "novel_readerAutoHideOff": "Off",
+  "novel_readerSeconds": "{seconds} s",
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
 }
