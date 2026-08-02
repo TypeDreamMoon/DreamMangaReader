@@ -511,5 +511,6 @@ class ScriptSource implements MangaSource, NovelSource {
         name: (m['name'] as String?) ?? '',
         url: m['url'] as String?,
         number: (m['number'] as num?)?.toDouble(),
+        publishedAt: (m['publishedAt'] as num?)?.toInt(),
       );
 }

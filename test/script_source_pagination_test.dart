@@ -64,6 +64,16 @@ var __source = {
       title: '人物图集',
       updatedAt: 1785600000000
     }];
+  },
+  prepareChapterList: function () {
+    return { url: 'https://example.test/chapters' };
+  },
+  handleChapterList: function () {
+    return [{
+      id: 'c1',
+      name: '最新图集',
+      publishedAt: 1785686400000
+    }];
   }
 };
 ''';
@@ -138,6 +148,19 @@ void main() {
     final result = await source.getDiscovery(1);
 
     expect(result.items.single.updatedAt, 1785600000000);
+  });
+
+  test('chapter decoding preserves script publish times', () async {
+    final source = ScriptSource(
+      engine: JsEngine(),
+      http: RoutingHttp((_) => jsonResponse({'unused': true})),
+      scriptCode: timestampScript,
+    );
+    addTearDown(source.dispose);
+
+    final result = await source.getChapters('m1');
+
+    expect(result.items.single.publishedAt, 1785686400000);
   });
 
   test('legacy chapter arrays still execute one request', () async {
