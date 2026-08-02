@@ -4,10 +4,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../app/library_store.dart' show LibraryStore;
 import '../../app/novel_library_store.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/source_registry.dart';
+import '../../ui/ui.dart';
+import '../common/animations.dart';
 import 'novel_cover.dart';
 import 'novel_detail_page.dart';
 import 'novel_import_sheet.dart';
@@ -132,9 +136,13 @@ class NovelLibraryView extends StatefulWidget {
   const NovelLibraryView({
     super.key,
     this.importServices,
+    this.searchVisible = false,
   });
 
   final NovelImportServices? importServices;
+
+  /// 搜索框是否展开。开关在书架页标题栏上(与漫画书架同一个放大镜),收起时清筛选词。
+  final bool searchVisible;
 
   @override
   State<NovelLibraryView> createState() => _NovelLibraryViewState();
@@ -145,7 +153,18 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
   String _query = '';
 
   @override
+  void didUpdateWidget(covariant NovelLibraryView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 收起搜索框 = 退出筛选态(漫画书架同语义)。已在重建途中,不必再 setState。
+    if (oldWidget.searchVisible && !widget.searchVisible) {
+      _search.clear();
+      _query = '';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final p = context.palette;
     final store = NovelLibraryScope.of(context);
     final entries = store.entries.where((entry) {
       final query = _query.toLowerCase();
@@ -162,30 +181,29 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _search,
-                  onChanged: (value) => setState(() => _query = value.trim()),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: context.l10n.novel_librarySearchHint,
-                    prefixIcon: const Icon(Icons.search_rounded),
+        // 搜索框展开/收起用高度动画,避免书架内容硬跳(与漫画书架同款)。
+        AnimatedSize(
+          duration: LibraryStore.animationsEnabled
+              ? const Duration(milliseconds: 220)
+              : Duration.zero,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: widget.searchVisible
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                  child: AppSearchField(
+                    controller: _search,
+                    autofocus: true,
+                    hint: context.l10n.novel_librarySearchHint,
+                    onChanged: (value) => setState(() => _query = value.trim()),
                   ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              NovelImportButton(services: widget.importServices),
-            ],
-          ),
+                )
+              : const SizedBox(width: double.infinity),
         ),
         Expanded(
           child: entries.isEmpty
               ? _emptyState()
-              : ListView(
+              : AppScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                   children: [
                     if (continued.isNotEmpty) ...[
@@ -194,7 +212,7 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                         continued.length,
                       ),
                       for (final entry in continued)
-                        _entryTile(context, store, entry, continuing: true),
+                        _entryTile(context, p, store, entry),
                       const SizedBox(height: 14),
                     ],
                     _sectionTitle(
@@ -202,7 +220,7 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                       entries.length,
                     ),
                     for (final entry in entries)
-                      _entryTile(context, store, entry),
+                      _entryTile(context, p, store, entry),
                   ],
                 ),
         ),
@@ -211,41 +229,34 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
   }
 
   Widget _emptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.menu_book_rounded, size: 46),
-            const SizedBox(height: 12),
-            Text(
-              _query.isEmpty
-                  ? context.l10n.novel_libraryEmpty
-                  : context.l10n.novel_libraryNoMatch,
-            ),
-          ],
-        ),
-      ),
+    // 空书架的正经出路就是导入,把导入按钮当 CTA 摆在空态里(标题栏那颗只是快捷入口)。
+    return EmptyState(
+      icon: Icons.menu_book_rounded,
+      iconSize: 46,
+      title: _query.isEmpty
+          ? context.l10n.novel_libraryEmpty
+          : context.l10n.novel_libraryNoMatch,
+      action: _query.isEmpty
+          ? NovelImportButton(services: widget.importServices)
+          : null,
     );
   }
 
   Widget _sectionTitle(String title, int count) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
-      child: Text(
-        context.l10n.novel_sectionCount(title, count),
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+    return AppSectionHeading(
+      context.l10n.novel_sectionCount(title, count),
+      padding: const EdgeInsets.fromLTRB(0, 6, 0, 14),
     );
   }
 
+  /// 书架行。版式跟漫画书架的 `coverListTile` 对齐(56 宽封面 + palette 面/描边 +
+  /// [Pressable] 按压反馈),不用 Material/InkWell 那套默认色 —— 三主题下会跑色。
   Widget _entryTile(
     BuildContext context,
+    AppPalette p,
     NovelLibraryStore store,
-    NovelLibraryEntry entry, {
-    bool continuing = false,
-  }) {
+    NovelLibraryEntry entry,
+  ) {
     final progress = store.progressFor(entry.key);
     final novel = Novel(
       id: entry.novelId ?? entry.fingerprint ?? entry.key,
@@ -255,80 +266,96 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     );
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: entry.available ? () => openNovelLibraryEntry(context, entry) : null,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 48,
-                  child: NovelCover(novel: novel, radius: 6),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+      child: Pressable(
+        onTap:
+            entry.available ? () => openNovelLibraryEntry(context, entry) : null,
+        hoverElevate: true,
+        child: Container(
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(context.radius),
+            border: Border.all(color: p.line),
+          ),
+          padding: const EdgeInsets.all(9),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 56,
+                child: NovelCover(novel: novel, radius: 8),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: p.textPrimary,
+                        fontSize: 14,
+                        height: 1.25,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (entry.authors.isNotEmpty) ...[
+                      const SizedBox(height: 6),
                       Text(
-                        entry.title,
+                        entry.authors.join('、'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      if (entry.authors.isNotEmpty)
-                        Text(
-                          entry.authors.join('、'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      const SizedBox(height: 3),
-                      Text(
-                        !entry.available
-                            ? context.l10n.novel_fileMissing
-                            : progress != null
-                                ? context.l10n.novel_readTo(progress.chapterId)
-                                : entry.isLocal
-                                    ? context.l10n.novel_localFormat(
-                                        entry.origin == NovelOrigin.localTxt
-                                            ? 'TXT'
-                                            : 'EPUB',
-                                      )
-                                    : context.l10n.novel_online,
-                        style: TextStyle(
-                          color: !entry.available
-                              ? Theme.of(context).colorScheme.error
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: p.textMuted, fontSize: 11.5),
                       ),
                     ],
-                  ),
+                    const SizedBox(height: 4),
+                    Text(
+                      !entry.available
+                          ? context.l10n.novel_fileMissing
+                          : progress != null
+                              ? context.l10n.novel_readTo(progress.chapterId)
+                              : entry.isLocal
+                                  ? context.l10n.novel_localFormat(
+                                      entry.origin == NovelOrigin.localTxt
+                                          ? 'TXT'
+                                          : 'EPUB',
+                                    )
+                                  : context.l10n.novel_online,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: !entry.available
+                            ? p.statusFail
+                            : progress != null
+                                ? p.accentSoft
+                                : p.textMuted,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
                 ),
-                if (!entry.available)
-                  NovelImportButton(
-                    services: widget.importServices,
-                    compact: true,
-                  ),
-                IconButton(
-                  tooltip: entry.isLocal
-                      ? context.l10n.novel_deleteLocal
-                      : context.l10n.novel_removeFavorite,
-                  onPressed: () => entry.isLocal
-                      ? _confirmDelete(context, store, entry)
-                      : store.toggleRemoteFavorite(entry),
-                  icon: Icon(
-                    entry.isLocal
-                        ? Icons.delete_outline_rounded
-                        : Icons.favorite_border_rounded,
-                  ),
+              ),
+              if (!entry.available)
+                NovelImportButton(
+                  services: widget.importServices,
+                  compact: true,
                 ),
-              ],
-            ),
+              IconButton(
+                tooltip: entry.isLocal
+                    ? context.l10n.novel_deleteLocal
+                    : context.l10n.novel_removeFavorite,
+                onPressed: () => entry.isLocal
+                    ? _confirmDelete(context, store, entry)
+                    : store.toggleRemoteFavorite(entry),
+                icon: Icon(
+                  entry.isLocal
+                      ? Icons.delete_outline_rounded
+                      : Icons.favorite_border_rounded,
+                  color: p.textMuted,
+                ),
+              ),
+            ],
           ),
         ),
       ),

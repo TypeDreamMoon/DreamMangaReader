@@ -149,6 +149,8 @@ void main() {
     ));
 
     await tester.pumpWidget(MaterialApp(
+      // 书架行走 palette(AppTokens 主题扩展),必须给真主题。
+      theme: buildTheme(AppThemeVariant.light),
       locale: const Locale('zh'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -160,6 +162,48 @@ void main() {
 
     expect(find.text('缺失的小说'), findsWidgets);
     expect(find.text('文件缺失'), findsOneWidget);
+    store.dispose();
+  });
+
+  testWidgets('novel shelf search field follows the app bar toggle',
+      (tester) async {
+    final store = NovelLibraryStore();
+    await store.load();
+    store.addLocal(NovelLibraryEntry.local(
+      sha256: 'toggle',
+      title: '搜索用小说',
+      privatePath: sandbox.path,
+      origin: NovelOrigin.localTxt,
+    ));
+
+    Widget shelf({required bool searchVisible}) => MaterialApp(
+          theme: buildTheme(AppThemeVariant.light),
+          locale: const Locale('zh'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: NovelLibraryScope(
+            store: store,
+            child: Scaffold(
+              body: NovelLibraryView(searchVisible: searchVisible),
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(shelf(searchVisible: false));
+    expect(find.text('搜索小说书架'), findsNothing);
+
+    await tester.pumpWidget(shelf(searchVisible: true));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索小说书架'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '对不上的词');
+    await tester.pumpAndSettle();
+    expect(find.text('搜索用小说'), findsNothing);
+
+    // 收起搜索框要退出筛选态,否则书架会「凭空少书」且没有可见的筛选提示。
+    // findsWidgets:生成式封面也会把书名画上去,行标题之外还有一处。
+    await tester.pumpWidget(shelf(searchVisible: false));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索用小说'), findsWidgets);
     store.dispose();
   });
 
