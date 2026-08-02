@@ -245,7 +245,7 @@ class LibraryStore extends ChangeNotifier {
   int _gridColumns = 0; // 0 = 自适应
   int _preload = 3; // 预加载后 N 页
   bool _doublePage = false; // 翻页模式双页并排
-  bool _chaptersDesc = false; // 详情页章节列表倒序(新章在上,几千章免下拉)
+  bool _chaptersDesc = true; // 详情页章节列表倒序(新章在上,几千章免下拉)
   bool _doubleTapZoom = true; // 允许双击缩放
   bool _showPageNumber = true; // 展示页码
   double _brightness = 1.0; // 阅读器亮度(0.25~1.0,靠遮罩变暗)
@@ -648,7 +648,7 @@ class LibraryStore extends ChangeNotifier {
       _gridColumns = (prefs.getInt(_kGridColumns) ?? 0).clamp(0, 8);
       _preload = (prefs.getInt(_kPreload) ?? 3).clamp(0, 10);
       _doublePage = prefs.getBool(_kDoublePage) ?? false;
-      _chaptersDesc = prefs.getBool(_kChaptersDesc) ?? false;
+      _chaptersDesc = prefs.getBool(_kChaptersDesc) ?? true;
       _doubleTapZoom = prefs.getBool(_kDoubleTapZoom) ?? true;
       _showPageNumber = prefs.getBool(_kShowPageNumber) ?? true;
       _brightness = (prefs.getDouble(_kBrightness) ?? 1.0).clamp(0.25, 1.0);
