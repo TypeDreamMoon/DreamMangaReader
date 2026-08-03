@@ -207,6 +207,72 @@ void main() {
     store.dispose();
   });
 
+  testWidgets('a book listed twice gets distinct cover hero tags',
+      (tester) async {
+    // 同一本远端书会同时出现在「继续阅读」和书架列表里。两处封面都要飞入详情页,
+    // 但 Hero tag 必须分开 —— 同屏出现两个相同 tag 时 Flutter 直接抛异常。
+    final store = NovelLibraryStore();
+    await store.load();
+    store.toggleRemoteFavorite(NovelLibraryEntry.remote(
+      sourceId: 'src',
+      novelId: 'n1',
+      title: '两处都在的小说',
+    ));
+    store.saveProgress(
+      NovelIdentity.remote('src', 'n1').key,
+      const NovelLocator(chapterId: 'c1', fraction: .3),
+    );
+    await store.flushPending();
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: NovelLibraryScope(
+        store: store,
+        child: const Scaffold(body: NovelLibraryView()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final tags = tester
+        .widgetList<Hero>(find.byType(Hero))
+        .map((hero) => hero.tag)
+        .toList();
+    expect(tags, hasLength(2));
+    expect(tags.toSet(), hasLength(2));
+    expect(tester.takeException(), isNull);
+    store.dispose();
+  });
+
+  testWidgets('local books get no hero tag', (tester) async {
+    // 本地书点开的是阅读器而不是详情页,没有可飞过去的封面 —— 不该占 tag。
+    final store = NovelLibraryStore();
+    await store.load();
+    store.addLocal(NovelLibraryEntry.local(
+      sha256: 'local-only',
+      title: '本地小说',
+      privatePath: sandbox.path,
+      origin: NovelOrigin.localTxt,
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: NovelLibraryScope(
+        store: store,
+        child: const Scaffold(body: NovelLibraryView()),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Hero), findsNothing);
+    store.dispose();
+  });
+
   testWidgets('novel history is isolated from manga history', (tester) async {
     final mangaStore = LibraryStore();
     final novelStore = NovelLibraryStore();

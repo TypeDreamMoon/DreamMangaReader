@@ -371,10 +371,16 @@ class NovelBrowserState extends State<NovelBrowser> {
     }
   }
 
-  void _open(_NovelResult result) {
+  /// 卡片/行的 Hero tag。带下标:同一本书可能在结果里出现多次(混合源翻页),
+  /// 不带下标会撞 tag,Hero 直接抛「同屏多个相同 tag」。
+  String _heroTag(_NovelResult result, int index, String prefix) =>
+      '$prefix:${result.meta.id}:${result.novel.id}:$index';
+
+  void _open(_NovelResult result, {Object? heroTag}) {
     Navigator.of(context).push(appRoute(NovelDetailPage(
       meta: result.meta,
       novel: result.novel,
+      heroTag: heroTag,
       sourceBuilder: widget.sourceBuilder,
       sourceCatalog: widget.sourceCatalog,
     )));
@@ -498,25 +504,29 @@ class NovelBrowserState extends State<NovelBrowser> {
           : null,
       cardBuilder: (context, index) {
         final result = _results[index];
+        final tag = _heroTag(result, index, 'nfeed');
         return NovelFeedCard(
           novel: result.novel,
           meta: result.meta,
           layout: layout,
+          heroTag: tag,
           sourceCountLabel: result.sourceIds.length > 1
               ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
               : null,
-          onTap: () => _open(result),
+          onTap: () => _open(result, heroTag: tag),
         );
       },
       tileBuilder: (context, index) {
         final result = _results[index];
+        final tag = _heroTag(result, index, 'nfeedl');
         return NovelFeedTile(
           novel: result.novel,
           meta: result.meta,
+          heroTag: tag,
           sourceCountLabel: result.sourceIds.length > 1
               ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
               : null,
-          onTap: () => _open(result),
+          onTap: () => _open(result, heroTag: tag),
         );
       },
     );

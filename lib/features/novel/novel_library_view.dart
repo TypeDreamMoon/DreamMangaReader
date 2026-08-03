@@ -212,7 +212,8 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                         continued.length,
                       ),
                       for (final entry in continued)
-                        _entryTile(context, p, store, entry),
+                        _entryTile(context, p, store, entry,
+                            tagPrefix: 'ncont'),
                       const SizedBox(height: 14),
                     ],
                     _sectionTitle(
@@ -220,7 +221,7 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
                       entries.length,
                     ),
                     for (final entry in entries)
-                      _entryTile(context, p, store, entry),
+                      _entryTile(context, p, store, entry, tagPrefix: 'nshelf'),
                   ],
                 ),
         ),
@@ -255,9 +256,14 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     BuildContext context,
     AppPalette p,
     NovelLibraryStore store,
-    NovelLibraryEntry entry,
-  ) {
+    NovelLibraryEntry entry, {
+    required String tagPrefix,
+  }) {
     final progress = store.progressFor(entry.key);
+    // 只有远端条目会打开详情页(本地书直接进阅读器),本地书不给 tag。
+    // 前缀区分区块:同一本书会同时出现在「继续阅读」和书架列表里,
+    // 共用 tag 会让 Hero 抛「同屏多个相同 tag」。
+    final heroTag = entry.isLocal ? null : '$tagPrefix:${entry.key}';
     final novel = Novel(
       id: entry.novelId ?? entry.fingerprint ?? entry.key,
       title: entry.title,
@@ -267,8 +273,9 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Pressable(
-        onTap:
-            entry.available ? () => openNovelLibraryEntry(context, entry) : null,
+        onTap: entry.available
+            ? () => openNovelLibraryEntry(context, entry, heroTag: heroTag)
+            : null,
         hoverElevate: true,
         child: Container(
           decoration: BoxDecoration(
@@ -281,7 +288,11 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
             children: [
               SizedBox(
                 width: 56,
-                child: NovelCover(novel: novel, radius: 8),
+                child: NovelCover(
+                  novel: novel,
+                  radius: 8,
+                  heroTag: heroTag,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -412,8 +423,9 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
 
 Future<void> openNovelLibraryEntry(
   BuildContext context,
-  NovelLibraryEntry entry,
-) async {
+  NovelLibraryEntry entry, {
+  Object? heroTag,
+}) async {
   if (entry.isLocal) {
     final path = entry.privatePath;
     if (path == null) return;
@@ -461,6 +473,7 @@ Future<void> openNovelLibraryEntry(
   await Navigator.of(context).push(MaterialPageRoute<void>(
     builder: (_) => NovelDetailPage(
       meta: meta!,
+      heroTag: heroTag,
       novel: Novel(
         id: entry.novelId!,
         title: entry.title,

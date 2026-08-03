@@ -17,6 +17,7 @@ class NovelFeedCard extends StatelessWidget {
     required this.layout,
     required this.sourceCountLabel,
     required this.onTap,
+    this.heroTag,
   });
 
   final Novel novel;
@@ -24,6 +25,9 @@ class NovelFeedCard extends StatelessWidget {
   final FeedLayout layout;
   final String? sourceCountLabel;
   final VoidCallback onTap;
+
+  /// 封面飞入详情页的 Hero tag(同屏唯一)。
+  final Object? heroTag;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +40,7 @@ class NovelFeedCard extends StatelessWidget {
           novel: novel,
           headers: imageHeadersOf(meta),
           compactGeneratedTitle: true,
+          heroTag: heroTag,
         ),
         Positioned(
           left: 6,
@@ -95,12 +100,16 @@ class NovelFeedTile extends StatelessWidget {
     required this.meta,
     required this.sourceCountLabel,
     required this.onTap,
+    this.heroTag,
   });
 
   final Novel novel;
   final SourceMeta meta;
   final String? sourceCountLabel;
   final VoidCallback onTap;
+
+  /// 封面飞入详情页的 Hero tag(同屏唯一)。
+  final Object? heroTag;
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +138,7 @@ class NovelFeedTile extends StatelessWidget {
                   novel: novel,
                   headers: imageHeadersOf(meta),
                   compactGeneratedTitle: true,
+                  heroTag: heroTag,
                 ),
               ),
               const SizedBox(width: 12),
