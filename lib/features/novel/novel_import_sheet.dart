@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/import/epub_novel_importer.dart';
 import '../../core/novel/import/txt_novel_importer.dart';
@@ -282,7 +283,11 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
         children: [
           Text(
             context.l10n.novel_importPreview,
-            style: Theme.of(context).textTheme.titleLarge,
+            style: TextStyle(
+              color: context.palette.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -336,7 +341,7 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
             const SizedBox(height: 12),
             Text(
               context.l10n.novel_operationFailed('$_error'),
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              style: TextStyle(color: context.palette.statusFail),
             ),
           ],
           const SizedBox(height: 22),
