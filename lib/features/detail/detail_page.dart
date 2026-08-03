@@ -26,6 +26,7 @@ import '../common/transitions.dart';
 import '../library/manga_cover.dart';
 import '../reader/reader_page.dart';
 import 'bangumi_search_sheet.dart';
+import 'chapter_order.dart';
 import 'cross_source_sheet.dart';
 
 class DetailPage extends StatefulWidget {
@@ -231,15 +232,20 @@ class _DetailPageState extends State<DetailPage> {
     final extraByNumber = <double, _MergedChapter>{}; // 他源独有话数
 
     for (final c in current) {
-      final n = parseChapterNumber(c.name);
+      final order = chapterOrder(c, rows.length);
+      final n = order.number;
       final row = _MergedChapter(
-          n, c.name, [_ChapterProvider(widget.meta, _source, c, widget.manga.id)]);
+          n,
+          c.name,
+          [_ChapterProvider(widget.meta, _source, c, widget.manga.id)],
+          order);
       rows.add(row);
       if (n != null) (currentByNumber[n] ??= []).add(row);
     }
     for (final os in _otherSources) {
       for (final c in os.chapters) {
-        final n = parseChapterNumber(c.name);
+        final order = chapterOrder(c, rows.length);
+        final n = order.number;
         if (n == null) continue; // 他源无号章无法对齐,忽略
         final prov = _ChapterProvider(os.meta, os.source, c, os.mangaId);
         final curRows = currentByNumber[n];
@@ -252,7 +258,7 @@ class _DetailPageState extends State<DetailPage> {
         } else {
           final er = extraByNumber[n];
           if (er == null) {
-            final row = _MergedChapter(n, c.name, [prov]);
+            final row = _MergedChapter(n, c.name, [prov], order);
             extraByNumber[n] = row;
             rows.add(row);
           } else if (!er.providers.any((pv) => pv.meta.id == os.meta.id)) {
@@ -261,14 +267,10 @@ class _DetailPageState extends State<DetailPage> {
         }
       }
     }
-    // 稳定升序:等话数按原序(上/下不乱),无号章(null)沉底。
+    // 按显式话数、发布时间或标题话数稳定升序。
     final indexed = [for (var i = 0; i < rows.length; i++) (i, rows[i])];
-    indexed.sort((a, b) {
-      final an = a.$2.number ?? double.infinity;
-      final bn = b.$2.number ?? double.infinity;
-      final c = an.compareTo(bn);
-      return c != 0 ? c : a.$1.compareTo(b.$1);
-    });
+    indexed.sort((left, right) =>
+        compareChapterOrder(left.$2.order, right.$2.order));
     return [for (final e in indexed) e.$2];
   }
 
@@ -1810,8 +1812,9 @@ class _ChapterProvider {
 
 /// 合并后的一话:跨源按话数对齐,记录该话由哪些源提供。
 class _MergedChapter {
-  _MergedChapter(this.number, this.label, this.providers);
+  _MergedChapter(this.number, this.label, this.providers, this.order);
   final double? number; // 话数;null = 解析不出(番外等),按当前源原样保留
   final String label; // 展示章名(取首个 provider 的)
   final List<_ChapterProvider> providers; // 提供该话的源(当前源优先在前)
+  final ChapterOrder order;
 }
