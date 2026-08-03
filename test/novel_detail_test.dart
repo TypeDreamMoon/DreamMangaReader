@@ -130,7 +130,7 @@ void main() {
     if (await temp.exists()) await temp.delete(recursive: true);
   });
 
-  Widget harness() {
+  Widget harness({Object? heroTag}) {
     NovelSource build(SourceMeta meta) => switch (meta.id) {
           'a' => _FakeNovelSource(
               meta: meta,
@@ -162,6 +162,7 @@ void main() {
             child: NovelDetailPage(
               meta: sourceA,
               novel: novelA,
+              heroTag: heroTag,
               sourceBuilder: build,
               sourceCatalog: const [sourceA, sourceB],
             ),
@@ -170,6 +171,25 @@ void main() {
       ),
     );
   }
+
+  testWidgets('the hero tag lands on the detail cover', (tester) async {
+    // 列表页把 tag 交给详情页,封面才能从卡片飞过来。同屏只能有这一个 Hero,
+    // 多一个就是 tag 撞车(Flutter 会直接抛)。
+    await tester.pumpWidget(harness(heroTag: 'nfeed:a:novel-a:0'));
+    await tester.pumpAndSettle();
+
+    final heroes = tester.widgetList<Hero>(find.byType(Hero)).toList();
+    expect(heroes, hasLength(1));
+    expect(heroes.single.tag, 'nfeed:a:novel-a:0');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('no hero tag means no hero on the detail cover', (tester) async {
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Hero), findsNothing);
+  });
 
   testWidgets('detail uses one source and never merges chapter lists',
       (tester) async {

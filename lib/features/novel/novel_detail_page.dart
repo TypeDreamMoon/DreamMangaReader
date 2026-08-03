@@ -10,6 +10,8 @@ import '../../app/library_store.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../app/ui_signals.dart';
+import '../../core/color/cover_palette.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
@@ -34,12 +36,17 @@ class NovelDetailPage extends StatefulWidget {
     super.key,
     required this.meta,
     required this.novel,
+    this.heroTag,
     this.sourceBuilder = buildNovelSource,
     this.sourceCatalog,
   });
 
   final SourceMeta meta;
   final Novel novel;
+
+  /// 列表页封面的 Hero tag —— 传了才有「封面飞入详情」的过渡。
+  final Object? heroTag;
+
   final NovelSourceFactory sourceBuilder;
   final List<SourceMeta>? sourceCatalog;
 
@@ -57,12 +64,62 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
   bool _descriptionExpanded = false;
   int _loadGeneration = 0;
 
+  CoverPalette? _cover; // 封面主色(KMeans),null=没封面/未算好 → 退回主题 accent
+  String? _paletteFor; // 已取过色的封面 url(换源/补详情后才重算)
+  late Object _tintToken; // 全局背景封面色的栈 token(本页在栈,离开出栈)
+  Color? _coverTint; // 算好的封面色(取消返回手势时重新压栈)
+  bool _tintPushed = true;
+  ModalRoute<Object?>? _route; // 监听本页路由动画:开始返回就出栈,不等 dispose
+
   String get _libraryKey => NovelIdentity.remote(_meta.id, _novel.id).key;
+
+  /// 页面强调色:封面主色 > 主题 accent。与漫画详情页同一套回退链。
+  Color get _accent => _cover?.primary ?? context.palette.accent;
 
   @override
   void initState() {
     super.initState();
+    _tintToken = DetailTint.push(); // 进入详情:入栈(取色算好后 update)
     unawaited(_load(_meta, _novel));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      _route?.animation?.removeStatusListener(_onRouteAnim);
+      _route = route;
+      _route?.animation?.addStatusListener(_onRouteAnim);
+    }
+  }
+
+  // 返回动画一开始就把封面色出栈:背景在「离开动画」里就渐变回设置色,
+  // 而不是等回到列表页才闪一下。取消返回手势则重新压回。
+  void _onRouteAnim(AnimationStatus status) {
+    final leaving = status == AnimationStatus.reverse ||
+        status == AnimationStatus.dismissed;
+    if (leaving && _tintPushed) {
+      _tintPushed = false;
+      DetailTint.pop(_tintToken);
+    } else if (!leaving && !_tintPushed && mounted) {
+      _tintPushed = true;
+      _tintToken = DetailTint.push(_coverTint);
+    }
+  }
+
+  /// 从封面图算主题色。小说很多是生成式封面(没有网络图),这时 [extractCoverPalette]
+  /// 直接返回 null,页面照常用主题 accent —— 与漫画「取色失败就退回 accent」一致。
+  Future<void> _extractPalette() async {
+    final url = _novel.cover;
+    if (url == null || url.isEmpty || url == _paletteFor) return;
+    _paletteFor = url;
+    final palette = await extractCoverPalette(url, imageHeadersOf(_meta));
+    if (!mounted || palette == null || url != _novel.cover) return;
+    setState(() => _cover = palette);
+    _coverTint = palette.primary;
+    // 让全局背景在本页混入封面主题色(与漫画详情页共用同一个 tint 栈)。
+    if (_tintPushed) DetailTint.update(_tintToken, palette.primary);
   }
 
   Future<void> _load(SourceMeta meta, Novel seed) async {
@@ -78,8 +135,12 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
         _error = null;
         _loading = true;
         _descriptionExpanded = false;
+        _cover = null; // 换源 = 换封面,旧主题色不能留着
+        _paletteFor = null;
       });
     }
+    // 先用列表页带过来的封面取色:详情还在路上时页面就已经染上主题色了。
+    unawaited(_extractPalette());
 
     NovelSource? source;
     try {
@@ -101,6 +162,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
         _chapters = values[1] as List<NovelChapter>;
         _loading = false;
       });
+      // 详情可能给了更好的封面(列表页往往只有缩略图)→ 用它重算一次。
+      unawaited(_extractPalette());
     } catch (error) {
       if (!mounted || generation != _loadGeneration || _source != source) {
         return;
@@ -290,7 +353,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [p.accent.withValues(alpha: 0.16), Colors.transparent],
+                  colors: [_accent.withValues(alpha: 0.16), Colors.transparent],
                   stops: const [0.0, 0.55],
                 ),
               ),
@@ -367,7 +430,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
 
   Widget _hero(AppPalette p) {
     final grad = coverGradient(_novel.id);
-    final acc = p.accent;
+    final acc = _accent;
+    final gradTop = _cover?.primary ?? grad.first;
+    final gradBot = _cover?.secondary ?? grad.last;
     final cover = _novel.cover;
     final remote = Uri.tryParse(cover ?? '');
     final hasRemoteCover = remote != null &&
@@ -381,12 +446,13 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          DecoratedBox(
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 450),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [grad.first.withValues(alpha: 0.9), grad.last],
+                colors: [gradTop.withValues(alpha: 0.9), gradBot],
               ),
             ),
           ),
@@ -431,6 +497,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     novel: _novel,
                     headers: imageHeadersOf(_meta),
                     radius: 12,
+                    heroTag: widget.heroTag,
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -477,7 +544,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                         runSpacing: 6,
                         children: [
                           _pill(p, _statusLabel(context, _novel.status),
-                              accent: true),
+                              accent: true, accentColor: acc),
                           for (final genre in genres.take(6)) _pill(p, genre),
                         ],
                       ),
@@ -492,13 +559,16 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
   }
 
-  Widget _pill(AppPalette p, String text, {bool accent = false}) => AppPill(
-        text: text,
-        fill: accent ? p.accent.withValues(alpha: 0.16) : p.surface,
-        border: accent ? p.accent.withValues(alpha: 0.45) : p.line,
-        textColor:
-            accent ? Color.lerp(p.accent, Colors.white, 0.25) : p.textMuted,
-      );
+  Widget _pill(AppPalette p, String text,
+      {bool accent = false, Color? accentColor}) {
+    final a = accentColor ?? p.accent;
+    return AppPill(
+      text: text,
+      fill: accent ? a.withValues(alpha: 0.16) : p.surface,
+      border: accent ? a.withValues(alpha: 0.45) : p.line,
+      textColor: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
+    );
+  }
 
   Widget _cta(AppPalette p, bool favorite) {
     final progress = NovelLibraryScope.read(context).progressFor(_libraryKey);
@@ -508,6 +578,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     final startIndex = activeIndex < 0 ? 0 : activeIndex;
     final canRead = !_loading && _chapters.isNotEmpty;
     final resumed = canRead && activeIndex >= 0;
+    final acc = _accent;
+    final accOn = _cover?.onPrimary ?? p.onAccent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
       child: Row(
@@ -516,8 +588,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             child: FilledButton(
               onPressed: canRead ? () => _openChapter(startIndex) : null,
               style: FilledButton.styleFrom(
-                  backgroundColor: p.accent,
-                  foregroundColor: p.onAccent,
+                  backgroundColor: acc,
+                  foregroundColor: accOn,
                   minimumSize: const Size.fromHeight(46)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -551,6 +623,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                 ? context.l10n.novel_removeFavorite
                 : context.l10n.novel_addFavorite,
             active: favorite,
+            accent: acc,
             onTap: _toggleFavorite,
           ),
           const SizedBox(width: 10),
@@ -558,6 +631,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             p,
             Icons.download_rounded,
             tooltip: context.l10n.detail_downloadAll,
+            accent: acc,
             onTap: canRead ? _downloadAll : null,
           ),
           if (_novel.url != null) ...[
@@ -566,6 +640,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
               p,
               Icons.open_in_browser_rounded,
               tooltip: context.l10n.novel_openInBrowser,
+              accent: acc,
               onTap: _openBrowser,
             ),
           ],
@@ -579,9 +654,10 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     IconData icon, {
     required String tooltip,
     bool active = false,
+    Color? accent,
     VoidCallback? onTap,
   }) {
-    final a = p.accent;
+    final a = accent ?? p.accent;
     return Tooltip(
       message: tooltip,
       child: Pressable(
@@ -631,7 +707,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
           children: [
             Text(context.l10n.detail_synopsis,
                 style: TextStyle(
-                    color: p.accent,
+                    color: _accent,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.0)),
@@ -665,7 +741,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                             ? context.l10n.detail_collapse
                             : context.l10n.detail_expandAll,
                         style: TextStyle(
-                            color: p.accent,
+                            color: _accent,
                             fontSize: 12,
                             fontWeight: FontWeight.w700)),
                     AnimatedRotation(
@@ -673,7 +749,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                       child: Icon(Icons.keyboard_arrow_down_rounded,
-                          color: p.accent, size: 18),
+                          color: _accent, size: 18),
                     ),
                   ],
                 ),
@@ -702,7 +778,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                   context.l10n.novel_directory,
                   style: TextStyle(
                       // 与漫画章节表头同款:标题色向 accent 偏一点,融进页面主色。
-                      color: Color.lerp(p.textPrimary, p.accent, 0.4),
+                      color: Color.lerp(p.textPrimary, _accent, 0.4),
                       fontWeight: FontWeight.w700,
                       fontSize: 13),
                 ),
@@ -870,6 +946,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
 
   @override
   void dispose() {
+    _route?.animation?.removeStatusListener(_onRouteAnim);
+    if (_tintPushed) DetailTint.pop(_tintToken); // 兜底:还在栈里就出栈
     _loadGeneration++;
     _source?.dispose();
     super.dispose();
