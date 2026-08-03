@@ -7,6 +7,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/novel/novel_browser.dart';
 import 'package:dream_manga_reader/features/library/masonry_feed.dart';
+import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -92,6 +93,8 @@ Future<({LibraryStore library, SourceController controller})>
   await controller.load();
 
   await tester.pumpWidget(MaterialApp(
+    // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
+    theme: buildTheme(AppThemeVariant.light),
     locale: const Locale('zh'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -192,6 +195,8 @@ void main() {
         };
 
     await tester.pumpWidget(MaterialApp(
+      // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
+      theme: buildTheme(AppThemeVariant.light),
       locale: const Locale('zh'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
