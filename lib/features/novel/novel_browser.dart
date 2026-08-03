@@ -14,8 +14,9 @@ import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
-import 'novel_cover.dart';
+import '../library/masonry_feed.dart';
 import 'novel_detail_page.dart';
+import 'novel_feed_item.dart';
 import 'novel_source_sheet.dart';
 
 class NovelBrowser extends StatefulWidget {
@@ -492,79 +493,41 @@ class NovelBrowserState extends State<NovelBrowser> {
       }
       return Center(child: Text(context.l10n.novel_browserNoResults));
     }
-    return GridView.builder(
+    final library = LibraryScope.of(context);
+    final layout = library.feedLayout;
+    return FeedView(
+      layout: layout,
       controller: _scroll,
+      columns: library.gridColumns,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 176,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 14,
-        childAspectRatio: .58,
-      ),
       itemCount: _results.length,
-      itemBuilder: (context, index) {
+      footer: _loading
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          : null,
+      cardBuilder: (context, index) {
         final result = _results[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(8),
+        return NovelFeedCard(
+          novel: result.novel,
+          meta: result.meta,
+          layout: layout,
+          sourceCountLabel: result.sourceIds.length > 1
+              ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
+              : null,
           onTap: () => _open(result),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    NovelCover(
-                      novel: result.novel,
-                      headers: imageHeadersOf(result.meta),
-                      compactGeneratedTitle: true,
-                    ),
-                    if (result.sourceIds.length > 1)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            child: Text(
-                              context.l10n.novel_browserSourceCount(
-                                result.sourceIds.length,
-                              ),
-                              style: TextStyle(
-                                color: scheme.onPrimary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                result.novel.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                result.meta.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
+        );
+      },
+      tileBuilder: (context, index) {
+        final result = _results[index];
+        return NovelFeedTile(
+          novel: result.novel,
+          meta: result.meta,
+          sourceCountLabel: result.sourceIds.length > 1
+              ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
+              : null,
+          onTap: () => _open(result),
         );
       },
     );

@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/core/source/chinese_fold.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/novel/novel_browser.dart';
+import 'package:dream_manga_reader/features/library/masonry_feed.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -69,7 +70,99 @@ class _SearchSource implements NovelSource {
   }
 }
 
+Future<({LibraryStore library, SourceController controller})>
+    _pumpBrowserHarness(
+  WidgetTester tester, {
+  required FeedLayout layout,
+  Size size = const Size(390, 844),
+}) async {
+  await tester.binding.setSurfaceSize(size);
+  SharedPreferences.setMockInitialValues({});
+  const source = SourceMeta(
+    id: 'a',
+    name: '来源 A',
+    script: '',
+    kind: 'novel',
+  );
+  registeredSources = const [source];
+  final library = LibraryStore();
+  await library.load();
+  library.feedLayout = layout;
+  final controller = SourceController(source);
+  await controller.load();
+
+  await tester.pumpWidget(MaterialApp(
+    locale: const Locale('zh'),
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    home: LibraryScope(
+      store: library,
+      child: SourceScope(
+        controller: controller,
+        child: Scaffold(
+          body: NovelBrowser(
+            sourceCatalog: const [source],
+            sourceBuilder: (meta) => _SearchSource(
+              meta,
+              const [
+                Novel(
+                  id: 'novel-with-a-long-stable-id',
+                  title: '这是一部用于验证窄屏排版不会溢出的长篇小说名称',
+                  authors: ['测试作者'],
+                  description: '这是一段用于验证列表布局最多显示两行且不会挤压其他信息的作品简介。',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  ));
+  await tester.pumpAndSettle();
+  return (library: library, controller: controller);
+}
+
 void main() {
+  for (final layout in FeedLayout.values) {
+    testWidgets('novel results use ${layout.name} shared feed layout',
+        (tester) async {
+      final harness = await _pumpBrowserHarness(tester, layout: layout);
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+        registeredSources = [];
+        harness.library.dispose();
+        harness.controller.dispose();
+      });
+
+      final feed = tester.widget<FeedView>(find.byType(FeedView));
+      expect(feed.layout, layout);
+      expect(find.text('测试作者'), findsWidgets);
+      expect(find.text('来源 A'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final size in [const Size(390, 844), const Size(1280, 720)]) {
+    testWidgets('long novel metadata fits at ${size.width}x${size.height}',
+        (tester) async {
+      final harness = await _pumpBrowserHarness(
+        tester,
+        layout: FeedLayout.list,
+        size: size,
+      );
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+        registeredSources = [];
+        harness.library.dispose();
+        harness.controller.dispose();
+      });
+
+      expect(find.textContaining('这是一部用于验证'), findsOneWidget);
+      expect(find.textContaining('这是一段用于验证'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('mixed novel search isolates failures and deduplicates titles',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

@@ -136,6 +136,36 @@ void main() {
     store.dispose();
   });
 
+  test('legacy reader settings default toolbar auto-hide to four seconds',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      'novel.settings.v1': jsonEncode({'mode': 'scroll'}),
+    });
+    final store = NovelLibraryStore();
+
+    await store.load();
+
+    expect(store.preferences.toolbarAutoHideSeconds, 4);
+    expect(store.preferences.lineHeight, 1.7);
+    expect(
+      NovelReaderPreferences.fromJson(const {}).lineHeight,
+      1.7,
+    );
+    expect(
+      NovelReaderPreferences.fromJson(
+        {'toolbarAutoHideSeconds': -3},
+      ).toolbarAutoHideSeconds,
+      0,
+    );
+    expect(
+      NovelReaderPreferences.fromJson(
+        {'toolbarAutoHideSeconds': 99},
+      ).toolbarAutoHideSeconds,
+      10,
+    );
+    store.dispose();
+  });
+
   test('local and remote entries persist in an independent namespace',
       () async {
     final localDirectory =
@@ -169,6 +199,7 @@ void main() {
       horizontalMargin: 28,
       theme: NovelReaderTheme.black,
       keepScreenOn: false,
+      toolbarAutoHideSeconds: 7,
     ));
     await store.flushPending();
 
@@ -194,6 +225,7 @@ void main() {
     expect(restored.preferences.horizontalMargin, 28);
     expect(restored.preferences.theme, NovelReaderTheme.black);
     expect(restored.preferences.keepScreenOn, isFalse);
+    expect(restored.preferences.toolbarAutoHideSeconds, 7);
     expect(
       (await SharedPreferences.getInstance()).getString('lib.favorites'),
       'manga-data',
@@ -237,8 +269,7 @@ void main() {
     store.dispose();
   });
 
-  test('removing local entry can also remove only its novel history',
-      () async {
+  test('removing local entry can also remove only its novel history', () async {
     final directory = Directory('${sandbox.path}${Platform.pathSeparator}book');
     await directory.create();
     final store = NovelLibraryStore();

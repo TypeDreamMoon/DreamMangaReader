@@ -95,10 +95,17 @@ void main() {
   );
   const novelA = Novel(id: 'na', title: '测试小说');
   const novelB = Novel(id: 'nb', title: '测试小说');
+  late Novel detailedNovelA;
+  late List<NovelChapter> chaptersA;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     registeredSources = [sourceA, sourceB];
+    detailedNovelA = novelA;
+    chaptersA = const [
+      NovelChapter(id: 'a1', title: 'A1'),
+      NovelChapter(id: 'a2', title: 'A2'),
+    ];
     temp = await Directory.systemTemp.createTemp('novel-detail-test-');
     library = LibraryStore();
     novelLibrary = NovelLibraryStore();
@@ -126,11 +133,8 @@ void main() {
     NovelSource build(SourceMeta meta) => switch (meta.id) {
           'a' => _FakeNovelSource(
               meta: meta,
-              novel: novelA,
-              chapters: const [
-                NovelChapter(id: 'a1', title: 'A1'),
-                NovelChapter(id: 'a2', title: 'A2'),
-              ],
+              novel: detailedNovelA,
+              chapters: chaptersA,
             ),
           'b' => _FakeNovelSource(
               meta: meta,
@@ -172,6 +176,96 @@ void main() {
     expect(find.text('A1'), findsOneWidget);
     expect(find.text('A2'), findsOneWidget);
     expect(find.text('B1'), findsNothing);
+  });
+
+  testWidgets('novel detail uses manga-style wide split layout',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-wide')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(find.text('A1'), findsOneWidget);
+  });
+
+  testWidgets('novel detail uses manga-style narrow layout', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-narrow')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('saved chapter is highlighted in the lazy directory',
+      (tester) async {
+    novelLibrary.saveProgress(
+      NovelIdentity.remote(sourceA.id, novelA.id).key,
+      const NovelLocator(chapterId: 'a2', fraction: .4),
+    );
+    await novelLibrary.flushPending();
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final active = find.byKey(const Key('novel-chapter-active'));
+    expect(active, findsOneWidget);
+    expect(
+      find.descendant(of: active, matching: find.text('A2')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('long directory initially reveals the saved chapter',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    chaptersA = List.generate(
+      600,
+      (index) => NovelChapter(id: 'a$index', title: '章节 $index'),
+    );
+    novelLibrary.saveProgress(
+      NovelIdentity.remote(sourceA.id, novelA.id).key,
+      const NovelLocator(chapterId: 'a480', fraction: .4),
+    );
+    await novelLibrary.flushPending();
+
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final active = find.byKey(const Key('novel-chapter-active'));
+    expect(active, findsOneWidget);
+    expect(
+      find.descendant(of: active, matching: find.text('章节 480')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('long description can expand and collapse', (tester) async {
+    detailedNovelA = Novel(
+      id: 'na',
+      title: '测试小说',
+      description: List.filled(30, '这是一段用于验证展开与收起行为的很长简介。').join(),
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final description = find.byKey(const Key('novel-detail-description'));
+    expect(description, findsOneWidget);
+    expect(tester.widget<Text>(description).maxLines, 10);
+    expect(find.text('展开全部'), findsOneWidget);
+
+    await tester.tap(find.text('展开全部'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(description).maxLines, isNull);
+    expect(find.text('收起'), findsOneWidget);
   });
 
   testWidgets('manual source switch replaces the directory', (tester) async {

@@ -8,6 +8,39 @@ Future<void> showNovelReaderSettings({
   required NovelReaderPreferences value,
   required ValueChanged<NovelReaderPreferences> onChanged,
 }) {
+  if (MediaQuery.sizeOf(context).width >= 700) {
+    return showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (context, _, __) => Align(
+        alignment: Alignment.centerRight,
+        child: SafeArea(
+          child: SizedBox(
+            width: 420,
+            height: double.infinity,
+            child: Material(
+              elevation: 12,
+              color: Theme.of(context).colorScheme.surface,
+              child: NovelReaderSettingsSheet(
+                value: value,
+                onChanged: onChanged,
+              ),
+            ),
+          ),
+        ),
+      ),
+      transitionBuilder: (context, animation, _, child) => SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+        child: child,
+      ),
+    );
+  }
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -76,81 +109,54 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               },
             ),
             const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _value.fontFamily,
-                    decoration: InputDecoration(
-                      labelText: context.l10n.novel_readerFont,
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: '',
-                        child: Text(context.l10n.novel_readerSystemDefault),
-                      ),
-                      DropdownMenuItem(
-                        value: 'serif',
-                        child: Text(context.l10n.novel_readerSerif),
-                      ),
-                      DropdownMenuItem(
-                        value: 'sans-serif',
-                        child: Text(context.l10n.novel_readerSansSerif),
-                      ),
-                      DropdownMenuItem(
-                        value: 'monospace',
-                        child: Text(context.l10n.novel_readerMonospace),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        _update(_value.copyWith(fontFamily: value));
-                      }
-                    },
-                  ),
+            DropdownButtonFormField<String>(
+              initialValue: _value.fontFamily,
+              decoration: InputDecoration(
+                labelText: context.l10n.novel_readerFont,
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(context.l10n.novel_readerSystemDefault),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<NovelReaderTheme>(
-                    initialValue: _value.theme,
-                    decoration: InputDecoration(
-                      labelText: context.l10n.novel_readerTheme,
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: NovelReaderTheme.sepia,
-                        child: Text(context.l10n.novel_readerThemeSepia),
-                      ),
-                      DropdownMenuItem(
-                        value: NovelReaderTheme.white,
-                        child: Text(context.l10n.novel_readerThemeWhite),
-                      ),
-                      DropdownMenuItem(
-                        value: NovelReaderTheme.dark,
-                        child: Text(context.l10n.novel_readerThemeDark),
-                      ),
-                      DropdownMenuItem(
-                        value: NovelReaderTheme.black,
-                        child: Text(context.l10n.novel_readerThemeBlack),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        _update(_value.copyWith(theme: value));
-                      }
-                    },
-                  ),
+                DropdownMenuItem(
+                  value: 'serif',
+                  child: Text(context.l10n.novel_readerSerif),
+                ),
+                DropdownMenuItem(
+                  value: 'sans-serif',
+                  child: Text(context.l10n.novel_readerSansSerif),
+                ),
+                DropdownMenuItem(
+                  value: 'monospace',
+                  child: Text(context.l10n.novel_readerMonospace),
                 ),
               ],
+              onChanged: (value) {
+                if (value != null) {
+                  _update(_value.copyWith(fontFamily: value));
+                }
+              },
             ),
             const SizedBox(height: 14),
-            _SettingSlider(
+            _ThemePicker(
+              label: context.l10n.novel_readerTheme,
+              value: _value.theme,
+              labels: {
+                NovelReaderTheme.sepia: context.l10n.novel_readerThemeSepia,
+                NovelReaderTheme.white: context.l10n.novel_readerThemeWhite,
+                NovelReaderTheme.dark: context.l10n.novel_readerThemeDark,
+                NovelReaderTheme.black: context.l10n.novel_readerThemeBlack,
+              },
+              onChanged: (value) => _update(_value.copyWith(theme: value)),
+            ),
+            const SizedBox(height: 14),
+            _FontSizeStepper(
               label: context.l10n.novel_readerFontSize,
               value: _value.fontSize,
-              min: 12,
-              max: 32,
-              divisions: 20,
-              onChanged: (value) => _update(_value.copyWith(fontSize: value)),
+              onChanged: (value) => _update(
+                _value.copyWith(fontSize: value.clamp(12, 32).toDouble()),
+              ),
             ),
             _SettingSlider(
               label: context.l10n.novel_readerLineHeight,
@@ -178,6 +184,21 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) =>
                   _update(_value.copyWith(horizontalMargin: value)),
             ),
+            _SettingSlider(
+              label: context.l10n.novel_readerAutoHide,
+              value: _value.toolbarAutoHideSeconds.toDouble(),
+              min: 0,
+              max: 10,
+              divisions: 10,
+              valueLabel: _value.toolbarAutoHideSeconds == 0
+                  ? context.l10n.novel_readerAutoHideOff
+                  : context.l10n.novel_readerSeconds(
+                      _value.toolbarAutoHideSeconds,
+                    ),
+              onChanged: (value) => _update(
+                _value.copyWith(toolbarAutoHideSeconds: value.round()),
+              ),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(context.l10n.novel_readerKeepScreenOn),
@@ -200,6 +221,7 @@ class _SettingSlider extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.onChanged,
+    this.valueLabel,
   });
 
   final String label;
@@ -208,26 +230,143 @@ class _SettingSlider extends StatelessWidget {
   final double max;
   final int divisions;
   final ValueChanged<double> onChanged;
+  final String? valueLabel;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(width: 82, child: Text(label)),
+        SizedBox(width: 112, child: Text(label)),
         Expanded(
           child: Slider(
             value: value.clamp(min, max),
             min: min,
             max: max,
             divisions: divisions,
-            label:
+            label: valueLabel ??
                 value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1),
             onChanged: onChanged,
           ),
         ),
         SizedBox(
-          width: 38,
-          child: Text(value.toStringAsFixed(1), textAlign: TextAlign.end),
+          width: 58,
+          child: Text(
+            valueLabel ?? value.toStringAsFixed(1),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FontSizeStepper extends StatelessWidget {
+  const _FontSizeStepper({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(width: 112, child: Text(label)),
+        IconButton.outlined(
+          tooltip: '$label -',
+          onPressed: value <= 12 ? null : () => onChanged(value - 1),
+          icon: const Icon(Icons.remove_rounded),
+        ),
+        Expanded(
+          child: Text(
+            'A  ${value.round()}',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        IconButton.outlined(
+          tooltip: '$label +',
+          onPressed: value >= 32 ? null : () => onChanged(value + 1),
+          icon: const Icon(Icons.add_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _ThemePicker extends StatelessWidget {
+  const _ThemePicker({
+    required this.label,
+    required this.value,
+    required this.labels,
+    required this.onChanged,
+  });
+
+  final String label;
+  final NovelReaderTheme value;
+  final Map<NovelReaderTheme, String> labels;
+  final ValueChanged<NovelReaderTheme> onChanged;
+
+  static const _colors = {
+    NovelReaderTheme.sepia: Color(0xfff2e8cf),
+    NovelReaderTheme.white: Color(0xffffffff),
+    NovelReaderTheme.dark: Color(0xff292b2f),
+    NovelReaderTheme.black: Color(0xff050505),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        SizedBox(width: 112, child: Text(label)),
+        Expanded(
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              for (final theme in NovelReaderTheme.values)
+                Tooltip(
+                  message: labels[theme] ?? theme.name,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => onChanged(theme),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: _colors[theme],
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: value == theme
+                              ? scheme.primary
+                              : scheme.outlineVariant,
+                          width: value == theme ? 3 : 1,
+                        ),
+                      ),
+                      child: value == theme
+                          ? Icon(
+                              Icons.check_rounded,
+                              size: 18,
+                              color: theme == NovelReaderTheme.dark ||
+                                      theme == NovelReaderTheme.black
+                                  ? Colors.white
+                                  : Colors.black87,
+                            )
+                          : null,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );
