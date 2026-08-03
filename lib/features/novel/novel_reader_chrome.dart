@@ -32,11 +32,23 @@ class NovelReaderChrome extends StatelessWidget {
   final ValueChanged<double> onProgressChangeEnd;
   final VoidCallback onInteraction;
 
+  /// 顶/底栏用**固定深色渐变 + 白字**,和漫画阅读器一套 —— 不走 palette 是有意的:
+  /// 阅读画布的底色由读者自己在阅读器里选(纸白 / 米黄 / 夜间…),跟 App 主题无关。
+  /// 跟着 App 主题走会出现「浅色主题 + 纸白页面 = 白栏压白纸」这种看不清的组合。
+  static const _scrimTop = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Colors.black87, Colors.transparent],
+  );
+  static const _scrimBottom = LinearGradient(
+    begin: Alignment.bottomCenter,
+    end: Alignment.topCenter,
+    colors: [Colors.black87, Colors.transparent],
+  );
+
   @override
   Widget build(BuildContext context) {
     if (!visible) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
-    final surface = scheme.surface.withValues(alpha: .96);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -49,49 +61,59 @@ class NovelReaderChrome extends StatelessWidget {
             child: AnimatedOpacity(
               opacity: visible ? 1 : 0,
               duration: const Duration(milliseconds: 160),
-              child: Material(
-                color: surface,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(gradient: _scrimTop),
                 child: SafeArea(
                   bottom: false,
-                  child: SizedBox(
-                    height: 56,
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 980),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: context.l10n.novel_readerBack,
-                              onPressed: () {
-                                onInteraction();
-                                onBack();
-                              },
-                              icon: const Icon(Icons.arrow_back_rounded),
-                            ),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    bookTitle,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.titleSmall,
-                                  ),
-                                  Text(
-                                    chapterTitle,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                ],
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 18),
+                    child: SizedBox(
+                      height: 56,
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 980),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                tooltip: context.l10n.novel_readerBack,
+                                onPressed: () {
+                                  onInteraction();
+                                  onBack();
+                                },
+                                icon: const Icon(Icons.arrow_back_rounded,
+                                    color: Colors.white),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                          ],
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      bookTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    Text(
+                                      chapterTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -110,13 +132,13 @@ class NovelReaderChrome extends StatelessWidget {
             child: AnimatedOpacity(
               opacity: visible ? 1 : 0,
               duration: const Duration(milliseconds: 160),
-              child: Material(
+              child: DecoratedBox(
                 key: const Key('novel-reader-bottom-bar'),
-                color: surface,
+                decoration: const BoxDecoration(gradient: _scrimBottom),
                 child: SafeArea(
                   top: false,
                   child: SizedBox(
-                    height: 78,
+                    height: 84,
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 980),
@@ -131,6 +153,7 @@ class NovelReaderChrome extends StatelessWidget {
                               },
                               icon: const Icon(
                                 Icons.format_list_bulleted_rounded,
+                                color: Colors.white,
                               ),
                             ),
                             Expanded(
@@ -155,8 +178,10 @@ class NovelReaderChrome extends StatelessWidget {
                                     previewLabel,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -168,7 +193,8 @@ class NovelReaderChrome extends StatelessWidget {
                                 onInteraction();
                                 onTheme();
                               },
-                              icon: const Icon(Icons.palette_outlined),
+                              icon: const Icon(Icons.palette_outlined,
+                                  color: Colors.white),
                             ),
                             IconButton(
                               key: const Key('novel-reader-settings'),
@@ -177,7 +203,8 @@ class NovelReaderChrome extends StatelessWidget {
                                 onInteraction();
                                 onSettings();
                               },
-                              icon: const Icon(Icons.text_fields_rounded),
+                              icon: const Icon(Icons.text_fields_rounded,
+                                  color: Colors.white),
                             ),
                           ],
                         ),

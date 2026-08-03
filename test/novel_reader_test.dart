@@ -5,6 +5,7 @@ import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
+import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -76,6 +77,8 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   store.setPreferences(preferences);
   await store.flushPending();
   final widget = MaterialApp(
+    // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
+    theme: buildTheme(AppThemeVariant.light),
     locale: const Locale('zh'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,

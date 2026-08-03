@@ -6,9 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/platform/reader_keys.dart';
+import '../../ui/ui.dart';
 import 'novel_book_progress.dart';
 import 'novel_document_view.dart';
 import 'novel_reader_chrome.dart';
@@ -311,7 +313,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                 height: double.infinity,
                 child: Material(
                   elevation: 12,
-                  color: Theme.of(context).colorScheme.surface,
+                  color: context.palette.surface,
                   child: _directoryPanel(context),
                 ),
               ),
@@ -368,7 +370,11 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
               Expanded(
                 child: Text(
                   context.l10n.novel_directory,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: TextStyle(
+                    color: context.palette.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               IconButton(
@@ -396,7 +402,12 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                       child: Text(
                         chapter.volumeTitle ?? '',
-                        style: Theme.of(context).textTheme.labelLarge,
+                        style: TextStyle(
+                          color: context.palette.accent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.0,
+                        ),
                       ),
                     ),
                   ListTile(
@@ -455,9 +466,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
                       decoration: BoxDecoration(
                         color: _themeColor(theme),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
+                        border: Border.all(color: context.palette.line),
                       ),
                     ),
                     title: Text(_themeLabel(context, theme)),
@@ -554,9 +563,9 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final p = context.palette;
     return Scaffold(
-      backgroundColor: scheme.surface,
+      backgroundColor: p.background,
       body: Focus(
         focusNode: _focusNode,
         autofocus: true,
@@ -572,28 +581,13 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
               ),
             if (_error != null)
               ColoredBox(
-                color: scheme.surface,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline_rounded, size: 42),
-                        const SizedBox(height: 12),
-                        Text(
-                          context.l10n.novel_readerLoadFailed('$_error'),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _loadChapter,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: Text(context.l10n.retry),
-                        ),
-                      ],
-                    ),
-                  ),
+                // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
+                // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
+                color: Colors.black.withValues(alpha: 0.86),
+                child: AppErrorView(
+                  onDark: true,
+                  message: context.l10n.novel_readerLoadFailed('$_error'),
+                  onRetry: _loadChapter,
                 ),
               ),
             NovelReaderChrome(

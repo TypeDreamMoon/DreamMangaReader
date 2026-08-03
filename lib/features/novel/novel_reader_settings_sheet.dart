@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 
 Future<void> showNovelReaderSettings({
@@ -23,7 +24,7 @@ Future<void> showNovelReaderSettings({
             height: double.infinity,
             child: Material(
               elevation: 12,
-              color: Theme.of(context).colorScheme.surface,
+              color: context.palette.surface,
               child: NovelReaderSettingsSheet(
                 value: value,
                 onChanged: onChanged,
@@ -87,7 +88,11 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
           children: [
             Text(
               context.l10n.reader_settings,
-              style: Theme.of(context).textTheme.titleLarge,
+              style: TextStyle(
+                color: context.palette.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             const SizedBox(height: 16),
             SegmentedButton<NovelReaderMode>(
@@ -287,7 +292,11 @@ class _FontSizeStepper extends StatelessWidget {
           child: Text(
             'A  ${value.round()}',
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
+            style: TextStyle(
+              color: context.palette.textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         IconButton.outlined(
@@ -322,10 +331,13 @@ class _ThemePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final p = context.palette;
     return Row(
       children: [
-        SizedBox(width: 112, child: Text(label)),
+        SizedBox(
+          width: 112,
+          child: Text(label, style: TextStyle(color: p.textPrimary)),
+        ),
         Expanded(
           child: Wrap(
             alignment: WrapAlignment.spaceBetween,
@@ -346,9 +358,7 @@ class _ThemePicker extends StatelessWidget {
                         color: _colors[theme],
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: value == theme
-                              ? scheme.primary
-                              : scheme.outlineVariant,
+                          color: value == theme ? p.accent : p.line,
                           width: value == theme ? 3 : 1,
                         ),
                       ),
