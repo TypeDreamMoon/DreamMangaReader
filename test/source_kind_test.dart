@@ -53,4 +53,30 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('source.current.manga'), 'm2');
   });
+
+  test('same-id source refresh replaces the selected script instance', () {
+    const oldSource = SourceMeta(
+      id: 'misskon',
+      name: 'MissKon',
+      script: 'old script',
+    );
+    const refreshedSource = SourceMeta(
+      id: 'misskon',
+      name: 'MissKon',
+      script: 'refreshed script',
+      useWebView: true,
+    );
+    registeredSources = const [oldSource];
+    final controller = SourceController(oldSource);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    registeredSources = const [refreshedSource];
+    final current = controller.currentFor('manga');
+    controller.selectFor('manga', current!);
+
+    expect(current, same(refreshedSource));
+    expect(controller.currentFor('manga'), same(refreshedSource));
+    expect(notifications, 1);
+  });
 }

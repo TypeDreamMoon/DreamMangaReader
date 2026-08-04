@@ -14,6 +14,7 @@ class NovelCover extends StatelessWidget {
     this.localCoverPath,
     this.radius = 8,
     this.compactGeneratedTitle = false,
+    this.heroTag,
   });
 
   final Novel novel;
@@ -21,6 +22,9 @@ class NovelCover extends StatelessWidget {
   final String? localCoverPath;
   final double radius;
   final bool compactGeneratedTitle;
+
+  /// 非空时启用 Hero 飞入动画(封面在列表→详情间过渡)。同屏内须唯一。
+  final Object? heroTag;
 
   @override
   Widget build(BuildContext context) {
@@ -58,12 +62,15 @@ class NovelCover extends StatelessWidget {
       image = _GeneratedNovelCover(title: _generatedLabel, colors: colors);
     }
 
+    Widget clip = ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: ColoredBox(color: colors.background, child: image),
+    );
+    if (heroTag != null) clip = Hero(tag: heroTag!, child: clip);
+    // 封面纯装饰,排出无障碍树(与漫画封面一致:批量加载会刷爆 Windows AXTree)。
     return AspectRatio(
       aspectRatio: 3 / 4,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: ColoredBox(color: colors.background, child: image),
-      ),
+      child: ExcludeSemantics(child: clip),
     );
   }
 
@@ -123,6 +130,12 @@ class _GeneratedNovelCover extends StatelessWidget {
     );
   }
 }
+
+/// 生成式封面(无网络封面时)的配色:按书名散列取一套,同一本书每次一致。
+/// 详情页拿它当「无封面时的主题色」种子 —— 与漫画的 `coverGradient` 同性质。
+({Color background, Color accent, Color foreground}) novelCoverColors(
+        String seed) =>
+    _coverColors(seed);
 
 ({Color background, Color accent, Color foreground}) _coverColors(String seed) {
   const palettes = [

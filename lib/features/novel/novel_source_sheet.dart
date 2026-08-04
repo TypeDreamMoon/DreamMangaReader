@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
@@ -102,7 +103,11 @@ class _NovelSourceSheetState extends State<_NovelSourceSheet> {
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
               child: Text(
                 context.l10n.novel_switchSourceTitle,
-                style: Theme.of(context).textTheme.titleMedium,
+                style: TextStyle(
+                  color: context.palette.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             Flexible(

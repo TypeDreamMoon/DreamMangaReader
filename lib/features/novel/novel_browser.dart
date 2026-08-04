@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
@@ -12,10 +13,12 @@ import '../../core/source/models.dart';
 import '../../core/source/search_rank.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
+import '../../ui/ui.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
-import 'novel_cover.dart';
+import '../library/masonry_feed.dart';
 import 'novel_detail_page.dart';
+import 'novel_feed_item.dart';
 import 'novel_source_sheet.dart';
 
 class NovelBrowser extends StatefulWidget {
@@ -368,10 +371,16 @@ class NovelBrowserState extends State<NovelBrowser> {
     }
   }
 
-  void _open(_NovelResult result) {
+  /// 卡片/行的 Hero tag。带下标:同一本书可能在结果里出现多次(混合源翻页),
+  /// 不带下标会撞 tag,Hero 直接抛「同屏多个相同 tag」。
+  String _heroTag(_NovelResult result, int index, String prefix) =>
+      '$prefix:${result.meta.id}:${result.novel.id}:$index';
+
+  void _open(_NovelResult result, {Object? heroTag}) {
     Navigator.of(context).push(appRoute(NovelDetailPage(
       meta: result.meta,
       novel: result.novel,
+      heroTag: heroTag,
       sourceBuilder: widget.sourceBuilder,
       sourceCatalog: widget.sourceCatalog,
     )));
@@ -380,9 +389,9 @@ class NovelBrowserState extends State<NovelBrowser> {
   @override
   Widget build(BuildContext context) {
     final library = LibraryScope.of(context);
-    final scheme = Theme.of(context).colorScheme;
+    final p = context.palette;
     if (_enabledSources.isEmpty) {
-      return Center(child: Text(context.l10n.novel_browserNoSources));
+      return EmptyState(title: context.l10n.novel_browserNoSources);
     }
     return Column(
       children: [
@@ -400,8 +409,7 @@ class NovelBrowserState extends State<NovelBrowser> {
               ),
             ),
           ),
-        if (!_mixed && _filters.isNotEmpty && _query.isEmpty)
-          _filterBar(scheme),
+        if (!_mixed && _filters.isNotEmpty && _query.isEmpty) _filterBar(),
         if (_query.isNotEmpty &&
             _query != _originalQuery &&
             _results.isNotEmpty)
@@ -414,7 +422,7 @@ class NovelBrowserState extends State<NovelBrowser> {
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: TextStyle(color: p.textMuted, fontSize: 12),
             ),
           ),
         if (_failedSources.isNotEmpty && _results.isNotEmpty)
@@ -422,7 +430,8 @@ class NovelBrowserState extends State<NovelBrowser> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Row(
               children: [
-                Icon(Icons.info_outline_rounded, size: 16, color: scheme.error),
+                Icon(Icons.info_outline_rounded,
+                    size: 16, color: p.statusWarn),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -431,31 +440,33 @@ class NovelBrowserState extends State<NovelBrowser> {
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: p.textMuted, fontSize: 12),
                   ),
                 ),
               ],
             ),
           ),
-        Expanded(child: _content(scheme)),
+        Expanded(child: _content()),
       ],
     );
   }
 
-  Widget _filterBar(ColorScheme scheme) {
+  Widget _filterBar() {
+    // 与发现页筛选同款 chip(选中 = 淡 accent 底 + accent 边),不用 Material ChoiceChip。
     return SizedBox(
       height: 48,
-      child: ListView(
+      child: AppScrollView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         children: [
           for (final filter in _filters)
             for (final option in filter.options)
               Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(option.label),
+                child: AppFilterChip(
+                  label: option.label,
                   selected: _selectedFilters[filter.id] == option.value,
-                  onSelected: (_) {
+                  onTap: () {
                     _selectedFilters[filter.id] = option.value;
                     _reset();
                   },
@@ -466,105 +477,56 @@ class NovelBrowserState extends State<NovelBrowser> {
     );
   }
 
-  Widget _content(ColorScheme scheme) {
+  Widget _content() {
     if (_results.isEmpty) {
       if (_loading) return const Center(child: CircularProgressIndicator());
       if (_error != null) {
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.cloud_off_rounded, size: 42, color: scheme.error),
-              const SizedBox(height: 12),
-              Text(
-                context.l10n.novel_browserLoadFailed('$_error'),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: _reset,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text(context.l10n.retry),
-              ),
-            ],
-          ),
+        return AppErrorView(
+          message: context.l10n.novel_browserLoadFailed('$_error'),
+          onRetry: _reset,
         );
       }
-      return Center(child: Text(context.l10n.novel_browserNoResults));
+      return EmptyState(title: context.l10n.novel_browserNoResults);
     }
-    return GridView.builder(
+    final library = LibraryScope.of(context);
+    final layout = library.feedLayout;
+    return FeedView(
+      layout: layout,
       controller: _scroll,
+      columns: library.gridColumns,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 176,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 14,
-        childAspectRatio: .58,
-      ),
       itemCount: _results.length,
-      itemBuilder: (context, index) {
+      footer: _loading
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          : null,
+      cardBuilder: (context, index) {
         final result = _results[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => _open(result),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    NovelCover(
-                      novel: result.novel,
-                      headers: imageHeadersOf(result.meta),
-                      compactGeneratedTitle: true,
-                    ),
-                    if (result.sourceIds.length > 1)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            child: Text(
-                              context.l10n.novel_browserSourceCount(
-                                result.sourceIds.length,
-                              ),
-                              style: TextStyle(
-                                color: scheme.onPrimary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                result.novel.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                result.meta.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
+        final tag = _heroTag(result, index, 'nfeed');
+        return NovelFeedCard(
+          novel: result.novel,
+          meta: result.meta,
+          layout: layout,
+          heroTag: tag,
+          sourceCountLabel: result.sourceIds.length > 1
+              ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
+              : null,
+          onTap: () => _open(result, heroTag: tag),
+        );
+      },
+      tileBuilder: (context, index) {
+        final result = _results[index];
+        final tag = _heroTag(result, index, 'nfeedl');
+        return NovelFeedTile(
+          novel: result.novel,
+          meta: result.meta,
+          heroTag: tag,
+          sourceCountLabel: result.sourceIds.length > 1
+              ? context.l10n.novel_browserSourceCount(result.sourceIds.length)
+              : null,
+          onTap: () => _open(result, heroTag: tag),
         );
       },
     );

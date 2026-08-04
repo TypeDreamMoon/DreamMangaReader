@@ -80,7 +80,7 @@ class WebNovelDocumentController implements NovelDocumentController {
       source: 'document.body?.dataset?.dmrChapter || ""',
     );
     if (loadedChapter?.toString() != _chapterId) return;
-    await webView.evaluateJavascript(source: _bridgeScript);
+    await webView.evaluateJavascript(source: novelReaderBridgeScript);
     _loaded = true;
     await applyPreferences(_preferences);
     final restore = _pendingRestore;
@@ -293,7 +293,7 @@ String _htmlShell(String body, {String? chapterId}) {
 </head><body data-dmr-chapter="$chapter">$body</body></html>''';
 }
 
-const _bridgeScript = r'''
+const novelReaderBridgeScript = r'''
 (() => {
   if (window.__dmrInstalled) return;
   window.__dmrInstalled = true;
@@ -349,9 +349,9 @@ const _bridgeScript = r'''
     const family = String(p.fontFamily || '').replace(/["'\\]/g, '');
     document.getElementById('dmr-style').textContent = `
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
-      body{margin:0;padding:22px ${p.horizontalMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere}
+      body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:22px var(--dmr-side);font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere}
       p{margin:0 0 ${p.paragraphSpacing}px} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
-      html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:100vw;column-gap:0;column-fill:auto;overflow:visible}
+      html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;
   };
@@ -370,6 +370,9 @@ const _bridgeScript = r'''
     report();
     return true;
   };
+  const isInteractiveTarget = (target) => Boolean(
+    target?.closest?.('a,button,input,textarea,select,[contenteditable]')
+  );
   document.addEventListener('click', (event) => {
     const anchor = event.target.closest?.('a[href]');
     if (anchor) {
@@ -378,15 +381,34 @@ const _bridgeScript = r'''
       if (href.startsWith('#')) document.getElementById(href.slice(1))?.scrollIntoView();
       return;
     }
+    if (isInteractiveTarget(event.target)) return;
     const ratio = event.clientX / innerWidth;
     const command = ratio < .25 ? 'previous' : ratio > .75 ? 'next' : 'toggle';
     window.flutter_inappwebview?.callHandler('dmrCommand', command);
   });
-  let touchX = 0, touchY = 0;
+  let lastWheelTurn = 0;
+  document.addEventListener('wheel', (event) => {
+    if (isInteractiveTarget(event.target)) return;
+    if (mode !== 'paged' || Math.abs(event.deltaY) < 12) return;
+    event.preventDefault();
+    const now = Date.now();
+    if (now - lastWheelTurn < 250) return;
+    lastWheelTurn = now;
+    window.flutter_inappwebview?.callHandler(
+      'dmrCommand',
+      event.deltaY > 0 ? 'next' : 'previous'
+    );
+  }, {passive:false});
+  let touchX = 0, touchY = 0, touchInteractive = false;
   document.addEventListener('touchstart', (event) => {
+    touchInteractive = isInteractiveTarget(event.target);
+    if (touchInteractive) return;
     touchX = event.changedTouches[0].clientX; touchY = event.changedTouches[0].clientY;
   }, {passive:true});
   document.addEventListener('touchend', (event) => {
+    const blocked = touchInteractive || isInteractiveTarget(event.target);
+    touchInteractive = false;
+    if (blocked) return;
     if (mode !== 'paged') return;
     const dx = event.changedTouches[0].clientX - touchX;
     const dy = event.changedTouches[0].clientY - touchY;

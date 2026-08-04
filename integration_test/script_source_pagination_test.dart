@@ -4,6 +4,7 @@ import 'package:dream_manga_reader/core/script/js_engine.dart';
 import 'package:dream_manga_reader/core/script/script_source.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
 
 class RoutingHttp implements HttpService {
   RoutingHttp(this.respond);
@@ -120,8 +121,13 @@ var __source = {
 };
 ''';
 
+/// 验证分页集合协议(`{items, next}` 连续请求 + 旧数组契约)在真机上跑通。
+/// 每条用例都要建 [JsEngine],普通 `flutter test`(Dart VM)加载不到 QuickJS
+/// 原生库,所以必须走 integration_test。
+///
+/// 运行:flutter test integration_test/script_source_pagination_test.dart -d windows
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   test('source context exposes versioned collection continuation capability',
       () async {

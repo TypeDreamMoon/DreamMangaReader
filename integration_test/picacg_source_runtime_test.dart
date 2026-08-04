@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/core/script/script_source.dart';
 import 'package:dream_manga_reader/core/source/auth_token.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
 
 class PicacgFixtureHttp implements HttpService {
   final requests = <HostRequest>[];
@@ -102,14 +103,30 @@ const _comic = {
   'finished': false,
 };
 
+/// 用**真实的 picacg 源脚本**跑一遍登录 + 分页集合(响应用 fixture,不联网)。
+///
+/// 引擎仓库不携带任何源脚本,脚本在外部源仓库里 —— 路径由 `DMR_PICACG_SCRIPT`
+/// 指定,没配或文件不在就跳过(否则这条用例只在写它那台机器上能过)。
+///
+/// 运行:
+///   flutter test integration_test/picacg_source_runtime_test.dart -d windows \
+///     `--dart-define=DMR_PICACG_SCRIPT=picacg.js 的绝对路径`
+const _scriptPathDefine = String.fromEnvironment('DMR_PICACG_SCRIPT');
+
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final scriptPath = _scriptPathDefine.isNotEmpty
+      ? _scriptPathDefine
+      : Platform.environment['DMR_PICACG_SCRIPT'] ?? '';
+  final scriptFile = scriptPath.isEmpty ? null : File(scriptPath);
+  final skipReason = scriptFile == null || !scriptFile.existsSync()
+      ? '未配置 DMR_PICACG_SCRIPT(指向外部源仓库的 picacg.js)'
+      : null;
 
   test('real Picacg script runs through QuickJS login and continuation',
       () async {
-    final script = File(
-      r'D:\UnrealMap\DreamMangaReader-Source\picacg.js',
-    ).readAsStringSync();
+    final script = scriptFile!.readAsStringSync();
     final http = PicacgFixtureHttp();
     final source = ScriptSource(
       engine: JsEngine(),
@@ -150,5 +167,5 @@ void main() {
           ),
       true,
     );
-  });
+  }, skip: skipReason);
 }

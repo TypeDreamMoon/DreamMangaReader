@@ -10,6 +10,7 @@ import 'package:dream_manga_reader/core/novel/novel_source.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/novel/novel_detail_page.dart';
+import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,10 +96,17 @@ void main() {
   );
   const novelA = Novel(id: 'na', title: '测试小说');
   const novelB = Novel(id: 'nb', title: '测试小说');
+  late Novel detailedNovelA;
+  late List<NovelChapter> chaptersA;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     registeredSources = [sourceA, sourceB];
+    detailedNovelA = novelA;
+    chaptersA = const [
+      NovelChapter(id: 'a1', title: 'A1'),
+      NovelChapter(id: 'a2', title: 'A2'),
+    ];
     temp = await Directory.systemTemp.createTemp('novel-detail-test-');
     library = LibraryStore();
     novelLibrary = NovelLibraryStore();
@@ -122,15 +130,12 @@ void main() {
     if (await temp.exists()) await temp.delete(recursive: true);
   });
 
-  Widget harness() {
+  Widget harness({Object? heroTag}) {
     NovelSource build(SourceMeta meta) => switch (meta.id) {
           'a' => _FakeNovelSource(
               meta: meta,
-              novel: novelA,
-              chapters: const [
-                NovelChapter(id: 'a1', title: 'A1'),
-                NovelChapter(id: 'a2', title: 'A2'),
-              ],
+              novel: detailedNovelA,
+              chapters: chaptersA,
             ),
           'b' => _FakeNovelSource(
               meta: meta,
@@ -143,6 +148,8 @@ void main() {
         };
 
     return MaterialApp(
+      // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
+      theme: buildTheme(AppThemeVariant.light),
       locale: const Locale('zh'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -155,6 +162,7 @@ void main() {
             child: NovelDetailPage(
               meta: sourceA,
               novel: novelA,
+              heroTag: heroTag,
               sourceBuilder: build,
               sourceCatalog: const [sourceA, sourceB],
             ),
@@ -164,6 +172,25 @@ void main() {
     );
   }
 
+  testWidgets('the hero tag lands on the detail cover', (tester) async {
+    // 列表页把 tag 交给详情页,封面才能从卡片飞过来。同屏只能有这一个 Hero,
+    // 多一个就是 tag 撞车(Flutter 会直接抛)。
+    await tester.pumpWidget(harness(heroTag: 'nfeed:a:novel-a:0'));
+    await tester.pumpAndSettle();
+
+    final heroes = tester.widgetList<Hero>(find.byType(Hero)).toList();
+    expect(heroes, hasLength(1));
+    expect(heroes.single.tag, 'nfeed:a:novel-a:0');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('no hero tag means no hero on the detail cover', (tester) async {
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Hero), findsNothing);
+  });
+
   testWidgets('detail uses one source and never merges chapter lists',
       (tester) async {
     await tester.pumpWidget(harness());
@@ -172,6 +199,96 @@ void main() {
     expect(find.text('A1'), findsOneWidget);
     expect(find.text('A2'), findsOneWidget);
     expect(find.text('B1'), findsNothing);
+  });
+
+  testWidgets('novel detail uses manga-style wide split layout',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-wide')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(find.text('A1'), findsOneWidget);
+  });
+
+  testWidgets('novel detail uses manga-style narrow layout', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-detail-hero')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-narrow')), findsOneWidget);
+    expect(find.byKey(const Key('novel-detail-directory')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('saved chapter is highlighted in the lazy directory',
+      (tester) async {
+    novelLibrary.saveProgress(
+      NovelIdentity.remote(sourceA.id, novelA.id).key,
+      const NovelLocator(chapterId: 'a2', fraction: .4),
+    );
+    await novelLibrary.flushPending();
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final active = find.byKey(const Key('novel-chapter-active'));
+    expect(active, findsOneWidget);
+    expect(
+      find.descendant(of: active, matching: find.text('A2')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('long directory initially reveals the saved chapter',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    chaptersA = List.generate(
+      600,
+      (index) => NovelChapter(id: 'a$index', title: '章节 $index'),
+    );
+    novelLibrary.saveProgress(
+      NovelIdentity.remote(sourceA.id, novelA.id).key,
+      const NovelLocator(chapterId: 'a480', fraction: .4),
+    );
+    await novelLibrary.flushPending();
+
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final active = find.byKey(const Key('novel-chapter-active'));
+    expect(active, findsOneWidget);
+    expect(
+      find.descendant(of: active, matching: find.text('章节 480')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('long description can expand and collapse', (tester) async {
+    detailedNovelA = Novel(
+      id: 'na',
+      title: '测试小说',
+      description: List.filled(30, '这是一段用于验证展开与收起行为的很长简介。').join(),
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    final description = find.byKey(const Key('novel-detail-description'));
+    expect(description, findsOneWidget);
+    expect(tester.widget<Text>(description).maxLines, 10);
+    expect(find.text('展开全部'), findsOneWidget);
+
+    await tester.tap(find.text('展开全部'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(description).maxLines, isNull);
+    expect(find.text('收起'), findsOneWidget);
   });
 
   testWidgets('manual source switch replaces the directory', (tester) async {

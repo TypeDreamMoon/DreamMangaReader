@@ -16,11 +16,12 @@ class NovelReaderPreferences {
     this.mode = NovelReaderMode.paged,
     this.fontFamily = '',
     this.fontSize = 18,
-    this.lineHeight = 1.65,
+    this.lineHeight = 1.7,
     this.paragraphSpacing = 10,
     this.horizontalMargin = 22,
     this.theme = NovelReaderTheme.sepia,
     this.keepScreenOn = true,
+    this.toolbarAutoHideSeconds = 4,
   });
 
   final NovelReaderMode mode;
@@ -31,6 +32,7 @@ class NovelReaderPreferences {
   final double horizontalMargin;
   final NovelReaderTheme theme;
   final bool keepScreenOn;
+  final int toolbarAutoHideSeconds;
 
   NovelReaderPreferences copyWith({
     NovelReaderMode? mode,
@@ -41,6 +43,7 @@ class NovelReaderPreferences {
     double? horizontalMargin,
     NovelReaderTheme? theme,
     bool? keepScreenOn,
+    int? toolbarAutoHideSeconds,
   }) {
     return NovelReaderPreferences(
       mode: mode ?? this.mode,
@@ -51,6 +54,8 @@ class NovelReaderPreferences {
       horizontalMargin: horizontalMargin ?? this.horizontalMargin,
       theme: theme ?? this.theme,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+      toolbarAutoHideSeconds:
+          toolbarAutoHideSeconds ?? this.toolbarAutoHideSeconds,
     );
   }
 
@@ -63,6 +68,7 @@ class NovelReaderPreferences {
         'horizontalMargin': horizontalMargin,
         'theme': theme.name,
         'keepScreenOn': keepScreenOn,
+        'toolbarAutoHideSeconds': toolbarAutoHideSeconds,
       };
 
   factory NovelReaderPreferences.fromJson(Map<String, dynamic> json) {
@@ -73,7 +79,7 @@ class NovelReaderPreferences {
       ),
       fontFamily: json['fontFamily'] as String? ?? '',
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
-      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.65,
+      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.7,
       paragraphSpacing: (json['paragraphSpacing'] as num?)?.toDouble() ?? 10,
       horizontalMargin: (json['horizontalMargin'] as num?)?.toDouble() ?? 22,
       theme: NovelReaderTheme.values.firstWhere(
@@ -81,6 +87,10 @@ class NovelReaderPreferences {
         orElse: () => NovelReaderTheme.sepia,
       ),
       keepScreenOn: json['keepScreenOn'] as bool? ?? true,
+      toolbarAutoHideSeconds:
+          ((json['toolbarAutoHideSeconds'] as num?)?.toInt() ?? 4)
+              .clamp(0, 10)
+              .toInt(),
     );
   }
 }
