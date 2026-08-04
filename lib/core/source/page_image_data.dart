@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'models.dart';
+
 class PageImageData {
   const PageImageData({
     required this.bytes,
@@ -115,6 +117,28 @@ Future<File> writePageImageDataUri(String value, File output) async {
   await output.parent.create(recursive: true);
   await output.writeAsBytes(image.bytes, flush: true);
   return output;
+}
+
+typedef PageImageNetworkFetcher = Future<File> Function(
+  String url,
+  Map<String, String> headers,
+);
+
+Future<File> writePageImage({
+  required PageImage image,
+  required File output,
+  required Map<String, String> headers,
+  required PageImageNetworkFetcher fetchNetwork,
+}) async {
+  await output.parent.create(recursive: true);
+  if (isPageImageDataUri(image.url)) {
+    return writePageImageDataUri(image.url, output);
+  }
+  if (image.url.startsWith('http')) {
+    final cached = await fetchNetwork(image.url, headers);
+    return cached.copy(output.path);
+  }
+  return File(image.url).copy(output.path);
 }
 
 bool _startsWith(Uint8List bytes, List<int> signature) {

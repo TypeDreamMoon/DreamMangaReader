@@ -10,6 +10,8 @@ import 'html_host.dart';
 import 'js_engine.dart';
 import 'lz_host.dart';
 
+const int maxSourceContinuationRequests = 500;
+
 /// 用一段 JS 脚本(实现 `prepare*/handle*` 契约)+ 宿主编排,落地一个 [MangaSource]。
 ///
 /// 核心思想:**宿主拥有全部 I/O**。
@@ -28,7 +30,6 @@ import 'lz_host.dart';
 /// };
 /// ```
 class ScriptSource implements MangaSource, NovelSource {
-  static const int _maxContinuationRequests = 100;
   static const Map<String, int> _sourceCapabilities = {
     'collectionContinuation': 1,
   };
@@ -215,7 +216,9 @@ class ScriptSource implements MangaSource, NovelSource {
     final items = <Object?>[];
     final seenRequests = <String>{};
 
-    for (var completed = 0; completed < _maxContinuationRequests; completed++) {
+    for (var completed = 0;
+        completed < maxSourceContinuationRequests;
+        completed++) {
       final method = ((request['method'] as String?) ?? 'GET').toUpperCase();
       final fingerprint =
           '$method\n${request['url']}\n${request['body'] ?? ''}';
@@ -249,8 +252,8 @@ class ScriptSource implements MangaSource, NovelSource {
       if (next is! Map || next['url'] is! String) {
         throw const FormatException('源连续请求的 next 不是有效请求描述');
       }
-      if (completed + 1 >= _maxContinuationRequests) {
-        throw StateError('源连续请求超过 100 次，已停止');
+      if (completed + 1 >= maxSourceContinuationRequests) {
+        throw StateError('源连续请求超过 $maxSourceContinuationRequests 次，已停止');
       }
       request = next.cast<String, dynamic>();
     }
