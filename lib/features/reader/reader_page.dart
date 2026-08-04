@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -18,8 +19,27 @@ import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/platform/reader_keys.dart';
 import '../../core/source/models.dart';
+import '../../core/source/page_image_data.dart';
 import '../../core/source/source.dart';
 import '../../ui/ui.dart';
+
+@visibleForTesting
+ImageProvider<Object> readerPageImageProvider(
+  PageImage img,
+  Map<String, String> headers,
+) {
+  if (isPageImageDataUri(img.url)) {
+    return MemoryImage(decodePageImageDataUri(img.url).bytes);
+  }
+  if (img.url.startsWith('http')) {
+    return CachedNetworkImageProvider(
+      img.url,
+      cacheManager: appImageCache,
+      headers: headers,
+    );
+  }
+  return FileImage(File(img.url));
+}
 
 /// 沉浸式阅读器:翻页(paged)/ 条漫竖读(webtoon)两种模式 + 半透明控制层。
 ///
@@ -268,10 +288,8 @@ class _ReaderPageState extends State<ReaderPage> {
   Map<String, String> _headers(PageImage img) =>
       {...widget.imageHeaders, ...?img.headers};
 
-  ImageProvider _providerFor(PageImage img) => img.url.startsWith('http')
-      ? CachedNetworkImageProvider(img.url,
-          cacheManager: appImageCache, headers: _headers(img))
-      : FileImage(File(img.url));
+  ImageProvider _providerFor(PageImage img) =>
+      readerPageImageProvider(img, _headers(img));
 
   void _preload() {
     final n = _store?.preload ?? 0;
@@ -1378,6 +1396,19 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 某页对应的本地文件:已下载=直接文件;网络=磁盘缓存(未缓存则 null)。
   Future<File?> _pageFile(PageImage img) async {
+    if (isPageImageDataUri(img.url)) {
+      try {
+        final root = await getTemporaryDirectory();
+        final extension = pageImageExtension(img.url);
+        final hash = img.url.hashCode.toUnsigned(32).toRadixString(16);
+        return writePageImageDataUri(
+          img.url,
+          File('${root.path}/dream_manga_reader/page-images/$hash.$extension'),
+        );
+      } catch (_) {
+        return null;
+      }
+    }
     if (!img.url.startsWith('http')) {
       final f = File(img.url);
       return await f.exists() ? f : null;
@@ -1391,13 +1422,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 保存文件名:<漫画>_<章节>_p<页>.<ext>(非法字符替换为下划线)。
   String _pageFileName(_FlatPage fp) {
-    var ext = 'jpg';
-    final u = fp.img.url.split('?').first;
-    final dot = u.lastIndexOf('.');
-    if (dot > 0) {
-      final e = u.substring(dot + 1).toLowerCase();
-      if (RegExp(r'^[a-z0-9]{1,4}$').hasMatch(e)) ext = e;
-    }
+    final ext = pageImageExtension(fp.img.url);
     String safe(String s) => s.replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_');
     return '${safe(widget.manga.title)}_${safe(fp.chapter.name)}'
         '_p${fp.localPage + 1}.$ext';
@@ -1501,6 +1526,14 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 缩略图:限宽解码省内存;失败留空。
   Widget _thumb(PageImage img) {
+    if (isPageImageDataUri(img.url)) {
+      return Image.memory(
+        decodePageImageDataUri(img.url).bytes,
+        fit: BoxFit.cover,
+        cacheWidth: 240,
+        errorBuilder: (_, __, ___) => const SizedBox(),
+      );
+    }
     if (!img.url.startsWith('http')) {
       return Image.file(File(img.url),
           fit: BoxFit.cover,

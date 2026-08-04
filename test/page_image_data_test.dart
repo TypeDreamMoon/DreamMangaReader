@@ -1,8 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dream_manga_reader/core/source/page_image_data.dart';
+import 'package:dream_manga_reader/core/source/models.dart';
+import 'package:dream_manga_reader/features/reader/reader_page.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+const onePixelPng =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+    'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 void main() {
   group('isPageImageDataUri', () {
@@ -115,6 +123,34 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('page image integration helpers', () {
+    test('writes a data image to a materialized file', () async {
+      final temp = await Directory.systemTemp.createTemp('page-image-data-');
+      addTearDown(() => temp.delete(recursive: true));
+      final output = File('${temp.path}/page.png');
+
+      await writePageImageDataUri(onePixelPng, output);
+
+      expect(await output.readAsBytes(),
+          decodePageImageDataUri(onePixelPng).bytes);
+    });
+
+    test('chooses file extensions for data, network, and local pages', () {
+      expect(pageImageExtension(onePixelPng), 'png');
+      expect(pageImageExtension('https://img.test/page.webp?token=1'), 'webp');
+      expect(pageImageExtension(r'C:\pages\0.img'), 'jpg');
+    });
+
+    test('reader creates a MemoryImage for data pages', () {
+      final provider = readerPageImageProvider(
+        const PageImage(index: 0, url: onePixelPng),
+        const {},
+      );
+
+      expect(provider, isA<MemoryImage>());
     });
   });
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 class PageImageData {
@@ -94,6 +95,26 @@ PageImageData decodePageImageDataUri(String value) {
       _ => throw const FormatException('不支持的图片数据格式'),
     },
   );
+}
+
+String pageImageExtension(String value) {
+  if (isPageImageDataUri(value)) {
+    return decodePageImageDataUri(value).extension;
+  }
+  final withoutQuery = value.split(RegExp(r'[?#]')).first;
+  final match = RegExp(r'\.([A-Za-z0-9]{1,4})$').firstMatch(withoutQuery);
+  final extension = match?.group(1)?.toLowerCase();
+  if (const {'jpg', 'jpeg', 'png', 'gif', 'webp'}.contains(extension)) {
+    return extension == 'jpeg' ? 'jpg' : extension!;
+  }
+  return 'jpg';
+}
+
+Future<File> writePageImageDataUri(String value, File output) async {
+  final image = decodePageImageDataUri(value);
+  await output.parent.create(recursive: true);
+  await output.writeAsBytes(image.bytes, flush: true);
+  return output;
 }
 
 bool _startsWith(Uint8List bytes, List<int> signature) {
