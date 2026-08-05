@@ -1,7 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文(HTTP)流量白名单。
+
+  默认全禁(base-config)。下面列出的域名是**个别源站点目前不提供 HTTPS**、
+  不放行就整个源不可用,才逐个开的口子 —— 不是给「方便」用的。
+
+  代价要说清楚:Android 的网络安全配置在**编译期**烘进 APK,没有运行时接口。
+  这意味着引擎在这里破了「不内置任何具体源」的原则:每加一个 HTTP-only 源,
+  就得改这个文件并发一个新版本,光更新源仓库不够。
+
+  另外两条路都更差:base-config 放开 = 所有域名都能走明文;完全不放行 =
+  这些源在 Android 上直接不可用。所以选了影响面最小的这条。
+
+  改动约束:
+  - 只加**确实无法用 HTTPS** 的域名,加之前先确认站点真的没有 https 端点;
+  - 同步改 test/android_network_security_test.dart 里的期望集合(它挡的是
+    「顺手多开一个」和「误把 base-config 翻成 true」);
+  - 站点上了 HTTPS 就把域名删掉,别留着。
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
+        <!-- Small Color 漫画/番剧源:站点与其图片、视频服务域名当前均无 HTTPS。 -->
         <domain includeSubdomains="true">smallcolor.hair</domain>
         <domain includeSubdomains="true">xiaoxiaocomic.top</domain>
         <domain includeSubdomains="true">animewcaip.top</domain>
