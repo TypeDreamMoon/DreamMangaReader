@@ -23,7 +23,9 @@ import '../../core/source/page_image_data.dart';
 import '../../core/source/source.dart';
 import '../../ui/ui.dart';
 
-@visibleForTesting
+/// 一页对应的 ImageProvider:Base64 内联页 / 网络页 / 本地已下载页。
+/// 阅读器渲染、预加载、首页宽高比探测都走它,三条路径必须给出**同一个** provider,
+/// 否则同一页会被解码两次、缓存也对不上。
 ImageProvider<Object> readerPageImageProvider(
   PageImage img,
   Map<String, String> headers,
@@ -1103,6 +1105,17 @@ class _ReaderPageState extends State<ReaderPage> {
   Widget _image(PageImage img, BoxFit fit,
       {bool fullWidth = false, double? width, double? height}) {
     final w = width ?? (fullWidth ? double.infinity : null);
+    // Base64 内联页:必须先于下面的「非 http = 本地文件」分支拦掉 —— data: URI
+    // 也不以 http 开头,漏进去会被当成文件名去开,整页变破图。
+    if (isPageImageDataUri(img.url)) {
+      return Image(
+        image: _providerFor(img),
+        fit: fit,
+        width: w,
+        height: height,
+        errorBuilder: (_, __, ___) => _broken(fullWidth),
+      );
+    }
     // 本地下载的页:直接读文件(url 非 http)。
     if (!img.url.startsWith('http')) {
       return Image.file(
@@ -1399,11 +1412,9 @@ class _ReaderPageState extends State<ReaderPage> {
     if (isPageImageDataUri(img.url)) {
       try {
         final root = await getTemporaryDirectory();
-        final extension = pageImageExtension(img.url);
-        final hash = img.url.hashCode.toUnsigned(32).toRadixString(16);
-        return writePageImageDataUri(
+        return await materializePageImageDataUri(
           img.url,
-          File('${root.path}/dream_manga_reader/page-images/$hash.$extension'),
+          Directory('${root.path}/dream_manga_reader'),
         );
       } catch (_) {
         return null;
@@ -1527,10 +1538,9 @@ class _ReaderPageState extends State<ReaderPage> {
   // 缩略图:限宽解码省内存;失败留空。
   Widget _thumb(PageImage img) {
     if (isPageImageDataUri(img.url)) {
-      return Image.memory(
-        decodePageImageDataUri(img.url).bytes,
+      return Image(
+        image: ResizeImage(_providerFor(img), width: 240, allowUpscaling: false),
         fit: BoxFit.cover,
-        cacheWidth: 240,
         errorBuilder: (_, __, ___) => const SizedBox(),
       );
     }
