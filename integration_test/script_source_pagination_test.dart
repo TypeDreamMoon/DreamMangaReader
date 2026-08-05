@@ -330,11 +330,13 @@ void main() {
     );
   });
 
-  test('continuation request count is limited to one hundred', () async {
+  test('continuation request count is limited to five hundred', () async {
     var calls = 0;
     final http = RoutingHttp((_) {
       calls++;
-      if (calls > 100) throw Exception('fixture exceeded one hundred calls');
+      if (calls > maxSourceContinuationRequests) {
+        throw Exception('fixture exceeded continuation limit');
+      }
       return jsonResponse({
         'items': const [],
         'next': {'url': 'https://example.test/endless?page=${calls + 1}'},
@@ -353,11 +355,11 @@ void main() {
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          contains('100'),
+          contains('$maxSourceContinuationRequests'),
         ),
       ),
     );
-    expect(http.requests, hasLength(100));
+    expect(http.requests, hasLength(maxSourceContinuationRequests));
   });
 
   test('a failed second page does not return partial chapters', () async {

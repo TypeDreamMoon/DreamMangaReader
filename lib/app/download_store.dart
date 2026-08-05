@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/log/app_log.dart';
 import '../core/net/image_cache.dart';
 import '../core/source/models.dart';
+import '../core/source/page_image_data.dart';
 import '../core/source/source_registry.dart';
 
 /// 一话已下载的记录(足够离线渲染 + 在下载页展示)。
@@ -166,8 +167,13 @@ class DownloadStore extends ChangeNotifier {
         if (_disposed) return;
         final h = {...job.headers, ...?pages[i].headers};
         try {
-          final f = await appImageCache.getSingleFile(pages[i].url, headers: h);
-          await f.copy('${dir.path}/$i.img');
+          await writePageImage(
+            image: pages[i],
+            output: File('${dir.path}/$i.img'),
+            headers: h,
+            fetchNetwork: (url, headers) =>
+                appImageCache.getSingleFile(url, headers: headers),
+          );
         } catch (_) {
           // 单页失败不整章中断,但记为不完整:直接放弃本章。
           AppLog.i.err(LogCat.download, '$label 第 ${i + 1} 页下载失败,已放弃本章');

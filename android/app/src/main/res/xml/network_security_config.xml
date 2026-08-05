@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">smallcolor.hair</domain>
+        <domain includeSubdomains="true">xiaoxiaocomic.top</domain>
+        <domain includeSubdomains="true">animewcaip.top</domain>
+        <domain includeSubdomains="true">truefruit.tw</domain>
+    </domain-config>
+</network-security-config>
