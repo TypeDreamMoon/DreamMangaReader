@@ -70,6 +70,7 @@ class PlaybackSessionController {
   int _generation = 0;
   int _recoveryRound = 0;
   bool _recovering = false;
+  bool _playing = false;
   bool _userPaused = false;
   bool _disposed = false;
 
@@ -126,7 +127,9 @@ class PlaybackSessionController {
   }
 
   void _onPlaying(bool playing) {
-    if (!playing || _disposed) return;
+    if (_disposed) return;
+    _playing = playing;
+    if (!playing) return;
     _stallTimer?.cancel();
     _emit(_state.copyWith(
       phase: PlaybackPhase.playing,
@@ -146,6 +149,13 @@ class PlaybackSessionController {
     if (_disposed || _userPaused) return;
     if (!buffering) {
       _stallTimer?.cancel();
+      if (_playing && _state.phase == PlaybackPhase.buffering) {
+        _emit(_state.copyWith(
+          phase: PlaybackPhase.playing,
+          position: _position,
+          selectedTrack: _selected,
+        ));
+      }
       return;
     }
     _emit(_state.copyWith(
@@ -201,22 +211,28 @@ class PlaybackSessionController {
         await _delay(_backoff[round]);
         if (!_isCurrent(generation)) return;
 
-        final candidates = <Future<VideoTrack?> Function()>[
-          () async => _selected,
-          () async {
-            final refreshed = await _tracks.refresh();
-            _available = List.unmodifiable(refreshed);
-            return _selected == null
-                ? null
-                : _tracks.matchRefreshed(_selected!, _available);
-          },
-          () async => _state.manualQualityLocked || _selected == null
-              ? null
-              : _tracks.lowerQuality(_selected!, _available),
-          () async => _selected == null
-              ? null
-              : _tracks.alternateLine(_selected!, _available),
-        ];
+        final candidates = switch (round) {
+          0 => <Future<VideoTrack?> Function()>[
+              () async => _selected,
+            ],
+          1 => <Future<VideoTrack?> Function()>[
+              () async {
+                final refreshed = await _tracks.refresh();
+                _available = List.unmodifiable(refreshed);
+                return _selected == null
+                    ? null
+                    : _tracks.matchRefreshed(_selected!, _available);
+              },
+            ],
+          _ => <Future<VideoTrack?> Function()>[
+              () async => _state.manualQualityLocked || _selected == null
+                  ? null
+                  : _tracks.lowerQuality(_selected!, _available),
+              () async => _selected == null
+                  ? null
+                  : _tracks.alternateLine(_selected!, _available),
+            ],
+        };
 
         for (final candidate in candidates) {
           if (!_isCurrent(generation)) return;
@@ -225,7 +241,7 @@ class PlaybackSessionController {
             if (track == null || !_isCurrent(generation)) continue;
             await _open(track, generation: generation, resume: true);
             if (!_isCurrent(generation)) return;
-            _recoveryRound = (round + 1).clamp(0, _backoff.length - 1);
+            _recoveryRound = round + 1;
             return;
           } catch (error) {
             lastError = error;

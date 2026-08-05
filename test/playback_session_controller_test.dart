@@ -160,6 +160,25 @@ void main() {
     });
   });
 
+  test('leaving a transient buffer returns the visible state to playing',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    await controller.start(const [_track480], _track480);
+    adapter.playingController.add(true);
+    adapter.bufferingController.add(true);
+    expect(controller.state.phase, PlaybackPhase.buffering);
+
+    adapter.bufferingController.add(false);
+    expect(controller.state.phase, PlaybackPhase.playing);
+
+    await controller.dispose();
+  });
+
   test('three failed rounds use one two four second backoff then fail', () {
     fakeAsync((async) {
       final adapter = _FakePlayerAdapter();
@@ -208,6 +227,34 @@ void main() {
       async.flushMicrotasks();
 
       expect(delays, [const Duration(seconds: 1), const Duration(seconds: 1)]);
+      controller.dispose();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('consecutive failures advance from reopen to refresh to lower quality',
+      () {
+    fakeAsync((async) {
+      final adapter = _FakePlayerAdapter();
+      final provider = _FakeTrackProvider();
+      final controller = PlaybackSessionController(
+        player: adapter,
+        tracks: provider,
+        delay: (_) async {},
+      );
+      controller.start(const [_track480, _track360], _track480);
+      async.flushMicrotasks();
+
+      adapter.errorController.add(StateError('first disconnect'));
+      async.flushMicrotasks();
+      adapter.errorController.add(StateError('expired URL'));
+      async.flushMicrotasks();
+      adapter.errorController.add(StateError('insufficient throughput'));
+      async.flushMicrotasks();
+
+      expect(provider.refreshCalls, 1);
+      expect(adapter.opened, [_track480, _track480, _track480, _track360]);
+      expect(controller.state.selectedTrack, _track360);
       controller.dispose();
       async.flushMicrotasks();
     });

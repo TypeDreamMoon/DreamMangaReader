@@ -21,6 +21,7 @@ import '../common/transitions.dart';
 import '../../core/update/update_models.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
+import '../anime/playback/hls_cache_settings.dart';
 import 'about_page.dart';
 import 'account_page.dart';
 import 'font_picker_sheet.dart';
@@ -687,6 +688,8 @@ class _CacheSheetState extends State<_CacheSheet> {
                 ? null
                 : () => _clear(SourceRepository.instance.clearCache,
                     l10n.set_srcCacheCleared)),
+        const SizedBox(height: 8),
+        const VideoCacheSettingsPanel(),
       ],
     );
   }
@@ -735,4 +738,147 @@ class _CacheSheetState extends State<_CacheSheet> {
           ],
         ),
       );
+}
+
+class VideoCacheSettingsPanel extends StatefulWidget {
+  const VideoCacheSettingsPanel({
+    super.key,
+    this.controller,
+  });
+
+  final VideoCacheSettingsController? controller;
+
+  @override
+  State<VideoCacheSettingsPanel> createState() =>
+      _VideoCacheSettingsPanelState();
+}
+
+class _VideoCacheSettingsPanelState extends State<VideoCacheSettingsPanel> {
+  late final VideoCacheSettingsController _controller =
+      widget.controller ?? HlsCacheController.instance;
+  HlsCacheLimit _limit = HlsCacheLimit.defaultValue;
+  int? _bytes;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    await _controller.initialize();
+    final bytes = await _controller.sizeBytes();
+    if (!mounted) return;
+    setState(() {
+      _limit = _controller.limit;
+      _bytes = bytes;
+    });
+  }
+
+  Future<void> _setLimit(HlsCacheLimit value) async {
+    setState(() => _busy = true);
+    try {
+      await _controller.setLimit(value);
+      await _refresh();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clear() async {
+    setState(() => _busy = true);
+    try {
+      await _controller.clear();
+      await _refresh();
+      if (mounted) {
+        showAppNotify(context, context.l10n.set_videoCacheCleared,
+            kind: AppNotifyKind.success);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _limitLabel(HlsCacheLimit value) => switch (value) {
+        HlsCacheLimit.off => context.l10n.set_videoCacheOff,
+        HlsCacheLimit.mib256 => '256 MiB',
+        HlsCacheLimit.mib512 => '512 MiB',
+        HlsCacheLimit.gib1 => '1 GiB',
+      };
+
+  static String _formatBytes(int? bytes) {
+    if (bytes == null) return '...';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final l10n = context.l10n;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      decoration: BoxDecoration(
+        color: palette.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: palette.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.movie_filter_rounded, size: 18, color: palette.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(l10n.set_videoCache,
+                    style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14)),
+              ),
+              Text(_formatBytes(_bytes),
+                  style: TextStyle(
+                      color: palette.accent,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(l10n.set_videoCacheSub,
+              style: TextStyle(color: palette.textMuted, fontSize: 11.5)),
+          const SizedBox(height: 10),
+          Text(l10n.set_videoCacheLimit,
+              style: TextStyle(color: palette.textMuted, fontSize: 11.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final value in HlsCacheLimit.values)
+                ChoiceChip(
+                  label: Text(_limitLabel(value)),
+                  selected: value == _limit,
+                  onSelected: _busy ? null : (_) => _setLimit(value),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _busy ? null : _clear,
+              icon: const Icon(Icons.delete_sweep_rounded, size: 18),
+              label: Text(l10n.set_videoCacheClear),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

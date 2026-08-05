@@ -73,7 +73,14 @@ class UnsupportedHlsEncryption implements Exception {
   const UnsupportedHlsEncryption();
 }
 
-class HlsCacheGateway {
+abstract interface class HlsSessionGateway {
+  Future<HlsSession> open(
+    VideoTrack track, {
+    required String authScope,
+  });
+}
+
+class HlsCacheGateway implements HlsSessionGateway {
   HlsCacheGateway({
     required HlsCacheStore cache,
     required HlsUpstreamClient upstream,
@@ -90,6 +97,7 @@ class HlsCacheGateway {
   HttpServer? _server;
   StreamSubscription<HttpRequest>? _subscription;
 
+  @override
   Future<HlsSession> open(
     VideoTrack track, {
     required String authScope,
