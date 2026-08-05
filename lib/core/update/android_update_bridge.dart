@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import 'update_models.dart';
+import 'update_resolver.dart';
 import 'update_transfer.dart';
 
 class AndroidUpdatePlan {
@@ -248,6 +249,99 @@ class AndroidUpdateBridgeException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class AndroidUpdateTransferCoordinator implements UpdateTransferCoordinator {
+  AndroidUpdateTransferCoordinator(this._bridge) {
+    _subscription = _bridge.states.listen(
+      _emit,
+      onError: (Object error, StackTrace stackTrace) {
+        _emit(UpdateTransferState(
+          stage: UpdateTransferStage.error,
+          message: sanitizeUpdateError('$error'),
+          errorCode: 'platform_event_error',
+        ));
+      },
+    );
+  }
+
+  final AndroidUpdateBridgeApi _bridge;
+  final _controller = StreamController<UpdateTransferState>.broadcast(
+    sync: true,
+  );
+  late final StreamSubscription<AndroidUpdateState> _subscription;
+  UpdateTransferState _state = const UpdateTransferState.idle();
+  bool _disposed = false;
+
+  @override
+  bool get supportsBackground => true;
+
+  @override
+  Stream<UpdateTransferState> get states => _controller.stream;
+
+  @override
+  Future<UpdateTransferState> current() async {
+    if (_disposed) return _state;
+    final state = await _bridge.current();
+    _state = state;
+    return state;
+  }
+
+  @override
+  Future<void> start({
+    required UpdateCandidate candidate,
+    required ResolvedUpdateAsset asset,
+  }) async {
+    if (_disposed) throw StateError('Update transfer coordinator is disposed.');
+    final taskKey = '${asset.sha256.toLowerCase()}:${candidate.version}';
+    try {
+      await _bridge.start(AndroidUpdatePlan.fromAsset(
+        versionName: candidate.version,
+        asset: asset,
+      ));
+      _emit(UpdateTransferState(
+        stage: UpdateTransferStage.downloading,
+        taskKey: taskKey,
+        versionName: candidate.version,
+        totalBytes: asset.sizeBytes,
+      ));
+    } on AndroidUpdateBridgeException catch (error) {
+      _emit(UpdateTransferState(
+        stage: UpdateTransferStage.error,
+        taskKey: taskKey,
+        versionName: candidate.version,
+        totalBytes: asset.sizeBytes,
+        message: error.message,
+        errorCode: error.code,
+      ));
+    }
+  }
+
+  @override
+  Future<void> cancel() async {
+    await _bridge.cancel();
+    _emit(const UpdateTransferState.idle());
+  }
+
+  @override
+  Future<void> install({Future<void> Function()? onBeforeExit}) async {
+    await onBeforeExit?.call();
+    await _bridge.installReady();
+  }
+
+  @override
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await _subscription.cancel();
+    await _controller.close();
+  }
+
+  void _emit(UpdateTransferState state) {
+    if (_disposed) return;
+    _state = state;
+    if (!_controller.isClosed) _controller.add(state);
+  }
 }
 
 String sanitizeUpdateError(String value) {

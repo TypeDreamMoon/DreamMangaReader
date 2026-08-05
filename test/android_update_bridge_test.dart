@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:dream_manga_reader/core/update/android_update_bridge.dart';
 import 'package:dream_manga_reader/core/update/update_models.dart';
+import 'package:dream_manga_reader/core/update/update_resolver.dart';
 import 'package:dream_manga_reader/core/update/update_transfer.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,6 +47,41 @@ const _chunkedAsset = ResolvedUpdateAsset(
     ),
   ],
 );
+
+const _candidate = UpdateCandidate(
+  source: UpdateSource.gitee,
+  version: '1.7.0',
+  tag: 'v1.7.0',
+  pageUrl: 'https://example.com/release',
+  notes: '',
+  prerelease: false,
+  assets: [],
+  integrity: UpdateIntegrity.manifest,
+);
+
+class _FakeBridge implements AndroidUpdateBridgeApi {
+  final controller = StreamController<AndroidUpdateState>.broadcast();
+  AndroidUpdateState currentState =
+      const AndroidUpdateState(stage: UpdateTransferStage.idle);
+  AndroidUpdatePlan? started;
+  var cancels = 0;
+  var installs = 0;
+
+  @override
+  Future<void> cancel() async => cancels++;
+
+  @override
+  Future<AndroidUpdateState> current() async => currentState;
+
+  @override
+  Future<void> installReady() async => installs++;
+
+  @override
+  Future<void> start(AndroidUpdatePlan plan) async => started = plan;
+
+  @override
+  Stream<AndroidUpdateState> get states => controller.stream;
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -197,5 +235,31 @@ void main() {
       'installReadyUpdate',
       'cancelUpdateDownload',
     ]);
+  });
+
+  test('Android coordinator starts plans and forwards native state', () async {
+    final bridge = _FakeBridge();
+    final coordinator = AndroidUpdateTransferCoordinator(bridge);
+    final states = <UpdateTransferState>[];
+    final subscription = coordinator.states.listen(states.add);
+
+    await coordinator.start(candidate: _candidate, asset: _asset);
+    bridge.controller.add(const AndroidUpdateState(
+      stage: UpdateTransferStage.retrying,
+      retryAttempt: 2,
+      progress: .4,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bridge.started?.toJson()['taskKey'], '$_shaA:1.7.0');
+    expect(coordinator.supportsBackground, isTrue);
+    expect(states.last.stage, UpdateTransferStage.retrying);
+    await coordinator.cancel();
+    await coordinator.install();
+    expect(bridge.cancels, 1);
+    expect(bridge.installs, 1);
+    await subscription.cancel();
+    await coordinator.dispose();
+    await bridge.controller.close();
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -11,12 +12,14 @@ import '../../ui/ui.dart';
 import '../l10n/app_strings.dart';
 import '../log/app_log.dart';
 import 'android_abi.dart';
+import 'android_update_bridge.dart';
 import 'update_asset_selector.dart';
 import 'update_downloader.dart';
 import 'update_installer.dart';
 import 'update_models.dart';
 import 'update_release_client.dart';
 import 'update_resolver.dart';
+import 'update_transfer.dart';
 
 enum UpdateCheckState { updateAvailable, upToDate, failed }
 
@@ -32,9 +35,6 @@ class UpdateCheckResult {
 class UpdateService {
   UpdateService._();
 
-  /// 查最新版本。[includeBeta]=true 时把预发布(-beta/-rc/-alpha)也算进来。
-  /// **当前若本身是预发布,自动包含预发布**——beta 用户就该收到 beta 更新。
-  /// 网络或来源错误会明确返回 [UpdateCheckState.failed]，不会伪装成最新版。
   static Future<UpdateCheckResult> check({
     bool includeBeta = false,
     UpdateSource preferredSource = UpdateSource.gitee,
@@ -70,12 +70,9 @@ class UpdateService {
     }
   }
 
-  /// 当前 tag/版本是否为预发布(带 -beta/-rc/-alpha 后缀)。
   static bool isPrerelease(String value) =>
       UpdateVersion.tryParse(value)?.isPrerelease ?? false;
 
-  /// 语义化版本比较:先比 major.minor.patch;base 相等时正式版 > 预发布,预发布之间
-  /// 按标识符逐段比(beta.3 < beta.4、beta.9 < beta.10、alpha < beta)。a>b 正、a<b 负、相等 0。
   static int compareVersions(String a, String b) =>
       UpdateVersion.parse(a).compareTo(UpdateVersion.parse(b));
 }
@@ -92,20 +89,43 @@ typedef UpdateInstallCallback = Future<void> Function(
 });
 
 typedef UpdateManualCallback = Future<void> Function(Uri uri);
+typedef UpdateRefreshCallback = Future<UpdateCandidate?> Function(
+  UpdateSource preferred,
+);
 
 @immutable
 class UpdateDialogDependencies {
-  const UpdateDialogDependencies({
-    required this.download,
-    required this.install,
+  factory UpdateDialogDependencies({
+    required UpdateDownloadCallback download,
+    required UpdateInstallCallback install,
+    required UpdateManualCallback openManual,
+  }) {
+    return UpdateDialogDependencies.coordinator(
+      coordinator: WindowsUpdateTransferCoordinator(
+        download: download,
+        install: install,
+      ),
+      refresh: _noRefresh,
+      openManual: openManual,
+    );
+  }
+
+  const UpdateDialogDependencies.coordinator({
+    required this.coordinator,
+    required this.refresh,
     required this.openManual,
   });
 
-  final UpdateDownloadCallback download;
-  final UpdateInstallCallback install;
+  final UpdateTransferCoordinator coordinator;
+  final UpdateRefreshCallback refresh;
   final UpdateManualCallback openManual;
 
-  static UpdateDialogDependencies production() => UpdateDialogDependencies(
+  static UpdateDialogDependencies production() {
+    final UpdateTransferCoordinator coordinator;
+    if (Platform.isAndroid) {
+      coordinator = AndroidUpdateTransferCoordinator(AndroidUpdateBridge());
+    } else {
+      coordinator = WindowsUpdateTransferCoordinator(
         download: (
           asset, {
           required cancelToken,
@@ -120,23 +140,28 @@ class UpdateDialogDependencies {
           package,
           onBeforeExit: onBeforeExit,
         ),
-        openManual: (uri) async {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        },
       );
+    }
+    return UpdateDialogDependencies.coordinator(
+      coordinator: coordinator,
+      refresh: (preferred) async {
+        final result = await UpdateService.check(
+          preferredSource: preferred,
+          includeBeta: true,
+        );
+        return result.state == UpdateCheckState.updateAvailable
+            ? result.candidate
+            : null;
+      },
+      openManual: (uri) async {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      },
+    );
+  }
+
+  static Future<UpdateCandidate?> _noRefresh(UpdateSource _) async => null;
 }
 
-enum _UpdateStage {
-  preparing,
-  idle,
-  downloading,
-  verifying,
-  launching,
-  complete,
-  error,
-}
-
-/// 弹出「发现新版本」对话框并在应用内完成下载、校验和安装器启动。
 Future<void> showUpdateDialog(
   BuildContext context,
   UpdateCandidate info, {
@@ -163,61 +188,91 @@ class _UpdateDialog extends StatefulWidget {
 }
 
 class _UpdateDialogState extends State<_UpdateDialog> {
-  _UpdateStage _stage = _UpdateStage.preparing;
-  double _progress = 0;
+  bool _preparing = true;
+  bool _installing = false;
+  bool _complete = false;
+  bool _installStarted = false;
+  UpdateTransferState _transfer = const UpdateTransferState.idle();
   ResolvedUpdateAsset? _asset;
-  String? _error;
-  CancelToken? _cancel;
-
-  /// 实际选中安装包的那个来源。换源后对话框的标题、说明和下载页都跟着走。
+  StreamSubscription<UpdateTransferState>? _subscription;
   late UpdateCandidate _active = widget.info;
 
-  bool get _busy => switch (_stage) {
-        _UpdateStage.downloading ||
-        _UpdateStage.verifying ||
-        _UpdateStage.launching =>
-          true,
-        _ => false,
-      };
+  String? get _taskKey => _asset == null
+      ? null
+      : '${_asset!.sha256.toLowerCase()}:${_active.version}';
+
+  bool get _busy => _transfer.busy || _installing;
 
   @override
   void initState() {
     super.initState();
+    _subscription = widget.dependencies.coordinator.states.listen(
+      _onTransferState,
+      onError: (Object error) => _onTransferState(UpdateTransferState(
+        stage: UpdateTransferStage.error,
+        message: sanitizeUpdateError('$error'),
+      )),
+    );
     _prepareAsset();
   }
 
+  @override
+  void dispose() {
+    unawaited(_subscription?.cancel());
+    unawaited(widget.dependencies.coordinator.dispose());
+    super.dispose();
+  }
+
   Future<void> _prepareAsset() async {
-    var active = widget.info;
-    ResolvedUpdateAsset? selected;
-    if (UpdateInstaller.supported) {
-      final platform =
-          Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
-      // 首选来源挑不出本机架构的包时依次试备选来源,而不是直接让用户去下载页。
-      for (final candidate in [widget.info, ...widget.info.alternates]) {
-        if (candidate.integrity != UpdateIntegrity.manifest ||
-            candidate.manifest == null) {
-          continue;
+    final selection = await _selectFromCandidates(widget.info);
+    if (!mounted) return;
+    _active = selection?.$1 ?? widget.info;
+    _asset = selection?.$2;
+    var restored = const UpdateTransferState.idle();
+    if (_asset != null) {
+      try {
+        final current = await widget.dependencies.coordinator.current();
+        if (current.stage == UpdateTransferStage.idle ||
+            current.taskKey == _taskKey) {
+          restored = current;
         }
-        final resolved = await _select(candidate, platform);
-        if (resolved == null) continue;
-        active = candidate;
-        selected = resolved;
-        break;
-      }
-      if (selected != null && active.source != widget.info.source) {
-        AppLog.i.warn(
-          LogCat.update,
-          '${widget.info.source.displayName} 没有本机架构的安装包,'
-          '改用 ${active.source.displayName}',
+      } catch (error) {
+        restored = UpdateTransferState(
+          stage: UpdateTransferStage.error,
+          message: sanitizeUpdateError('$error'),
         );
       }
     }
     if (!mounted) return;
     setState(() {
-      _active = active;
-      _asset = selected;
-      _stage = _UpdateStage.idle;
+      _preparing = false;
+      _transfer = restored;
     });
+    _maybeInstall(restored);
+  }
+
+  Future<(UpdateCandidate, ResolvedUpdateAsset)?> _selectFromCandidates(
+    UpdateCandidate root,
+  ) async {
+    if (!UpdateInstaller.supported) return null;
+    final platform =
+        Platform.isWindows ? UpdatePlatform.windows : UpdatePlatform.android;
+    for (final candidate in [root, ...root.alternates]) {
+      if (candidate.integrity != UpdateIntegrity.manifest ||
+          candidate.manifest == null) {
+        continue;
+      }
+      final selected = await _select(candidate, platform);
+      if (selected == null) continue;
+      if (candidate.source != root.source) {
+        AppLog.i.warn(
+          LogCat.update,
+          '${root.source.displayName} 没有本机架构的安装包，改用 ${candidate.source.displayName}',
+        );
+      }
+      return (candidate, selected);
+    }
+    return null;
   }
 
   Future<ResolvedUpdateAsset?> _select(
@@ -239,11 +294,9 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     try {
       return await selector.select(platform: platform, assets: assets);
     } on AndroidAbiUnavailableException catch (error) {
-      // 架构未知时通用包功能上是对的(它含全部 ABI),但这必须是一个被记录的
-      // 显式决定 —— 以前靠一个空列表默默走到这里,通道坏了都没人知道。
       AppLog.i.err(
         LogCat.update,
-        '无法识别设备 ABI,改用通用安装包',
+        '无法识别设备 ABI，改用通用安装包',
         detail: '$error',
       );
       return selector.select(
@@ -254,56 +307,91 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     }
   }
 
+  void _onTransferState(UpdateTransferState state) {
+    if (!mounted) return;
+    if (state.stage != UpdateTransferStage.idle &&
+        state.taskKey != null &&
+        state.taskKey != _taskKey) {
+      return;
+    }
+    setState(() => _transfer = state);
+    _maybeInstall(state);
+  }
+
+  void _maybeInstall(UpdateTransferState state) {
+    if (state.stage == UpdateTransferStage.ready &&
+        !widget.dependencies.coordinator.supportsBackground) {
+      unawaited(_installReady());
+    }
+  }
+
   Future<void> _startUpdate() async {
+    if (_transfer.errorCode == 'expired_url') {
+      final refreshed = await _refreshExpiredAsset();
+      if (!refreshed) return;
+    }
     final asset = _asset;
     if (asset == null) return;
-    final cancel = _cancel = CancelToken();
+    _complete = false;
+    _installStarted = false;
+    await widget.dependencies.coordinator.start(
+      candidate: _active,
+      asset: asset,
+    );
+  }
+
+  Future<bool> _refreshExpiredAsset() async {
+    final previous = _asset;
+    if (previous == null) return false;
+    final refreshed = await widget.dependencies.refresh(_active.source);
+    final selection =
+        refreshed == null ? null : await _selectFromCandidates(refreshed);
+    if (!mounted) return false;
+    if (selection == null ||
+        selection.$1.version != _active.version ||
+        selection.$2.sha256.toLowerCase() != previous.sha256.toLowerCase()) {
+      setState(() {
+        _transfer = const UpdateTransferState(
+          stage: UpdateTransferStage.error,
+          errorCode: 'expired_url',
+          message: 'The update download URL could not be refreshed.',
+        );
+      });
+      return false;
+    }
     setState(() {
-      _stage = _UpdateStage.downloading;
-      _error = null;
-      _progress = 0;
+      _active = selection.$1;
+      _asset = selection.$2;
+      _transfer = const UpdateTransferState.idle();
     });
+    return true;
+  }
+
+  Future<void> _cancel() => widget.dependencies.coordinator.cancel();
+
+  Future<void> _installReady() async {
+    if (_installStarted) return;
+    _installStarted = true;
+    if (mounted) setState(() => _installing = true);
     try {
-      final package = await widget.dependencies.download(
-        asset,
-        cancelToken: cancel,
-        onProgress: (p) {
-          if (!mounted) return;
-          setState(() {
-            _progress = p;
-            if (p >= 1) _stage = _UpdateStage.verifying;
-          });
-        },
-      );
-      if (cancel.isCancelled) {
-        if (mounted) setState(() => _stage = _UpdateStage.idle);
-        return;
-      }
-      if (mounted) setState(() => _stage = _UpdateStage.launching);
-      await widget.dependencies.install(
-        package,
+      await widget.dependencies.coordinator.install(
         onBeforeExit: () => LibraryScope.read(context).flushPending(),
       );
       if (mounted) {
         setState(() {
-          _stage = _UpdateStage.complete;
+          _installing = false;
+          _complete = true;
         });
       }
-    } on DioException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        if (e.type == DioExceptionType.cancel) {
-          _stage = _UpdateStage.idle;
-        } else {
-          _error = '$e';
-          _stage = _UpdateStage.error;
-        }
-      });
-    } catch (e) {
+    } catch (error) {
       if (mounted) {
         setState(() {
-          _error = '$e';
-          _stage = _UpdateStage.error;
+          _installing = false;
+          _installStarted = false;
+          _transfer = UpdateTransferState(
+            stage: UpdateTransferStage.error,
+            message: sanitizeUpdateError('$error'),
+          );
         });
       }
     }
@@ -327,7 +415,10 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       title: Text(
         l10n.update_foundTitle(_active.tag),
         style: TextStyle(
-            color: p.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
+          color: p.textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+        ),
       ),
       content: SizedBox(
         width: contentWidth,
@@ -347,16 +438,21 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             Expanded(
               child: SingleChildScrollView(
                 child: _active.notes.isEmpty
-                    ? Text(l10n.update_noNotes,
+                    ? Text(
+                        l10n.update_noNotes,
                         style: TextStyle(
-                            color: p.textMuted, fontSize: 12.5, height: 1.5))
+                          color: p.textMuted,
+                          fontSize: 12.5,
+                          height: 1.5,
+                        ),
+                      )
                     : MarkdownView(_active.notes),
               ),
             ),
             const SizedBox(height: 12),
             if (_busy) ...[
               LinearProgressIndicator(
-                value: _progress,
+                value: _transfer.progress,
                 backgroundColor: p.line,
               ),
               const SizedBox(height: 8),
@@ -364,22 +460,27 @@ class _UpdateDialogState extends State<_UpdateDialog> {
                 _statusText(l10n),
                 style: TextStyle(color: p.textMuted, fontSize: 12),
               ),
-            ] else if (_stage == _UpdateStage.complete)
+            ] else if (_complete)
               Text(
                 l10n.update_installerOpened,
                 style: TextStyle(color: p.textPrimary, fontSize: 12.5),
               )
-            else if (_stage == _UpdateStage.error)
+            else if (_transfer.stage == UpdateTransferStage.ready)
               Text(
-                l10n.update_failed(_error ?? ''),
+                l10n.update_readyNotification,
+                style: TextStyle(color: p.textPrimary, fontSize: 12.5),
+              )
+            else if (_transfer.stage == UpdateTransferStage.error)
+              Text(
+                l10n.update_failed(_errorText(l10n)),
                 style: TextStyle(color: p.statusFail, fontSize: 12),
               )
-            else if (_stage == _UpdateStage.idle && _asset == null)
+            else if (!_preparing && _asset == null)
               Text(
                 l10n.update_noCompatibleAsset,
                 style: TextStyle(color: p.textMuted, fontSize: 12),
               )
-            else if (_stage == _UpdateStage.preparing)
+            else if (_preparing)
               Text(
                 l10n.update_preparing,
                 style: TextStyle(color: p.textMuted, fontSize: 12),
@@ -391,34 +492,66 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     );
   }
 
-  String _statusText(AppLocalizations l10n) => switch (_stage) {
-        _UpdateStage.downloading =>
-          l10n.update_downloadingProgress((_progress * 100).round()),
-        _UpdateStage.verifying => l10n.update_verifying,
-        _UpdateStage.launching => Platform.isWindows
-            ? l10n.update_launchingWindows
-            : l10n.update_launchingAndroid,
-        _ => '',
-      };
+  String _errorText(AppLocalizations l10n) =>
+      _transfer.errorCode == 'expired_url'
+          ? l10n.update_expiredUrl
+          : (_transfer.message ?? '');
+
+  String _statusText(AppLocalizations l10n) {
+    if (_installing) {
+      return Platform.isWindows
+          ? l10n.update_launchingWindows
+          : l10n.update_launchingAndroid;
+    }
+    return switch (_transfer.stage) {
+      UpdateTransferStage.downloading =>
+        l10n.update_downloadingProgress((_transfer.progress * 100).round()),
+      UpdateTransferStage.retrying =>
+        l10n.update_retrying(_transfer.retryAttempt ?? 1),
+      UpdateTransferStage.verifying ||
+      UpdateTransferStage.assembling =>
+        l10n.update_verifying,
+      _ => '',
+    };
+  }
 
   List<Widget> _actions() {
     final l10n = context.l10n;
-    if (_stage == _UpdateStage.downloading ||
-        _stage == _UpdateStage.verifying) {
+    if (_transfer.busy) {
       return [
         TextButton(
           key: const Key('update-cancel'),
-          onPressed: () => _cancel?.cancel('user'),
+          onPressed: _cancel,
           child: Text(l10n.cancel),
+        ),
+        if (widget.dependencies.coordinator.supportsBackground)
+          FilledButton.tonal(
+            key: const Key('update-background'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.update_background),
+          ),
+      ];
+    }
+    if (_installing) return const [];
+    if (_complete) {
+      return [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.done),
         ),
       ];
     }
-    if (_stage == _UpdateStage.launching) return const [];
-    if (_stage == _UpdateStage.complete) {
+    if (_transfer.stage == UpdateTransferStage.ready) {
       return [
         TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.done)),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.later),
+        ),
+        FilledButton(
+          key: const Key('update-install'),
+          onPressed: _installReady,
+          child: Text(l10n.update_primary),
+        ),
       ];
     }
     return [
@@ -426,20 +559,22 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         onPressed: () => Navigator.of(context).pop(),
         child: Text(l10n.later),
       ),
-      if (_stage == _UpdateStage.error ||
-          (_stage == _UpdateStage.idle && _asset == null))
+      if (_transfer.stage == UpdateTransferStage.error ||
+          (!_preparing && _asset == null))
         TextButton(
           key: const Key('update-manual'),
           onPressed: _openPage,
           child: Text(l10n.goDownloadPage),
         ),
-      if (_stage == _UpdateStage.idle && _asset != null)
+      if (!_preparing &&
+          _transfer.stage == UpdateTransferStage.idle &&
+          _asset != null)
         FilledButton(
           key: const Key('update-primary'),
           onPressed: _startUpdate,
           child: Text(l10n.update_primary),
         ),
-      if (_stage == _UpdateStage.error && _asset != null)
+      if (_transfer.stage == UpdateTransferStage.error && _asset != null)
         FilledButton(
           key: const Key('update-retry'),
           onPressed: _startUpdate,

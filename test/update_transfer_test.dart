@@ -1,7 +1,5 @@
-import 'dart:async';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:dream_manga_reader/core/update/update_models.dart';
 import 'package:dream_manga_reader/core/update/update_resolver.dart';
 import 'package:dream_manga_reader/core/update/update_transfer.dart';
