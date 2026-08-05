@@ -117,6 +117,29 @@ void main() {
     expect((m['sourceRepo'] as Map)['repoUrl'], 'a');
   });
 
+  test('legacy source repository tokens are stripped while merging', () {
+    const sentinel = 'DO_NOT_EXPORT_TOKEN_91f4';
+    final legacy = blob(100, {}, {
+      'repoUrl': 'https://example.test/sources',
+      'localDir': '',
+      'token': sentinel,
+      'sources.token': sentinel,
+      'source.repository.token': sentinel,
+    });
+
+    final merged = SyncData.merge(legacy, blob(50, {}));
+    final overlaid = SyncData.overlay(legacy, blob(200, {}));
+
+    for (final result in [merged, overlaid]) {
+      final encoded = result.toString();
+      final sourceRepo = result['sourceRepo'] as Map;
+      expect(encoded, isNot(contains(sentinel)));
+      expect(sourceRepo.containsKey('token'), isFalse);
+      expect(sourceRepo.containsKey('sources.token'), isFalse);
+      expect(sourceRepo.containsKey('source.repository.token'), isFalse);
+    }
+  });
+
   test('小说源类别支持追加且保留独立序列化键', () {
     expect(SyncData.supportsAppend(SyncCategory.novelSources), true);
     final merged = SyncData.merge(

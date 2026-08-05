@@ -422,7 +422,7 @@ class SyncController extends ChangeNotifier {
         SyncCategory.animeSources => srcSig('anime'),
         SyncCategory.novelSources => srcSig('novel'),
         SyncCategory.sourceRepo =>
-          _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}|${repo.token ?? ''}'),
+          _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}'),
       };
     }
     return out;

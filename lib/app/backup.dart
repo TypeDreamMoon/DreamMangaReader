@@ -17,18 +17,41 @@ Map<String, dynamic> buildBackupData(
   LibraryStore store,
   NovelLibraryStore novels,
 ) =>
-    {
+    sanitizeBackupData({
       ...store.exportData(),
       'novels': novels.exportData(),
+    });
+
+Map<String, dynamic> sanitizeBackupData(Map<String, dynamic> data) =>
+    _sanitizePortableValue(data) as Map<String, dynamic>;
+
+Object? _sanitizePortableValue(Object? value) {
+  if (value is Map) {
+    return <String, dynamic>{
+      for (final entry in value.entries)
+        if (entry.key is String && !_isDeviceSecretKey(entry.key as String))
+          entry.key as String: _sanitizePortableValue(entry.value),
     };
+  }
+  if (value is List) {
+    return [for (final item in value) _sanitizePortableValue(item)];
+  }
+  return value;
+}
+
+bool _isDeviceSecretKey(String key) =>
+    key == 'sources.token' ||
+    key == 'source.repository.token' ||
+    (key.startsWith('auth.') && key.endsWith('.token'));
 
 Future<void> restoreBackupData(
   LibraryStore store,
   NovelLibraryStore novels,
   Map<String, dynamic> data,
 ) async {
-  await store.importData(data);
-  final novelData = data['novels'];
+  final portable = sanitizeBackupData(data);
+  await store.importData(portable);
+  final novelData = portable['novels'];
   if (novelData is Map) {
     await novels.importData(novelData.cast<String, dynamic>());
   }

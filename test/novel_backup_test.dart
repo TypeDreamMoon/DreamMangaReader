@@ -103,4 +103,28 @@ void main() {
     manga.dispose();
     novels.dispose();
   });
+
+  test('portable backup sanitizer removes device-only secrets recursively', () {
+    const sentinel = 'DO_NOT_EXPORT_TOKEN_91f4';
+    final sanitized = sanitizeBackupData({
+      'v': 1,
+      'sources.token': sentinel,
+      'source.repository.token': sentinel,
+      'auth.xiaojie_novel.token': sentinel,
+      'nested': {
+        'safe': 'keep-me',
+        'auth.picacg.token': sentinel,
+      },
+      'items': [
+        {'auth.xiaojie_anime.token': sentinel},
+      ],
+    });
+    final encoded = jsonEncode(sanitized);
+
+    expect(encoded, isNot(contains(sentinel)));
+    expect(encoded, isNot(contains('sources.token')));
+    expect(encoded, isNot(contains('source.repository.token')));
+    expect(encoded, isNot(contains('auth.picacg.token')));
+    expect((sanitized['nested'] as Map)['safe'], 'keep-me');
+  });
 }
