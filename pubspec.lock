@@ -463,6 +463,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  hls:
+    dependency: "direct main"
+    description:
+      name: hls
+      sha256: "39026b53df7a88263434f286a000f9e669a7adb39d123be0318ea745a07f2e60"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.0.0"
   hooks:
     dependency: transitive
     description:
