@@ -93,9 +93,13 @@ class UpdateDownloadService : Service() {
         } catch (_: DownloadCancelledException) {
             // Explicit cancellation already cleared state and files.
         } catch (error: ExpiredUrlException) {
-            publishError(plan, "expired_url", "下载地址已过期，请重试")
+            if (!cancelled.get()) {
+                publishError(plan, "expired_url", "下载地址已过期，请重试")
+            }
         } catch (error: Throwable) {
-            publishError(plan, "download_failed", safeMessage(error))
+            if (!cancelled.get()) {
+                publishError(plan, "download_failed", safeMessage(error))
+            }
         } finally {
             releaseWakeLock()
             running.set(false)
