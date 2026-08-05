@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+
 import 'models.dart';
 
 class PageImageData {
@@ -65,7 +67,33 @@ String detectPageImageMediaType(Uint8List bytes) {
   throw const FormatException('不支持的图片数据格式');
 }
 
+/// 最近解码过的 Base64 页(URI → 字节)。
+///
+/// **必须缓存**:[MemoryImage] 的相等性按 `bytes` 的**实例**比,每次 build 重新
+/// 解码都会得到新的 Uint8List → Flutter 的 ImageCache 永远命不中,每帧把整张图
+/// 重解一遍。缓存后同一页拿到的是同一个实例,provider 才等价、缓存才生效。
+///
+/// 只留最近 [_decodedCacheLimit] 张:阅读器同时用到的就是当前页 + 预加载窗口,
+/// 再多就是白占内存(一张页的字节可能有几 MB)。
+const int _decodedCacheLimit = 12;
+final Map<String, PageImageData> _decodedCache = <String, PageImageData>{};
+
 PageImageData decodePageImageDataUri(String value) {
+  // Dart 的 Map 保插入序 → remove + 重插 = 把命中项挪到队尾,队首即最久未用。
+  final cached = _decodedCache.remove(value);
+  if (cached != null) {
+    _decodedCache[value] = cached;
+    return cached;
+  }
+  final decoded = _decodePageImageDataUri(value);
+  _decodedCache[value] = decoded;
+  if (_decodedCache.length > _decodedCacheLimit) {
+    _decodedCache.remove(_decodedCache.keys.first);
+  }
+  return decoded;
+}
+
+PageImageData _decodePageImageDataUri(String value) {
   if (!isPageImageDataUri(value)) {
     throw const FormatException('不支持的图片数据格式');
   }
@@ -110,6 +138,20 @@ String pageImageExtension(String value) {
     return extension == 'jpeg' ? 'jpg' : extension!;
   }
   return 'jpg';
+}
+
+/// 把 Base64 页落到磁盘,**按内容寻址**(文件名 = 字节的 sha1)。
+///
+/// 保存/分享要一个真实文件路径。用 URI 的 `String.hashCode` 当文件名是不行的:
+/// 32 位、非密码学散列,一话几百页时撞名的后果是**存出去的是别的页**。
+Future<File> materializePageImageDataUri(String value, Directory root) async {
+  final image = decodePageImageDataUri(value);
+  final digest = sha1.convert(image.bytes).toString();
+  final output = File('${root.path}/page-images/$digest.${image.extension}');
+  if (await output.exists()) return output; // 同内容不重写
+  await output.parent.create(recursive: true);
+  await output.writeAsBytes(image.bytes, flush: true);
+  return output;
 }
 
 Future<File> writePageImageDataUri(String value, File output) async {
