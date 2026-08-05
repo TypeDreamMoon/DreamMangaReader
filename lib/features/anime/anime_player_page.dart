@@ -10,6 +10,7 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
+import 'playback/mpv_network_options.dart';
 
 /// 播放诊断开关。开着时播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错)。
 /// 平时关闭(避免刷屏);排查番剧播放问题时置 true 复现即可。
@@ -17,12 +18,6 @@ const bool kAvDiag = false;
 void _av(String m) {
   if (kAvDiag) debugPrint('[AV] $m');
 }
-
-/// 番剧 CDN 大多会对 mpv 默认 UA(`Lavf/…`)直接**重置连接**(curl 带浏览器 UA 却 200)。
-/// 播放前必须把 mpv 的 `user-agent` 选项换成浏览器 UA,否则很多源根本打不开。
-const String _kBrowserUa =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /// 番剧播放页:media_kit(libmpv)播放一集。取源的 [MangaSource.getVideo] 拿清晰度/线路,
 /// 带上防盗链 headers 交给播放器;支持上一集/下一集、切线路。
@@ -53,6 +48,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     configuration: PlayerConfiguration(
       bufferSize: 64 * 1024 * 1024,
       logLevel: kAvDiag ? MPVLogLevel.warn : MPVLogLevel.error,
+      protocolWhitelist: MpvNetworkOptions.protocolWhitelist,
     ),
   );
   late final VideoController _controller = VideoController(_player);
@@ -111,7 +107,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (v) _av('completed (放完)');
     }));
     _diag.add(_player.stream.error.listen((e) => _av('!! ERROR: $e')));
-    _diag.add(_player.stream.log.listen((e) => _av('mpv[${e.level}] ${e.prefix}: ${e.text.trim()}')));
+    _diag.add(_player.stream.log
+        .listen((e) => _av('mpv[${e.level}] ${e.prefix}: ${e.text.trim()}')));
     _diagTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!mounted) return;
       final s = _player.state;
@@ -123,9 +120,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   /// 番剧源的 m3u8 分片常仅 2~6 秒/片;libmpv 默认 `demuxer-readahead-secs` 只有 ~1s,
   /// 于是「播一片 → 等下一片」= 每几秒卡一下。这里**只**放大内存里的向前预读 —— 安全。
   ///
-  /// ⚠️ 血泪教训:别设 `cache=yes`(会让 mpv 尝试建**文件缓存**,失败后 completed 误触发、
-  /// 位置重置回 0 → 「播 2 秒又重来」的循环);也别设 `stream-lavf-o`(和环境代理冲突,
-  /// 触发 `httpproxy` 协议不在白名单)。predemux 预读是纯内存,不碰这些坑。
+  /// 不在这里改文件缓存；HLS 磁盘缓存由可控额度的应用层网关负责。
   Future<void> _tuneBuffering() async {
     try {
       final p = _player.platform;
@@ -144,31 +139,30 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   /// open() 前配置 mpv 网络:浏览器 UA + 走 App 代理。用 `waitForPlayerInitialization`
   /// 只等 mpv 句柄就绪、**不等 VideoController**(避免死锁);setProperty 传 false 同理。
   Future<void> _applyNetOptions() async {
-    try {
-      final p = _player.platform;
-      if (p is! NativePlayer) return;
-      await p.waitForPlayerInitialization;
-      // UA:见 [_kBrowserUa]。
-      final ua = _current?.headers?['User-Agent'] ??
-          _current?.headers?['user-agent'] ??
-          _kBrowserUa;
-      await p.setProperty('user-agent', ua, waitForInitialization: false);
-      // 视频跟随 App 代理(和 dio 一致)。直连某些 CDN 会因地区/指纹被 TLS 重置;
-      // 走代理(如 FlClash)按其规则出口即可正常握手。没配代理则直连。
-      final proxy = AppProxy.current;
-      if (proxy != null && proxy.isNotEmpty) {
-        await p.setProperty('http-proxy', 'http://$proxy',
-            waitForInitialization: false);
-        // 用 HTTP 代理隧道 HTTPS 时,ffmpeg 需把 `httpproxy` 协议加进白名单,否则
-        // 「Protocol 'httpproxy' not on whitelist」→ 打不开。stream + demuxer 两层都要设。
-        // 注意:值里有逗号,mpv 必须用方括号包住,否则被当成多个 key=value → 解析报错。
-        const wl =
-            'protocol_whitelist=[file,crypto,data,http,https,tcp,tls,httpproxy,hls,applehttp]';
-        await p.setProperty('stream-lavf-o', wl, waitForInitialization: false);
-        await p.setProperty('demuxer-lavf-o', wl, waitForInitialization: false);
-        _av('mpv 走代理 $proxy');
+    final track = _current;
+    if (track == null) throw StateError('尚未选择播放线路');
+    final p = _player.platform;
+    if (p is! NativePlayer) return;
+    final options = MpvNetworkOptions.forTrack(
+      track,
+      proxy: AppProxy.current,
+    );
+    await p.waitForPlayerInitialization;
+
+    Future<void> setRequired(String key, String value) async {
+      try {
+        await p.setProperty(key, value, waitForInitialization: false);
+      } catch (error) {
+        throw StateError('无法配置播放器网络参数 $key: $error');
       }
-    } catch (_) {}
+    }
+
+    await setRequired('network-timeout', '${options.networkTimeoutSeconds}');
+    await setRequired('user-agent', options.userAgent);
+    await setRequired('http-proxy', options.httpProxy ?? '');
+    await setRequired('stream-lavf-o', options.streamLavf);
+    await setRequired('demuxer-lavf-o', options.demuxerLavf);
+    if (options.httpProxy != null) _av('mpv 走代理 ${options.httpProxy}');
   }
 
   @override
@@ -624,7 +618,5 @@ class _PanelLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(text,
       style: const TextStyle(
-          color: Colors.white,
-          fontSize: 14.5,
-          fontWeight: FontWeight.w700));
+          color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.w700));
 }
