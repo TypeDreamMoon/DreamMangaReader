@@ -31,6 +31,7 @@ class SourceMeta {
     this.useWebView = false, // 站点拦裸 HTTP 时走隐藏 WebView 抓取
     this.imageReferer, // 图片(封面/页面)加载所需的 Referer
     this.needsLogin = false, // 该源内容需账号登录(脚本实现 prepareLogin/handleLogin)
+    this.authKey, // 多个源可共用同一份登录凭据;未设置时使用 id
   });
 
   /// 从清单条目 + 已取到的脚本正文构建。脚本正文单独拉取(清单里只存文件名)。
@@ -44,6 +45,7 @@ class SourceMeta {
         useWebView: (j['useWebView'] as bool?) ?? false,
         imageReferer: j['imageReferer'] as String?,
         needsLogin: (j['needsLogin'] as bool?) ?? false,
+        authKey: j['authKey'] as String?,
       );
 
   final String id;
@@ -60,6 +62,9 @@ class SourceMeta {
   final bool useWebView;
   final String? imageReferer;
   final bool needsLogin;
+  final String? authKey;
+
+  String get credentialKey => authKey ?? id;
 }
 
 /// 加载该源图片(封面/页面)时要带的头(通常是 Referer,防盗链)。

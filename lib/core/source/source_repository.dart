@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../log/app_log.dart';
 import '../script/script_source.dart' show ScriptSource;
+import '../storage/secret_store.dart';
 import 'source_registry.dart';
 
 /// 运行时漫画源仓库。
@@ -32,12 +33,23 @@ import 'source_registry.dart';
 /// ```
 /// 每个条目的 `script` 是与清单同目录的脚本文件名。
 class SourceRepository {
-  SourceRepository._();
+  SourceRepository._({SharedPreferences? preferences, SecretStore? secrets})
+      : _preferences = preferences,
+        _secrets = secrets ?? const FlutterSecretStore();
   static final SourceRepository instance = SourceRepository._();
+
+  factory SourceRepository.forTesting({
+    required SharedPreferences preferences,
+    required SecretStore secrets,
+    required Directory cacheDirectory,
+  }) =>
+      SourceRepository._(preferences: preferences, secrets: secrets)
+        .._cacheDirectory = cacheDirectory;
 
   static const _kUrl = 'sources.repoUrl';
   static const _kLocal = 'sources.localDir';
   static const _kToken = 'sources.token';
+  static const _secureTokenKey = 'source.repository.token';
   static const _kRemoved = 'sources.removed'; // 用户删掉的仓库源 id(持久隐藏,可恢复)
 
   /// 当前配置(设置页读写)。
@@ -47,6 +59,13 @@ class SourceRepository {
   /// 可选的访问令牌:填了就能拉**私有**源仓库(GitHub raw 主机不认 PAT,
   /// 会自动改走 Contents API;其它自建托管则作 Bearer 头)。
   String? token;
+
+  SharedPreferences? _preferences;
+  final SecretStore _secrets;
+  Directory? _cacheDirectory;
+
+  Future<SharedPreferences> _prefs() async =>
+      _preferences ??= await SharedPreferences.getInstance();
 
   /// 最近一次加载的人类可读状态(设置页展示)。
   String status = '未加载';
@@ -63,6 +82,11 @@ class SourceRepository {
   void Function()? onChanged;
 
   Future<Directory> _cacheDir() async {
+    final injected = _cacheDirectory;
+    if (injected != null) {
+      if (!await injected.exists()) await injected.create(recursive: true);
+      return injected;
+    }
     final base = await getApplicationSupportDirectory();
     final d = Directory('${base.path}/sources');
     if (!await d.exists()) await d.create(recursive: true);
@@ -102,10 +126,15 @@ class SourceRepository {
   }
 
   Future<void> _resolve() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     repoUrl = prefs.getString(_kUrl);
     localDir = prefs.getString(_kLocal);
-    token = prefs.getString(_kToken);
+    token = await readMigratingSecret(
+      secrets: _secrets,
+      preferences: prefs,
+      secureKey: _secureTokenKey,
+      legacyKeys: const [_kToken],
+    );
     removedIds = (prefs.getStringList(_kRemoved) ?? const <String>[]).toSet();
 
     // 1) 仓库源(URL / 本地目录 / 缓存 / 开发目录)。
@@ -280,6 +309,7 @@ class SourceRepository {
       'useWebView': (meta['useWebView'] as bool?) ?? false,
       'imageReferer': meta['imageReferer'],
       'needsLogin': (meta['needsLogin'] as bool?) ?? false,
+      'authKey': meta['authKey'],
       'script': '$id.js',
     };
     final dir = await _localSourcesDir();
@@ -373,7 +403,7 @@ class SourceRepository {
       await removeLocalSource(id); // 内部会 load()
       return;
     }
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     removedIds.add(id);
     await prefs.setStringList(_kRemoved, removedIds.toList());
     await load();
@@ -381,7 +411,7 @@ class SourceRepository {
 
   /// 恢复所有被删除(隐藏)的仓库源。
   Future<void> restoreRemoved() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     removedIds.clear();
     await prefs.remove(_kRemoved);
     await load();
@@ -428,6 +458,7 @@ class SourceRepository {
         'useWebView': e['useWebView'] ?? false,
         'imageReferer': e['imageReferer'],
         'needsLogin': e['needsLogin'] ?? false,
+        'authKey': e['authKey'],
         'script': '$id.js',
       });
       n++;
@@ -439,7 +470,7 @@ class SourceRepository {
 
   /// 设置里改仓库 URL 后调用:持久化并重新加载。
   Future<void> setRepoUrl(String? url) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final v = url?.trim();
     if (v == null || v.isEmpty) {
       await prefs.remove(_kUrl);
@@ -453,20 +484,27 @@ class SourceRepository {
   /// 持久化访问令牌(拉私有源仓库用)。只落盘不重载——重载由随后的 setRepoUrl 触发,
   /// 避免用新 token + 旧 URL 多拉一次。
   Future<void> setToken(String? value) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final v = value?.trim();
-    token = (v == null || v.isEmpty) ? null : v;
-    if (token == null) {
+    final next = (v == null || v.isEmpty) ? null : v;
+    if (next == null) {
+      await _secrets.delete(_secureTokenKey);
       await prefs.remove(_kToken);
     } else {
-      await prefs.setString(_kToken, token!);
+      await writeVerifiedSecret(
+        secrets: _secrets,
+        key: _secureTokenKey,
+        value: next,
+      );
+      await prefs.remove(_kToken);
     }
+    token = next;
     onChanged?.call();
   }
 
   /// 设置里选本地目录后调用:持久化并重新加载。
   Future<void> setLocalDir(String? dir) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final v = dir?.trim();
     if (v == null || v.isEmpty) {
       await prefs.remove(_kLocal);

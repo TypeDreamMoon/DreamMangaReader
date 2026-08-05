@@ -532,6 +532,7 @@ Map<String, Object?> _sourceToJson(SourceMeta source) => {
       'useWebView': source.useWebView,
       'imageReferer': source.imageReferer,
       'needsLogin': source.needsLogin,
+      'authKey': source.authKey,
     };
 
 SourceMeta _sourceFromJson(Map<String, dynamic> json) => SourceMeta(
@@ -543,6 +544,7 @@ SourceMeta _sourceFromJson(Map<String, dynamic> json) => SourceMeta(
       useWebView: json['useWebView'] as bool? ?? false,
       imageReferer: json['imageReferer'] as String?,
       needsLogin: json['needsLogin'] as bool? ?? false,
+      authKey: json['authKey'] as String?,
     );
 
 Map<String, Object?> _novelToJson(Novel novel) => {

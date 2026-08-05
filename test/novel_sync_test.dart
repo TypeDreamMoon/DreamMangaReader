@@ -5,20 +5,52 @@ import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/source/source_repository.dart';
+import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/core/sync/sync_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   late Directory sandbox;
+  late List<SourceMeta> originalSources;
 
   setUp(() async {
+    originalSources = List<SourceMeta>.of(registeredSources);
     SharedPreferences.setMockInitialValues({});
     sandbox = await Directory.systemTemp.createTemp('novel-sync-test-');
   });
 
   tearDown(() async {
+    registeredSources = originalSources;
     if (await sandbox.exists()) await sandbox.delete(recursive: true);
+  });
+
+  test('sync source metadata preserves a shared auth key', () async {
+    registeredSources = const [
+      SourceMeta(
+        id: 'xiaojie_novel',
+        name: '晓桀小说',
+        script: 'source code',
+        kind: 'novel',
+        needsLogin: true,
+        authKey: 'xiaojie_github',
+      ),
+    ];
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+
+    final blob = SyncData.build(
+      manga,
+      novels,
+      SourceRepository.instance,
+      categories: {SyncCategory.novelSources},
+    );
+    final entries = (blob['library'] as Map)['localSourcesNovel'] as List;
+
+    expect((entries.single as Map)['authKey'], 'xiaojie_github');
+    manga.dispose();
+    novels.dispose();
   });
 
   test('sync build strips local paths and separates novel categories',

@@ -95,6 +95,31 @@ void main() {
         cacheFactory: (root) => NovelDocumentCache(root: root, dio: Dio()),
       );
 
+  test('downloaded source metadata preserves a shared auth key', () {
+    const sourceWithSharedAuth = SourceMeta(
+      id: 'xiaojie_novel',
+      name: '晓桀小说',
+      script: 'source code',
+      kind: 'novel',
+      needsLogin: true,
+      authKey: 'xiaojie_github',
+    );
+    final record = DownloadedNovelChapter(
+      source: sourceWithSharedAuth,
+      novel: novel,
+      chapter: chapter,
+      directory: 'chapter-directory',
+      resourceCount: 2,
+      byteCount: 128,
+      completedAt: 100,
+    );
+
+    final restored = DownloadedNovelChapter.fromJson(record.toJson());
+
+    expect(restored.source.authKey, 'xiaojie_github');
+    expect(restored.source.credentialKey, 'xiaojie_github');
+  });
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     temp = await Directory.systemTemp.createTemp('novel-download-test-');

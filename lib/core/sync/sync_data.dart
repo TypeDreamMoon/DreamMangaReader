@@ -143,6 +143,7 @@ class SyncData {
               'useWebView': m.useWebView,
               'imageReferer': m.imageReferer,
               'needsLogin': m.needsLogin,
+              'authKey': m.authKey,
               'code': m.script,
             },
       ];

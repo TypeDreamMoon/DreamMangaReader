@@ -392,7 +392,7 @@ class SyncController extends ChangeNotifier {
         for (final m in registeredSources)
           if (m.kind == kind)
             '${m.id}:${m.name}:${m.kind}:${m.experimental}:${m.useWebView}:'
-                '${m.imageReferer}:${m.needsLogin}:${_sig(m.script)}'
+                '${m.imageReferer}:${m.needsLogin}:${m.authKey}:${_sig(m.script)}'
       ]..sort();
       return _sig('${disabled.join(',')}|${scripts.join(',')}');
     }
