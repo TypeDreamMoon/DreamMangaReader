@@ -12,6 +12,7 @@ import '../../core/source/source_registry.dart';
 import '../../app/anime_download_store.dart';
 import '../../app/anime_library_store.dart';
 import '../../app/theme/app_colors.dart';
+import 'anime_player_controls.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
 import 'playback/mpv_network_options.dart';
@@ -30,11 +31,13 @@ class AnimePlaybackSurface extends StatelessWidget {
     required this.state,
     required this.video,
     required this.onRetry,
+    this.controls,
   });
 
   final PlaybackState state;
   final Widget video;
   final VoidCallback onRetry;
+  final Widget? controls;
 
   @override
   Widget build(BuildContext context) {
@@ -114,6 +117,13 @@ class AnimePlaybackSurface extends StatelessWidget {
                 ),
               ),
             ),
+          ),
+        if (controls != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: controls!,
           ),
       ],
     );
@@ -212,14 +222,19 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   Widget Function(BoxFit fit)? _videoBuilder;
   PlaybackSessionController? _session;
   StreamSubscription<PlaybackState>? _stateSubscription;
+  StreamSubscription<bool>? _playingSubscription;
+  StreamSubscription<bool>? _bufferingSubscription;
   int _loadGeneration = 0;
   bool _disposed = false;
   AnimeLibraryStore? _library;
   Duration _lastPosition = Duration.zero;
   bool _initialResumePending = true;
+  bool _playing = false;
+  bool _buffering = false;
 
   // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
   int _panelTab = 0; // 0=选集 1=线路 2=设置
   double _rate = 1.0; // 倍速(跨集保持)
   BoxFit _fit = BoxFit.contain; // 画面填充
@@ -253,6 +268,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _disposed = true;
     _loadGeneration++;
     unawaited(_stateSubscription?.cancel());
+    unawaited(_playingSubscription?.cancel());
+    unawaited(_bufferingSubscription?.cancel());
     final session = _session;
     if (session != null) {
       unawaited(session.dispose());
@@ -324,7 +341,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         loadTracks: (episodeId) async =>
             resolver.resolve(await loadTracks(episodeId)),
         localTrackForEpisode: localTrackForEpisode,
-        videoBuilder: (fit) => Video(controller: videoController, fit: fit),
+        videoBuilder: (fit) => Video(
+          key: _videoKey,
+          controller: videoController,
+          fit: fit,
+          controls: NoVideoControls,
+        ),
       );
       await _load();
     } catch (error) {
@@ -366,6 +388,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         _playback = state;
         _current = state.selectedTrack;
       });
+    });
+    _playingSubscription = adapter.playing.listen((playing) {
+      if (!mounted) return;
+      setState(() => _playing = playing);
+    });
+    _bufferingSubscription = adapter.buffering.listen((buffering) {
+      if (!mounted) return;
+      setState(() => _buffering = buffering);
     });
   }
 
@@ -526,6 +556,32 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                       color: Colors.black,
                     ),
                 onRetry: _load,
+                controls: AnimePlayerControls(
+                  position: _playback.position,
+                  duration: _playback.duration,
+                  playing: _playing,
+                  buffering: _buffering,
+                  onPlayPause: () {
+                    if (_playing) {
+                      _session?.setUserPaused(true);
+                    } else {
+                      _session?.setUserPaused(false);
+                      unawaited(_adapter?.play());
+                    }
+                  },
+                  onScrubStart: (wasPlaying) {
+                    if (wasPlaying) unawaited(_adapter?.pause());
+                  },
+                  onSeek: (target, resumeAfterSeek) => unawaited(
+                    _session?.seekTo(
+                      target,
+                      resumeAfterSeek: resumeAfterSeek,
+                    ),
+                  ),
+                  onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
+                  onFullscreen: () =>
+                      unawaited(_videoKey.currentState?.toggleFullscreen()),
+                ),
               ),
             ),
           ),
