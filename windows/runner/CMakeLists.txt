@@ -30,6 +30,12 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTT
 # Disable Windows macros that collide with C++ standard library functions.
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
+# 源码是 UTF-8(托盘菜单里有中文字面量)。不显式指定的话 MSVC 会按系统代码页解码:
+# 中文 Windows(CP936)上直接编译失败,英文机器(CP1252)上则静默生成乱码菜单。
+if(MSVC)
+  target_compile_options(${BINARY_NAME} PRIVATE "/utf-8")
+endif()
+
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
