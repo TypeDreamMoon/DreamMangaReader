@@ -21,6 +21,7 @@ class _IntegrationBackend implements MediaKitBackend {
   final bufferController = StreamController<Duration>.broadcast(sync: true);
   final opened = <VideoTrack>[];
   final seeks = <Duration>[];
+  int clearedAudioCount = 0;
 
   @override
   Stream<bool> get playing => playingController.stream;
@@ -44,6 +45,8 @@ class _IntegrationBackend implements MediaKitBackend {
   Future<void> open(VideoTrack track) async => opened.add(track);
   @override
   Future<void> attachAudio(String url) async {}
+  @override
+  Future<void> clearAudio() async => clearedAudioCount++;
   @override
   Future<void> pause() async {}
   @override
@@ -104,11 +107,24 @@ void main() {
     upstream.addText('/episode.m3u8', '''#EXTM3U
 #EXT-X-TARGETDURATION:4
 #EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="init-a.mp4"
 #EXTINF:4,
 0.ts
+#EXT-X-CUE-OUT:4
+#EXTINF:4,
+ad.ts
+#EXT-X-CUE-IN
+#EXT-X-DISCONTINUITY
+#EXT-X-MAP:URI="init-b.mp4"
+#EXTINF:4,
+1.ts
 #EXT-X-ENDLIST
 ''');
+    upstream.addBytes('/init-a.mp4', [1, 1]);
+    upstream.addBytes('/init-b.mp4', [2, 2]);
     upstream.addBytes('/0.ts', [7, 8, 9], contentType: 'video/mp2t');
+    upstream.addBytes('/ad.ts', [99], contentType: 'video/mp2t');
+    upstream.addBytes('/1.ts', [10, 11], contentType: 'video/mp2t');
     final track = VideoTrack(
       url: upstream.baseUri.resolve('episode.m3u8').toString(),
       quality: '480p',
@@ -120,11 +136,17 @@ void main() {
     final local = Uri.parse(backend.opened.single.url);
     expect(InternetAddress.tryParse(local.host)?.isLoopback, isTrue);
     expect(backend.opened.single.headers, isNull);
-    final playlist =
-        HlsParser.parse((await _get(local)).text) as HlsMediaPlaylist;
-    expect((await _get(playlist.segments.single.uri)).bytes, [7, 8, 9]);
-    await _get(playlist.segments.single.uri);
+    final rewritten = (await _get(local)).text;
+    expect(rewritten, isNot(contains('ad.ts')));
+    expect(
+        RegExp(r'#EXT-X-MAP:URI="[^"]+"').allMatches(rewritten), hasLength(2));
+    final playlist = HlsParser.parse(rewritten) as HlsMediaPlaylist;
+    expect(playlist.segments, hasLength(2));
+    expect((await _get(playlist.segments.first.uri)).bytes, [7, 8, 9]);
+    expect((await _get(playlist.segments.last.uri)).bytes, [10, 11]);
+    await _get(playlist.segments.first.uri);
     expect(upstream.requestCount('/0.ts'), 1);
+    expect(upstream.requestCount('/ad.ts'), 0);
     expect(
       upstream.requests.every(
         (request) => request.authorization == 'Bearer $sentinel',
@@ -132,11 +154,13 @@ void main() {
       isTrue,
     );
 
-    backend.positionController.add(const Duration(seconds: 42));
+    await adapter.seek(const Duration(seconds: 42));
+    backend.positionController.add(Duration.zero);
     backend.errorController.add(StateError('HTTP 501 gateway fallback'));
     await Future<void>.delayed(Duration.zero);
     expect(backend.opened.last.url, track.url);
     expect(backend.seeks.last, const Duration(seconds: 42));
+    expect(backend.clearedAudioCount, 1);
 
     final persisted = <String>[
       ...directory.listSync().map((entry) => entry.path),

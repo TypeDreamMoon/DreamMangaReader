@@ -394,6 +394,8 @@ class _PageFakeAdapter implements PlayerAdapter {
   @override
   Future<void> open(VideoTrack track) async => opened.add(track);
   @override
+  Future<void> rebuildDecoder(Duration resumePosition) async {}
+  @override
   Future<void> pause() async => pauseCalls++;
   @override
   Future<void> play() async => playCalls++;

@@ -28,6 +28,7 @@ class _FakePlayerAdapter implements PlayerAdapter {
 
   final List<VideoTrack> opened = [];
   final List<Duration> seeks = [];
+  final List<Duration> decoderRebuilds = [];
   final List<Completer<void>> pauseGates = [];
   bool failOpen = false;
   int playCalls = 0;
@@ -54,6 +55,10 @@ class _FakePlayerAdapter implements PlayerAdapter {
 
   @override
   Future<void> seek(Duration position) async => seeks.add(position);
+  @override
+  Future<void> rebuildDecoder(Duration resumePosition) async => failOpen
+      ? throw StateError('fixture rebuild failure')
+      : decoderRebuilds.add(resumePosition);
   @override
   Future<void> play() async => playCalls++;
   @override
@@ -145,6 +150,30 @@ void main() {
     await controller.dispose();
   });
 
+  test('confirmed playback ignores transient zero before boundary recovery',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final progress = <Duration>[];
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+      onProgress: (position, _) => progress.add(position),
+    );
+    await controller.start(const [_track480], _track480);
+    adapter.playingController.add(true);
+    adapter.positionController.add(const Duration(minutes: 7));
+
+    adapter.positionController.add(Duration.zero);
+    adapter.errorController.add(StateError('decoder boundary'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(progress, [const Duration(minutes: 7)]);
+    expect(adapter.decoderRebuilds, [const Duration(minutes: 7)]);
+    expect(controller.state.position, const Duration(minutes: 7));
+    await controller.dispose();
+  });
+
   test('pending seek near the beginning does not accept transient zero',
       () async {
     final adapter = _FakePlayerAdapter();
@@ -209,7 +238,8 @@ void main() {
       async.elapse(const Duration(seconds: 8));
       async.flushMicrotasks();
 
-      expect(adapter.opened, hasLength(2));
+      expect(adapter.opened, hasLength(1));
+      expect(adapter.decoderRebuilds, [const Duration(seconds: 95)]);
       expect(adapter.seeks.last, const Duration(seconds: 95));
       expect(controller.state.position, const Duration(seconds: 95));
       controller.dispose();
@@ -433,9 +463,9 @@ void main() {
       async.elapse(const Duration(seconds: 1));
       async.flushMicrotasks();
 
-      expect(controller.state.phase, PlaybackPhase.opening);
-      expect(adapter.opened, hasLength(2));
-      expect(adapter.seeks.last, const Duration(seconds: 37));
+      expect(controller.state.phase, PlaybackPhase.recovering);
+      expect(adapter.opened, hasLength(1));
+      expect(adapter.decoderRebuilds, [const Duration(seconds: 37)]);
       expect(delays, [const Duration(seconds: 1)]);
       controller.dispose();
       async.flushMicrotasks();
@@ -454,13 +484,15 @@ void main() {
       async.flushMicrotasks();
       adapter.errorController.add(StateError('connection reset'));
       async.flushMicrotasks();
-      expect(adapter.opened, hasLength(2));
+      expect(adapter.opened, hasLength(1));
+      expect(adapter.decoderRebuilds, [Duration.zero]);
 
       controller.setUserPaused(true);
       adapter.bufferingController.add(true);
       async.elapse(const Duration(seconds: 20));
       async.flushMicrotasks();
-      expect(adapter.opened, hasLength(2));
+      expect(adapter.opened, hasLength(1));
+      expect(adapter.decoderRebuilds, [Duration.zero]);
       controller.dispose();
       async.flushMicrotasks();
     });
@@ -559,7 +591,8 @@ void main() {
       async.flushMicrotasks();
 
       expect(provider.refreshCalls, 1);
-      expect(adapter.opened, [_track480, _track480, _track480, _track360]);
+      expect(adapter.opened, [_track480, _track480, _track360]);
+      expect(adapter.decoderRebuilds, [Duration.zero]);
       expect(controller.state.selectedTrack, _track360);
       controller.dispose();
       async.flushMicrotasks();

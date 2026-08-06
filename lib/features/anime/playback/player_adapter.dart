@@ -9,6 +9,7 @@ abstract interface class PlayerAdapter {
   Stream<Object> get errors;
 
   Future<void> open(VideoTrack track);
+  Future<void> rebuildDecoder(Duration resumePosition);
   Future<void> seek(Duration position);
   Future<void> play();
   Future<void> pause();

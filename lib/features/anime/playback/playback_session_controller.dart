@@ -277,6 +277,8 @@ class PlaybackSessionController {
       return;
     }
 
+    if (position == Duration.zero && _confirmedPosition > Duration.zero) return;
+
     _confirmedPosition = position;
     _reportProgress(position);
   }
@@ -338,10 +340,19 @@ class PlaybackSessionController {
         await _delay(_backoff[round]);
         if (!_isCurrent(generation)) return;
 
+        if (round == 0) {
+          try {
+            await _player.rebuildDecoder(_recoveryPosition);
+            if (!_isCurrent(generation)) return;
+            _recoveryRound = round + 1;
+            return;
+          } catch (error) {
+            lastError = error;
+            continue;
+          }
+        }
+
         final candidates = switch (round) {
-          0 => <Future<VideoTrack?> Function()>[
-              () async => _selected,
-            ],
           1 => <Future<VideoTrack?> Function()>[
               () async {
                 final refreshed = await _tracks.refresh();
