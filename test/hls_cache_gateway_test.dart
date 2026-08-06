@@ -166,6 +166,46 @@ media.mp4
     );
   });
 
+  test('preserves multiple ordered maps as distinct local resources', () async {
+    upstream.addText('/multi-map.m3u8', '''#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="init-a.mp4"
+#EXTINF:4,
+a.m4s
+#EXT-X-DISCONTINUITY
+#EXT-X-MAP:URI="init-b.mp4"
+#EXTINF:4,
+b.m4s
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/init-a.mp4', [1, 1]);
+    upstream.addBytes('/init-b.mp4', [2, 2]);
+    upstream.addBytes('/a.m4s', [3]);
+    upstream.addBytes('/b.m4s', [4]);
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('multi-map.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+
+    final response = await _get(session.localUri);
+    final mapMatches =
+        RegExp(r'#EXT-X-MAP:URI="([^"]+)"').allMatches(response.text).toList();
+    expect(mapMatches, hasLength(2));
+    final firstMap = Uri.parse(mapMatches[0].group(1)!);
+    final secondMap = Uri.parse(mapMatches[1].group(1)!);
+    expect(firstMap, isNot(secondMap));
+    expect(await _get(firstMap).then((value) => value.bytes), [1, 1]);
+    expect(await _get(secondMap).then((value) => value.bytes), [2, 2]);
+    expect(response.text.indexOf(firstMap.toString()),
+        lessThan(response.text.indexOf('#EXT-X-DISCONTINUITY')));
+    expect(response.text.indexOf(secondMap.toString()),
+        greaterThan(response.text.indexOf('#EXT-X-DISCONTINUITY')));
+  });
+
   test('retries one upstream 500 before succeeding', () async {
     upstream.addText(
       '/retry.m3u8',

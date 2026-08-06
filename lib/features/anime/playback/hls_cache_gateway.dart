@@ -9,6 +9,7 @@ import 'package:hls/hls.dart';
 
 import '../../../core/source/models.dart';
 import 'hls_cache_store.dart';
+import 'hls_media_rewriter.dart';
 import 'hls_session.dart';
 import 'hls_stream_response.dart';
 
@@ -111,10 +112,6 @@ class DioHlsUpstreamClient
       },
     );
   }
-}
-
-class UnsupportedHlsEncryption implements Exception {
-  const UnsupportedHlsEncryption();
 }
 
 abstract interface class HlsSessionGateway {
@@ -226,15 +223,20 @@ class HlsCacheGateway implements HlsSessionGateway {
     final upstream = await _fetch(session, resource);
     final text = utf8.decode(upstream.bytes);
     final parsed = HlsParser.parse(text, baseUri: resource.uri.resolve('.'));
-    late final HlsPlaylist rewritten;
+    late final List<int> body;
     if (parsed is HlsMasterPlaylist) {
-      rewritten = _rewriteMaster(session, parsed);
+      body = utf8.encode(HlsComposer.compose(_rewriteMaster(session, parsed)));
     } else if (parsed is HlsMediaPlaylist) {
-      rewritten = _rewriteMedia(session, parsed);
+      body = utf8.encode(
+        _rewriteMediaText(
+          session,
+          text,
+          baseUri: resource.uri.resolve('.'),
+        ),
+      );
     } else {
       throw const FormatException('未知 HLS 清单');
     }
-    final body = utf8.encode(HlsComposer.compose(rewritten));
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType(
       'application',
@@ -284,49 +286,35 @@ class HlsCacheGateway implements HlsSessionGateway {
     );
   }
 
-  HlsMediaPlaylist _rewriteMedia(
+  String _rewriteMediaText(
     _SessionData session,
-    HlsMediaPlaylist source,
-  ) {
-    final normalized = HlsComposer.normalize(source) as HlsMediaPlaylist;
-    final isLive = normalized.isLive;
+    String source, {
+    required Uri baseUri,
+  }) {
+    final rewriter = HlsMediaRewriter();
+    final isLive = rewriter.isLivePlaylist(source);
     final segmentResources = <_Resource>[];
-
-    HlsSegmentKey? rewriteKey(HlsSegmentKey? key) {
-      if (key == null || key.method == 'NONE') return key;
-      if (key.method != 'AES-128' ||
-          (key.keyFormat != null && key.keyFormat != 'identity')) {
-        throw const UnsupportedHlsEncryption();
-      }
-      final uri = key.uri;
-      if (uri == null) throw const UnsupportedHlsEncryption();
-      final resource =
-          _register(session, _validateUpstream(uri), _ResourceKind.key);
-      return HlsSegmentKey(
-        method: key.method,
-        uri: _localUri(session.id, resource.id),
-        iv: key.iv,
-        keyFormat: key.keyFormat,
-        keyFormatVersions: key.keyFormatVersions,
-      );
-    }
-
-    final rewrittenSegments = normalized.segments.map((segment) {
-      final range = segment.byteRange;
-      final resource = _register(
-        session,
-        _validateUpstream(segment.uri),
-        _ResourceKind.segment,
-        rangeStart: range?.offset,
-        rangeLength: range?.length,
-        live: isLive,
-      );
-      segmentResources.add(resource);
-      return segment.copyWith(
-        uri: _localUri(session.id, resource.id),
-        key: rewriteKey(segment.key),
-      );
-    }).toList();
+    final result = rewriter.rewrite(
+      source,
+      baseUri: baseUri,
+      register: (uri, kind, range) {
+        final resourceKind = switch (kind) {
+          HlsUriKind.segment => _ResourceKind.segment,
+          HlsUriKind.init => _ResourceKind.init,
+          HlsUriKind.key => _ResourceKind.key,
+        };
+        final resource = _register(
+          session,
+          _validateUpstream(uri),
+          resourceKind,
+          rangeStart: range?.offset,
+          rangeLength: range?.length,
+          live: isLive,
+        );
+        if (kind == HlsUriKind.segment) segmentResources.add(resource);
+        return _localUri(session.id, resource.id);
+      },
+    );
 
     for (var index = 0; index < segmentResources.length; index++) {
       segmentResources[index].prefetchIds = isLive
@@ -342,23 +330,7 @@ class HlsCacheGateway implements HlsSessionGateway {
               : segmentResources[index + 4].id;
     }
 
-    HlsInitSegment? init;
-    if (normalized.initSegment != null) {
-      final sourceInit = normalized.initSegment!;
-      final resource = _register(
-        session,
-        _validateUpstream(sourceInit.uri),
-        _ResourceKind.init,
-        rangeStart: sourceInit.byteRange?.offset,
-        rangeLength: sourceInit.byteRange?.length,
-        live: isLive,
-      );
-      init = sourceInit.copyWith(uri: _localUri(session.id, resource.id));
-    }
-    return normalized.copyWith(
-      initSegment: init,
-      segments: rewrittenSegments,
-    );
+    return result.text;
   }
 
   Future<void> _serveMedia(
