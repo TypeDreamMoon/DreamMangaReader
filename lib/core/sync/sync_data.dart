@@ -22,7 +22,7 @@ enum SyncCategory {
   mangaSources, // 漫画源开关(disabledSources 中 kind=manga 的)
   animeSources, // 番剧源开关(disabledSources 中 kind=anime 的)
   novelSources, // 小说源开关(disabledSources 中 kind=novel 的)
-  sourceRepo, // 源仓库配置(repoUrl/localDir/token)
+  sourceRepo, // 源仓库配置(repoUrl/localDir);访问令牌只留在设备安全存储
 }
 
 /// 云同步的数据 blob:书架数据(收藏/历史/设置/源开关)+ 源仓库配置。
@@ -143,6 +143,7 @@ class SyncData {
               'useWebView': m.useWebView,
               'imageReferer': m.imageReferer,
               'needsLogin': m.needsLogin,
+              'authKey': m.authKey,
               'code': m.script,
             },
       ];
@@ -227,7 +228,6 @@ class SyncData {
       blob['sourceRepo'] = {
         'repoUrl': repo.repoUrl ?? '',
         'localDir': repo.localDir ?? '',
-        'token': repo.token ?? '',
       };
     }
     return blob;
@@ -273,7 +273,7 @@ class SyncData {
     }
     final sr = _lww(local.containsKey('sourceRepo'), local['sourceRepo'], lTs,
         remote.containsKey('sourceRepo'), remote['sourceRepo'], rTs);
-    if (sr != null) out['sourceRepo'] = sr;
+    if (sr != null) out['sourceRepo'] = _portableSourceRepo(sr);
     return out;
   }
 
@@ -302,8 +302,16 @@ class SyncData {
     final sr = over.containsKey('sourceRepo')
         ? over['sourceRepo']
         : base['sourceRepo'];
-    if (sr != null) out['sourceRepo'] = sr;
+    if (sr != null) out['sourceRepo'] = _portableSourceRepo(sr);
     return out;
+  }
+
+  static Map<String, dynamic> _portableSourceRepo(Object? value) {
+    final source = _map(value);
+    return {
+      'repoUrl': source['repoUrl'] as String? ?? '',
+      'localDir': source['localDir'] as String? ?? '',
+    };
   }
 
   static dynamic _lww(
@@ -704,10 +712,6 @@ class SyncData {
         final sr = _map(blob['sourceRepo']);
         final url = (sr['repoUrl'] as String?)?.trim() ?? '';
         final dir = (sr['localDir'] as String?)?.trim() ?? '';
-        final tok = (sr['token'] as String?)?.trim() ?? '';
-        if (tok != (repo.token ?? '')) {
-          await repo.setToken(tok.isEmpty ? null : tok);
-        }
         if (url.isNotEmpty && url != (repo.repoUrl ?? '')) {
           await repo.setRepoUrl(url);
         } else if (url.isEmpty && dir.isNotEmpty && dir != (repo.localDir ?? '')) {

@@ -114,7 +114,11 @@ class NovelDocumentSanitizer {
       final href = _safeUrl(element.attributes['href'], baseUrl);
       if (href != null) retained['href'] = href;
     } else if (element.localName == 'img') {
-      final src = _safeUrl(element.attributes['src'], baseUrl);
+      final src = _safeUrl(
+        element.attributes['src'],
+        baseUrl,
+        allowDataImage: true,
+      );
       if (src != null) retained['src'] = src;
       final alt = element.attributes['alt'];
       if (alt != null) retained['alt'] = alt;
@@ -137,10 +141,21 @@ class NovelDocumentSanitizer {
       ..addAll(retained);
   }
 
-  static String? _safeUrl(String? value, Uri? baseUrl) {
+  static String? _safeUrl(
+    String? value,
+    Uri? baseUrl, {
+    bool allowDataImage = false,
+  }) {
     final trimmed = value?.trim();
     if (trimmed == null || trimmed.isEmpty) return null;
     if (trimmed.startsWith('#')) return trimmed;
+    if (allowDataImage &&
+        RegExp(
+          r'^data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$',
+          caseSensitive: false,
+        ).hasMatch(trimmed)) {
+      return trimmed;
+    }
     try {
       final parsed = Uri.parse(trimmed);
       final resolved = baseUrl?.resolveUri(parsed) ?? parsed;
