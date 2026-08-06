@@ -1,7 +1,9 @@
 package com.dreammoon.dream_manga_reader
 
+import android.content.Intent
 import android.os.Build
 import android.view.KeyEvent
+import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -13,6 +15,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
     private var platformChannel: MethodChannel? = null
+    private var updateBridge: UpdateDownloadBridge? = null
     private var volumeKeyPaging = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -39,6 +42,39 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        updateBridge = UpdateDownloadBridge(this).also { it.configure(flutterEngine) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateBridge?.onResume()
+    }
+
+    override fun onPause() {
+        updateBridge?.onPause()
+        super.onPause()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        updateBridge?.onNewIntent(intent)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (updateBridge?.onRequestPermissionsResult(requestCode, grantResults) != true) {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        }
+    }
+
+    override fun onDestroy() {
+        updateBridge?.dispose()
+        updateBridge = null
+        super.onDestroy()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

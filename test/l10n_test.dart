@@ -115,8 +115,17 @@ const _requiredNovelKeys = {
   'novel_readerSeconds',
 };
 
+const _requiredBackgroundUpdateKeys = {
+  'update_background',
+  'update_backgroundHint',
+  'update_retrying',
+  'update_readyNotification',
+  'update_notificationPermission',
+  'update_expiredUrl',
+};
+
 void main() {
-  test('four ARB files keep key parity and complete novel copy', () {
+  test('four ARB files keep key parity and required feature copy', () {
     final files = [
       'lib/l10n/app_zh.arb',
       'lib/l10n/app_zh_Hant.arb',
@@ -132,6 +141,7 @@ void main() {
           .toSet();
       keysByFile[path] = keys;
       expect(keys, containsAll(_requiredNovelKeys), reason: path);
+      expect(keys, containsAll(_requiredBackgroundUpdateKeys), reason: path);
       for (final key in _requiredNovelKeys) {
         expect((json[key] as String?)?.trim(), isNotEmpty,
             reason: '$path:$key');

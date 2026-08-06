@@ -7,6 +7,7 @@ import 'package:dream_manga_reader/core/update/update_downloader.dart';
 import 'package:dream_manga_reader/core/update/update_models.dart';
 import 'package:dream_manga_reader/core/update/update_resolver.dart';
 import 'package:dream_manga_reader/core/update/update_service.dart';
+import 'package:dream_manga_reader/core/update/update_transfer.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +18,7 @@ const _sha256 =
 UpdateCandidate _candidate({
   UpdateSource source = UpdateSource.gitee,
   bool compatible = true,
+  String assetUrl = 'https://example/setup.exe',
   List<UpdateCandidate> alternates = const [],
 }) {
   const fileName = 'DreamMangaReader-windows-x64-setup.exe';
@@ -43,10 +45,10 @@ UpdateCandidate _candidate({
     pageUrl: 'https://example/release',
     notes: 'notes',
     prerelease: false,
-    assets: const [
+    assets: [
       RemoteAsset(
         name: fileName,
-        url: 'https://example/setup.exe',
+        url: assetUrl,
         size: 3,
       ),
     ],
@@ -54,6 +56,56 @@ UpdateCandidate _candidate({
     manifest: manifest,
     alternates: alternates,
   );
+}
+
+class _FakeCoordinator implements UpdateTransferCoordinator {
+  _FakeCoordinator({
+    this.initial = const UpdateTransferState.idle(),
+  });
+
+  UpdateTransferState initial;
+  final controller = StreamController<UpdateTransferState>.broadcast();
+  var startCount = 0;
+  var cancelCount = 0;
+  var installCount = 0;
+  ResolvedUpdateAsset? startedAsset;
+
+  @override
+  bool get supportsBackground => true;
+
+  @override
+  Stream<UpdateTransferState> get states => controller.stream;
+
+  void emit(UpdateTransferState state) {
+    initial = state;
+    controller.add(state);
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+    emit(const UpdateTransferState.idle());
+  }
+
+  @override
+  Future<UpdateTransferState> current() async => initial;
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> install({Future<void> Function()? onBeforeExit}) async {
+    installCount++;
+  }
+
+  @override
+  Future<void> start({
+    required UpdateCandidate candidate,
+    required ResolvedUpdateAsset asset,
+  }) async {
+    startCount++;
+    startedAsset = asset;
+  }
 }
 
 Future<void> _openDialog(
@@ -227,7 +279,8 @@ void main() {
     expect(find.byKey(const Key('update-manual')), findsOneWidget);
   });
 
-  testWidgets('switches to the alternate source when the preferred one has no '
+  testWidgets(
+      'switches to the alternate source when the preferred one has no '
       'compatible asset', (tester) async {
     var downloads = 0;
     await _openDialog(
@@ -264,7 +317,9 @@ void main() {
       tester,
       _candidate(
         compatible: false,
-        alternates: [_candidate(source: UpdateSource.github, compatible: false)],
+        alternates: [
+          _candidate(source: UpdateSource.github, compatible: false)
+        ],
       ),
       UpdateDialogDependencies(
         download: (asset, {required cancelToken, required onProgress}) async =>
@@ -277,5 +332,92 @@ void main() {
     expect(find.byKey(const Key('update-primary')), findsNothing);
     expect(find.byKey(const Key('update-retry')), findsNothing);
     expect(find.byKey(const Key('update-manual')), findsOneWidget);
+  });
+
+  testWidgets('background button closes without cancelling Android transfer',
+      (tester) async {
+    final coordinator = _FakeCoordinator();
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies.coordinator(
+        coordinator: coordinator,
+        refresh: (_) async => null,
+        openManual: (_) async {},
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('update-primary')));
+    coordinator.emit(const UpdateTransferState(
+      stage: UpdateTransferStage.downloading,
+      taskKey: '$_sha256:1.3.1',
+      versionName: '1.3.1',
+      progress: .25,
+      downloadedBytes: 1,
+      totalBytes: 3,
+    ));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('update-background')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(coordinator.cancelCount, 0);
+  });
+
+  testWidgets('restores an existing transfer without starting a duplicate',
+      (tester) async {
+    final coordinator = _FakeCoordinator(
+      initial: const UpdateTransferState(
+        stage: UpdateTransferStage.downloading,
+        taskKey: '$_sha256:1.3.1',
+        versionName: '1.3.1',
+        progress: .6,
+        downloadedBytes: 2,
+        totalBytes: 3,
+      ),
+    );
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies.coordinator(
+        coordinator: coordinator,
+        refresh: (_) async => null,
+        openManual: (_) async {},
+      ),
+    );
+
+    expect(find.textContaining('60%'), findsOneWidget);
+    expect(coordinator.startCount, 0);
+  });
+
+  testWidgets('expired URL refreshes the asset before retry', (tester) async {
+    final coordinator = _FakeCoordinator(
+      initial: const UpdateTransferState(
+        stage: UpdateTransferStage.error,
+        taskKey: '$_sha256:1.3.1',
+        versionName: '1.3.1',
+        errorCode: 'expired_url',
+        message: 'expired',
+      ),
+    );
+    var refreshes = 0;
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies.coordinator(
+        coordinator: coordinator,
+        refresh: (_) async {
+          refreshes++;
+          return _candidate(assetUrl: 'https://example/fresh.apk?token=new');
+        },
+        openManual: (_) async {},
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('update-retry')));
+    await tester.pumpAndSettle();
+
+    expect(refreshes, 1);
+    expect(coordinator.startedAsset?.url, contains('fresh.apk'));
   });
 }
