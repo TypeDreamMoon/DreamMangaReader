@@ -14,6 +14,7 @@ import '../core/downloads/download_task_repository.dart';
 import '../core/log/app_log.dart';
 import '../core/platform/windows_window_bridge.dart';
 import 'anime_download_store.dart';
+import 'anime_library_store.dart';
 import 'auth_store.dart';
 import 'download_coordinator_scope.dart';
 import 'download_settings.dart';
@@ -48,6 +49,7 @@ class _AppState extends State<App> {
   final SourceController _source = SourceController();
   final LibraryStore _library = LibraryStore();
   final NovelLibraryStore _novelLibrary = NovelLibraryStore();
+  final AnimeLibraryStore _animeLibrary = AnimeLibraryStore();
   final DownloadStore _downloads = DownloadStore();
   final NovelDownloadStore _novelDownloads = NovelDownloadStore();
   final AnimeDownloadStore _animeDownloads = AnimeDownloadStore();
@@ -83,6 +85,7 @@ class _AppState extends State<App> {
     Future.wait([
       libraryLoad,
       _novelLibrary.load(),
+      _animeLibrary.load(),
     ]).then((_) async {
       if (!mounted) return;
       final sync = SyncController.instance;
@@ -184,67 +187,71 @@ class _AppState extends State<App> {
           store: _library,
           child: NovelLibraryScope(
             store: _novelLibrary,
-            child: DownloadSettingsScope(
-              settings: _downloadSettings,
-              child: DownloadCoordinatorScope(
-                coordinator: _downloadCoordinator,
-                child: DownloadScope(
-                  store: _downloads,
-                  child: NovelDownloadScope(
-                    store: _novelDownloads,
-                    child: AnimeDownloadScope(
-                      store: _animeDownloads,
-                      child: AuthScope(
-                        store: _auth,
-                        child: AnimatedBuilder(
-                          animation: Listenable.merge([
-                            _theme,
-                            _library.controlRadiusVN,
-                            _library.uiScaleVN,
-                            _library.uiFontVN,
-                            _library.uiLocaleVN,
-                            _novelLibrary.preferencesNotifier,
-                          ]),
-                          builder: (context, _) {
-                            const desktop = {
-                              TargetPlatform.windows,
-                              TargetPlatform.linux,
-                              TargetPlatform.macOS,
-                            };
-                            final isDesktop =
-                                desktop.contains(defaultTargetPlatform);
-                            return MaterialApp(
-                              title: 'Dream Manga Reader',
-                              debugShowCheckedModeBanner: false,
-                              // 多语言:gen-l10n 生成的委托 + 支持语言列表(含 Material 组件本地化)。
-                              locale: _library.uiLocale.toLocale(),
-                              supportedLocales:
-                                  AppLocalizations.supportedLocales,
-                              localizationsDelegates:
-                                  AppLocalizations.localizationsDelegates,
-                              theme: buildTheme(_theme.variant,
-                                  controlRadius: _library.controlRadius,
-                                  // 字体只在桌面平台生效
-                                  fontFamily: isDesktop ? _library.uiFont : ''),
-                              home: const SplashGate(child: HomeShell()),
-                              // 桌面(尤其 Windows)无障碍桥有 AXTree bug:每加载一张图就触发一次
-                              // 语义更新、应用失败刷屏,严重时卡死。漫画阅读器桌面端不需要无障碍,
-                              // 整体关掉语义树彻底规避;手机端保留。ExcludeSemantics 只去 a11y。
-                              builder: (context, child) {
-                                var w = child ?? const SizedBox.shrink();
-                                if (isDesktop) w = ExcludeSemantics(child: w);
-                                // 全局背景垫在所有页面之后(透明 scaffold 才能透出)。
-                                w = AppBackground(child: w);
-                                // 桌面界面缩放:整体等比缩放(文字/图标/间距一起),并按缩放后的
-                                // 画布重新布局——不像 textScaler 只放大文字会撑破固定高度的布局。
-                                if (isDesktop && _library.uiScale != 1.0) {
-                                  w = UiScale(
-                                      scale: _library.uiScale, child: w);
-                                }
-                                return w;
-                              },
-                            );
-                          },
+            child: AnimeLibraryScope(
+              store: _animeLibrary,
+              child: DownloadSettingsScope(
+                settings: _downloadSettings,
+                child: DownloadCoordinatorScope(
+                  coordinator: _downloadCoordinator,
+                  child: DownloadScope(
+                    store: _downloads,
+                    child: NovelDownloadScope(
+                      store: _novelDownloads,
+                      child: AnimeDownloadScope(
+                        store: _animeDownloads,
+                        child: AuthScope(
+                          store: _auth,
+                          child: AnimatedBuilder(
+                            animation: Listenable.merge([
+                              _theme,
+                              _library.controlRadiusVN,
+                              _library.uiScaleVN,
+                              _library.uiFontVN,
+                              _library.uiLocaleVN,
+                              _novelLibrary.preferencesNotifier,
+                            ]),
+                            builder: (context, _) {
+                              const desktop = {
+                                TargetPlatform.windows,
+                                TargetPlatform.linux,
+                                TargetPlatform.macOS,
+                              };
+                              final isDesktop =
+                                  desktop.contains(defaultTargetPlatform);
+                              return MaterialApp(
+                                title: 'Dream Manga Reader',
+                                debugShowCheckedModeBanner: false,
+                                // 多语言:gen-l10n 生成的委托 + 支持语言列表(含 Material 组件本地化)。
+                                locale: _library.uiLocale.toLocale(),
+                                supportedLocales:
+                                    AppLocalizations.supportedLocales,
+                                localizationsDelegates:
+                                    AppLocalizations.localizationsDelegates,
+                                theme: buildTheme(_theme.variant,
+                                    controlRadius: _library.controlRadius,
+                                    // 字体只在桌面平台生效
+                                    fontFamily:
+                                        isDesktop ? _library.uiFont : ''),
+                                home: const SplashGate(child: HomeShell()),
+                                // 桌面(尤其 Windows)无障碍桥有 AXTree bug:每加载一张图就触发一次
+                                // 语义更新、应用失败刷屏,严重时卡死。漫画阅读器桌面端不需要无障碍,
+                                // 整体关掉语义树彻底规避;手机端保留。ExcludeSemantics 只去 a11y。
+                                builder: (context, child) {
+                                  var w = child ?? const SizedBox.shrink();
+                                  if (isDesktop) w = ExcludeSemantics(child: w);
+                                  // 全局背景垫在所有页面之后(透明 scaffold 才能透出)。
+                                  w = AppBackground(child: w);
+                                  // 桌面界面缩放:整体等比缩放(文字/图标/间距一起),并按缩放后的
+                                  // 画布重新布局——不像 textScaler 只放大文字会撑破固定高度的布局。
+                                  if (isDesktop && _library.uiScale != 1.0) {
+                                    w = UiScale(
+                                        scale: _library.uiScale, child: w);
+                                  }
+                                  return w;
+                                },
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ),
@@ -265,6 +272,7 @@ class _AppState extends State<App> {
     _library.closeToTrayVN.removeListener(_syncWindowsCloseBehavior);
     _library.dispose();
     _novelLibrary.dispose();
+    _animeLibrary.dispose();
     _downloads.dispose();
     _novelDownloads.dispose();
     _animeDownloads.dispose();

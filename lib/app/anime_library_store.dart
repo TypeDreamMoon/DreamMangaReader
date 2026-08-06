@@ -349,6 +349,30 @@ class AnimeLibraryStore extends ChangeNotifier {
   }
 }
 
+class AnimeLibraryScope extends InheritedNotifier<AnimeLibraryStore> {
+  const AnimeLibraryScope({
+    super.key,
+    required AnimeLibraryStore store,
+    required super.child,
+  }) : super(notifier: store);
+
+  static AnimeLibraryStore of(BuildContext context) {
+    final scope =
+        context.dependOnInheritedWidgetOfExactType<AnimeLibraryScope>();
+    assert(scope != null, 'AnimeLibraryScope not found in context');
+    return scope!.notifier!;
+  }
+
+  static AnimeLibraryStore read(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<AnimeLibraryScope>();
+    assert(scope != null, 'AnimeLibraryScope not found in context');
+    return scope!.notifier!;
+  }
+
+  static AnimeLibraryStore? maybeRead(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<AnimeLibraryScope>()?.notifier;
+}
+
 String _requiredString(Map<String, dynamic> json, String key) {
   final value = json[key];
   if (value is! String || value.trim().isEmpty) {
