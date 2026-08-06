@@ -43,6 +43,29 @@ void main() {
     expect(ContentDownloadRequest.fromTask(task).chapterId, 'chapter');
   });
 
+  test('anime task stores identifiers without transport credentials', () {
+    final task = ContentDownloadTask.anime(
+      sourceId: 'anime-source',
+      contentId: 'show',
+      contentTitle: '番剧',
+      chapterId: 'episode-1',
+      chapterTitle: '第一集',
+      now: 150,
+    );
+
+    expect(task.kind, DownloadContentKind.anime);
+    expect(task.payload, {
+      'sourceId': 'anime-source',
+      'contentId': 'show',
+      'chapterId': 'episode-1',
+    });
+    expect(task.payload.keys, isNot(contains('url')));
+    expect(task.payload.keys, isNot(contains('headers')));
+    expect(task.payload.keys, isNot(contains('token')));
+    expect(task.payload.keys, isNot(contains('cookie')));
+    expect(ContentDownloadRequest.fromTask(task).chapterId, 'episode-1');
+  });
+
   test('completed content task preserves local compatibility metadata', () {
     final task = ContentDownloadTask.manga(
       sourceId: 'source',

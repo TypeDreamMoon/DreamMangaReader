@@ -67,6 +67,37 @@ final class ContentDownloadTask {
     );
   }
 
+  static DownloadTask anime({
+    required String sourceId,
+    required String contentId,
+    required String contentTitle,
+    required String chapterId,
+    required String chapterTitle,
+    required int now,
+    int priority = 0,
+    bool completed = false,
+    int completedBytes = 0,
+    int totalBytes = 0,
+    String? localDirectory,
+    int? resourceCount,
+  }) {
+    return _chapter(
+      kind: DownloadContentKind.anime,
+      sourceId: sourceId,
+      contentId: contentId,
+      contentTitle: contentTitle,
+      chapterId: chapterId,
+      chapterTitle: chapterTitle,
+      now: now,
+      priority: priority,
+      completed: completed,
+      completedBytes: completedBytes,
+      totalBytes: totalBytes,
+      localDirectory: localDirectory,
+      resourceCount: resourceCount,
+    );
+  }
+
   static DownloadTask _chapter({
     required DownloadContentKind kind,
     required String sourceId,
@@ -118,7 +149,8 @@ final class ContentDownloadRequest {
 
   factory ContentDownloadRequest.fromTask(DownloadTask task) {
     if (task.kind != DownloadContentKind.manga &&
-        task.kind != DownloadContentKind.novel) {
+        task.kind != DownloadContentKind.novel &&
+        task.kind != DownloadContentKind.anime) {
       throw FormatException('unsupported content task kind: ${task.kind.name}');
     }
     return ContentDownloadRequest(
@@ -139,7 +171,9 @@ String contentDownloadTaskId(
   String contentId,
   String chapterId,
 ) {
-  if (kind != DownloadContentKind.manga && kind != DownloadContentKind.novel) {
+  if (kind != DownloadContentKind.manga &&
+      kind != DownloadContentKind.novel &&
+      kind != DownloadContentKind.anime) {
     throw ArgumentError.value(kind, 'kind');
   }
   final encoded = base64Url.encode(
