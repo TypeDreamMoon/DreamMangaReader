@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
+import 'page_transitions.dart';
 
 /// 三个主题变体。UI 里用 [AppThemeVariant.values] 渲染切换器。
 enum AppThemeVariant {
@@ -72,11 +73,11 @@ ThemeData buildTheme(AppThemeVariant variant,
   return base.copyWith(
     // 全平台统一顺滑转场(桌面默认几乎无过渡,加上更有质感)。
     pageTransitionsTheme: const PageTransitionsTheme(builders: {
-      TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-      TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
-      TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
-      TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
-      TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+      TargetPlatform.android: DreamPageTransitionsBuilder(),
+      TargetPlatform.iOS: DreamPageTransitionsBuilder(),
+      TargetPlatform.windows: DreamPageTransitionsBuilder(),
+      TargetPlatform.macOS: DreamPageTransitionsBuilder(),
+      TargetPlatform.linux: DreamPageTransitionsBuilder(),
     }),
     textTheme: base.textTheme.apply(
       bodyColor: p.textPrimary,
@@ -160,7 +161,8 @@ ThemeData buildTheme(AppThemeVariant variant,
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(r)),
       elevation: 0,
       labelTextStyle: WidgetStatePropertyAll(
-        TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: p.textMuted),
+        TextStyle(
+            fontSize: 11, fontWeight: FontWeight.w600, color: p.textMuted),
       ),
       iconTheme: WidgetStateProperty.resolveWith(
         (states) => IconThemeData(
@@ -180,8 +182,7 @@ ThemeData buildTheme(AppThemeVariant variant,
       unselectedIconTheme: IconThemeData(color: p.textMuted),
       selectedLabelTextStyle:
           TextStyle(color: p.accent, fontSize: 11, fontWeight: FontWeight.w700),
-      unselectedLabelTextStyle:
-          TextStyle(color: p.textMuted, fontSize: 11),
+      unselectedLabelTextStyle: TextStyle(color: p.textMuted, fontSize: 11),
     ),
   );
 }
