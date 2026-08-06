@@ -24,7 +24,9 @@ void main() {
   testWidgets('episode download action enqueues a durable anime task',
       (tester) async {
     SharedPreferences.setMockInitialValues(const {});
-    final root = await Directory.systemTemp.createTemp('anime-detail-test-');
+    final root = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('anime-detail-test-'),
+    ))!;
     addTearDown(() async {
       if (await root.exists()) await root.delete(recursive: true);
     });
@@ -36,7 +38,7 @@ void main() {
       trackProvider: (_, __, ___) async => const [],
       upstream: _UnusedUpstream(),
     );
-    await downloads.load();
+    await tester.runAsync(downloads.load);
     addTearDown(downloads.dispose);
     final coordinator = DownloadCoordinator(
       repository: RecordingDownloadTaskRepository(),
@@ -92,6 +94,7 @@ void main() {
       'contentId': anime.id,
       'chapterId': 'episode-1',
     });
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
 

@@ -38,7 +38,7 @@ void main() {
       ),
     );
 
-    await coordinator.load();
+    await tester.runAsync(coordinator.load);
     await tester.pump();
 
     expect(observed, same(coordinator));
@@ -61,7 +61,7 @@ void main() {
       ),
     );
 
-    await coordinator.load();
+    await tester.runAsync(coordinator.load);
     await tester.pump();
 
     expect(builds, 2);

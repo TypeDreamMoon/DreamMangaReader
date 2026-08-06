@@ -12,7 +12,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('groups completed anime episodes by title', (tester) async {
-    final root = await Directory.systemTemp.createTemp('anime-view-test-');
+    final root = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('anime-view-test-'),
+    ))!;
     addTearDown(() async {
       if (await root.exists()) await root.delete(recursive: true);
     });
@@ -27,22 +29,24 @@ void main() {
       ],
       upstream: _ViewUpstream(),
     );
-    await store.load();
-    await store.execute(
-      DownloadExecutionContext(
-        cancellation: DownloadCancellation(),
-        reportProgress: (_, __) async {},
-        checkpoint: () async {},
-      ),
-      ContentDownloadTask.anime(
-        sourceId: 'source',
-        contentId: 'show',
-        contentTitle: '测试番剧',
-        chapterId: 'episode-1',
-        chapterTitle: '第一集',
-        now: 1,
-      ),
-    );
+    await tester.runAsync(() async {
+      await store.load();
+      await store.execute(
+        DownloadExecutionContext(
+          cancellation: DownloadCancellation(),
+          reportProgress: (_, __) async {},
+          checkpoint: () async {},
+        ),
+        ContentDownloadTask.anime(
+          sourceId: 'source',
+          contentId: 'show',
+          contentTitle: '测试番剧',
+          chapterId: 'episode-1',
+          chapterTitle: '第一集',
+          now: 1,
+        ),
+      );
+    });
     addTearDown(store.dispose);
 
     await tester.pumpWidget(MaterialApp(
@@ -55,6 +59,7 @@ void main() {
 
     expect(find.text('测试番剧'), findsOneWidget);
     expect(find.text('第一集'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
 

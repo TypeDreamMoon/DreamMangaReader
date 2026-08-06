@@ -14,6 +14,8 @@ const _onePixelPng =
     'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late Directory root;
   late List<SourceMeta> previousSources;
 
