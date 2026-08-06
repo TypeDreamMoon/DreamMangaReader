@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/app/library_store.dart';
+import 'package:dream_manga_reader/app/anime_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/features/library/history_page.dart';
@@ -143,8 +144,7 @@ void main() {
     store.addLocal(NovelLibraryEntry.local(
       sha256: 'missing',
       title: '缺失的小说',
-      privatePath:
-          '${sandbox.path}${Platform.pathSeparator}does-not-exist',
+      privatePath: '${sandbox.path}${Platform.pathSeparator}does-not-exist',
       origin: NovelOrigin.localTxt,
     ));
 
@@ -273,10 +273,13 @@ void main() {
     store.dispose();
   });
 
-  testWidgets('novel history is isolated from manga history', (tester) async {
+  testWidgets('novel history appears in the unified history list',
+      (tester) async {
     final mangaStore = LibraryStore();
     final novelStore = NovelLibraryStore();
+    final animeStore = AnimeLibraryStore();
     await novelStore.load();
+    await animeStore.load();
     novelStore.addLocal(NovelLibraryEntry.local(
       sha256: 'history',
       title: '小说历史甲',
@@ -297,17 +300,19 @@ void main() {
         store: mangaStore,
         child: NovelLibraryScope(
           store: novelStore,
-          child: const HistoryPage(showNovelInitially: true),
+          child: AnimeLibraryScope(
+            store: animeStore,
+            child: const HistoryPage(),
+          ),
         ),
       ),
     ));
 
     expect(find.text('小说历史甲'), findsWidgets);
-    await tester.tap(find.text('漫画'));
-    await tester.pump();
-    expect(find.text('小说历史甲'), findsNothing);
+    expect(find.byType(SegmentedButton), findsNothing);
     mangaStore.dispose();
     novelStore.dispose();
+    animeStore.dispose();
   });
 }
 
@@ -330,9 +335,7 @@ class _SwitchHarnessState extends State<_SwitchHarness> {
           onSelected: (value) => setState(() => _kind = value),
         ),
       ),
-      body: _kind == LibraryKind.manga
-          ? const Text('漫画甲')
-          : const Text('小说乙'),
+      body: _kind == LibraryKind.manga ? const Text('漫画甲') : const Text('小说乙'),
     );
   }
 }
