@@ -653,5 +653,19 @@
   "novel_readerAutoHide": "工具列自動隱藏",
   "novel_readerAutoHideOff": "關閉",
   "novel_readerSeconds": "{seconds} 秒",
-  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}},
+  "libraryUnifiedHistory": "歷史記錄",
+  "libraryMangaFavorites": "漫畫收藏",
+  "libraryNovelFavorites": "小說收藏",
+  "libraryAnimeFavorites": "番劇收藏",
+  "libraryHistoryEmpty": "暫無歷史記錄",
+  "libraryMangaFavoritesEmpty": "暫無漫畫收藏",
+  "libraryNovelFavoritesEmpty": "暫無小說收藏",
+  "libraryAnimeFavoritesEmpty": "暫無番劇收藏",
+  "animeFavorite": "收藏番劇",
+  "animeUnfavorite": "取消收藏番劇",
+  "animeHistoryProgress": "{episode} · {position} / {duration}",
+  "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},
+  "animeResumeFailed": "恢復播放失敗：{error}",
+  "@animeResumeFailed": {"placeholders":{"error":{}}}
 }

@@ -5,6 +5,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/anime/anime_history_resume.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,7 +14,7 @@ void main() {
     late int openedIndex;
     late Duration openedPosition;
     final source = _ResumeSource();
-    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) {
+    await tester.pumpWidget(_app(Builder(builder: (context) {
       return TextButton(
         onPressed: () => unawaited(openAnimeHistory(
           context,
@@ -42,7 +43,7 @@ void main() {
   testWidgets('missing episode id falls back to a clamped index',
       (tester) async {
     late int openedIndex;
-    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) {
+    await tester.pumpWidget(_app(Builder(builder: (context) {
       return TextButton(
         onPressed: () => unawaited(openAnimeHistory(
           context,
@@ -67,7 +68,7 @@ void main() {
   testWidgets('resolution failure reports an error without mutating history',
       (tester) async {
     final entry = _history(episodeId: 'ep-1', episodeIndex: 0);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
+    await tester.pumpWidget(_app(Scaffold(
       body: Builder(builder: (context) {
         return TextButton(
           onPressed: () => unawaited(openAnimeHistory(
@@ -90,6 +91,13 @@ void main() {
     expect(entry.positionSeconds, 83);
   });
 }
+
+Widget _app(Widget home) => MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: home,
+    );
 
 const _meta = SourceMeta(
   id: 'anime-source',

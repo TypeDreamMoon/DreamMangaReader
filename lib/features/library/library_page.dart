@@ -805,7 +805,9 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 8, 14),
           child: Row(
             children: [
-              const Expanded(child: AppSectionHeading('历史记录')),
+              Expanded(
+                child: AppSectionHeading(context.l10n.libraryUnifiedHistory),
+              ),
               IconButton(
                 tooltip: context.l10n.shelf_historyTooltip,
                 onPressed: () => Navigator.of(context).push(
@@ -817,7 +819,7 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
           ),
         ),
         if (items.isEmpty)
-          _compactEmpty(p, '暂无历史记录')
+          _compactEmpty(p, context.l10n.libraryHistoryEmpty)
         else
           SizedBox(
             height: 172,
@@ -885,8 +887,13 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
           headers: meta == null ? const {} : imageHeadersOf(meta),
           radius: 8,
         );
-        progress = '${history.episodeName} · '
-            '${_formatClock(history.positionSeconds)}';
+        progress = context.l10n.animeHistoryProgress(
+          history.episodeName,
+          _formatClock(history.positionSeconds),
+          history.durationSeconds > 0
+              ? _formatClock(history.durationSeconds)
+              : '--:--',
+        );
         onTap = () => openAnimeHistory(context, history);
     }
     return GestureDetector(
@@ -946,9 +953,9 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, '漫画收藏'),
+        _sectionHeader(p, context.l10n.libraryMangaFavorites),
         if (favs.isEmpty)
-          _compactEmpty(p, '暂无漫画收藏')
+          _compactEmpty(p, context.l10n.libraryMangaFavoritesEmpty)
         else
           FeedView(
             layout: layout,
@@ -976,9 +983,9 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, '小说收藏'),
+        _sectionHeader(p, context.l10n.libraryNovelFavorites),
         if (entries.isEmpty)
-          _compactEmpty(p, '暂无小说收藏')
+          _compactEmpty(p, context.l10n.libraryNovelFavoritesEmpty)
         else
           SizedBox(
             height: 172,
@@ -1042,9 +1049,9 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, '番剧收藏'),
+        _sectionHeader(p, context.l10n.libraryAnimeFavorites),
         if (entries.isEmpty)
-          _compactEmpty(p, '暂无番剧收藏')
+          _compactEmpty(p, context.l10n.libraryAnimeFavoritesEmpty)
         else
           SizedBox(
             height: 172,

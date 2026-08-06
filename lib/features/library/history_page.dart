@@ -190,13 +190,17 @@ class HistoryPage extends StatelessWidget {
     );
     final position = _formatDuration(history.positionSeconds);
     final duration = history.durationSeconds > 0
-        ? ' / ${_formatDuration(history.durationSeconds)}'
-        : '';
+        ? _formatDuration(history.durationSeconds)
+        : '--:--';
     return _card(
       cardKey: const Key('history-row-anime'),
       palette: palette,
       title: history.title,
-      progress: '${history.episodeName} · $position$duration',
+      progress: context.l10n.animeHistoryProgress(
+        history.episodeName,
+        position,
+        duration,
+      ),
       cover: MangaCover(
         manga: anime,
         headers: meta == null ? const {} : imageHeadersOf(meta),

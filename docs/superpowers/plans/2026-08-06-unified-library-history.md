@@ -16,7 +16,7 @@
 - Create: `lib/app/anime_library_store.dart`
 - Create: `test/anime_library_store_test.dart`
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 Cover favorite toggle/reload, malformed-record repair, integer-second deduplication, ordered history, per-entry removal, clear-all, and `flushPending()`:
 
@@ -55,7 +55,7 @@ test('anime history persists one record per integer second', () async {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -65,7 +65,7 @@ flutter test test\anime_library_store_test.dart
 
 Expected: compilation fails because `AnimeLibraryStore` does not exist.
 
-- [ ] **Step 3: Implement the store and immutable records**
+- [x] **Step 3: Implement the store and immutable records**
 
 Use stable keys and tolerant JSON parsing:
 
@@ -100,7 +100,7 @@ class AnimeHistoryEntry {
 
 `AnimeLibraryStore` must provide `load`, `favorites`, `history`, `isFavorite`, `toggleFavorite`, `saveProgress`, `removeHistory`, `clearHistory`, `flushPending`, `exportData`, `importData`, and `dispose`. Store JSON under `anime.library.v1` and `anime.history.v1`; skip malformed individual records and rewrite repaired collections.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Run `flutter test test\anime_library_store_test.dart`, then:
 
@@ -116,7 +116,7 @@ git commit -m "feat(anime): persist favorites and playback history"
 - Modify: `lib/app/anime_library_store.dart`
 - Create: `test/app_anime_library_scope_test.dart`
 
-- [ ] **Step 1: Write a failing App scope test**
+- [x] **Step 1: Write a failing App scope test**
 
 ```dart
 testWidgets('app loads and exposes anime library state', (tester) async {
@@ -126,15 +126,15 @@ testWidgets('app loads and exposes anime library state', (tester) async {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `flutter test test\app_anime_library_scope_test.dart`; expect `AnimeLibraryScope` to be missing.
 
-- [ ] **Step 3: Add the scope and lifecycle**
+- [x] **Step 3: Add the scope and lifecycle**
 
 Add `AnimeLibraryScope extends InheritedNotifier<AnimeLibraryStore>` with `of`, `read`, and `maybeRead`. In `_AppState`, create `_animeLibrary`, load it beside manga/novel stores, wrap the application under `AnimeLibraryScope`, call `flushPending()` in explicit app-exit persistence paths, and dispose it after removing listeners.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Run `flutter test test\app_anime_library_scope_test.dart test\app_anime_download_scope_test.dart`, then commit:
 
@@ -149,7 +149,7 @@ git commit -m "feat(app): expose anime library state"
 - Create: `lib/features/library/unified_history.dart`
 - Create: `test/unified_history_test.dart`
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Build records at timestamps `30`, `20`, and `10`; assert anime, novel, manga order. Add equal-timestamp records and assert the stable tie-breaker `(kind.index, key)`.
 
@@ -166,15 +166,15 @@ expect(items.map((item) => item.kind), [
 ]);
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `flutter test test\unified_history_test.dart`; expect missing projector/model failures.
 
-- [ ] **Step 3: Implement a pure projection model**
+- [x] **Step 3: Implement a pure projection model**
 
 Create `UnifiedHistoryKind`, `UnifiedHistoryItem`, and `UnifiedHistoryProjector.build`. The projector receives already-resolved novel `(entry, progress)` records, does not mutate any store, sorts by descending `updatedAt`, then by kind and stable key. Preserve type-specific payloads so the UI does not reconstruct IDs from strings.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 flutter test test\unified_history_test.dart
@@ -193,7 +193,7 @@ git commit -m "feat(library): merge content history chronologically"
 - Modify: `test/playback_session_controller_test.dart`
 - Modify: `test/anime_player_page_test.dart`
 
-- [ ] **Step 1: Write failing resume and progress tests**
+- [x] **Step 1: Write failing resume and progress tests**
 
 Add tests proving:
 
@@ -208,7 +208,7 @@ expect(adapter.seeks, [const Duration(seconds: 83)]);
 
 Also assert position callbacks report integer seconds once per changed second, duration is captured, a near-end resume resets to zero, and changing episode flushes the old episode before recording the new one.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -218,7 +218,7 @@ flutter test test\playback_session_controller_test.dart test\anime_player_page_t
 
 Expected: `initialPosition`, duration, and history callbacks are absent.
 
-- [ ] **Step 3: Extend the player contract and controller**
+- [x] **Step 3: Extend the player contract and controller**
 
 Add `Stream<Duration> get duration` to `PlayerAdapter` and adapters/fakes. Extend `PlaybackState` with duration. Extend `PlaybackSessionController`:
 
@@ -236,11 +236,11 @@ Future<void> start(
 
 Subscribe to duration and call an injected `void Function(Duration position, Duration duration)? onProgress` only when the integer second changes. Before seek, reset to zero when duration is known and `duration - initialPosition <= const Duration(seconds: 10)`.
 
-- [ ] **Step 4: Connect `AnimePlayerPage` to `AnimeLibraryStore`**
+- [x] **Step 4: Connect `AnimePlayerPage` to `AnimeLibraryStore`**
 
 Add `initialPosition` and optional test callback parameters. On load/start, pass the initial position. On progress, call `saveProgress` with the current source/anime/episode metadata. On pause, episode switch, and `dispose`, call `flushPending()` after the last in-memory update. Do not write URLs, headers, cookies, or selected lines to history.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 flutter test test\playback_session_controller_test.dart test\anime_player_page_test.dart
@@ -256,15 +256,15 @@ git commit -m "feat(anime): resume playback to the stored second"
 - Create: `test/anime_favorite_test.dart`
 - Create: `test/anime_history_resume_test.dart`
 
-- [ ] **Step 1: Write failing favorite and resume tests**
+- [x] **Step 1: Write failing favorite and resume tests**
 
 Assert the detail action toggles `AnimeLibraryStore.isFavorite`. For resume, use a fake source whose episodes have IDs `ep-1`, `ep-2`; verify ID match wins over a stale index, missing ID falls back to a clamped index, and resolution errors leave the history record intact.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `flutter test test\anime_favorite_test.dart test\anime_history_resume_test.dart`; expect missing favorite UI and resume helper failures.
 
-- [ ] **Step 3: Implement favorite UI and resume resolver**
+- [x] **Step 3: Implement favorite UI and resume resolver**
 
 Add a keyed favorite icon to `AnimeDetailPage` using the loaded detail title/cover when available. Implement:
 
@@ -278,7 +278,7 @@ Future<void> openAnimeHistory(
 
 Resolve `SourceMeta`, fetch chapters, choose by episode ID then valid index, dispose the temporary source, and push `AnimePlayerPage(initialPosition: Duration(seconds: entry.positionSeconds))`. Surface errors through the existing app snackbar/dialog style without deleting history.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 flutter test test\anime_favorite_test.dart test\anime_history_resume_test.dart
@@ -293,19 +293,19 @@ git commit -m "feat(anime): add favorites and history resume"
 - Delete: `lib/features/library/library_kind_switch.dart`
 - Create: `test/unified_history_page_test.dart`
 
-- [ ] **Step 1: Write failing widget tests**
+- [x] **Step 1: Write failing widget tests**
 
 Host `HistoryPage` under all three scopes. Assert no `SegmentedButton` exists, mixed rows follow timestamp order, anime progress renders `12:34`, per-row delete affects only its Store, and clear-all empties all three.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `flutter test test\unified_history_page_test.dart`; expect the existing manga/novel switch and missing anime row.
 
-- [ ] **Step 3: Implement mixed rows and deletion dispatch**
+- [x] **Step 3: Implement mixed rows and deletion dispatch**
 
 Build items through `UnifiedHistoryProjector`. Switch on `UnifiedHistoryKind` for cover, progress text, open action, and delete action. The clear confirmation runs manga `clearHistory`, novel `clearHistory`, and anime `clearHistory` in one operation. Use `openAnimeHistory` for anime rows.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 flutter test test\unified_history_page_test.dart
@@ -319,7 +319,7 @@ git commit -m "feat(library): show one mixed history list"
 - Modify: `lib/features/library/library_page.dart`
 - Create: `test/unified_library_page_test.dart`
 
-- [ ] **Step 1: Write failing home layout tests**
+- [x] **Step 1: Write failing home layout tests**
 
 Seed one history item of each kind and one favorite of each kind. Assert section order:
 
@@ -333,17 +333,17 @@ expect(find.byType(SegmentedButton), findsNothing);
 
 Add a search test proving one query filters manga, novel, and anime favorites while history/recommendations are hidden during search.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `flutter test test\unified_library_page_test.dart`; expect the split page and absent anime section.
 
-- [ ] **Step 3: Consolidate `LibraryPage`**
+- [x] **Step 3: Consolidate `LibraryPage`**
 
 Remove `LibraryKind` state and `_NovelLibraryPage`; make the existing manga page the single scaffold. Remove `LibraryKindSwitch`, keep search/import/refresh/history actions, and order body children as unified history, manga favorites, novel favorites, anime favorites, then recommendation/browser content. Reuse `openNovelLibraryEntry`, `NovelCover`, `MangaCover`, and `AnimeDetailPage`; do not duplicate persistence logic in widgets.
 
 Show compact empty states for all three favorite sections. Limit the home history strip to 12 items and link its header/action to `HistoryPage`.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 flutter test test\unified_library_page_test.dart test\novel_library_view_test.dart
@@ -361,7 +361,7 @@ git commit -m "feat(library): combine content shelves on the home page"
 - Modify generated localization files through `flutter gen-l10n` (ignored by Git)
 - Modify: `docs/superpowers/plans/2026-08-06-unified-library-history.md`
 
-- [ ] **Step 1: Add localization keys**
+- [x] **Step 1: Add localization keys**
 
 Add these exact keys in all four ARB files, then run `flutter gen-l10n`:
 
@@ -380,7 +380,7 @@ animeHistoryProgress
 animeResumeFailed
 ```
 
-- [ ] **Step 2: Run the focused suite**
+- [x] **Step 2: Run the focused suite**
 
 Run all new/changed tests, excluding the previously known hanging `anime_detail_download_test.dart` and `anime_downloads_view_test.dart` until the combined validation stage:
 
@@ -388,11 +388,11 @@ Run all new/changed tests, excluding the previously known hanging `anime_detail_
 flutter test test\anime_library_store_test.dart test\app_anime_library_scope_test.dart test\unified_history_test.dart test\playback_session_controller_test.dart test\anime_player_page_test.dart test\anime_favorite_test.dart test\anime_history_resume_test.dart test\unified_history_page_test.dart test\unified_library_page_test.dart test\novel_library_view_test.dart
 ```
 
-- [ ] **Step 3: Run focused analysis and diff checks**
+- [x] **Step 3: Run focused analysis and diff checks**
 
 Run `dart analyze` on touched production/test Dart files, then `git diff --check` and `git status --short`. Do not run Windows/Android builds, packaging, or device playback tests.
 
-- [ ] **Step 4: Commit localization and plan completion**
+- [x] **Step 4: Commit localization and plan completion**
 
 ```powershell
 git add lib\l10n\app_*.arb docs\superpowers\plans\2026-08-06-unified-library-history.md

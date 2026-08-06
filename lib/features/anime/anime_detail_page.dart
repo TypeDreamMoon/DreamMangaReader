@@ -8,6 +8,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -472,7 +473,8 @@ class AnimeFavoriteAction extends StatelessWidget {
         cover: anime.cover,
         addedAt: DateTime.now().millisecondsSinceEpoch,
       )),
-      tooltip: favorite ? '取消收藏' : '收藏',
+      tooltip:
+          favorite ? context.l10n.animeUnfavorite : context.l10n.animeFavorite,
       icon: Icon(
         favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
       ),

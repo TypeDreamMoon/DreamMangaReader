@@ -653,5 +653,19 @@
   "novel_readerAutoHide": "ツールバーを自動的に隠す",
   "novel_readerAutoHideOff": "オフ",
   "novel_readerSeconds": "{seconds} 秒",
-  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}},
+  "libraryUnifiedHistory": "履歴",
+  "libraryMangaFavorites": "漫画のお気に入り",
+  "libraryNovelFavorites": "小説のお気に入り",
+  "libraryAnimeFavorites": "アニメのお気に入り",
+  "libraryHistoryEmpty": "履歴はありません",
+  "libraryMangaFavoritesEmpty": "お気に入りの漫画はありません",
+  "libraryNovelFavoritesEmpty": "お気に入りの小説はありません",
+  "libraryAnimeFavoritesEmpty": "お気に入りのアニメはありません",
+  "animeFavorite": "アニメをお気に入りに追加",
+  "animeUnfavorite": "アニメのお気に入りを解除",
+  "animeHistoryProgress": "{episode} · {position} / {duration}",
+  "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},
+  "animeResumeFailed": "再生を再開できませんでした: {error}",
+  "@animeResumeFailed": {"placeholders":{"error":{}}}
 }

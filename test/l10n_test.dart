@@ -113,6 +113,18 @@ const _requiredNovelKeys = {
   'novel_readerAutoHide',
   'novel_readerAutoHideOff',
   'novel_readerSeconds',
+  'libraryUnifiedHistory',
+  'libraryMangaFavorites',
+  'libraryNovelFavorites',
+  'libraryAnimeFavorites',
+  'libraryHistoryEmpty',
+  'libraryMangaFavoritesEmpty',
+  'libraryNovelFavoritesEmpty',
+  'libraryAnimeFavoritesEmpty',
+  'animeFavorite',
+  'animeUnfavorite',
+  'animeHistoryProgress',
+  'animeResumeFailed',
 };
 
 const _requiredBackgroundUpdateKeys = {

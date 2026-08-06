@@ -653,5 +653,19 @@
   "novel_readerAutoHide": "Auto-hide toolbar",
   "novel_readerAutoHideOff": "Off",
   "novel_readerSeconds": "{seconds} s",
-  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}}
+  "@novel_readerSeconds": {"placeholders":{"seconds":{"type":"int"}}},
+  "libraryUnifiedHistory": "History",
+  "libraryMangaFavorites": "Manga favorites",
+  "libraryNovelFavorites": "Novel favorites",
+  "libraryAnimeFavorites": "Anime favorites",
+  "libraryHistoryEmpty": "No history yet",
+  "libraryMangaFavoritesEmpty": "No manga favorites",
+  "libraryNovelFavoritesEmpty": "No novel favorites",
+  "libraryAnimeFavoritesEmpty": "No anime favorites",
+  "animeFavorite": "Favorite anime",
+  "animeUnfavorite": "Remove anime favorite",
+  "animeHistoryProgress": "{episode} · {position} / {duration}",
+  "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},
+  "animeResumeFailed": "Failed to resume playback: {error}",
+  "@animeResumeFailed": {"placeholders":{"error":{}}}
 }

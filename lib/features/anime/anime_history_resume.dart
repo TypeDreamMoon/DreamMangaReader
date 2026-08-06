@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/anime_library_store.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -55,7 +56,7 @@ Future<void> openAnimeHistory(
   } catch (error) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('恢复播放失败：$error')),
+      SnackBar(content: Text(context.l10n.animeResumeFailed('$error'))),
     );
   } finally {
     source?.dispose();
