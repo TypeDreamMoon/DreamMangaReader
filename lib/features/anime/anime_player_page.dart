@@ -263,16 +263,17 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       ),
     );
     final videoController = VideoController(player);
-    final source = buildSource(widget.meta);
     _nativePlayer = player;
-    _source = source;
     try {
       final cache = HlsCacheController.instance;
       await cache.initialize();
       if (_disposed) return;
       final dio = Dio();
-      Future<List<VideoTrack>> loadTracks(String episodeId) =>
-          source.getVideo(widget.animeId, episodeId);
+      Future<List<VideoTrack>> loadTracks(String episodeId) async {
+        final source = _source ??= buildSource(widget.meta);
+        return source.getVideo(widget.animeId, episodeId);
+      }
+
       VideoTrack? localTrackForEpisode(String episodeId) {
         final manifest = AnimeDownloadScope.maybeRead(context)?.localManifest(
           widget.meta.id,

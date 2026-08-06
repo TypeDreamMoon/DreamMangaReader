@@ -10,6 +10,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../common/transitions.dart';
+import '../anime/anime_downloads_view.dart';
 import '../detail/detail_page.dart';
 import '../library/manga_cover.dart';
 import '../novel/novel_downloads_view.dart';
@@ -229,14 +230,7 @@ class _AnimeDownloadsPage extends StatelessWidget {
         mode: DownloadViewMode.completed,
         onKindChanged: onKindChanged,
         onModeChanged: onModeChanged,
-        child: EmptyState(
-          icon: Icons.movie_outlined,
-          iconSize: 48,
-          title: context.l10n.download_completed,
-          titleSize: 16,
-          dense: true,
-          message: context.l10n.dl_emptyHint,
-        ),
+        child: const AnimeDownloadsView(),
       );
 }
 
