@@ -7,11 +7,15 @@ class FaultRoute {
     required this.body,
     this.contentType = 'application/octet-stream',
     this.failuresBeforeSuccess = 0,
+    this.chunks,
+    this.beforeChunk,
   });
 
   final List<int> body;
   final String contentType;
   int failuresBeforeSuccess;
+  final List<List<int>>? chunks;
+  final Future<void> Function(int index)? beforeChunk;
 }
 
 class RecordedRequest {
@@ -71,6 +75,20 @@ class FaultHttpServer {
     );
   }
 
+  void addChunked(
+    String path,
+    List<List<int>> chunks, {
+    String contentType = 'application/octet-stream',
+    Future<void> Function(int index)? beforeChunk,
+  }) {
+    routes[path] = FaultRoute(
+      body: chunks.expand((chunk) => chunk).toList(),
+      contentType: contentType,
+      chunks: chunks,
+      beforeChunk: beforeChunk,
+    );
+  }
+
   Future<void> _handle(HttpRequest request) async {
     requests.add(RecordedRequest(
       path: request.uri.path,
@@ -108,6 +126,18 @@ class FaultHttpServer {
       );
     }
     request.response.headers.contentType = ContentType.parse(route.contentType);
+    request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+    if (range == null && route.chunks != null) {
+      request.response.bufferOutput = false;
+      request.response.headers.chunkedTransferEncoding = true;
+      for (var index = 0; index < route.chunks!.length; index++) {
+        await route.beforeChunk?.call(index);
+        request.response.add(route.chunks![index]);
+        await request.response.flush();
+      }
+      await request.response.close();
+      return;
+    }
     request.response.contentLength = bytes.length;
     request.response.add(bytes);
     await request.response.close();

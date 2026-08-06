@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,7 +11,13 @@ import 'package:hls/hls.dart';
 
 import 'support/fault_http_server.dart';
 
-Future<({int status, List<int> bytes, String text})> _get(
+Future<
+    ({
+      int status,
+      List<int> bytes,
+      String text,
+      String? contentRange,
+    })> _get(
   Uri uri, {
   Map<String, String>? headers,
 }) async {
@@ -25,6 +32,7 @@ Future<({int status, List<int> bytes, String text})> _get(
       status: response.statusCode,
       bytes: bytes,
       text: utf8.decode(bytes, allowMalformed: true),
+      contentRange: response.headers.value(HttpHeaders.contentRangeHeader),
     );
   } finally {
     client.close(force: true);
@@ -175,6 +183,89 @@ media.mp4
     expect(upstream.requestCount('/retry.m3u8'), 2);
   });
 
+  test('dio upstream exposes a chunk before the response completes', () async {
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+    upstream.addChunked(
+      '/direct-stream.ts',
+      const [
+        [1, 2],
+        [3, 4],
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await releaseTail.future;
+      },
+    );
+    final response =
+        await (DioHlsUpstreamClient(Dio()) as HlsStreamingUpstreamClient)
+            .stream(
+      upstream.baseUri.resolve('direct-stream.ts'),
+      headers: const {},
+    ).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => throw StateError('upstream headers timed out'),
+    );
+    final first = Completer<List<int>>();
+    final done = Completer<void>();
+    response.stream.listen(
+        (chunk) {
+          if (!first.isCompleted) first.complete(List.of(chunk));
+        },
+        onDone: done.complete,
+        onError: (Object error, StackTrace stackTrace) {
+          if (!first.isCompleted) first.completeError(error, stackTrace);
+          done.completeError(error, stackTrace);
+        });
+    expect(
+      await first.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw StateError('direct first chunk timed out'),
+      ),
+      [1, 2],
+    );
+    releaseTail.complete();
+    await done.future;
+  });
+
+  test('fault server flushes a raw HTTP chunk before completion', () async {
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+    upstream.addChunked(
+      '/raw-stream.ts',
+      const [
+        [1, 2],
+        [3, 4],
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await releaseTail.future;
+      },
+    );
+    final client = HttpClient();
+    addTearDown(() => client.close(force: true));
+    final response = await (await client.getUrl(
+      upstream.baseUri.resolve('raw-stream.ts'),
+    ))
+        .close();
+    final first = Completer<List<int>>();
+    final done = Completer<void>();
+    response.listen((chunk) {
+      if (!first.isCompleted) first.complete(List.of(chunk));
+    }, onDone: done.complete, onError: done.completeError);
+    expect(
+      await first.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw StateError('raw first chunk timed out'),
+      ),
+      [1, 2],
+    );
+    releaseTail.complete();
+    await done.future;
+  });
+
   test('healthy buffer allows exactly one extra forward prefetch', () async {
     upstream.addText('/forward.m3u8', '''#EXTM3U
 #EXT-X-TARGETDURATION:4
@@ -264,5 +355,124 @@ media.mp4
     final response = await _get(session.localUri);
     expect(response.status, HttpStatus.notImplemented);
     expect(response.text, contains('unsupported-hls-encryption'));
+  });
+
+  test('streams first miss bytes before committing the cache', () async {
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+    upstream.addText('/stream.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+slow.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addChunked(
+      '/slow.ts',
+      const [
+        [1, 2],
+        [3, 4],
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await releaseTail.future;
+      },
+    );
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('stream.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    final client = HttpClient();
+    final response =
+        await (await client.getUrl(media.segments.single.uri)).close().timeout(
+              const Duration(seconds: 5),
+              onTimeout: () => throw StateError('response headers timed out'),
+            );
+    final firstChunk = Completer<List<int>>();
+    final all = <int>[];
+    final done = Completer<void>();
+    response.listen(
+        (chunk) {
+          all.addAll(chunk);
+          if (!firstChunk.isCompleted) firstChunk.complete(List.of(chunk));
+        },
+        onDone: done.complete,
+        onError: (Object error, StackTrace stackTrace) {
+          if (!firstChunk.isCompleted) {
+            firstChunk.completeError(error, stackTrace);
+          }
+          done.completeError(error, stackTrace);
+        });
+
+    expect(
+      await firstChunk.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw StateError('first chunk timed out'),
+      ),
+      [1, 2],
+    );
+    expect(
+      temp
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+    releaseTail.complete();
+    await done.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => throw StateError('response completion timed out'),
+    );
+    expect(all, [1, 2, 3, 4]);
+    expect((await _get(media.segments.single.uri)).bytes, [1, 2, 3, 4]);
+    expect(upstream.requestCount('/slow.ts'), 1);
+    client.close(force: true);
+  });
+
+  test('cache hits and upstream misses honor local byte ranges', () async {
+    upstream.addText('/range.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+range.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/range.ts', List<int>.generate(10, (index) => index));
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('range.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    final segment = media.segments.single.uri;
+
+    final partialMiss = await _get(
+      segment,
+      headers: const {'Range': 'bytes=3-6'},
+    );
+    expect(partialMiss.status, HttpStatus.partialContent);
+    expect(partialMiss.bytes, [3, 4, 5, 6]);
+    expect(partialMiss.contentRange, 'bytes 3-6/10');
+    expect(upstream.requests.last.range, 'bytes=3-6');
+
+    expect(
+        (await _get(segment)).bytes, List<int>.generate(10, (index) => index));
+    final cachedRange = await _get(
+      segment,
+      headers: const {'Range': 'bytes=7-9'},
+    );
+    expect(cachedRange.status, HttpStatus.partialContent);
+    expect(cachedRange.bytes, [7, 8, 9]);
+    expect(cachedRange.contentRange, 'bytes 7-9/10');
+    expect(upstream.requestCount('/range.ts'), 2);
   });
 }

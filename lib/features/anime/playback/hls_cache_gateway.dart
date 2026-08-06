@@ -10,6 +10,7 @@ import 'package:hls/hls.dart';
 import '../../../core/source/models.dart';
 import 'hls_cache_store.dart';
 import 'hls_session.dart';
+import 'hls_stream_response.dart';
 
 class HlsUpstreamResponse {
   const HlsUpstreamResponse({
@@ -36,7 +37,17 @@ abstract interface class HlsUpstreamClient {
   });
 }
 
-class DioHlsUpstreamClient implements HlsUpstreamClient {
+abstract interface class HlsStreamingUpstreamClient {
+  Future<HlsStreamResponse> stream(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  });
+}
+
+class DioHlsUpstreamClient
+    implements HlsUpstreamClient, HlsStreamingUpstreamClient {
   const DioHlsUpstreamClient(this.dio);
 
   final Dio dio;
@@ -65,6 +76,39 @@ class DioHlsUpstreamClient implements HlsUpstreamClient {
       statusCode: response.statusCode ?? 0,
       bytes: response.data ?? const [],
       headers: response.headers.map,
+    );
+  }
+
+  @override
+  Future<HlsStreamResponse> stream(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    final requestHeaders = Map<String, String>.of(headers);
+    if (rangeStart != null) {
+      requestHeaders[HttpHeaders.rangeHeader] = rangeLength == null
+          ? 'bytes=$rangeStart-'
+          : 'bytes=$rangeStart-${rangeStart + rangeLength - 1}';
+    }
+    final cancelToken = CancelToken();
+    final response = await dio.get<ResponseBody>(
+      uri.toString(),
+      cancelToken: cancelToken,
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: requestHeaders,
+        validateStatus: (_) => true,
+      ),
+    );
+    return HlsStreamResponse(
+      statusCode: response.statusCode ?? 0,
+      stream: response.data?.stream.cast<List<int>>() ?? const Stream.empty(),
+      headers: response.headers.map,
+      cancel: () async {
+        if (!cancelToken.isCancelled) cancelToken.cancel('stream-cancelled');
+      },
     );
   }
 }
@@ -322,50 +366,226 @@ class HlsCacheGateway implements HlsSessionGateway {
     _SessionData session,
     _Resource resource,
   ) async {
-    if (resource.live) {
-      final upstream = await _fetch(session, resource);
-      await _writeResponse(request, upstream.bytes, upstream.contentType);
+    _RequestedRange? range;
+    try {
+      range = _parseRange(request.headers.value(HttpHeaders.rangeHeader));
+    } on FormatException {
+      await _respondError(
+        request,
+        HttpStatus.requestedRangeNotSatisfiable,
+        'invalid-range',
+      );
       return;
     }
-    final lease = await _cache.acquire(
-      HlsCacheRequest(
-        url: resource.uri.toString(),
-        authScope: session.authScope,
-        rangeStart: resource.rangeStart,
-        rangeLength: resource.rangeLength,
-      ),
-      (file) async {
-        final upstream = await _fetch(session, resource);
-        await file.writeAsBytes(upstream.bytes, flush: true);
-        return CacheDownloadResult(
-          contentType: upstream.contentType,
-          expectedLength: upstream.bytes.length,
-        );
-      },
+    final cacheRequest = HlsCacheRequest(
+      url: resource.uri.toString(),
+      authScope: session.authScope,
+      rangeStart: resource.rangeStart,
+      rangeLength: resource.rangeLength,
     );
-    try {
-      request.response.statusCode = HttpStatus.ok;
-      request.response.headers.contentType =
-          _contentTypeOrBinary(lease.contentType);
-      request.response.contentLength = await lease.file.length();
-      await request.response.addStream(lease.file.openRead());
-      await request.response.close();
-    } finally {
-      await lease.release();
-    }
-    if (resource.prefetchIds.isNotEmpty) {
-      final generation = session.prefetchGeneration;
-      final ids = List<String>.of(resource.prefetchIds);
-      if (session.bufferHealthy && resource.forwardPrefetchId != null) {
-        ids.add(resource.forwardPrefetchId!);
+    final hit = resource.live ? null : await _cache.lookup(cacheRequest);
+    if (hit != null) {
+      try {
+        await _serveCacheHit(request, hit, range);
+      } finally {
+        await hit.release();
       }
-      session.prefetch =
-          (session.prefetch ?? Future<void>.value()).then((_) async {
-        if (session.closing) return;
-        await _prefetch(session, ids, generation);
-      });
-      unawaited(session.prefetch);
+      _schedulePrefetch(session, resource);
+      return;
     }
+
+    await _streamMediaMiss(
+      request,
+      session,
+      resource,
+      cacheRequest,
+      range,
+    );
+    if (range == null) _schedulePrefetch(session, resource);
+  }
+
+  Future<void> _serveCacheHit(
+    HttpRequest request,
+    HlsCacheLease lease,
+    _RequestedRange? range,
+  ) async {
+    final length = await lease.file.length();
+    var start = 0;
+    var end = length - 1;
+    if (range != null) {
+      if (range.start >= length) {
+        request.response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes */$length',
+        );
+        await _respondError(
+          request,
+          HttpStatus.requestedRangeNotSatisfiable,
+          'range-not-satisfiable',
+        );
+        return;
+      }
+      start = range.start;
+      end = min(range.end ?? end, end);
+      request.response.statusCode = HttpStatus.partialContent;
+      request.response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes $start-$end/$length',
+      );
+    } else {
+      request.response.statusCode = HttpStatus.ok;
+    }
+    request.response.headers.contentType =
+        _contentTypeOrBinary(lease.contentType);
+    request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+    request.response.contentLength = end - start + 1;
+    await request.response.addStream(lease.file.openRead(start, end + 1));
+    await request.response.close();
+  }
+
+  Future<void> _streamMediaMiss(
+    HttpRequest request,
+    _SessionData session,
+    _Resource resource,
+    HlsCacheRequest cacheRequest,
+    _RequestedRange? range,
+  ) async {
+    final localLength = resource.rangeLength;
+    if (range != null && localLength != null && range.start >= localLength) {
+      request.response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes */$localLength',
+      );
+      await _respondError(
+        request,
+        HttpStatus.requestedRangeNotSatisfiable,
+        'range-not-satisfiable',
+      );
+      return;
+    }
+    final rangeEnd = range == null
+        ? null
+        : min(range.end ?? ((localLength ?? 0) - 1),
+            localLength == null ? (range.end ?? -1) : localLength - 1);
+    final upstreamStart = range == null
+        ? resource.rangeStart
+        : (resource.rangeStart ?? 0) + range.start;
+    final upstreamLength = range == null
+        ? resource.rangeLength
+        : rangeEnd != null && rangeEnd >= range.start
+            ? rangeEnd - range.start + 1
+            : null;
+    final upstream = await _fetchStream(
+      session,
+      resource,
+      rangeStart: upstreamStart,
+      rangeLength: upstreamLength,
+    );
+    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+      await upstream.cancel();
+      throw HttpException('上游 HTTP ${upstream.statusCode}');
+    }
+    if (range != null && upstream.statusCode != HttpStatus.partialContent) {
+      await upstream.cancel();
+      await _respondError(
+        request,
+        HttpStatus.requestedRangeNotSatisfiable,
+        'upstream-range-unsupported',
+      );
+      return;
+    }
+
+    HlsCacheWriter? writer;
+    if (!resource.live && range == null) {
+      try {
+        writer = await _cache.beginWrite(cacheRequest);
+      } on StateError {
+        writer = null;
+      }
+    }
+    request.response.statusCode =
+        range == null ? HttpStatus.ok : HttpStatus.partialContent;
+    request.response.headers.contentType =
+        _contentTypeOrBinary(upstream.contentType);
+    request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+    if (range != null) {
+      final total =
+          localLength ?? _totalFromContentRange(upstream.contentRange);
+      final returnedLength = upstream.contentLength ?? upstreamLength;
+      final end = returnedLength == null
+          ? (range.end ?? range.start)
+          : range.start + returnedLength - 1;
+      request.response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes ${range.start}-$end/${total ?? '*'}',
+      );
+    }
+    if (upstream.contentLength != null) {
+      request.response.contentLength = upstream.contentLength!;
+    } else {
+      request.response.bufferOutput = false;
+      request.response.headers.chunkedTransferEncoding = true;
+    }
+
+    HlsCacheLease? committed;
+    try {
+      await for (final chunk in upstream.stream) {
+        writer?.sink.add(chunk);
+        request.response.add(chunk);
+        await request.response.flush();
+      }
+      if (writer != null) {
+        committed = await writer.commit(
+          contentType: upstream.contentType,
+          expectedLength: upstream.contentLength,
+        );
+      }
+      await request.response.close();
+    } catch (_) {
+      await writer?.abort();
+      await upstream.cancel();
+      try {
+        await request.response.close();
+      } on Object {
+        // The player may have cancelled the local HTTP request mid-segment.
+      }
+    } finally {
+      await committed?.release();
+    }
+  }
+
+  void _schedulePrefetch(_SessionData session, _Resource resource) {
+    if (resource.prefetchIds.isEmpty) return;
+    final generation = session.prefetchGeneration;
+    final ids = List<String>.of(resource.prefetchIds);
+    if (session.bufferHealthy && resource.forwardPrefetchId != null) {
+      ids.add(resource.forwardPrefetchId!);
+    }
+    session.prefetch =
+        (session.prefetch ?? Future<void>.value()).then((_) async {
+      if (session.closing) return;
+      await _prefetch(session, ids, generation);
+    });
+    unawaited(session.prefetch);
+  }
+
+  _RequestedRange? _parseRange(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'^bytes=(\d+)-(\d*)$').firstMatch(value.trim());
+    if (match == null) throw const FormatException('invalid range');
+    final start = int.parse(match.group(1)!);
+    final endText = match.group(2)!;
+    final end = endText.isEmpty ? null : int.parse(endText);
+    if (end != null && end < start) {
+      throw const FormatException('invalid range');
+    }
+    return _RequestedRange(start, end);
+  }
+
+  int? _totalFromContentRange(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'/([0-9]+)$').firstMatch(value);
+    return match == null ? null : int.tryParse(match.group(1)!);
   }
 
   Future<void> _serveKey(
@@ -442,6 +662,64 @@ class HlsCacheGateway implements HlsSessionGateway {
       }
     }
     throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+  }
+
+  Future<HlsStreamResponse> _fetchStream(
+    _SessionData session,
+    _Resource resource, {
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final client = _upstream;
+        final response = client is HlsStreamingUpstreamClient
+            ? await (client as HlsStreamingUpstreamClient).stream(
+                resource.uri,
+                headers: session.headers,
+                rangeStart: rangeStart,
+                rangeLength: rangeLength,
+              )
+            : await _streamFromBytes(
+                client,
+                resource.uri,
+                session.headers,
+                rangeStart,
+                rangeLength,
+              );
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return response;
+        }
+        lastError = HttpException('上游 HTTP ${response.statusCode}');
+        await response.cancel();
+        if (response.statusCode < 500) break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+  }
+
+  Future<HlsStreamResponse> _streamFromBytes(
+    HlsUpstreamClient client,
+    Uri uri,
+    Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  ) async {
+    final response = await client.get(
+      uri,
+      headers: headers,
+      rangeStart: rangeStart,
+      rangeLength: rangeLength,
+    );
+    return HlsStreamResponse(
+      statusCode: response.statusCode,
+      stream: Stream.value(response.bytes),
+      headers: response.headers,
+      cancel: () async {},
+    );
   }
 
   _Resource _register(
@@ -553,6 +831,13 @@ class HlsCacheGateway implements HlsSessionGateway {
 }
 
 enum _ResourceKind { playlist, segment, init, key }
+
+class _RequestedRange {
+  const _RequestedRange(this.start, this.end);
+
+  final int start;
+  final int? end;
+}
 
 class _Resource {
   _Resource({

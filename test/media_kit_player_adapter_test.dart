@@ -73,15 +73,17 @@ class _FakeGateway implements HlsSessionGateway {
 }
 
 class _FakeSession {
-  _FakeSession(int index)
-      : value = HlsSession(
-          localUri: Uri.parse('http://127.0.0.1:4567/session/$index'),
-          onClose: () async {},
-          onBuffer: (_) {},
-          onSeek: () {},
-        );
+  _FakeSession(int index) {
+    value = HlsSession(
+      localUri: Uri.parse('http://127.0.0.1:4567/session/$index'),
+      onClose: () async {},
+      onBuffer: (_) {},
+      onSeek: () => seekNotifications++,
+    );
+  }
 
-  final HlsSession value;
+  late final HlsSession value;
+  int seekNotifications = 0;
 }
 
 void main() {
@@ -148,6 +150,24 @@ void main() {
 
     expect(backend.opened, [dash]);
     expect(backend.attachedAudio, [dash.audioUrl]);
+    await adapter.dispose();
+  });
+
+  test('HLS seek notifies the active gateway session before backend seek',
+      () async {
+    final backend = _FakeBackend();
+    final gateway = _FakeGateway();
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: gateway,
+      authScope: 'source:test',
+    );
+    await adapter.open(_hls);
+
+    await adapter.seek(const Duration(minutes: 6));
+
+    expect(gateway.sessions.single.seekNotifications, 1);
+    expect(backend.seeks, [const Duration(minutes: 6)]);
     await adapter.dispose();
   });
 }

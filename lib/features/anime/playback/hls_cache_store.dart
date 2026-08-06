@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -46,6 +47,44 @@ class HlsCacheLease {
     if (_released) return;
     _released = true;
     await _onRelease();
+  }
+}
+
+class HlsCacheWriter {
+  HlsCacheWriter._({
+    required this.sink,
+    required Future<HlsCacheLease> Function({
+      required String contentType,
+      int? expectedLength,
+    }) onCommit,
+    required Future<void> Function() onAbort,
+  })  : _onCommit = onCommit,
+        _onAbort = onAbort;
+
+  final IOSink sink;
+  final Future<HlsCacheLease> Function({
+    required String contentType,
+    int? expectedLength,
+  }) _onCommit;
+  final Future<void> Function() _onAbort;
+  bool _completed = false;
+
+  Future<HlsCacheLease> commit({
+    required String contentType,
+    int? expectedLength,
+  }) {
+    if (_completed) throw StateError('缓存写入已经结束');
+    _completed = true;
+    return _onCommit(
+      contentType: contentType,
+      expectedLength: expectedLength,
+    );
+  }
+
+  Future<void> abort() async {
+    if (_completed) return;
+    _completed = true;
+    await _onAbort();
   }
 }
 
@@ -116,6 +155,90 @@ class HlsCacheStore {
         if (identical(_inFlight[key], future)) _inFlight.remove(key);
       }
     }
+    entry.lastAccessMs = _now().millisecondsSinceEpoch;
+    _entries[key] = entry;
+    _inUse[key] = (_inUse[key] ?? 0) + 1;
+    await _evict();
+    await _persist();
+    return HlsCacheLease._(
+      file: _fileFor(key),
+      contentType: entry.contentType,
+      onRelease: () => _release(key),
+    );
+  }
+
+  Future<HlsCacheLease?> lookup(HlsCacheRequest request) async {
+    await initialize();
+    final key = _keyFor(request);
+    final entry = _entries[key];
+    if (entry == null || !await _fileFor(key).exists()) return null;
+    return _lease(key, entry);
+  }
+
+  Future<HlsCacheWriter> beginWrite(HlsCacheRequest request) async {
+    await initialize();
+    final key = _keyFor(request);
+    if (_inFlight.containsKey(key)) {
+      throw StateError('相同缓存资源正在写入');
+    }
+    final temporary = _temporaryFileFor(key);
+    if (await temporary.exists()) await temporary.delete();
+    final completer = Completer<_CacheEntry>();
+    final future = completer.future;
+    _inFlight[key] = future;
+    unawaited(future.then<void>((_) {}, onError: (_) {}));
+    final sink = temporary.openWrite();
+
+    Future<void> finishInFlight() async {
+      if (identical(_inFlight[key], future)) _inFlight.remove(key);
+    }
+
+    return HlsCacheWriter._(
+      sink: sink,
+      onCommit: ({required contentType, expectedLength}) async {
+        try {
+          await sink.flush();
+          await sink.close();
+          final size = await temporary.length();
+          if (expectedLength != null && size != expectedLength) {
+            throw StateError('缓存下载长度不完整');
+          }
+          final target = _fileFor(key);
+          if (await target.exists()) await target.delete();
+          await temporary.rename(target.path);
+          final entry = _CacheEntry(
+            key: key,
+            size: size,
+            lastAccessMs: _now().millisecondsSinceEpoch,
+            contentType: contentType,
+          );
+          _entries[key] = entry;
+          completer.complete(entry);
+          await finishInFlight();
+          return _lease(key, entry);
+        } catch (error, stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+          await finishInFlight();
+          if (await temporary.exists()) await temporary.delete();
+          rethrow;
+        }
+      },
+      onAbort: () async {
+        try {
+          await sink.close();
+        } finally {
+          final error = StateError('缓存流式写入已取消');
+          if (!completer.isCompleted) completer.completeError(error);
+          await finishInFlight();
+          if (await temporary.exists()) await temporary.delete();
+        }
+      },
+    );
+  }
+
+  Future<HlsCacheLease> _lease(String key, _CacheEntry entry) async {
     entry.lastAccessMs = _now().millisecondsSinceEpoch;
     _entries[key] = entry;
     _inUse[key] = (_inUse[key] ?? 0) + 1;
