@@ -24,6 +24,7 @@ class _FakeBackend implements MediaKitBackend {
   final configured = <VideoTrack>[];
   final attachedAudio = <String>[];
   final seeks = <Duration>[];
+  int clearedAudioCount = 0;
   Duration mediaDuration = Duration.zero;
 
   @override
@@ -32,6 +33,8 @@ class _FakeBackend implements MediaKitBackend {
   Stream<bool> get buffering => bufferingController.stream;
   @override
   Stream<Duration> get position => positionController.stream;
+  @override
+  Stream<Duration> get durationChanges => const Stream.empty();
   @override
   Stream<bool> get completed => completedController.stream;
   @override
@@ -47,6 +50,8 @@ class _FakeBackend implements MediaKitBackend {
   Future<void> open(VideoTrack track) async => opened.add(track);
   @override
   Future<void> attachAudio(String url) async => attachedAudio.add(url);
+  @override
+  Future<void> clearAudio() async => clearedAudioCount++;
   @override
   Future<void> pause() async {}
   @override
@@ -71,15 +76,17 @@ class _FakeGateway implements HlsSessionGateway {
 }
 
 class _FakeSession {
-  _FakeSession(int index)
-      : value = HlsSession(
-          localUri: Uri.parse('http://127.0.0.1:4567/session/$index'),
-          onClose: () async {},
-          onBuffer: (_) {},
-          onSeek: () {},
-        );
+  _FakeSession(int index) {
+    value = HlsSession(
+      localUri: Uri.parse('http://127.0.0.1:4567/session/$index'),
+      onClose: () async {},
+      onBuffer: (_) {},
+      onSeek: () => seekNotifications++,
+    );
+  }
 
-  final HlsSession value;
+  late final HlsSession value;
+  int seekNotifications = 0;
 }
 
 void main() {
@@ -146,6 +153,83 @@ void main() {
 
     expect(backend.opened, [dash]);
     expect(backend.attachedAudio, [dash.audioUrl]);
+    await adapter.dispose();
+  });
+
+  test('HLS seek notifies the active gateway session before backend seek',
+      () async {
+    final backend = _FakeBackend();
+    final gateway = _FakeGateway();
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: gateway,
+      authScope: 'source:test',
+    );
+    await adapter.open(_hls);
+
+    await adapter.seek(const Duration(minutes: 6));
+
+    expect(gateway.sessions.single.seekNotifications, 1);
+    expect(backend.seeks, [const Duration(minutes: 6)]);
+    await adapter.dispose();
+  });
+
+  test('boundary recovery clears stale audio before reopening at target',
+      () async {
+    const dash = VideoTrack(
+      url: 'https://media.example.test/video.m4s',
+      quality: '1080p',
+      audioUrl: 'https://media.example.test/audio.m4s',
+    );
+    final backend = _FakeBackend()..mediaDuration = const Duration(minutes: 20);
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: _FakeGateway(),
+      authScope: 'source:test',
+    );
+    await adapter.open(dash);
+    backend.playingController.add(true);
+    await Future<void>.delayed(Duration.zero);
+
+    await adapter.rebuildDecoder(const Duration(minutes: 9));
+    backend.playingController.add(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(backend.clearedAudioCount, 1);
+    expect(backend.opened, [dash, dash]);
+    expect(backend.seeks.last, const Duration(minutes: 9));
+    expect(backend.attachedAudio, [dash.audioUrl, dash.audioUrl]);
+    await adapter.dispose();
+  });
+
+  test('gateway fallback clears stale external audio before direct reopen',
+      () async {
+    const hlsWithAudio = VideoTrack(
+      url: 'https://media.example.test/master.m3u8',
+      quality: '1080p',
+      audioUrl: 'https://media.example.test/audio.m4s',
+      hls: true,
+    );
+    final backend = _FakeBackend()..mediaDuration = const Duration(minutes: 20);
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: _FakeGateway(),
+      authScope: 'source:test',
+    );
+    await adapter.open(hlsWithAudio);
+    backend.playingController.add(true);
+    await adapter.seek(const Duration(minutes: 7));
+    backend.positionController.add(Duration.zero);
+
+    backend.errorController.add(StateError('gateway decoder boundary'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(backend.clearedAudioCount, 1);
+    expect(backend.opened.last, hlsWithAudio);
+    expect(backend.seeks, [
+      const Duration(minutes: 7),
+      const Duration(minutes: 7),
+    ]);
     await adapter.dispose();
   });
 }

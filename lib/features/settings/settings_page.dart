@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_info.dart';
 import '../../app/backup.dart';
+import '../../app/download_settings.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
@@ -40,6 +41,7 @@ class SettingsPage extends StatelessWidget {
     final l10n = context.l10n;
     final theme = ThemeScope.of(context);
     final lib = LibraryScope.of(context);
+    final downloadSettings = DownloadSettingsScope.of(context);
     const desktop = {
       TargetPlatform.windows,
       TargetPlatform.linux,
@@ -100,6 +102,14 @@ class SettingsPage extends StatelessWidget {
                       lib.uiScale, 0.7, 1.6, 18, (v) => lib.uiScale = v,
                       pct: true),
                   if (isWindows) _fontSelector(context, p, lib),
+                  if (isWindows)
+                    _switch(
+                      Icons.move_to_inbox_rounded,
+                      l10n.closeToTray,
+                      l10n.closeToTraySub,
+                      lib.closeToTray,
+                      (value) => lib.closeToTray = value,
+                    ),
                 ]),
               _group(l10n.secReading, [
                 _rowCard(AppSegmentedRow<ReaderMode>(
@@ -274,6 +284,57 @@ class SettingsPage extends StatelessWidget {
                     l10n.set_translateSearchSub,
                     lib.translateSearch,
                     (v) => lib.translateSearch = v),
+              ]),
+              _group(l10n.download_settings, [
+                _switch(
+                  Icons.wifi_rounded,
+                  l10n.download_wifiOnly,
+                  l10n.download_wifiOnlySub,
+                  downloadSettings.wifiOnly,
+                  (value) => downloadSettings.wifiOnly = value,
+                ),
+                _switch(
+                  Icons.public_rounded,
+                  l10n.download_allowRoaming,
+                  l10n.download_allowRoamingSub,
+                  downloadSettings.allowRoaming,
+                  (value) => downloadSettings.allowRoaming = value,
+                ),
+                _switch(
+                  Icons.battery_alert_rounded,
+                  l10n.download_lowBattery,
+                  l10n.download_lowBatterySub,
+                  downloadSettings.pauseOnLowBattery,
+                  (value) => downloadSettings.pauseOnLowBattery = value,
+                ),
+                _rowCard(AppSegmentedRow<int>(
+                  icon: Icons.format_list_numbered_rounded,
+                  title: l10n.download_concurrency,
+                  subtitle: l10n.download_concurrencySub,
+                  segments: const [
+                    ButtonSegment(value: 1, label: Text('1')),
+                    ButtonSegment(value: 2, label: Text('2')),
+                    ButtonSegment(value: 3, label: Text('3')),
+                  ],
+                  selected: {downloadSettings.maxConcurrentWorks},
+                  onSelectionChanged: (values) =>
+                      downloadSettings.maxConcurrentWorks = values.single,
+                )),
+                _rowCard(AppSegmentedRow<int>(
+                  icon: Icons.sd_storage_rounded,
+                  title: l10n.download_reserveSpace,
+                  subtitle: l10n.download_reserveSpaceSub,
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('0 GB')),
+                    ButtonSegment(value: 1, label: Text('1 GB')),
+                    ButtonSegment(value: 2, label: Text('2 GB')),
+                    ButtonSegment(value: 5, label: Text('5 GB')),
+                    ButtonSegment(value: 10, label: Text('10 GB')),
+                  ],
+                  selected: {downloadSettings.reserveGiB},
+                  onSelectionChanged: (values) =>
+                      downloadSettings.reserveGiB = values.single,
+                )),
               ]),
               _group(l10n.set_secData, [
                 _tile(

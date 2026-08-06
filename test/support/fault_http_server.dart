@@ -7,6 +7,8 @@ class FaultRoute {
     required this.body,
     this.contentType = 'application/octet-stream',
     this.failuresBeforeSuccess = 0,
+    this.chunks,
+    this.beforeChunk,
     this.redirectTo,
     this.redirectStatus = HttpStatus.movedTemporarily,
   });
@@ -14,6 +16,8 @@ class FaultRoute {
   final List<int> body;
   final String contentType;
   int failuresBeforeSuccess;
+  final List<List<int>>? chunks;
+  final Future<void> Function(int index)? beforeChunk;
 
   /// 非空时该路由返回一个跳转而不是内容,用来验证上游准入策略是否逐跳校验。
   final String? redirectTo;
@@ -77,6 +81,20 @@ class FaultHttpServer {
     );
   }
 
+  void addChunked(
+    String path,
+    List<List<int>> chunks, {
+    String contentType = 'application/octet-stream',
+    Future<void> Function(int index)? beforeChunk,
+  }) {
+    routes[path] = FaultRoute(
+      body: chunks.expand((chunk) => chunk).toList(),
+      contentType: contentType,
+      chunks: chunks,
+      beforeChunk: beforeChunk,
+    );
+  }
+
   void addRedirect(
     String path,
     String location, {
@@ -133,6 +151,18 @@ class FaultHttpServer {
       );
     }
     request.response.headers.contentType = ContentType.parse(route.contentType);
+    request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+    if (range == null && route.chunks != null) {
+      request.response.bufferOutput = false;
+      request.response.headers.chunkedTransferEncoding = true;
+      for (var index = 0; index < route.chunks!.length; index++) {
+        await route.beforeChunk?.call(index);
+        request.response.add(route.chunks![index]);
+        await request.response.flush();
+      }
+      await request.response.close();
+      return;
+    }
     request.response.contentLength = bytes.length;
     request.response.add(bytes);
     await request.response.close();

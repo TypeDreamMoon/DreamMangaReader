@@ -13,6 +13,7 @@ abstract interface class MediaKitBackend {
   Stream<bool> get playing;
   Stream<bool> get buffering;
   Stream<Duration> get position;
+  Stream<Duration> get durationChanges;
   Stream<bool> get completed;
   Stream<Object> get errors;
   Stream<Duration> get buffer;
@@ -21,6 +22,7 @@ abstract interface class MediaKitBackend {
   Future<void> configure(VideoTrack track);
   Future<void> open(VideoTrack track);
   Future<void> attachAudio(String url);
+  Future<void> clearAudio();
   Future<void> seek(Duration position);
   Future<void> play();
   Future<void> pause();
@@ -39,6 +41,8 @@ class NativeMediaKitBackend implements MediaKitBackend {
   Stream<bool> get buffering => player.stream.buffering;
   @override
   Stream<Duration> get position => player.stream.position;
+  @override
+  Stream<Duration> get durationChanges => player.stream.duration;
   @override
   Stream<bool> get completed => player.stream.completed;
   @override
@@ -89,6 +93,8 @@ class NativeMediaKitBackend implements MediaKitBackend {
   Future<void> attachAudio(String url) =>
       player.setAudioTrack(AudioTrack.uri(url));
   @override
+  Future<void> clearAudio() => player.setAudioTrack(AudioTrack.auto());
+  @override
   Future<void> seek(Duration position) => player.seek(position);
   @override
   Future<void> play() => player.play();
@@ -110,7 +116,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     _subscriptions.add(_backend.errors.listen(_onBackendError));
     _subscriptions.add(_backend.playing.listen(_onPlaying));
     _subscriptions.add(_backend.buffer.listen(_onBuffer));
-    _subscriptions.add(_backend.position.listen((value) => _position = value));
+    _subscriptions.add(_backend.position.listen(_onPosition));
   }
 
   final MediaKitBackend _backend;
@@ -134,14 +140,21 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   @override
   Stream<Duration> get position => _backend.position;
   @override
+  Stream<Duration> get duration => _backend.durationChanges;
+  @override
   Stream<bool> get completed => _backend.completed;
   @override
   Stream<Object> get errors => _errorController.stream;
 
   @override
   Future<void> open(VideoTrack track) async {
+    if (_originalTrack != null) await _resetAudioAttachment();
     await _closeSession();
-    _audioTimer?.cancel();
+    _position = Duration.zero;
+    await _openTrack(track);
+  }
+
+  Future<void> _openTrack(VideoTrack track) async {
     _originalTrack = track;
     _pendingAudioUrl = track.audioUrl;
     _audioAttached = false;
@@ -160,6 +173,16 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     ));
   }
 
+  @override
+  Future<void> rebuildDecoder(Duration resumePosition) async {
+    final track = _originalTrack;
+    if (track == null || _disposed) return;
+    await _resetAudioAttachment();
+    await _closeSession();
+    await _openTrack(track);
+    if (resumePosition > Duration.zero) await seek(resumePosition);
+  }
+
   void _onBackendError(Object error) {
     if (_disposed) return;
     if (_session != null && !_directFallback && _originalTrack != null) {
@@ -174,7 +197,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     final track = _originalTrack;
     if (track == null || _disposed) return;
     try {
+      await _resetAudioAttachment();
       await _closeSession();
+      _pendingAudioUrl = track.audioUrl;
       await _backend.configure(track);
       await _backend.open(track);
       if (_position > Duration.zero) await _backend.seek(_position);
@@ -215,8 +240,22 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
 
   void _onBuffer(Duration buffer) => _session?.reportBuffer(buffer);
 
+  void _onPosition(Duration position) {
+    if (position == Duration.zero && _position > Duration.zero) return;
+    _position = position;
+  }
+
+  Future<void> _resetAudioAttachment() async {
+    _audioTimer?.cancel();
+    _audioTimer = null;
+    _pendingAudioUrl = null;
+    _audioAttached = false;
+    await _backend.clearAudio();
+  }
+
   @override
   Future<void> seek(Duration position) async {
+    _position = position;
     _session?.notifySeek();
     await _backend.seek(position);
   }

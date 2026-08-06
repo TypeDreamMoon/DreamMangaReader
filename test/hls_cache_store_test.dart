@@ -97,6 +97,44 @@ void main() {
     );
   });
 
+  test('aborted streaming writes never become cache hits', () async {
+    final store = HlsCacheStore(directory: temp, limitBytes: 1024);
+    const request = HlsCacheRequest(
+      url: 'https://media.example.test/stream.ts',
+      authScope: 'public',
+    );
+    final writer = await store.beginWrite(request);
+    writer.sink.add([1, 2]);
+    await writer.abort();
+
+    expect(await store.lookup(request), isNull);
+    expect(
+      temp.listSync().whereType<File>().where(
+            (file) => file.path.endsWith('.tmp') || file.path.endsWith('.bin'),
+          ),
+      isEmpty,
+    );
+  });
+
+  test('streaming commit keeps a zero-limit entry until lease release',
+      () async {
+    final store = HlsCacheStore(directory: temp, limitBytes: 0);
+    const request = HlsCacheRequest(
+      url: 'https://media.example.test/leased.ts',
+      authScope: 'public',
+    );
+    final writer = await store.beginWrite(request);
+    writer.sink.add([1, 2, 3]);
+    final lease = await writer.commit(
+      contentType: 'video/mp2t',
+      expectedLength: 3,
+    );
+
+    expect(await lease.file.readAsBytes(), [1, 2, 3]);
+    await lease.release();
+    expect(await lease.file.exists(), isFalse);
+  });
+
   test('evicts least recently used entries and protects active leases',
       () async {
     final store = HlsCacheStore(

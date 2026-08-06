@@ -8,6 +8,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/page_image_data.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:dream_manga_reader/features/reader/reader_page.dart';
+import 'package:dream_manga_reader/features/reader/retryable_reader_network_image.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 
 const _onePixelPng =
@@ -57,6 +58,7 @@ void main() {
         reason: 'Base64 页应当以 MemoryImage 渲染');
     expect(providers.whereType<FileImage>(), isEmpty,
         reason: 'data: URI 不该被当成文件路径');
+    expect(find.byType(RetryableReaderNetworkImage), findsNothing);
     expect(tester.takeException(), isNull);
     store.dispose();
   });
@@ -76,6 +78,25 @@ void main() {
         .map((image) => image.image)
         .toList();
     expect(providers.whereType<FileImage>(), isNotEmpty);
+    expect(find.byType(RetryableReaderNetworkImage), findsNothing);
+    store.dispose();
+  });
+
+  testWidgets('only HTTP pages use the retryable network image',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = LibraryStore();
+    await store.load();
+
+    await tester.pumpWidget(
+      harness(store, const [
+        PageImage(index: 0, url: 'https://example.test/page.png'),
+      ]),
+    );
+    await tester.pump();
+
+    expect(find.byType(RetryableReaderNetworkImage), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });
 

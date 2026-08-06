@@ -348,4 +348,3 @@ class AndroidUpdateTransferCoordinator implements UpdateTransferCoordinator {
 
 // sanitizeUpdateError 已移到 update_transfer.dart,让 Windows / Android 两条传输路径
 // 共用同一份脱敏实现。这里继续导出,保持既有 import 点不变。
-

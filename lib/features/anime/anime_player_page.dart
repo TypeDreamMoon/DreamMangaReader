@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +9,10 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../app/anime_download_store.dart';
+import '../../app/anime_library_store.dart';
 import '../../app/theme/app_colors.dart';
+import 'anime_player_controls.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
 import 'playback/mpv_network_options.dart';
@@ -27,11 +31,13 @@ class AnimePlaybackSurface extends StatelessWidget {
     required this.state,
     required this.video,
     required this.onRetry,
+    this.controls,
   });
 
   final PlaybackState state;
   final Widget video;
   final VoidCallback onRetry;
+  final Widget? controls;
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +118,13 @@ class AnimePlaybackSurface extends StatelessWidget {
               ),
             ),
           ),
+        if (controls != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: controls!,
+          ),
       ],
     );
   }
@@ -123,12 +136,49 @@ class AnimePlayerDependencies {
     required this.tracks,
     required this.loadTracks,
     required this.videoBuilder,
+    this.localTrackForEpisode,
   });
 
   final PlayerAdapter player;
   final PlaybackTrackProvider tracks;
   final Future<List<VideoTrack>> Function(String episodeId) loadTracks;
   final Widget Function(BoxFit fit) videoBuilder;
+  final VideoTrack? Function(String episodeId)? localTrackForEpisode;
+}
+
+class _OfflineAwareTracks implements PlaybackTrackProvider {
+  const _OfflineAwareTracks({
+    required this.delegate,
+    required this.localTrack,
+  });
+
+  final PlaybackTrackProvider delegate;
+  final VideoTrack? Function() localTrack;
+
+  @override
+  Future<List<VideoTrack>> refresh() async {
+    final local = localTrack();
+    return local == null ? delegate.refresh() : [local];
+  }
+
+  @override
+  VideoTrack? matchRefreshed(
+    VideoTrack current,
+    List<VideoTrack> refreshed,
+  ) {
+    if (_isLocal(current)) return refreshed.firstOrNull;
+    return delegate.matchRefreshed(current, refreshed);
+  }
+
+  @override
+  VideoTrack? lowerQuality(VideoTrack current, List<VideoTrack> available) =>
+      _isLocal(current) ? null : delegate.lowerQuality(current, available);
+
+  @override
+  VideoTrack? alternateLine(VideoTrack current, List<VideoTrack> available) =>
+      _isLocal(current) ? null : delegate.alternateLine(current, available);
+
+  bool _isLocal(VideoTrack track) => track.url.startsWith('file:');
 }
 
 /// 番剧播放页:media_kit(libmpv)播放一集。取源的 [MangaSource.getVideo] 拿清晰度/线路,
@@ -141,6 +191,7 @@ class AnimePlayerPage extends StatefulWidget {
     required this.animeTitle,
     required this.episodes,
     required this.index,
+    this.initialPosition = Duration.zero,
     this.dependencies,
   });
 
@@ -149,6 +200,7 @@ class AnimePlayerPage extends StatefulWidget {
   final String animeTitle;
   final List<Chapter> episodes; // 番剧沿用章节契约:一集=一个 Chapter
   final int index;
+  final Duration initialPosition;
   final AnimePlayerDependencies? dependencies;
 
   @override
@@ -166,14 +218,23 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   MangaSource? _source;
   PlayerAdapter? _adapter;
   Future<List<VideoTrack>> Function(String episodeId)? _loadTracks;
+  VideoTrack? Function(String episodeId)? _localTrackForEpisode;
   Widget Function(BoxFit fit)? _videoBuilder;
   PlaybackSessionController? _session;
   StreamSubscription<PlaybackState>? _stateSubscription;
+  StreamSubscription<bool>? _playingSubscription;
+  StreamSubscription<bool>? _bufferingSubscription;
   int _loadGeneration = 0;
   bool _disposed = false;
+  AnimeLibraryStore? _library;
+  Duration _lastPosition = Duration.zero;
+  bool _initialResumePending = true;
+  bool _playing = false;
+  bool _buffering = false;
 
   // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
   int _panelTab = 0; // 0=选集 1=线路 2=设置
   double _rate = 1.0; // 倍速(跨集保持)
   BoxFit _fit = BoxFit.contain; // 画面填充
@@ -187,6 +248,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         adapter: injected.player,
         tracks: injected.tracks,
         loadTracks: injected.loadTracks,
+        localTrackForEpisode: injected.localTrackForEpisode,
         videoBuilder: injected.videoBuilder,
       );
       unawaited(_load());
@@ -196,10 +258,18 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _library = AnimeLibraryScope.maybeRead(context);
+  }
+
+  @override
   void dispose() {
     _disposed = true;
     _loadGeneration++;
     unawaited(_stateSubscription?.cancel());
+    unawaited(_playingSubscription?.cancel());
+    unawaited(_bufferingSubscription?.cancel());
     final session = _session;
     if (session != null) {
       unawaited(session.dispose());
@@ -208,6 +278,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       unawaited(_nativePlayer?.dispose());
     }
     _source?.dispose();
+    unawaited(_library?.flushPending());
     super.dispose();
   }
 
@@ -222,16 +293,30 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       ),
     );
     final videoController = VideoController(player);
-    final source = buildSource(widget.meta);
     _nativePlayer = player;
-    _source = source;
     try {
       final cache = HlsCacheController.instance;
       await cache.initialize();
       if (_disposed) return;
       final dio = Dio();
-      Future<List<VideoTrack>> loadTracks(String episodeId) =>
-          source.getVideo(widget.animeId, episodeId);
+      Future<List<VideoTrack>> loadTracks(String episodeId) async {
+        final source = _source ??= buildSource(widget.meta);
+        return source.getVideo(widget.animeId, episodeId);
+      }
+
+      VideoTrack? localTrackForEpisode(String episodeId) {
+        final manifest = AnimeDownloadScope.maybeRead(context)?.localManifest(
+          widget.meta.id,
+          widget.animeId,
+          episodeId,
+        );
+        if (manifest == null) return null;
+        return VideoTrack(
+          url: Uri.file(manifest, windows: Platform.isWindows).toString(),
+          quality: '离线',
+        );
+      }
+
       final resolver = TrackResolver(
         fetchPlaylist: (uri, headers) async {
           final response = await dio.get<String>(
@@ -255,7 +340,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         tracks: resolver,
         loadTracks: (episodeId) async =>
             resolver.resolve(await loadTracks(episodeId)),
-        videoBuilder: (fit) => Video(controller: videoController, fit: fit),
+        localTrackForEpisode: localTrackForEpisode,
+        videoBuilder: (fit) => Video(
+          key: _videoKey,
+          controller: videoController,
+          fit: fit,
+          controls: NoVideoControls,
+        ),
       );
       await _load();
     } catch (error) {
@@ -273,11 +364,23 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     required PlaybackTrackProvider tracks,
     required Future<List<VideoTrack>> Function(String episodeId) loadTracks,
     required Widget Function(BoxFit fit) videoBuilder,
+    VideoTrack? Function(String episodeId)? localTrackForEpisode,
   }) {
     _adapter = adapter;
     _loadTracks = loadTracks;
+    _localTrackForEpisode = localTrackForEpisode;
     _videoBuilder = videoBuilder;
-    final session = PlaybackSessionController(player: adapter, tracks: tracks);
+    final session = PlaybackSessionController(
+      player: adapter,
+      tracks: localTrackForEpisode == null
+          ? tracks
+          : _OfflineAwareTracks(
+              delegate: tracks,
+              localTrack: () => localTrackForEpisode(_ep.id),
+            ),
+      onProgress: _recordProgress,
+      onPaused: () => unawaited(_library?.flushPending()),
+    );
     _session = session;
     _stateSubscription = session.states.listen((state) {
       if (!mounted) return;
@@ -285,6 +388,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         _playback = state;
         _current = state.selectedTrack;
       });
+    });
+    _playingSubscription = adapter.playing.listen((playing) {
+      if (!mounted) return;
+      setState(() => _playing = playing);
+    });
+    _bufferingSubscription = adapter.buffering.listen((buffering) {
+      if (!mounted) return;
+      setState(() => _buffering = buffering);
     });
   }
 
@@ -296,13 +407,21 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           ));
     }
     try {
-      final tracks = await _loadTracks!(_ep.id);
+      final local = _localTrackForEpisode?.call(_ep.id);
+      final tracks = local == null ? await _loadTracks!(_ep.id) : [local];
       if (_disposed || generation != _loadGeneration) return;
       if (tracks.isEmpty) throw StateError('没有解析到可播放的线路');
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
-      await _session!.start(tracks, pick);
+      final initialPosition =
+          _initialResumePending ? widget.initialPosition : Duration.zero;
+      _initialResumePending = false;
+      await _session!.start(
+        tracks,
+        pick,
+        initialPosition: initialPosition,
+      );
       if (_disposed || generation != _loadGeneration) return;
       if (_rate != 1.0 && _session!.state.selectedTrack != null) {
         await _adapter!.setRate(_rate);
@@ -317,15 +436,35 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     }
   }
 
-  void _go(int delta) => _goTo(_i + delta);
+  void _go(int delta) => unawaited(_goTo(_i + delta));
 
   /// 跳到第 [index] 集(绝对)。越界/同集则忽略;换集后关面板。
-  void _goTo(int index) {
+  Future<void> _goTo(int index) async {
     if (index < 0 || index >= widget.episodes.length) return;
     _scaffoldKey.currentState?.closeEndDrawer();
     if (index == _i) return;
+    await _library?.flushPending();
+    if (_disposed) return;
     setState(() => _i = index);
-    _load();
+    _lastPosition = Duration.zero;
+    await _load();
+  }
+
+  void _recordProgress(Duration position, Duration duration) {
+    _lastPosition = position;
+    final library = _library;
+    if (library == null) return;
+    final episode = _ep;
+    library.saveProgress(
+      sourceId: widget.meta.id,
+      animeId: widget.animeId,
+      title: widget.animeTitle,
+      episodeId: episode.id,
+      episodeName: episode.name,
+      episodeIndex: _i,
+      position: position,
+      duration: duration,
+    );
   }
 
   /// 切线路 / 清晰度(与 _play 同逻辑,含错误兜底)。切完关面板。
@@ -334,7 +473,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     if (t.url == _current?.url) return;
     final generation = ++_loadGeneration;
     try {
-      await _session!.start(_tracks, t);
+      await _session!.start(
+        _tracks,
+        t,
+        initialPosition: _lastPosition,
+      );
       if (_disposed || generation != _loadGeneration) return;
       _session!.setManualQualityLocked(true);
       if (_rate != 1.0) await _adapter!.setRate(_rate);
@@ -413,6 +556,32 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                       color: Colors.black,
                     ),
                 onRetry: _load,
+                controls: AnimePlayerControls(
+                  position: _playback.position,
+                  duration: _playback.duration,
+                  playing: _playing,
+                  buffering: _buffering,
+                  onPlayPause: () {
+                    if (_playing) {
+                      _session?.setUserPaused(true);
+                    } else {
+                      _session?.setUserPaused(false);
+                      unawaited(_adapter?.play());
+                    }
+                  },
+                  onScrubStart: (wasPlaying) {
+                    if (wasPlaying) unawaited(_adapter?.pause());
+                  },
+                  onSeek: (target, resumeAfterSeek) => unawaited(
+                    _session?.seekTo(
+                      target,
+                      resumeAfterSeek: resumeAfterSeek,
+                    ),
+                  ),
+                  onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
+                  onFullscreen: () =>
+                      unawaited(_videoKey.currentState?.toggleFullscreen()),
+                ),
               ),
             ),
           ),

@@ -31,7 +31,8 @@ void main() {
         'http://[::1]/a.ts',
       ]) {
         expect(() => policy.validate(Uri.parse(url)),
-            throwsA(isA<FormatException>()), reason: url);
+            throwsA(isA<FormatException>()),
+            reason: url);
       }
     });
 
@@ -49,7 +50,8 @@ void main() {
         'http://[::ffff:192.168.0.1]/a.ts', // IPv4 映射地址
       ]) {
         expect(() => policy.validate(Uri.parse(url)),
-            throwsA(isA<FormatException>()), reason: url);
+            throwsA(isA<FormatException>()),
+            reason: url);
       }
     });
 
@@ -99,7 +101,8 @@ void main() {
 
     test('drops credential headers when a redirect changes host', () async {
       // 换主机名(localhost 与 127.0.0.1 是同一台机器但不同 host 串)后不得再带凭据。
-      server.addRedirect('/a.ts', 'http://localhost:${server.baseUri.port}/b.ts');
+      server.addRedirect(
+          '/a.ts', 'http://localhost:${server.baseUri.port}/b.ts');
       server.addBytes('/b.ts', const [9]);
       final client = DioHlsUpstreamClient(
         Dio(),
@@ -114,6 +117,32 @@ void main() {
       expect(response.statusCode, 200);
       final hop = server.requests.last;
       expect(hop.path, '/b.ts');
+      expect(hop.authorization, isNull);
+    });
+
+    test('stream redirects drop credentials when the host changes', () async {
+      server.addRedirect(
+        '/stream-a.ts',
+        'http://localhost:${server.baseUri.port}/stream-b.ts',
+      );
+      server.addBytes('/stream-b.ts', const [4, 5, 6]);
+      final client = DioHlsUpstreamClient(
+        Dio(),
+        policy: const HlsUpstreamPolicy(allowLoopback: true),
+      ) as HlsStreamingUpstreamClient;
+
+      final response = await client.stream(
+        server.baseUri.resolve('/stream-a.ts'),
+        headers: const {'Authorization': 'Bearer stream-secret'},
+      );
+      final bytes = await response.stream.fold<List<int>>(
+        <int>[],
+        (all, chunk) => all..addAll(chunk),
+      );
+
+      expect(bytes, const [4, 5, 6]);
+      final hop = server.requests.last;
+      expect(hop.path, '/stream-b.ts');
       expect(hop.authorization, isNull);
     });
 
