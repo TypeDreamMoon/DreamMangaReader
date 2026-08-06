@@ -11,7 +11,9 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/anime/anime_browser.dart';
+import 'package:dream_manga_reader/features/anime/anime_detail_page.dart';
 import 'package:dream_manga_reader/features/common/source_picker.dart';
+import 'package:dream_manga_reader/features/library/manga_cover.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -117,6 +119,16 @@ const _sources = [
   SourceMeta(id: 'anime-b', name: '番剧 B', script: '', kind: 'anime'),
 ];
 
+class _RecordingNavigatorObserver extends NavigatorObserver {
+  Route<dynamic>? pushedRoute;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    if (previousRoute != null) pushedRoute = route;
+  }
+}
+
 Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   WidgetTester tester, {
   required bool showSourcePicker,
@@ -124,6 +136,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   List<SourceMeta> sources = _sources,
   String? savedSourceId,
   _FakeAnimeSource Function(SourceMeta meta, int buildIndex)? sourceFactory,
+  NavigatorObserver? navigatorObserver,
   bool settle = true,
 }) async {
   SharedPreferences.setMockInitialValues({
@@ -149,6 +162,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
     locale: const Locale('zh'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
+    navigatorObservers: [if (navigatorObserver != null) navigatorObserver],
     home: LibraryScope(
       store: library,
       child: SourceScope(
@@ -399,5 +413,90 @@ void main() {
     expect(instances['anime-b']!.single.discoveryPages, [1]);
     slowGate.complete();
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('anime picker persists a selected source', (tester) async {
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: true,
+      instances: instances,
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+    final oldA = instances['anime-a']!.single;
+
+    await tester.tap(find.byType(SourcePickerPill));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('番剧 B').last);
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.currentFor('anime')?.id, 'anime-b');
+    expect(find.textContaining('番剧 B'), findsOneWidget);
+    expect(oldA.disposed, isTrue);
+    expect(instances['anime-b']!.single.discoveryCalls, 1);
+  });
+
+  testWidgets('mixed anime card opens detail with its representative source',
+      (tester) async {
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final observer = _RecordingNavigatorObserver();
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      navigatorObserver: observer,
+      sourceFactory: (meta, _) => _FakeAnimeSource(
+        meta,
+        discoveryResult: meta.id == 'anime-b'
+            ? const Paged([Manga(id: 'b-show', title: '代表番剧')])
+            : const Paged([]),
+      ),
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    await tester.tap(find.byType(MangaCover));
+    final route = observer.pushedRoute! as PageRouteBuilder<dynamic>;
+    final detail = route.pageBuilder(
+      tester.element(find.byType(AnimeBrowser)),
+      const AlwaysStoppedAnimation(1),
+      const AlwaysStoppedAnimation(0),
+    ) as AnimeDetailPage;
+    expect(detail.meta.id, 'anime-b');
+    expect(detail.anime.id, 'b-show');
+  });
+
+  testWidgets('manual mixed mode survives unrelated library notifications',
+      (tester) async {
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: true,
+      instances: instances,
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    await tester.tap(find.byType(SourcePickerPill));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('混合 · 全部源').last);
+    await tester.pumpAndSettle();
+    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(instances['anime-a']!.last.discoveryCalls, 1);
+    expect(instances['anime-b']!.last.discoveryCalls, 1);
+
+    harness.library.feedLayout = FeedLayout.list;
+    await tester.pump();
+
+    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(instances['anime-a']!.last.discoveryCalls, 1);
+    expect(instances['anime-b']!.last.discoveryCalls, 1);
   });
 }

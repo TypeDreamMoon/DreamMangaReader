@@ -67,6 +67,8 @@ class _AnimeCursor {
 /// 公有 State:发现页用 GlobalKey 调 [runSearch] 把顶栏搜索词喂进来(搜索 UI 与漫画统一到
 /// 发现页顶栏,番剧不再自带内联搜索框)。
 class AnimeBrowserState extends State<AnimeBrowser> {
+  static const _mixedId = '__anime_all__';
+
   SourceMeta? _meta;
   MangaSource? _source;
   SourceController? _sourceController;
@@ -353,15 +355,29 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   Future<void> _pickSource() async {
-    if (_meta == null) return;
-    final id =
-        await showSourcePicker(context, currentId: _meta!.id, kind: 'anime');
-    if (id == null || !mounted) return;
-    for (final s in _enabledSources) {
-      if (s.id == id) {
-        _sourceController?.selectFor('anime', s);
-        break;
-      }
+    final selected = await showSourcePicker(
+      context,
+      currentId: _mixed ? _mixedId : (_meta?.id ?? ''),
+      includeMixed: true,
+      mixedId: _mixedId,
+      kind: 'anime',
+    );
+    if (selected == null || !mounted) return;
+    if (selected == _mixedId) {
+      if (_mixed) return;
+      _mixed = true;
+      _configureSources();
+      return;
+    }
+    final meta =
+        _enabledSources.where((source) => source.id == selected).firstOrNull;
+    if (meta == null) return;
+    _mixed = false;
+    final controller = _sourceController;
+    if (controller?.currentFor('anime')?.id == meta.id) {
+      _configureSources();
+    } else {
+      controller?.selectFor('anime', meta);
     }
   }
 
@@ -373,11 +389,14 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   void _open(_AnimeResult result) {
-    Navigator.of(context).push(
-        appRoute(AnimeDetailPage(meta: result.meta, anime: result.anime)));
+    Navigator.of(context).push(appRoute(AnimeDetailPage(
+      meta: result.meta,
+      anime: result.anime,
+      sourceBuilder: widget.sourceBuilder,
+    )));
   }
 
-  bool get _isBili => _meta?.id == kBiliSourceId;
+  bool get _isBili => !_mixed && _meta?.id == kBiliSourceId;
 
   Future<void> _openBiliLogin() async {
     final ok =
