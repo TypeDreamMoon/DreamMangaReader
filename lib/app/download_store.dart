@@ -6,11 +6,22 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/downloads/content_download_task.dart';
+import '../core/downloads/download_executor.dart';
+import '../core/downloads/download_task.dart';
 import '../core/log/app_log.dart';
 import '../core/net/image_cache.dart';
 import '../core/source/models.dart';
 import '../core/source/page_image_data.dart';
+import '../core/source/source.dart';
 import '../core/source/source_registry.dart';
+
+typedef MangaDownloadRootProvider = Future<String> Function();
+typedef MangaDownloadSourceBuilder = MangaSource Function(SourceMeta meta);
+typedef MangaPageFetcher = Future<File> Function(
+  String url,
+  Map<String, String> headers,
+);
 
 /// 一话已下载的记录(足够离线渲染 + 在下载页展示)。
 class DownloadedChapter {
@@ -53,7 +64,8 @@ class DownloadedChapter {
         't': doneAt,
       };
 
-  static DownloadedChapter fromJson(Map<String, dynamic> j) => DownloadedChapter(
+  static DownloadedChapter fromJson(Map<String, dynamic> j) =>
+      DownloadedChapter(
         sourceId: j['s'] as String,
         mangaId: j['m'] as String,
         mangaTitle: (j['mt'] as String?) ?? '',
@@ -77,8 +89,20 @@ class _Job {
 
 /// 离线下载管理:排队下载章节图片到本地,记录索引(可离线阅读)。
 /// 沿用 ChangeNotifier + InheritedNotifier 模式。
-class DownloadStore extends ChangeNotifier {
+class DownloadStore extends ChangeNotifier implements DownloadExecutor {
+  DownloadStore({
+    MangaDownloadRootProvider? rootProvider,
+    MangaDownloadSourceBuilder sourceBuilder = buildSource,
+    MangaPageFetcher pageFetcher = _defaultPageFetcher,
+  })  : _rootProvider = rootProvider ?? _applicationDownloadsRoot,
+        _sourceBuilder = sourceBuilder,
+        _pageFetcher = pageFetcher;
+
   static const _kIndex = 'downloads.index';
+
+  final MangaDownloadRootProvider _rootProvider;
+  final MangaDownloadSourceBuilder _sourceBuilder;
+  final MangaPageFetcher _pageFetcher;
 
   final Map<String, DownloadedChapter> _done = {};
   final Map<String, double> _progress = {}; // key → 0..1(进行中/排队)
@@ -91,8 +115,7 @@ class DownloadStore extends ChangeNotifier {
 
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
-    final dir = await getApplicationSupportDirectory();
-    _root = '${dir.path}/downloads';
+    _root = await _rootProvider();
     try {
       final raw = _prefs!.getString(_kIndex);
       if (raw != null) {
@@ -127,8 +150,38 @@ class DownloadStore extends ChangeNotifier {
 
   int get activeCount => _progress.length;
 
-  void enqueue(
-      SourceMeta meta, Manga manga, Chapter chapter, Map<String, String> headers) {
+  @override
+  DownloadContentKind get kind => DownloadContentKind.manga;
+
+  @override
+  Future<void> execute(
+    DownloadExecutionContext context,
+    DownloadTask task,
+  ) async {
+    final request = ContentDownloadRequest.fromTask(task);
+    final meta = _sourceById(request.sourceId);
+    if (!meta.isManga) {
+      throw StateError('source is not a manga source: ${meta.id}');
+    }
+    final job = _Job(
+      meta,
+      Manga(id: request.contentId, title: task.title),
+      Chapter(id: request.chapterId, name: task.itemTitle),
+      imageHeadersOf(meta),
+    );
+    if (_done.containsKey(job.key)) return;
+    _progress[job.key] = 0;
+    notifyListeners();
+    try {
+      await _download(job, context: context);
+    } finally {
+      _progress.remove(job.key);
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void enqueue(SourceMeta meta, Manga manga, Chapter chapter,
+      Map<String, String> headers) {
     final key = '${meta.id}:${manga.id}:${chapter.id}';
     if (_done.containsKey(key) || _progress.containsKey(key)) return;
     _progress[key] = 0;
@@ -147,47 +200,57 @@ class DownloadStore extends ChangeNotifier {
   }
 
   Future<void> _run(_Job job) async {
-    final key = job.key;
+    try {
+      await _download(job);
+    } catch (e) {
+      final label = '《${job.manga.title}》${job.chapter.name}';
+      AppLog.i.err(LogCat.download, '$label 下载出错', detail: '$e');
+    }
+    _progress.remove(job.key);
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _download(
+    _Job job, {
+    DownloadExecutionContext? context,
+  }) async {
+    final root = _root;
+    if (root == null) throw StateError('DownloadStore is not loaded');
     final label = '《${job.manga.title}》${job.chapter.name}';
     final sw = Stopwatch()..start();
-    final source = buildSource(job.meta);
+    final source = _sourceBuilder(job.meta);
     AppLog.i.info(LogCat.download, '开始下载 $label', detail: '源:${job.meta.name}');
     try {
+      context?.cancellation.throwIfCancelled();
       final pages = await source.getPages(job.manga.id, job.chapter.id);
-      if (pages.isEmpty) {
-        AppLog.i.warn(LogCat.download, '$label:没有页面,跳过');
-        _progress.remove(key);
-        notifyListeners();
-        return;
-      }
+      context?.cancellation.throwIfCancelled();
+      if (pages.isEmpty) throw StateError('$label 没有可下载页面');
       final dir = Directory(
-          '$_root/${job.meta.id}/${_safe(job.manga.id)}/${_safe(job.chapter.id)}');
+        '$root/${job.meta.id}/${_safe(job.manga.id)}/${_safe(job.chapter.id)}',
+      );
       await dir.create(recursive: true);
       for (var i = 0; i < pages.length; i++) {
-        if (_disposed) return;
-        final h = {...job.headers, ...?pages[i].headers};
+        if (_disposed) throw const DownloadCancelledException();
+        context?.cancellation.throwIfCancelled();
+        final headers = {...job.headers, ...?pages[i].headers};
         try {
           await writePageImage(
             image: pages[i],
             output: File('${dir.path}/$i.img'),
-            headers: h,
-            fetchNetwork: (url, headers) =>
-                appImageCache.getSingleFile(url, headers: headers),
+            headers: headers,
+            fetchNetwork: _pageFetcher,
           );
         } catch (_) {
-          // 单页失败不整章中断,但记为不完整:直接放弃本章。
-          AppLog.i.err(LogCat.download, '$label 第 ${i + 1} 页下载失败,已放弃本章');
-          _progress.remove(key);
-          notifyListeners();
           try {
             await dir.delete(recursive: true);
           } catch (_) {}
-          return;
+          rethrow;
         }
-        _progress[key] = (i + 1) / pages.length;
-        notifyListeners();
+        _progress[job.key] = (i + 1) / pages.length;
+        if (!_disposed) notifyListeners();
+        await context?.reportProgress(i + 1, pages.length);
       }
-      _done[key] = DownloadedChapter(
+      final completed = DownloadedChapter(
         sourceId: job.meta.id,
         mangaId: job.manga.id,
         mangaTitle: job.manga.title,
@@ -198,15 +261,18 @@ class DownloadStore extends ChangeNotifier {
         pageCount: pages.length,
         doneAt: DateTime.now().millisecondsSinceEpoch,
       );
-      _progress.remove(key);
-      _persist();
-      notifyListeners();
-      AppLog.i.success(LogCat.download,
-          '下载完成 $label · ${pages.length} 页 · ${sw.elapsedMilliseconds}ms');
-    } catch (e) {
-      AppLog.i.err(LogCat.download, '$label 下载出错', detail: '$e');
-      _progress.remove(key);
-      notifyListeners();
+      _done[job.key] = completed;
+      try {
+        await _persist();
+      } catch (_) {
+        _done.remove(job.key);
+        rethrow;
+      }
+      if (!_disposed) notifyListeners();
+      AppLog.i.success(
+        LogCat.download,
+        '下载完成 $label · ${pages.length} 页 · ${sw.elapsedMilliseconds}ms',
+      );
     } finally {
       source.dispose();
     }
@@ -218,7 +284,7 @@ class DownloadStore extends ChangeNotifier {
     try {
       await Directory(d.dir).delete(recursive: true);
     } catch (_) {}
-    _persist();
+    await _persist();
     notifyListeners();
   }
 
@@ -230,8 +296,22 @@ class DownloadStore extends ChangeNotifier {
     }
   }
 
-  void _persist() => _prefs?.setString(_kIndex,
-      jsonEncode({for (final e in _done.entries) e.key: e.value.toJson()}));
+  Future<void> _persist() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    final stored = await prefs.setString(
+      _kIndex,
+      jsonEncode({for (final e in _done.entries) e.key: e.value.toJson()}),
+    );
+    if (!stored) throw StateError('Failed to persist manga download index');
+  }
+
+  SourceMeta _sourceById(String id) {
+    for (final source in registeredSources) {
+      if (source.id == id) return source;
+    }
+    throw StateError('manga source is unavailable: $id');
+  }
 
   String _safe(String s) => s.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
 
@@ -240,6 +320,18 @@ class DownloadStore extends ChangeNotifier {
     _disposed = true;
     super.dispose();
   }
+}
+
+Future<String> _applicationDownloadsRoot() async {
+  final directory = await getApplicationSupportDirectory();
+  return '${directory.path}/downloads';
+}
+
+Future<File> _defaultPageFetcher(
+  String url,
+  Map<String, String> headers,
+) {
+  return appImageCache.getSingleFile(url, headers: headers);
 }
 
 class DownloadScope extends InheritedNotifier<DownloadStore> {

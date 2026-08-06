@@ -95,7 +95,16 @@ class _AppState extends State<App> {
         _downloads.load(),
         _novelDownloads.load(),
       ]);
-      if (!mounted) return;
+    } catch (error) {
+      AppLog.i.err(
+        LogCat.download,
+        '下载状态加载失败',
+        detail: '$error',
+      );
+      return;
+    }
+    if (!mounted) return;
+    try {
       await LegacyDownloadMigrator.migrate(
         coordinator: _downloadCoordinator,
         mangaDownloads: _downloads,
@@ -108,6 +117,8 @@ class _AppState extends State<App> {
         detail: '$error',
       );
     }
+    if (!mounted) return;
+    _downloadCoordinator.registerExecutor(_downloads);
   }
 
   @override
