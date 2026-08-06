@@ -59,6 +59,15 @@ class _IntegrationBackend implements MediaKitBackend {
   Future<void> dispose() async {}
 }
 
+/// 等一个异步链跑完。断言前只推一轮微任务在多 await 的路径上会随机抢跑。
+Future<void> _waitFor(bool Function() condition) async {
+  for (var attempt = 0; attempt < 200; attempt++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  throw StateError('等待条件超时');
+}
+
 Future<({int status, List<int> bytes, String text})> _get(Uri uri) async {
   final client = HttpClient();
   try {
@@ -157,7 +166,9 @@ ad.ts
     await adapter.seek(const Duration(seconds: 42));
     backend.positionController.add(Duration.zero);
     backend.errorController.add(StateError('HTTP 501 gateway fallback'));
-    await Future<void>.delayed(Duration.zero);
+    // 回退到直连要串起 clearAudio → 关会话 → configure → open 好几个 await,
+    // 单个 Duration.zero 只推进一轮微任务,推不完整条链(约 1/5 概率抢跑)。
+    await _waitFor(() => backend.opened.length > 1);
     expect(backend.opened.last.url, track.url);
     expect(backend.seeks.last, const Duration(seconds: 42));
     expect(backend.clearedAudioCount, 1);
