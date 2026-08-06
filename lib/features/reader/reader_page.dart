@@ -22,6 +22,7 @@ import '../../core/source/models.dart';
 import '../../core/source/page_image_data.dart';
 import '../../core/source/source.dart';
 import '../../ui/ui.dart';
+import 'retryable_reader_network_image.dart';
 
 /// 一页对应的 ImageProvider:Base64 内联页 / 网络页 / 本地已下载页。
 /// 阅读器渲染、预加载、首页宽高比探测都走它,三条路径必须给出**同一个** provider,
@@ -1126,16 +1127,16 @@ class _ReaderPageState extends State<ReaderPage> {
         errorBuilder: (_, __, ___) => _broken(fullWidth),
       );
     }
-    return CachedNetworkImage(
+    return RetryableReaderNetworkImage(
       cacheManager: appImageCache,
       imageUrl: img.url,
       httpHeaders: _headers(img),
       fit: fit,
       width: w,
       height: height,
-      fadeInDuration: const Duration(milliseconds: 120),
-      progressIndicatorBuilder: (ctx, url, p) => _loading(p, fullWidth),
-      errorWidget: (_, __, ___) => _broken(fullWidth),
+      progressIndicatorBuilder: (_, progress) => _loading(progress, fullWidth),
+      errorWidgetBuilder: (_, retrying) =>
+          _retryableBroken(fullWidth, retrying: retrying),
     );
   }
 
@@ -1144,6 +1145,33 @@ class _ReaderPageState extends State<ReaderPage> {
         alignment: Alignment.center,
         child: const Icon(Icons.broken_image_rounded,
             color: Colors.white38, size: 40),
+      );
+
+  Widget _retryableBroken(bool fullWidth, {required bool retrying}) =>
+      Container(
+        height: fullWidth ? 200 : null,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (retrying)
+              const SizedBox.square(
+                dimension: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(
+                Icons.broken_image_rounded,
+                color: Colors.white38,
+                size: 40,
+              ),
+            const SizedBox(height: 8),
+            Text(
+              context.l10n.retry,
+              style: const TextStyle(color: Colors.white54),
+            ),
+          ],
+        ),
       );
 
   // 加载占位:无背景,仅居中显示加载百分比(占位高度保留,避免布局跳动)。
