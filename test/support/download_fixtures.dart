@@ -1,5 +1,6 @@
 import 'package:dream_manga_reader/core/downloads/download_task.dart';
 import 'package:dream_manga_reader/core/downloads/download_policy.dart';
+import 'package:dream_manga_reader/core/downloads/download_task_repository.dart';
 
 const unrestrictedEnvironment = DownloadEnvironment(
   connected: true,
@@ -31,4 +32,17 @@ DownloadTask taskFixture({
     payload: const {'sourceId': 'source', 'contentId': 'book'},
     completedAt: state == DownloadTaskState.completed ? 200 : null,
   );
+}
+
+final class RecordingDownloadTaskRepository implements DownloadTaskRepository {
+  List<DownloadTask> loaded = const [];
+  final List<List<DownloadTask>> saved = [];
+
+  @override
+  Future<List<DownloadTask>> load() async => List.unmodifiable(loaded);
+
+  @override
+  Future<void> save(List<DownloadTask> tasks) async {
+    saved.add(List.unmodifiable(tasks));
+  }
 }
