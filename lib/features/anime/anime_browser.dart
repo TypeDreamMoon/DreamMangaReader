@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
+import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bili/bili_auth.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -14,13 +18,48 @@ import '../library/manga_cover.dart';
 import 'anime_detail_page.dart';
 import 'bili_login_page.dart';
 
+typedef AnimeSourceFactory = MangaSource Function(SourceMeta meta);
+
+typedef AnimeSearchVariants = Future<List<String>> Function(
+  String query,
+  LibraryStore library,
+);
+
 /// 发现页「番剧」档的内容:选番剧源(kind=anime)→ 热门/搜索网格 → 点卡进详情。
 /// 与漫画发现的单源/混合机器完全隔离,自管一套状态,不动漫画那套。
 class AnimeBrowser extends StatefulWidget {
-  const AnimeBrowser({super.key});
+  const AnimeBrowser({
+    super.key,
+    this.sourceBuilder = buildSource,
+    this.sourceCatalog,
+    this.searchVariants,
+  });
+
+  final AnimeSourceFactory sourceBuilder;
+  final List<SourceMeta>? sourceCatalog;
+  final AnimeSearchVariants? searchVariants;
 
   @override
   State<AnimeBrowser> createState() => AnimeBrowserState();
+}
+
+class _AnimeResult {
+  _AnimeResult({required this.anime, required this.meta});
+
+  final Manga anime;
+  final SourceMeta meta;
+  final Set<String> sourceIds = {};
+}
+
+class _AnimeCursor {
+  _AnimeCursor(this.meta, this.source);
+
+  final SourceMeta meta;
+  final MangaSource source;
+  int page = 1;
+  bool hasNext = true;
+  bool loading = false;
+  bool failed = false;
 }
 
 /// 公有 State:发现页用 GlobalKey 调 [runSearch] 把顶栏搜索词喂进来(搜索 UI 与漫画统一到
@@ -28,8 +67,15 @@ class AnimeBrowser extends StatefulWidget {
 class AnimeBrowserState extends State<AnimeBrowser> {
   SourceMeta? _meta;
   MangaSource? _source;
-  final List<Manga> _results = [];
+  SourceController? _sourceController;
+  final List<_AnimeCursor> _mixedSources = [];
+  final List<_AnimeResult> _results = [];
   int _page = 1;
+  int _loadGeneration = 0;
+  bool _initialized = false;
+  bool _mixed = true;
+  bool? _showSourcePicker;
+  String _enabledSourceSignature = '';
   bool _loading = false;
   bool _hasNext = true;
   String? _error;
@@ -51,77 +97,180 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_meta == null) _pickDefault();
+    final controller = SourceScope.of(context);
+    final controllerChanged = controller != _sourceController;
+    if (controllerChanged) {
+      _sourceController?.removeListener(_onSelectedSourceChanged);
+      _sourceController = controller..addListener(_onSelectedSourceChanged);
+    }
+
+    final library = LibraryScope.of(context);
+    final showSourcePicker = library.showSourcePicker;
+    final signature = _enabledSources.map((source) => source.id).join('|');
+    final enabledSourcesChanged = signature != _enabledSourceSignature;
+    final pickerWasEnabled = _showSourcePicker == true;
+    final mustConfigure = !_initialized ||
+        controllerChanged ||
+        enabledSourcesChanged ||
+        (!showSourcePicker && !_mixed) ||
+        (showSourcePicker && !pickerWasEnabled);
+
+    _initialized = true;
+    _showSourcePicker = showSourcePicker;
+    _enabledSourceSignature = signature;
+    if (mustConfigure) {
+      // 隐藏选择器时始终使用混合源；首次显示或从隐藏切回显示时恢复保存的单源。
+      _mixed = !showSourcePicker;
+      _configureSources();
+    }
   }
 
   @override
   void dispose() {
-    _source?.dispose();
+    _loadGeneration++;
+    _sourceController?.removeListener(_onSelectedSourceChanged);
+    _disposeSources();
     _scroll.dispose();
     super.dispose();
   }
 
-  List<SourceMeta> get _animeSources {
+  List<SourceMeta> get _enabledSources {
     final store = LibraryScope.read(context);
     return [
-      for (final s in registeredSources)
-        if (s.kind == 'anime' && store.isSourceEnabled(s.id)) s,
+      for (final source in widget.sourceCatalog ?? registeredSources)
+        if (source.isAnime && store.isSourceEnabled(source.id)) source,
     ];
   }
 
-  void _pickDefault() {
-    final list = _animeSources;
-    if (list.isEmpty) {
-      setState(() {}); // 走空态提示
-      return;
-    }
-    _useSource(list.first);
+  void _onSelectedSourceChanged() {
+    if (!_mixed) _configureSources();
   }
 
-  void _useSource(SourceMeta meta) {
+  void _disposeSources() {
     _source?.dispose();
-    _meta = meta;
-    _source = buildSource(meta);
+    _source = null;
+    for (final cursor in _mixedSources) {
+      cursor.source.dispose();
+    }
+    _mixedSources.clear();
+  }
+
+  void _configureSources() {
+    _disposeSources();
+    final sources = _enabledSources;
+    if (_mixed) {
+      _meta = null;
+      for (final meta in sources) {
+        _mixedSources.add(_AnimeCursor(meta, widget.sourceBuilder(meta)));
+      }
+    } else {
+      final selected = _sourceController?.currentFor('anime');
+      _meta =
+          sources.where((source) => source.id == selected?.id).firstOrNull ??
+              sources.firstOrNull;
+      final meta = _meta;
+      if (meta != null) _source = widget.sourceBuilder(meta);
+    }
     _reset();
   }
 
   void _reset() {
+    _loadGeneration++;
+    for (final cursor in _mixedSources) {
+      cursor
+        ..page = 1
+        ..hasNext = true
+        ..loading = false
+        ..failed = false;
+    }
     setState(() {
       _results.clear();
       _page = 1;
       _hasNext = true;
       _error = null;
     });
-    _loadMore();
+    unawaited(_loadMore());
   }
 
   void _onScroll() {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 600) {
-      _loadMore();
+      unawaited(_loadMore());
     }
   }
 
   Future<void> _loadMore() async {
-    if (_loading || !_hasNext || _source == null) return;
+    if (_loading || !_hasNext) return;
+    if (_mixed && _mixedSources.isEmpty) return;
+    if (!_mixed && _source == null) return;
+    final generation = _loadGeneration;
     setState(() => _loading = true);
+    if (_mixed) {
+      final cursors = _mixedSources
+          .where((cursor) => cursor.hasNext && !cursor.loading)
+          .toList(growable: false);
+      await Future.wait([
+        for (final cursor in cursors) _loadMixedCursor(cursor, generation),
+      ]);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loading = false;
+        _hasNext = _mixedSources.any((cursor) => cursor.hasNext);
+      });
+      _maybeFallback();
+      return;
+    }
     try {
       final paged = _query.isEmpty
           ? await _source!.getDiscovery(_page)
           : await _source!.getSearch(_query, _page);
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _results.addAll(paged.items);
+        _addResults(paged.items, _meta!);
         _hasNext = paged.hasNext && paged.items.isNotEmpty;
         _page++;
         _loading = false;
       });
       _maybeFallback(); // 搜索首页零结果 → 尝试译名回退
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loading = false;
         _error = '$e';
       });
+    }
+  }
+
+  Future<void> _loadMixedCursor(
+    _AnimeCursor cursor,
+    int generation,
+  ) async {
+    cursor.loading = true;
+    try {
+      final paged = _query.isEmpty
+          ? await cursor.source.getDiscovery(cursor.page)
+          : await cursor.source.getSearch(_query, cursor.page);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _addResults(paged.items, cursor.meta);
+        cursor.page++;
+        cursor.hasNext = paged.hasNext && paged.items.isNotEmpty;
+        cursor.failed = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        cursor.failed = true;
+        cursor.hasNext = false;
+      });
+    } finally {
+      cursor.loading = false;
+    }
+  }
+
+  void _addResults(List<Manga> anime, SourceMeta meta) {
+    for (final item in anime) {
+      _results
+          .add(_AnimeResult(anime: item, meta: meta)..sourceIds.add(meta.id));
     }
   }
 
@@ -161,9 +310,9 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     final id =
         await showSourcePicker(context, currentId: _meta!.id, kind: 'anime');
     if (id == null) return;
-    for (final s in registeredSources) {
+    for (final s in _enabledSources) {
       if (s.id == id) {
-        _useSource(s);
+        _sourceController?.selectFor('anime', s);
         break;
       }
     }
@@ -176,10 +325,9 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     _reset();
   }
 
-  void _open(Manga m) {
-    if (_meta == null) return;
-    Navigator.of(context)
-        .push(appRoute(AnimeDetailPage(meta: _meta!, anime: m)));
+  void _open(_AnimeResult result) {
+    Navigator.of(context).push(
+        appRoute(AnimeDetailPage(meta: result.meta, anime: result.anime)));
   }
 
   bool get _isBili => _meta?.id == kBiliSourceId;
@@ -204,20 +352,24 @@ class AnimeBrowserState extends State<AnimeBrowser> {
 
   @override
   Widget build(BuildContext context) {
+    final library = LibraryScope.of(context);
     final p = context.palette;
-    if (_animeSources.isEmpty) return _noSource(p);
+    if (_enabledSources.isEmpty) return _noSource(p);
 
     return Column(
       children: [
         // 源选择(搜索已统一到发现页顶栏,这里只留源选择器)。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-          child: SourcePickerPill(
-            label: '${_meta?.name ?? ''} · 番剧',
-            icon: Icons.movie_rounded,
-            onTap: _pickSource,
+        if (library.showSourcePicker)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+            child: SourcePickerPill(
+              label: _mixed
+                  ? context.l10n.disc_mixedAllSources
+                  : '${_meta?.name ?? ''} · 番剧',
+              icon: _mixed ? Icons.dashboard_rounded : Icons.movie_rounded,
+              onTap: _pickSource,
+            ),
           ),
-        ),
         if (_isBili) _biliBar(p),
         // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
         if (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)
@@ -339,15 +491,16 @@ class AnimeBrowserState extends State<AnimeBrowser> {
       ),
       itemCount: _results.length,
       itemBuilder: (context, i) {
-        final m = _results[i];
+        final result = _results[i];
+        final m = result.anime;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Flexible(
               child: MangaCover(
                 manga: m,
-                headers: _meta == null ? const {} : imageHeadersOf(_meta!),
-                onTap: () => _open(m),
+                headers: imageHeadersOf(result.meta),
+                onTap: () => _open(result),
               ),
             ),
             const SizedBox(height: 6),
@@ -378,7 +531,8 @@ class AnimeBrowserState extends State<AnimeBrowser> {
             const SizedBox(height: 8),
             Text('在「设置 › 漫画源」里启用番剧源(如 AllAnime)后即可浏览。',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
+                style:
+                    TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
           ],
         ),
       );
