@@ -3,9 +3,9 @@ import 'dart:ui' show ImageFilter, TileMode;
 
 import 'package:flutter/material.dart';
 
-import '../../app/library_store.dart';
-import '../../app/theme/app_colors.dart';
-import '../../app/ui_signals.dart';
+import '../app/library_store.dart';
+import '../app/theme/app_colors.dart';
+import '../app/ui_signals.dart';
 
 /// 全局背景层:可选背景图(带模糊)+ 混合色遮罩,垫在所有页面之后。
 ///
@@ -18,12 +18,24 @@ class AppBackground extends StatelessWidget {
   final Widget child;
 
   @override
+  Widget build(BuildContext context) => Stack(
+        fit: StackFit.expand,
+        children: [
+          const AppBackdrop(),
+          child,
+        ],
+      );
+}
+
+/// 只绘制应用背景,供根应用和每个路由的隔离表面复用。
+class AppBackdrop extends StatelessWidget {
+  const AppBackdrop({super.key});
+
+  @override
   Widget build(BuildContext context) {
     final lib = LibraryScope.of(context);
     final p = context.palette;
-    if (lib.bgImage.isEmpty) {
-      return ColoredBox(color: p.background, child: child);
-    }
+    if (lib.bgImage.isEmpty) return ColoredBox(color: p.background);
     return ValueListenableBuilder<Color?>(
       valueListenable: DetailTint.color,
       builder: (context, detail, _) {
@@ -33,8 +45,11 @@ class AppBackground extends StatelessWidget {
         if (detail != null) {
           // 详情页:把混合色往封面主题色混(融合强度设置里可调)。
           // 低强度 → 更接近用户设的底色(默认黑);高强度 → 更接近封面主题色。
-          tint = Color.lerp(tint,
-              detail.withValues(alpha: lib.bgTintAlpha), lib.detailTintStrength)!;
+          tint = Color.lerp(
+            tint,
+            detail.withValues(alpha: lib.bgTintAlpha),
+            lib.detailTintStrength,
+          )!;
         }
         return Stack(
           fit: StackFit.expand,
@@ -43,33 +58,29 @@ class AppBackground extends StatelessWidget {
             // RepaintBoundary:把「底色+模糊背景图」缓存成一层。否则前景内容一滚动、
             // 整个 Stack 重绘就会**每帧重跑一次全屏高斯模糊**(手机 GPU 大开销、掉帧)。
             // 背景是静态的,隔离后只算一次;前景滚动直接复用缓存层。
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: ImageFiltered(
-                  imageFilter: ImageFilter.blur(
-                      sigmaX: lib.bgBlur,
-                      sigmaY: lib.bgBlur,
-                      tileMode: TileMode.decal),
-                  child: Image.file(
-                    File(lib.bgImage),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                  ),
+            RepaintBoundary(
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(
+                  sigmaX: lib.bgBlur,
+                  sigmaY: lib.bgBlur,
+                  tileMode: TileMode.decal,
+                ),
+                child: Image.file(
+                  File(lib.bgImage),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),
             ),
             // 混合色过渡:进出详情/阅读器时封面色 ↔ 设置色平滑淡变。
-            Positioned.fill(
-              child: TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: tint),
-                duration: LibraryStore.animationsEnabled
-                    ? const Duration(milliseconds: 450)
-                    : Duration.zero,
-                curve: Curves.easeOut,
-                builder: (_, c, __) => ColoredBox(color: c ?? tint),
-              ),
+            TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: tint),
+              duration: LibraryStore.animationsEnabled
+                  ? const Duration(milliseconds: 450)
+                  : Duration.zero,
+              curve: Curves.easeOut,
+              builder: (_, color, __) => ColoredBox(color: color ?? tint),
             ),
-            child,
           ],
         );
       },

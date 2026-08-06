@@ -28,10 +28,10 @@ import '../core/source/source_repository.dart';
 import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
-import '../features/common/app_background.dart';
 import '../features/common/ui_scale.dart';
 import '../features/shell/home_shell.dart';
 import '../features/shell/splash_gate.dart';
+import '../ui/app_background.dart';
 
 /// 应用根。持有三主题状态(ThemeController),经 ThemeScope 下发,
 /// 主题切换在设置页;主界面是底部导航外壳。
