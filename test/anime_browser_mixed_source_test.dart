@@ -254,6 +254,12 @@ void main() {
       sourceFactory: (meta, buildIndex) => _FakeAnimeSource(
         meta,
         gate: buildIndex == 0 ? oldGate.future : null,
+        discoveryResult: Paged([
+          Manga(
+            id: buildIndex == 0 ? 'old-${meta.id}' : 'new-${meta.id}',
+            title: buildIndex == 0 ? '旧结果' : '新结果',
+          ),
+        ]),
       ),
       settle: false,
     );
@@ -267,11 +273,16 @@ void main() {
 
     harness.library.setSourceEnabled('anime-b', false, 2);
     await tester.pump();
+    await tester.pump();
 
     expect(instances['anime-a'], hasLength(2));
     expect(instances['anime-a']!.last.discoveryCalls, 1);
+    expect(find.text('新结果'), findsOneWidget);
 
     oldGate.complete();
     await tester.pump();
+    await tester.pump();
+    expect(find.text('旧结果'), findsNothing);
+    expect(find.text('新结果'), findsOneWidget);
   });
 }

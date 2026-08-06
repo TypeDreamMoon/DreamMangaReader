@@ -310,7 +310,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     if (_meta == null) return;
     final id =
         await showSourcePicker(context, currentId: _meta!.id, kind: 'anime');
-    if (id == null) return;
+    if (id == null || !mounted) return;
     for (final s in _enabledSources) {
       if (s.id == id) {
         _sourceController?.selectFor('anime', s);
