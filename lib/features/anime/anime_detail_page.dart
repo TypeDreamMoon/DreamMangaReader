@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../app/anime_download_store.dart';
+import '../../app/download_coordinator_scope.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
+import '../../core/downloads/content_download_task.dart';
+import '../../core/downloads/download_task.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -13,20 +17,30 @@ import '../detail/bangumi_search_sheet.dart';
 import '../library/manga_cover.dart';
 import 'anime_player_page.dart';
 
+typedef AnimeBangumiLookup = Future<BangumiInfo?> Function(String title);
+
 /// 番剧详情:封面 + 简介 + 分集网格。点某集 → [AnimePlayerPage] 播放。
 /// 番剧沿用漫画契约:getMangaDetail(简介/封面)、getChapters(=分集)。
 class AnimeDetailPage extends StatefulWidget {
-  const AnimeDetailPage({super.key, required this.meta, required this.anime});
+  const AnimeDetailPage({
+    super.key,
+    required this.meta,
+    required this.anime,
+    this.sourceBuilder = buildSource,
+    this.bangumiLookup = _defaultBangumiLookup,
+  });
 
   final SourceMeta meta;
   final Manga anime; // 列表卡带来的 id/title/cover
+  final MangaSource Function(SourceMeta meta) sourceBuilder;
+  final AnimeBangumiLookup bangumiLookup;
 
   @override
   State<AnimeDetailPage> createState() => _AnimeDetailPageState();
 }
 
 class _AnimeDetailPageState extends State<AnimeDetailPage> {
-  late final MangaSource _source = buildSource(widget.meta);
+  late final MangaSource _source = widget.sourceBuilder(widget.meta);
   Manga? _detail;
   List<Chapter> _episodes = const [];
   bool _loading = true;
@@ -84,7 +98,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
     final bound = LibraryScope.read(context).bangumiBindingFor(_bgmKey);
     final info = bound != null
         ? await BangumiApi.fromId(bound)
-        : await BangumiApi.lookup(_bgmTitle, type: 2);
+        : await widget.bangumiLookup(_bgmTitle);
     if (!mounted) return;
     setState(() {
       _bgm = info;
@@ -129,8 +143,97 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         index: index,
       )));
 
+  String _downloadTaskId(Chapter episode) => contentDownloadTaskId(
+        DownloadContentKind.anime,
+        widget.meta.id,
+        widget.anime.id,
+        episode.id,
+      );
+
+  Future<void> _queueDownload(Chapter episode) async {
+    final downloads = AnimeDownloadScope.read(context);
+    if (downloads.isDownloaded(widget.meta.id, widget.anime.id, episode.id)) {
+      return;
+    }
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    if (coordinator == null) return;
+    final taskId = _downloadTaskId(episode);
+    final existing = coordinator.task(taskId);
+    if (existing == null) {
+      await coordinator.enqueue(ContentDownloadTask.anime(
+        sourceId: widget.meta.id,
+        contentId: widget.anime.id,
+        contentTitle: _detail?.title ?? widget.anime.title,
+        chapterId: episode.id,
+        chapterTitle: episode.name,
+        now: DateTime.now().millisecondsSinceEpoch,
+      ));
+      return;
+    }
+    switch (existing.state) {
+      case DownloadTaskState.paused:
+        await coordinator.resume(taskId);
+      case DownloadTaskState.failed || DownloadTaskState.cancelled:
+        await coordinator.retry(taskId);
+      case DownloadTaskState.resolving ||
+            DownloadTaskState.queued ||
+            DownloadTaskState.running ||
+            DownloadTaskState.verifying ||
+            DownloadTaskState.completed:
+        return;
+    }
+  }
+
+  Future<void> _downloadAll() async {
+    final downloads = AnimeDownloadScope.read(context);
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    if (coordinator == null) return;
+    final pending = _episodes.where((episode) {
+      if (downloads.isDownloaded(
+        widget.meta.id,
+        widget.anime.id,
+        episode.id,
+      )) {
+        return false;
+      }
+      final task = coordinator.task(_downloadTaskId(episode));
+      return task == null ||
+          task.state == DownloadTaskState.paused ||
+          task.state == DownloadTaskState.failed ||
+          task.state == DownloadTaskState.cancelled;
+    }).toList(growable: false);
+    if (pending.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('下载全部分集'),
+        content: Text('将 $pending.length 集加入下载队列。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('下载'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    for (final episode in pending) {
+      await _queueDownload(episode);
+    }
+    if (mounted) {
+      showAppNotify(context, '已加入 ${pending.length} 个下载任务',
+          kind: AppNotifyKind.success);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    AnimeDownloadScope.of(context);
+    DownloadCoordinatorScope.maybeOf(context);
     final p = context.palette;
     final title = (_detail?.title.isNotEmpty ?? false)
         ? _detail!.title
@@ -142,6 +245,15 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        actions: [
+          IconButton(
+            key: const Key('anime-download-all'),
+            onPressed: !_loading && _episodes.isNotEmpty ? _downloadAll : null,
+            tooltip: '下载全部分集',
+            icon: const Icon(Icons.download_for_offline_rounded),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: _error != null
           ? _errorView(p)
@@ -218,24 +330,80 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         children: [
           for (var i = 0; i < _episodes.length; i++)
             ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 54),
+              constraints: const BoxConstraints(minWidth: 82, maxWidth: 220),
               child: AppCard(
                 onTap: () => _play(i),
                 radius: context.radius,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                child: Text(
-                  _epLabel(_episodes[i], i),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: p.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600),
+                padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _epLabel(_episodes[i], i),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: p.textPrimary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    _downloadControl(p, _episodes[i]),
+                  ],
                 ),
               ),
             ),
         ],
       );
+
+  Widget _downloadControl(AppPalette p, Chapter episode) {
+    final downloads = AnimeDownloadScope.read(context);
+    if (downloads.isDownloaded(widget.meta.id, widget.anime.id, episode.id)) {
+      return Icon(Icons.download_done_rounded, size: 18, color: p.accent);
+    }
+    final task = DownloadCoordinatorScope.maybeRead(context)
+        ?.task(_downloadTaskId(episode));
+    if (task?.state == DownloadTaskState.completed) {
+      return Icon(Icons.download_done_rounded, size: 18, color: p.accent);
+    }
+    final active = task != null &&
+        (task.state == DownloadTaskState.resolving ||
+            task.state == DownloadTaskState.queued ||
+            task.state == DownloadTaskState.running ||
+            task.state == DownloadTaskState.verifying);
+    if (active) {
+      return SizedBox(
+        width: 32,
+        height: 32,
+        child: Padding(
+          padding: const EdgeInsets.all(7),
+          child: CircularProgressIndicator(
+            value: task.progress > 0 ? task.progress : null,
+            strokeWidth: 2,
+            color: p.accent,
+          ),
+        ),
+      );
+    }
+    final failed = task?.state == DownloadTaskState.failed ||
+        task?.state == DownloadTaskState.cancelled;
+    return IconButton(
+      key: Key('anime-download-${episode.id}'),
+      onPressed: () => _queueDownload(episode),
+      tooltip: failed ? '重试下载' : '下载本集',
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+      icon: Icon(
+        failed ? Icons.refresh_rounded : Icons.download_rounded,
+        size: 18,
+        color: failed ? p.statusFail : p.textMuted,
+      ),
+    );
+  }
 
   // 集标签:优先数字集号,否则用名字(截断)。
   String _epLabel(Chapter c, int i) {
@@ -271,3 +439,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         ),
       );
 }
+
+Future<BangumiInfo?> _defaultBangumiLookup(String title) =>
+    BangumiApi.lookup(title, type: 2);
