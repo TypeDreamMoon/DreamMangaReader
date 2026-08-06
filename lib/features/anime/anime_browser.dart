@@ -7,7 +7,9 @@ import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bili/bili_auth.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/source/chinese_fold.dart';
 import '../../core/source/models.dart';
+import '../../core/source/search_rank.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
@@ -70,6 +72,8 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   SourceController? _sourceController;
   final List<_AnimeCursor> _mixedSources = [];
   final List<_AnimeResult> _results = [];
+  final Map<String, _AnimeResult> _byTitle = {};
+  final Set<String> _failedSources = {};
   int _page = 1;
   int _loadGeneration = 0;
   bool _initialized = false;
@@ -185,6 +189,8 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     }
     setState(() {
       _results.clear();
+      _byTitle.clear();
+      _failedSources.clear();
       _page = 1;
       _hasNext = true;
       _loading = false;
@@ -200,36 +206,32 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   Future<void> _loadMore() async {
-    if (_loading || !_hasNext) return;
-    if (_mixed && _mixedSources.isEmpty) return;
-    if (!_mixed && _source == null) return;
-    final generation = _loadGeneration;
-    setState(() => _loading = true);
     if (_mixed) {
-      final cursors = _mixedSources
-          .where((cursor) => cursor.hasNext && !cursor.loading)
-          .toList(growable: false);
-      await Future.wait([
-        for (final cursor in cursors) _loadMixedCursor(cursor, generation),
-      ]);
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() {
-        _loading = false;
-        _hasNext = _mixedSources.any((cursor) => cursor.hasNext);
-      });
-      _maybeFallback();
+      if (_mixedSources.isEmpty) return;
+      final generation = _loadGeneration;
+      for (final cursor in _mixedSources) {
+        unawaited(_loadMixedCursor(cursor, generation));
+      }
       return;
     }
+
+    if (_loading || !_hasNext || _source == null) return;
+    final generation = _loadGeneration;
+    setState(() => _loading = true);
     try {
       final paged = _query.isEmpty
           ? await _source!.getDiscovery(_page)
           : await _source!.getSearch(_query, _page);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _addResults(paged.items, _meta!);
+        for (final anime in paged.items) {
+          _addResult(anime, _meta!);
+        }
         _hasNext = paged.hasNext && paged.items.isNotEmpty;
         _page++;
         _loading = false;
+        _error = null;
+        _sortResults();
       });
       _maybeFallback(); // 搜索首页零结果 → 尝试译名回退
     } catch (e) {
@@ -245,34 +247,78 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     _AnimeCursor cursor,
     int generation,
   ) async {
+    if (cursor.loading || !cursor.hasNext) return;
     cursor.loading = true;
+    if (mounted) setState(_recomputeMixedFlags);
     try {
       final paged = _query.isEmpty
           ? await cursor.source.getDiscovery(cursor.page)
           : await cursor.source.getSearch(_query, cursor.page);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _addResults(paged.items, cursor.meta);
+        for (final anime in paged.items) {
+          _addResult(anime, cursor.meta);
+        }
         cursor.page++;
         cursor.hasNext = paged.hasNext && paged.items.isNotEmpty;
         cursor.failed = false;
+        _failedSources.remove(cursor.meta.id);
+        _sortResults();
       });
     } catch (_) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         cursor.failed = true;
         cursor.hasNext = false;
+        _failedSources.add(cursor.meta.id);
       });
     } finally {
-      cursor.loading = false;
+      if (generation == _loadGeneration) {
+        cursor.loading = false;
+        if (mounted) {
+          setState(_recomputeMixedFlags);
+          _maybeFallback();
+        }
+      }
     }
   }
 
-  void _addResults(List<Manga> anime, SourceMeta meta) {
-    for (final item in anime) {
-      _results
-          .add(_AnimeResult(anime: item, meta: meta)..sourceIds.add(meta.id));
+  void _recomputeMixedFlags() {
+    _loading = _mixedSources.any((cursor) => cursor.loading);
+    _hasNext = _mixedSources.any((cursor) => cursor.hasNext);
+    if (!_loading &&
+        _results.isEmpty &&
+        _mixedSources.isNotEmpty &&
+        _failedSources.length == _mixedSources.length) {
+      _error = context.l10n.disc_allSourcesFailed;
     }
+  }
+
+  void _addResult(Manga anime, SourceMeta meta) {
+    final key = ChineseFold.dedupKey(anime.title);
+    if (key.isEmpty) {
+      _results.add(
+        _AnimeResult(anime: anime, meta: meta)..sourceIds.add(meta.id),
+      );
+      return;
+    }
+    final existing = _byTitle[key];
+    if (existing != null) {
+      existing.sourceIds.add(meta.id);
+      return;
+    }
+    final result = _AnimeResult(anime: anime, meta: meta)
+      ..sourceIds.add(meta.id);
+    _byTitle[key] = result;
+    _results.add(result);
+  }
+
+  void _sortResults() {
+    if (_origQuery.isEmpty) return;
+    _results.sort((a, b) => searchRelevance(
+          b.anime.title,
+          _origQuery,
+        ).compareTo(searchRelevance(a.anime.title, _origQuery)));
   }
 
   /// 搜索翻译回退:一轮搜索结束且零结果时,把原查询翻成 简/繁/英/日 逐个重搜,直到有
@@ -501,6 +547,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
               child: MangaCover(
                 manga: m,
                 headers: imageHeadersOf(result.meta),
+                sourceCount: result.sourceIds.length,
                 onTap: () => _open(result),
               ),
             ),

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/source_controller.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
+import 'package:dream_manga_reader/core/source/chinese_fold.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
@@ -120,6 +121,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   WidgetTester tester, {
   required bool showSourcePicker,
   required Map<String, List<_FakeAnimeSource>> instances,
+  List<SourceMeta> sources = _sources,
   String? savedSourceId,
   _FakeAnimeSource Function(SourceMeta meta, int buildIndex)? sourceFactory,
   bool settle = true,
@@ -127,11 +129,11 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   SharedPreferences.setMockInitialValues({
     if (savedSourceId != null) 'source.current.anime': savedSourceId,
   });
-  registeredSources = [..._sources];
+  registeredSources = [...sources];
   final library = LibraryStore();
   await library.load();
   library.showSourcePicker = showSourcePicker;
-  final controller = SourceController(_sources.first);
+  final controller = SourceController(sources.first);
   await controller.load();
 
   MangaSource build(SourceMeta meta) {
@@ -154,7 +156,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
         child: Scaffold(
           body: AnimeBrowser(
             sourceBuilder: build,
-            sourceCatalog: _sources,
+            sourceCatalog: sources,
           ),
         ),
       ),
@@ -284,5 +286,118 @@ void main() {
     await tester.pump();
     expect(find.text('旧结果'), findsNothing);
     expect(find.text('新结果'), findsOneWidget);
+  });
+
+  testWidgets('mixed anime isolates failures and deduplicates titles',
+      (tester) async {
+    await ChineseFold.load();
+    const broken = SourceMeta(
+      id: 'anime-broken',
+      name: '故障源',
+      script: '',
+      kind: 'anime',
+    );
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      sources: const [..._sources, broken],
+      sourceFactory: (meta, _) => switch (meta.id) {
+        'anime-a' => _FakeAnimeSource(
+            meta,
+            discoveryResult: const Paged([
+              Manga(id: 'a-1', title: '刀剑神域'),
+            ]),
+          ),
+        'anime-b' => _FakeAnimeSource(
+            meta,
+            discoveryResult: const Paged([
+              Manga(id: 'b-1', title: '刀劍神域'),
+            ]),
+          ),
+        _ => _FakeAnimeSource(meta, error: StateError('timeout')),
+      },
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    expect(find.text('刀剑神域'), findsOneWidget);
+    expect(find.text('刀劍神域'), findsNothing);
+    expect(find.text('2源'), findsOneWidget);
+    expect(find.byIcon(Icons.cloud_off_rounded), findsNothing);
+  });
+
+  testWidgets('all failed anime sources expose retry', (tester) async {
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      sourceFactory: (meta, _) =>
+          _FakeAnimeSource(meta, error: Exception(meta.id)),
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+  });
+
+  testWidgets('a slow anime source does not block a fast source next page',
+      (tester) async {
+    final slowGate = Completer<void>();
+    addTearDown(() {
+      if (!slowGate.isCompleted) slowGate.complete();
+    });
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      settle: false,
+      sourceFactory: (meta, _) {
+        if (meta.id == 'anime-b') {
+          return _FakeAnimeSource(meta, gate: slowGate.future);
+        }
+        return _FakeAnimeSource(
+          meta,
+          discoveryHandler: (page) async => page == 1
+              ? Paged(
+                  List.generate(
+                    30,
+                    (index) => Manga(
+                      id: 'a-$index',
+                      title: '快速番剧 $index',
+                    ),
+                  ),
+                  hasNext: true,
+                )
+              : const Paged([]),
+        );
+      },
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+    await tester.pump();
+
+    expect(find.text('快速番剧 0'), findsOneWidget);
+    await tester.fling(
+      find.byType(GridView),
+      const Offset(0, -2400),
+      1200,
+    );
+    await tester.pump();
+
+    expect(instances['anime-a']!.single.discoveryPages, [1, 2]);
+    expect(instances['anime-b']!.single.discoveryPages, [1]);
+    slowGate.complete();
+    await tester.pumpAndSettle();
   });
 }
