@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/anime_download_store.dart';
+import '../../app/anime_library_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
@@ -246,6 +247,11 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
         actions: [
+          if (AnimeLibraryScope.maybeRead(context) != null)
+            AnimeFavoriteAction(
+              meta: widget.meta,
+              anime: _detail ?? widget.anime,
+            ),
           IconButton(
             key: const Key('anime-download-all'),
             onPressed: !_loading && _episodes.isNotEmpty ? _downloadAll : null,
@@ -442,3 +448,34 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
 
 Future<BangumiInfo?> _defaultBangumiLookup(String title) =>
     BangumiApi.lookup(title, type: 2);
+
+class AnimeFavoriteAction extends StatelessWidget {
+  const AnimeFavoriteAction({
+    super.key,
+    required this.meta,
+    required this.anime,
+  });
+
+  final SourceMeta meta;
+  final Manga anime;
+
+  @override
+  Widget build(BuildContext context) {
+    final library = AnimeLibraryScope.of(context);
+    final favorite = library.isFavorite(meta.id, anime.id);
+    return IconButton(
+      key: const Key('anime-favorite'),
+      onPressed: () => library.toggleFavorite(AnimeFavoriteEntry(
+        sourceId: meta.id,
+        animeId: anime.id,
+        title: anime.title,
+        cover: anime.cover,
+        addedAt: DateTime.now().millisecondsSinceEpoch,
+      )),
+      tooltip: favorite ? '取消收藏' : '收藏',
+      icon: Icon(
+        favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+      ),
+    );
+  }
+}
