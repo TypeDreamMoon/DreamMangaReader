@@ -1,6 +1,8 @@
 // The fake accepts these controls for follow-up mixed-source scenarios.
 // ignore_for_file: unused_element_parameter
 
+import 'dart:async';
+
 import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/source_controller.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
@@ -118,8 +120,13 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   WidgetTester tester, {
   required bool showSourcePicker,
   required Map<String, List<_FakeAnimeSource>> instances,
+  String? savedSourceId,
+  _FakeAnimeSource Function(SourceMeta meta, int buildIndex)? sourceFactory,
+  bool settle = true,
 }) async {
-  SharedPreferences.setMockInitialValues({});
+  SharedPreferences.setMockInitialValues({
+    if (savedSourceId != null) 'source.current.anime': savedSourceId,
+  });
   registeredSources = [..._sources];
   final library = LibraryStore();
   await library.load();
@@ -128,7 +135,9 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   await controller.load();
 
   MangaSource build(SourceMeta meta) {
-    final instance = _FakeAnimeSource(meta);
+    final current = instances[meta.id] ?? const <_FakeAnimeSource>[];
+    final instance =
+        sourceFactory?.call(meta, current.length) ?? _FakeAnimeSource(meta);
     instances.putIfAbsent(meta.id, () => []).add(instance);
     return instance;
   }
@@ -151,7 +160,11 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
       ),
     ),
   ));
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
   return (library: library, controller: controller);
 }
 
@@ -181,13 +194,13 @@ void main() {
     expect(instances['anime-b']!.single.discoveryCalls, 1);
   });
 
-  testWidgets('shows source picker and only loads the selected anime source',
-      (tester) async {
+  testWidgets('visible picker restores the saved anime source', (tester) async {
     final instances = <String, List<_FakeAnimeSource>>{};
     final harness = await _pumpBrowser(
       tester,
       showSourcePicker: true,
       instances: instances,
+      savedSourceId: 'anime-b',
     );
     addTearDown(() {
       harness.library.dispose();
@@ -195,9 +208,9 @@ void main() {
     });
 
     expect(find.byType(SourcePickerPill), findsOneWidget);
-    expect(instances['anime-a'], hasLength(1));
-    expect(instances['anime-b'], isNull);
-    expect(instances['anime-a']!.single.discoveryCalls, 1);
+    expect(instances['anime-a'], isNull);
+    expect(instances['anime-b'], hasLength(1));
+    expect(instances['anime-b']!.single.discoveryCalls, 1);
   });
 
   testWidgets(
@@ -224,5 +237,41 @@ void main() {
     expect(instances['anime-a'], hasLength(2));
     expect(instances['anime-b'], hasLength(1));
     expect(instances['anime-a']!.last.discoveryCalls, 1);
+  });
+
+  testWidgets(
+      'rebuild starts discovery when prior mixed requests are still pending',
+      (tester) async {
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final oldGate = Completer<void>();
+    addTearDown(() {
+      if (!oldGate.isCompleted) oldGate.complete();
+    });
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      sourceFactory: (meta, buildIndex) => _FakeAnimeSource(
+        meta,
+        gate: buildIndex == 0 ? oldGate.future : null,
+      ),
+      settle: false,
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    expect(instances['anime-a']!.single.discoveryCalls, 1);
+    expect(instances['anime-b']!.single.discoveryCalls, 1);
+
+    harness.library.setSourceEnabled('anime-b', false, 2);
+    await tester.pump();
+
+    expect(instances['anime-a'], hasLength(2));
+    expect(instances['anime-a']!.last.discoveryCalls, 1);
+
+    oldGate.complete();
+    await tester.pump();
   });
 }

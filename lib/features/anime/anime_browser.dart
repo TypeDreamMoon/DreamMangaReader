@@ -187,6 +187,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
       _results.clear();
       _page = 1;
       _hasNext = true;
+      _loading = false;
       _error = null;
     });
     unawaited(_loadMore());
