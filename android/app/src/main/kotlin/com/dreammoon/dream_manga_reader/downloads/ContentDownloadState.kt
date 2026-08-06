@@ -29,7 +29,9 @@ data class ContentDownloadState(
                 taskCount = taskCount,
                 completedBytes = completed,
                 totalBytes = total,
-                indeterminate = value["indeterminate"] as? Boolean ?: total <= 0L,
+                // 括号是必须的:Kotlin 的 elvis 比比较运算符结合得更紧,少了括号会被解析成
+                // ((Boolean ?: total) <= 0L),两边类型并集是 Comparable<*>,直接编译不过。
+                indeterminate = (value["indeterminate"] as? Boolean) ?: (total <= 0L),
                 currentTitle = displayText(value["currentTitle"]),
                 currentItemTitle = displayText(value["currentItemTitle"]),
             )
