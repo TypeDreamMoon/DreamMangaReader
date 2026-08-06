@@ -33,6 +33,8 @@ class _FakeBackend implements MediaKitBackend {
   @override
   Stream<Duration> get position => positionController.stream;
   @override
+  Stream<Duration> get durationChanges => const Stream.empty();
+  @override
   Stream<bool> get completed => completedController.stream;
   @override
   Stream<Object> get errors => errorController.stream;

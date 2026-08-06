@@ -22,6 +22,7 @@ class _FakePlayerAdapter implements PlayerAdapter {
   final playingController = StreamController<bool>.broadcast(sync: true);
   final bufferingController = StreamController<bool>.broadcast(sync: true);
   final positionController = StreamController<Duration>.broadcast(sync: true);
+  final durationController = StreamController<Duration>.broadcast(sync: true);
   final completedController = StreamController<bool>.broadcast(sync: true);
   final errorController = StreamController<Object>.broadcast(sync: true);
 
@@ -35,6 +36,8 @@ class _FakePlayerAdapter implements PlayerAdapter {
   Stream<bool> get buffering => bufferingController.stream;
   @override
   Stream<Duration> get position => positionController.stream;
+  @override
+  Stream<Duration> get duration => durationController.stream;
   @override
   Stream<bool> get completed => completedController.stream;
   @override
@@ -59,6 +62,7 @@ class _FakePlayerAdapter implements PlayerAdapter {
     await playingController.close();
     await bufferingController.close();
     await positionController.close();
+    await durationController.close();
     await completedController.close();
     await errorController.close();
   }
@@ -90,6 +94,86 @@ class _FakeTrackProvider implements PlaybackTrackProvider {
 }
 
 void main() {
+  test('initial playback seeks only after opening the track', () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+
+    await controller.start(
+      const [_track480],
+      _track480,
+      initialPosition: const Duration(seconds: 83),
+    );
+
+    expect(adapter.opened, [_track480]);
+    expect(adapter.seeks, [const Duration(seconds: 83)]);
+    await controller.dispose();
+  });
+
+  test('progress callback emits once per changed integer second', () async {
+    final adapter = _FakePlayerAdapter();
+    final progress = <(Duration, Duration)>[];
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+      onProgress: (position, duration) => progress.add((position, duration)),
+    );
+    await controller.start(const [_track480], _track480);
+
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.positionController.add(const Duration(milliseconds: 12100));
+    adapter.positionController.add(const Duration(milliseconds: 12900));
+    adapter.positionController.add(const Duration(milliseconds: 13000));
+
+    expect(progress, [
+      (const Duration(seconds: 12), const Duration(minutes: 24)),
+      (const Duration(seconds: 13), const Duration(minutes: 24)),
+    ]);
+    await controller.dispose();
+  });
+
+  test('pausing playback invokes the persistence callback', () async {
+    final adapter = _FakePlayerAdapter();
+    var pauses = 0;
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+      onPaused: () => pauses++,
+    );
+    await controller.start(const [_track480], _track480);
+
+    adapter.playingController.add(true);
+    adapter.playingController.add(false);
+
+    expect(pauses, 1);
+    await controller.dispose();
+  });
+
+  test('near-end resume restarts from zero', () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    adapter.durationController.add(const Duration(seconds: 100));
+
+    await controller.start(
+      const [_track480],
+      _track480,
+      initialPosition: const Duration(seconds: 95),
+    );
+
+    expect(adapter.seeks, isEmpty);
+    expect(controller.state.position, Duration.zero);
+    await controller.dispose();
+  });
+
   test('opens the initial track and enters playing on readiness', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(

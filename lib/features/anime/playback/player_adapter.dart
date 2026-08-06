@@ -4,6 +4,7 @@ abstract interface class PlayerAdapter {
   Stream<bool> get playing;
   Stream<bool> get buffering;
   Stream<Duration> get position;
+  Stream<Duration> get duration;
   Stream<bool> get completed;
   Stream<Object> get errors;
 

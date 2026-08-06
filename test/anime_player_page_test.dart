@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
+import 'package:dream_manga_reader/app/anime_library_store.dart';
 import 'package:dream_manga_reader/app/theme/app_colors.dart';
 import 'package:dream_manga_reader/features/anime/anime_player_page.dart';
 import 'package:dream_manga_reader/features/anime/playback/playback_session_controller.dart';
@@ -9,6 +11,7 @@ import 'package:dream_manga_reader/features/anime/playback/playback_state.dart';
 import 'package:dream_manga_reader/features/anime/playback/player_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _track = VideoTrack(
   url: 'https://media.example.test/video.mp4',
@@ -33,6 +36,104 @@ Widget _host(PlaybackState state, {VoidCallback? onRetry}) => MaterialApp(
     );
 
 void main() {
+  testWidgets('page resumes and stores current episode to the second',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final library = AnimeLibraryStore(persistDelay: Duration.zero);
+    await library.load();
+    addTearDown(library.dispose);
+    final adapter = _PageFakeAdapter();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async => const [_track],
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimeLibraryScope(
+        store: library,
+        child: AnimePlayerPage(
+          meta: const SourceMeta(
+            id: 'test-anime',
+            name: 'Test Anime',
+            script: '',
+            kind: 'anime',
+          ),
+          animeId: 'anime-1',
+          animeTitle: '测试番剧',
+          episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+          index: 0,
+          initialPosition: const Duration(seconds: 83),
+          dependencies: dependencies,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    expect(adapter.seeks, [const Duration(seconds: 83)]);
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.positionController.add(const Duration(milliseconds: 84100));
+    await tester.pump();
+    expect(library.history.single.positionSeconds, 84);
+    expect(library.history.single.episodeId, 'ep-1');
+  });
+
+  testWidgets('switching episode flushes the previous episode progress',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final library = AnimeLibraryStore(persistDelay: const Duration(hours: 1));
+    await library.load();
+    addTearDown(library.dispose);
+    final adapter = _PageFakeAdapter();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async => const [_track],
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimeLibraryScope(
+        store: library,
+        child: AnimePlayerPage(
+          meta: const SourceMeta(
+            id: 'test-anime',
+            name: 'Test Anime',
+            script: '',
+            kind: 'anime',
+          ),
+          animeId: 'anime-1',
+          animeTitle: '测试番剧',
+          episodes: const [
+            Chapter(id: 'ep-1', name: '第一集'),
+            Chapter(id: 'ep-2', name: '第二集'),
+          ],
+          index: 0,
+          dependencies: dependencies,
+        ),
+      ),
+    ));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.positionController.add(const Duration(seconds: 42));
+    await tester.pump();
+
+    await tester.tap(find.text('下一集'));
+    await tester.pump();
+
+    final prefs = await SharedPreferences.getInstance();
+    final persisted = jsonDecode(prefs.getString('anime.history.v1')!) as List;
+    expect(persisted.single['episodeId'], 'ep-1');
+    expect(persisted.single['positionSeconds'], 42);
+  });
+
   testWidgets('shows transient playback state without replacing the video',
       (tester) async {
     for (final entry in <(PlaybackState, String)>[
@@ -228,9 +329,11 @@ class _PageFakeAdapter implements PlayerAdapter {
   final playingController = StreamController<bool>.broadcast(sync: true);
   final bufferingController = StreamController<bool>.broadcast(sync: true);
   final positionController = StreamController<Duration>.broadcast(sync: true);
+  final durationController = StreamController<Duration>.broadcast(sync: true);
   final completedController = StreamController<bool>.broadcast(sync: true);
   final errorController = StreamController<Object>.broadcast(sync: true);
   final opened = <VideoTrack>[];
+  final seeks = <Duration>[];
 
   @override
   Stream<bool> get playing => playingController.stream;
@@ -238,6 +341,8 @@ class _PageFakeAdapter implements PlayerAdapter {
   Stream<bool> get buffering => bufferingController.stream;
   @override
   Stream<Duration> get position => positionController.stream;
+  @override
+  Stream<Duration> get duration => durationController.stream;
   @override
   Stream<bool> get completed => completedController.stream;
   @override
@@ -249,7 +354,7 @@ class _PageFakeAdapter implements PlayerAdapter {
   @override
   Future<void> play() async {}
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async => seeks.add(position);
   @override
   Future<void> setRate(double rate) async {}
   @override
@@ -257,6 +362,7 @@ class _PageFakeAdapter implements PlayerAdapter {
     await playingController.close();
     await bufferingController.close();
     await positionController.close();
+    await durationController.close();
     await completedController.close();
     await errorController.close();
   }

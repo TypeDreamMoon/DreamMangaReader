@@ -30,6 +30,8 @@ class PlaybackSessionController {
     required PlayerAdapter player,
     required PlaybackTrackProvider tracks,
     PlaybackDelay? delay,
+    this.onProgress,
+    this.onPaused,
     this.stallThreshold = const Duration(seconds: 8),
     this.stableResetThreshold = const Duration(seconds: 15),
   })  : _player = player,
@@ -39,6 +41,7 @@ class PlaybackSessionController {
       _player.playing.listen(_onPlaying),
       _player.buffering.listen(_onBuffering),
       _player.position.listen(_onPosition),
+      _player.duration.listen(_onDuration),
       _player.completed.listen(_onCompleted),
       _player.errors.listen(_onError),
     ]);
@@ -53,6 +56,8 @@ class PlaybackSessionController {
   final PlayerAdapter _player;
   final PlaybackTrackProvider _tracks;
   final PlaybackDelay _delay;
+  final void Function(Duration position, Duration duration)? onProgress;
+  final void Function()? onPaused;
   final Duration stallThreshold;
   final Duration stableResetThreshold;
   final _states = StreamController<PlaybackState>.broadcast(sync: true);
@@ -65,6 +70,8 @@ class PlaybackSessionController {
   List<VideoTrack> _available = const [];
   VideoTrack? _selected;
   Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  int? _reportedPositionSecond;
   Timer? _stallTimer;
   Timer? _stableTimer;
   int _generation = 0;
@@ -76,22 +83,31 @@ class PlaybackSessionController {
 
   Future<void> start(
     List<VideoTrack> available,
-    VideoTrack selected,
-  ) async {
+    VideoTrack selected, {
+    Duration initialPosition = Duration.zero,
+  }) async {
     final generation = ++_generation;
     _cancelTimers();
     _recovering = false;
     _userPaused = false;
     _recoveryRound = 0;
-    _position = Duration.zero;
+    final knownDuration = _duration;
+    _position = _resumePosition(initialPosition, knownDuration);
+    _duration = Duration.zero;
+    _reportedPositionSecond = null;
     _available = List.unmodifiable(available);
     _selected = selected;
     _emit(PlaybackState(
       phase: PlaybackPhase.resolving,
+      position: _position,
       selectedTrack: selected,
     ));
     try {
-      await _open(selected, generation: generation, resume: false);
+      await _open(
+        selected,
+        generation: generation,
+        resume: _position > Duration.zero,
+      );
     } catch (error) {
       if (_isCurrent(generation)) await _recover(error, generation);
     }
@@ -119,6 +135,7 @@ class PlaybackSessionController {
     _emit(_state.copyWith(
       phase: PlaybackPhase.opening,
       position: _position,
+      duration: _duration,
       selectedTrack: track,
     ));
     await _player.open(track);
@@ -128,12 +145,17 @@ class PlaybackSessionController {
 
   void _onPlaying(bool playing) {
     if (_disposed) return;
+    final wasPlaying = _playing;
     _playing = playing;
-    if (!playing) return;
+    if (!playing) {
+      if (wasPlaying) onPaused?.call();
+      return;
+    }
     _stallTimer?.cancel();
     _emit(_state.copyWith(
       phase: PlaybackPhase.playing,
       position: _position,
+      duration: _duration,
       selectedTrack: _selected,
     ));
     _stableTimer?.cancel();
@@ -153,6 +175,7 @@ class PlaybackSessionController {
         _emit(_state.copyWith(
           phase: PlaybackPhase.playing,
           position: _position,
+          duration: _duration,
           selectedTrack: _selected,
         ));
       }
@@ -161,6 +184,7 @@ class PlaybackSessionController {
     _emit(_state.copyWith(
       phase: PlaybackPhase.buffering,
       position: _position,
+      duration: _duration,
       selectedTrack: _selected,
     ));
     _stallTimer?.cancel();
@@ -175,6 +199,19 @@ class PlaybackSessionController {
   void _onPosition(Duration position) {
     if (_disposed) return;
     _position = position;
+    final second = position.inSeconds;
+    if (_reportedPositionSecond == second) return;
+    _reportedPositionSecond = second;
+    onProgress?.call(
+      Duration(seconds: second),
+      Duration(seconds: _duration.inSeconds),
+    );
+  }
+
+  void _onDuration(Duration duration) {
+    if (_disposed) return;
+    _duration = duration;
+    _emit(_state.copyWith(duration: duration));
   }
 
   void _onCompleted(bool completed) {
@@ -183,6 +220,7 @@ class PlaybackSessionController {
     _emit(_state.copyWith(
       phase: PlaybackPhase.idle,
       position: _position,
+      duration: _duration,
       selectedTrack: _selected,
     ));
   }
@@ -204,6 +242,7 @@ class PlaybackSessionController {
         _emit(_state.copyWith(
           phase: PlaybackPhase.recovering,
           position: _position,
+          duration: _duration,
           attempt: round + 1,
           selectedTrack: _selected,
           message: '正在恢复播放（${round + 1}/3）',
@@ -252,6 +291,7 @@ class PlaybackSessionController {
         _emit(PlaybackState(
           phase: PlaybackPhase.failed,
           position: _position,
+          duration: _duration,
           attempt: _backoff.length,
           selectedTrack: _selected,
           manualQualityLocked: _state.manualQualityLocked,
@@ -264,6 +304,15 @@ class PlaybackSessionController {
   }
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
+
+  Duration _resumePosition(Duration requested, Duration knownDuration) {
+    if (requested <= Duration.zero) return Duration.zero;
+    if (knownDuration > Duration.zero &&
+        knownDuration - requested <= const Duration(seconds: 10)) {
+      return Duration.zero;
+    }
+    return requested;
+  }
 
   void _emit(PlaybackState next) {
     if (_disposed) return;

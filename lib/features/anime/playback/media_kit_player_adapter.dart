@@ -13,6 +13,7 @@ abstract interface class MediaKitBackend {
   Stream<bool> get playing;
   Stream<bool> get buffering;
   Stream<Duration> get position;
+  Stream<Duration> get durationChanges;
   Stream<bool> get completed;
   Stream<Object> get errors;
   Stream<Duration> get buffer;
@@ -39,6 +40,8 @@ class NativeMediaKitBackend implements MediaKitBackend {
   Stream<bool> get buffering => player.stream.buffering;
   @override
   Stream<Duration> get position => player.stream.position;
+  @override
+  Stream<Duration> get durationChanges => player.stream.duration;
   @override
   Stream<bool> get completed => player.stream.completed;
   @override
@@ -133,6 +136,8 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   Stream<bool> get buffering => _backend.buffering;
   @override
   Stream<Duration> get position => _backend.position;
+  @override
+  Stream<Duration> get duration => _backend.durationChanges;
   @override
   Stream<bool> get completed => _backend.completed;
   @override

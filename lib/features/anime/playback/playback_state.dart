@@ -14,6 +14,7 @@ class PlaybackState {
   const PlaybackState({
     required this.phase,
     this.position = Duration.zero,
+    this.duration = Duration.zero,
     this.message,
     this.attempt = 0,
     this.selectedTrack,
@@ -24,6 +25,7 @@ class PlaybackState {
 
   final PlaybackPhase phase;
   final Duration position;
+  final Duration duration;
   final String? message;
   final int attempt;
   final VideoTrack? selectedTrack;
@@ -32,6 +34,7 @@ class PlaybackState {
   PlaybackState copyWith({
     PlaybackPhase? phase,
     Duration? position,
+    Duration? duration,
     String? message,
     int? attempt,
     VideoTrack? selectedTrack,
@@ -40,6 +43,7 @@ class PlaybackState {
       PlaybackState(
         phase: phase ?? this.phase,
         position: position ?? this.position,
+        duration: duration ?? this.duration,
         message: message,
         attempt: attempt ?? this.attempt,
         selectedTrack: selectedTrack ?? this.selectedTrack,

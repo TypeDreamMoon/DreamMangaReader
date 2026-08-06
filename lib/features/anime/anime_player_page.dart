@@ -10,6 +10,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../app/anime_download_store.dart';
+import '../../app/anime_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
@@ -180,6 +181,7 @@ class AnimePlayerPage extends StatefulWidget {
     required this.animeTitle,
     required this.episodes,
     required this.index,
+    this.initialPosition = Duration.zero,
     this.dependencies,
   });
 
@@ -188,6 +190,7 @@ class AnimePlayerPage extends StatefulWidget {
   final String animeTitle;
   final List<Chapter> episodes; // 番剧沿用章节契约:一集=一个 Chapter
   final int index;
+  final Duration initialPosition;
   final AnimePlayerDependencies? dependencies;
 
   @override
@@ -211,6 +214,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   StreamSubscription<PlaybackState>? _stateSubscription;
   int _loadGeneration = 0;
   bool _disposed = false;
+  AnimeLibraryStore? _library;
+  Duration _lastPosition = Duration.zero;
+  bool _initialResumePending = true;
 
   // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -237,6 +243,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _library = AnimeLibraryScope.maybeRead(context);
+  }
+
+  @override
   void dispose() {
     _disposed = true;
     _loadGeneration++;
@@ -249,6 +261,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       unawaited(_nativePlayer?.dispose());
     }
     _source?.dispose();
+    unawaited(_library?.flushPending());
     super.dispose();
   }
 
@@ -343,6 +356,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               delegate: tracks,
               localTrack: () => localTrackForEpisode(_ep.id),
             ),
+      onProgress: _recordProgress,
+      onPaused: () => unawaited(_library?.flushPending()),
     );
     _session = session;
     _stateSubscription = session.states.listen((state) {
@@ -369,7 +384,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
-      await _session!.start(tracks, pick);
+      final initialPosition =
+          _initialResumePending ? widget.initialPosition : Duration.zero;
+      _initialResumePending = false;
+      await _session!.start(
+        tracks,
+        pick,
+        initialPosition: initialPosition,
+      );
       if (_disposed || generation != _loadGeneration) return;
       if (_rate != 1.0 && _session!.state.selectedTrack != null) {
         await _adapter!.setRate(_rate);
@@ -384,15 +406,35 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     }
   }
 
-  void _go(int delta) => _goTo(_i + delta);
+  void _go(int delta) => unawaited(_goTo(_i + delta));
 
   /// 跳到第 [index] 集(绝对)。越界/同集则忽略;换集后关面板。
-  void _goTo(int index) {
+  Future<void> _goTo(int index) async {
     if (index < 0 || index >= widget.episodes.length) return;
     _scaffoldKey.currentState?.closeEndDrawer();
     if (index == _i) return;
+    await _library?.flushPending();
+    if (_disposed) return;
     setState(() => _i = index);
-    _load();
+    _lastPosition = Duration.zero;
+    await _load();
+  }
+
+  void _recordProgress(Duration position, Duration duration) {
+    _lastPosition = position;
+    final library = _library;
+    if (library == null) return;
+    final episode = _ep;
+    library.saveProgress(
+      sourceId: widget.meta.id,
+      animeId: widget.animeId,
+      title: widget.animeTitle,
+      episodeId: episode.id,
+      episodeName: episode.name,
+      episodeIndex: _i,
+      position: position,
+      duration: duration,
+    );
   }
 
   /// 切线路 / 清晰度(与 _play 同逻辑,含错误兜底)。切完关面板。
@@ -401,7 +443,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     if (t.url == _current?.url) return;
     final generation = ++_loadGeneration;
     try {
-      await _session!.start(_tracks, t);
+      await _session!.start(
+        _tracks,
+        t,
+        initialPosition: _lastPosition,
+      );
       if (_disposed || generation != _loadGeneration) return;
       _session!.setManualQualityLocked(true);
       if (_rate != 1.0) await _adapter!.setRate(_rate);
