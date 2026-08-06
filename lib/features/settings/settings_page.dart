@@ -102,6 +102,14 @@ class SettingsPage extends StatelessWidget {
                       lib.uiScale, 0.7, 1.6, 18, (v) => lib.uiScale = v,
                       pct: true),
                   if (isWindows) _fontSelector(context, p, lib),
+                  if (isWindows)
+                    _switch(
+                      Icons.move_to_inbox_rounded,
+                      l10n.closeToTray,
+                      l10n.closeToTraySub,
+                      lib.closeToTray,
+                      (value) => lib.closeToTray = value,
+                    ),
                 ]),
               _group(l10n.secReading, [
                 _rowCard(AppSegmentedRow<ReaderMode>(

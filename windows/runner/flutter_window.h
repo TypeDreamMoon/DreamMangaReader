@@ -1,8 +1,12 @@
 #ifndef RUNNER_FLUTTER_WINDOW_H_
 #define RUNNER_FLUTTER_WINDOW_H_
 
+#include <windows.h>
+#include <shellapi.h>
+
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
 
 #include <memory>
 
@@ -23,11 +27,26 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void AddTrayIcon();
+  void RemoveTrayIcon();
+  void ShowFromTray();
+  void ShowTrayMenu();
+  void ExitFromTray();
+
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      window_channel_;
+  NOTIFYICONDATAW tray_icon_{};
+  UINT taskbar_created_message_ = 0;
+  bool tray_icon_added_ = false;
+  bool close_to_tray_ = true;
+  bool close_behavior_ready_ = false;
+  bool pending_close_ = false;
+  bool force_quit_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

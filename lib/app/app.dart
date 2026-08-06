@@ -12,6 +12,7 @@ import '../core/downloads/android_download_foreground.dart';
 import '../core/downloads/download_policy.dart';
 import '../core/downloads/download_task_repository.dart';
 import '../core/log/app_log.dart';
+import '../core/platform/windows_window_bridge.dart';
 import 'anime_download_store.dart';
 import 'auth_store.dart';
 import 'download_coordinator_scope.dart';
@@ -56,6 +57,7 @@ class _AppState extends State<App> {
   late final bool _ownsDownloadCoordinator;
   final AndroidDownloadForegroundBridge _androidDownloadForeground =
       AndroidDownloadForegroundBridge();
+  final WindowsWindowBridge _windowsWindow = WindowsWindowBridge();
 
   @override
   void initState() {
@@ -70,12 +72,16 @@ class _AppState extends State<App> {
           settings: () => _downloadSettings.policy,
         );
     unawaited(_loadDownloadState());
+    _library.closeToTrayVN.addListener(_syncWindowsCloseBehavior);
     _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
     _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
     // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
     // 能补传上次退出前漏掉的变化),再跑启动自动同步(源仓已在 main 里 load 好)。
+    final libraryLoad = _library.load().then((_) {
+      if (mounted) _syncWindowsCloseBehavior();
+    });
     Future.wait([
-      _library.load(),
+      libraryLoad,
       _novelLibrary.load(),
     ]).then((_) async {
       if (!mounted) return;
@@ -147,6 +153,20 @@ class _AppState extends State<App> {
           AppLog.i.warn(
             LogCat.download,
             'Android 后台下载通知同步失败',
+            detail: '$error',
+          );
+        },
+      ),
+    );
+  }
+
+  void _syncWindowsCloseBehavior() {
+    unawaited(
+      _windowsWindow.setCloseToTray(_library.closeToTray).catchError(
+        (Object error) {
+          AppLog.i.warn(
+            LogCat.app,
+            'Windows 关闭行为同步失败',
             detail: '$error',
           );
         },
@@ -242,6 +262,7 @@ class _AppState extends State<App> {
   void dispose() {
     _theme.dispose();
     _source.dispose();
+    _library.closeToTrayVN.removeListener(_syncWindowsCloseBehavior);
     _library.dispose();
     _novelLibrary.dispose();
     _downloads.dispose();

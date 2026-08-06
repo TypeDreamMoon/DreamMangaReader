@@ -30,6 +30,8 @@
   "language": "Language",
   "languageSub": "UI display language (this device only, not synced)",
   "uiScale": "UI scale",
+  "closeToTray": "Close to system tray",
+  "closeToTraySub": "Hide the window when closed so downloads can continue",
   "font": "Font",
   "chooseFont": "Choose font",
   "about": "About",

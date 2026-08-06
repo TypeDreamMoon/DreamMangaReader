@@ -30,6 +30,8 @@
   "language": "語言",
   "languageSub": "介面顯示語言(僅本機,不隨雲端同步)",
   "uiScale": "介面縮放",
+  "closeToTray": "關閉到系統匣",
+  "closeToTraySub": "點擊關閉按鈕時隱藏到系統匣，讓下載繼續執行",
   "font": "字型",
   "chooseFont": "選擇字型",
   "about": "關於",

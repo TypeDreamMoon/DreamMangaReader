@@ -30,6 +30,8 @@
   "language": "言語",
   "languageSub": "表示言語(この端末のみ・同期しません)",
   "uiScale": "UIスケール",
+  "closeToTray": "閉じるときにトレイへ格納",
+  "closeToTraySub": "閉じるボタンでウィンドウを隠し、ダウンロードを継続します",
   "font": "フォント",
   "chooseFont": "フォントを選択",
   "about": "情報",
