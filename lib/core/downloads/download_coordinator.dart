@@ -80,6 +80,26 @@ final class DownloadCoordinator extends ChangeNotifier {
     _requestPump();
   }
 
+  Future<void> importCompleted(Iterable<DownloadTask> tasks) {
+    return _serialize(() async {
+      final imports = tasks.toList(growable: false);
+      for (final task in imports) {
+        if (task.state != DownloadTaskState.completed) {
+          throw ArgumentError.value(task.state, 'task.state');
+        }
+      }
+
+      final next = {..._tasks};
+      var changed = false;
+      for (final task in imports) {
+        if (next.containsKey(task.id)) continue;
+        next[task.id] = task;
+        changed = true;
+      }
+      if (changed) await _commit(next);
+    });
+  }
+
   Future<void> pause(String id) async {
     _active[id]?.cancellation.cancel();
     await _serialize(() async {

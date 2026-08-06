@@ -60,6 +60,31 @@ void main() {
     expect(() => coordinator.enqueue(taskFixture()), throwsStateError);
   });
 
+  test('completed imports are atomic and idempotent', () async {
+    await coordinator.load();
+    final completed = taskFixture(
+      id: 'legacy:manga:chapter',
+      state: DownloadTaskState.completed,
+    );
+
+    await coordinator.importCompleted([completed]);
+    await coordinator.importCompleted([completed]);
+
+    expect(coordinator.task(completed.id), completed);
+    expect(repository.saved, hasLength(1));
+    expect(repository.saved.single, [completed]);
+  });
+
+  test('completed imports reject active tasks', () async {
+    await coordinator.load();
+
+    expect(
+      () => coordinator.importCompleted([taskFixture()]),
+      throwsArgumentError,
+    );
+    expect(repository.saved, isEmpty);
+  });
+
   test('pause and resume preserve a user pause reason', () async {
     await coordinator.load();
     final task = taskFixture();
