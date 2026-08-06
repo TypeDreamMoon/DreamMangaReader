@@ -392,7 +392,7 @@ class SyncController extends ChangeNotifier {
         for (final m in registeredSources)
           if (m.kind == kind)
             '${m.id}:${m.name}:${m.kind}:${m.experimental}:${m.useWebView}:'
-                '${m.imageReferer}:${m.needsLogin}:${_sig(m.script)}'
+                '${m.imageReferer}:${m.needsLogin}:${m.authKey}:${_sig(m.script)}'
       ]..sort();
       return _sig('${disabled.join(',')}|${scripts.join(',')}');
     }
@@ -422,7 +422,7 @@ class SyncController extends ChangeNotifier {
         SyncCategory.animeSources => srcSig('anime'),
         SyncCategory.novelSources => srcSig('novel'),
         SyncCategory.sourceRepo =>
-          _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}|${repo.token ?? ''}'),
+          _sig('${repo.repoUrl ?? ''}|${repo.localDir ?? ''}'),
       };
     }
     return out;

@@ -5,20 +5,110 @@ import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/source/source_repository.dart';
+import 'package:dream_manga_reader/core/source/source_registry.dart';
+import 'package:dream_manga_reader/core/storage/secret_store.dart';
 import 'package:dream_manga_reader/core/sync/sync_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+class _MemorySecretStore implements SecretStore {
+  final values = <String, String>{};
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async => values[key] = value;
+}
+
 void main() {
   late Directory sandbox;
+  late List<SourceMeta> originalSources;
 
   setUp(() async {
+    originalSources = List<SourceMeta>.of(registeredSources);
     SharedPreferences.setMockInitialValues({});
     sandbox = await Directory.systemTemp.createTemp('novel-sync-test-');
   });
 
   tearDown(() async {
+    registeredSources = originalSources;
     if (await sandbox.exists()) await sandbox.delete(recursive: true);
+  });
+
+  test('sync source metadata preserves a shared auth key', () async {
+    registeredSources = const [
+      SourceMeta(
+        id: 'xiaojie_novel',
+        name: '晓桀小说',
+        script: 'source code',
+        kind: 'novel',
+        needsLogin: true,
+        authKey: 'xiaojie_github',
+      ),
+    ];
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+
+    final blob = SyncData.build(
+      manga,
+      novels,
+      SourceRepository.instance,
+      categories: {SyncCategory.novelSources},
+    );
+    final entries = (blob['library'] as Map)['localSourcesNovel'] as List;
+
+    expect((entries.single as Map)['authKey'], 'xiaojie_github');
+    manga.dispose();
+    novels.dispose();
+  });
+
+  test('source repository sync exports no token and ignores legacy token',
+      () async {
+    const sentinel = 'DO_NOT_EXPORT_TOKEN_91f4';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final prefs = await SharedPreferences.getInstance();
+    final repository = SourceRepository.forTesting(
+      preferences: prefs,
+      secrets: _MemorySecretStore(),
+      cacheDirectory: sandbox,
+    )..token = 'device-only-token';
+
+    final blob = SyncData.build(
+      manga,
+      novels,
+      repository,
+      categories: {SyncCategory.sourceRepo},
+    );
+    expect(jsonEncode(blob), isNot(contains('device-only-token')));
+    expect((blob['sourceRepo'] as Map).containsKey('token'), isFalse);
+
+    await SyncData.apply(
+      {
+        'v': 1,
+        'library': {'v': 1},
+        'sourceRepo': {
+          'repoUrl': '',
+          'localDir': '',
+          'token': sentinel,
+        },
+      },
+      manga,
+      novels,
+      repository,
+      modes: {SyncCategory.sourceRepo: false},
+    );
+
+    expect(repository.token, 'device-only-token');
+    expect(jsonEncode(blob), isNot(contains(sentinel)));
+    manga.dispose();
+    novels.dispose();
   });
 
   test('sync build strips local paths and separates novel categories',

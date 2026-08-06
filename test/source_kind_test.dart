@@ -20,6 +20,20 @@ void main() {
     expect(novel.isNovel, true);
   });
 
+  test('source metadata preserves an optional shared auth key', () {
+    final parsed = SourceMeta.fromJson({
+      'id': 'xiaojie_novel',
+      'name': '晓桀小说',
+      'kind': 'novel',
+      'authKey': 'xiaojie_github',
+      'needsLogin': true,
+    }, script: 'source code');
+
+    expect(parsed.authKey, 'xiaojie_github');
+    expect(parsed.credentialKey, 'xiaojie_github');
+    expect(parsed.needsLogin, isTrue);
+  });
+
   test('source controller keeps manga and novel selections apart', () async {
     SharedPreferences.setMockInitialValues({
       'source.current.manga': 'm',
