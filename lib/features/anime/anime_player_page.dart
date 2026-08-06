@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
+import '../../app/anime_download_store.dart';
 import '../../app/theme/app_colors.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
@@ -123,12 +125,49 @@ class AnimePlayerDependencies {
     required this.tracks,
     required this.loadTracks,
     required this.videoBuilder,
+    this.localTrackForEpisode,
   });
 
   final PlayerAdapter player;
   final PlaybackTrackProvider tracks;
   final Future<List<VideoTrack>> Function(String episodeId) loadTracks;
   final Widget Function(BoxFit fit) videoBuilder;
+  final VideoTrack? Function(String episodeId)? localTrackForEpisode;
+}
+
+class _OfflineAwareTracks implements PlaybackTrackProvider {
+  const _OfflineAwareTracks({
+    required this.delegate,
+    required this.localTrack,
+  });
+
+  final PlaybackTrackProvider delegate;
+  final VideoTrack? Function() localTrack;
+
+  @override
+  Future<List<VideoTrack>> refresh() async {
+    final local = localTrack();
+    return local == null ? delegate.refresh() : [local];
+  }
+
+  @override
+  VideoTrack? matchRefreshed(
+    VideoTrack current,
+    List<VideoTrack> refreshed,
+  ) {
+    if (_isLocal(current)) return refreshed.firstOrNull;
+    return delegate.matchRefreshed(current, refreshed);
+  }
+
+  @override
+  VideoTrack? lowerQuality(VideoTrack current, List<VideoTrack> available) =>
+      _isLocal(current) ? null : delegate.lowerQuality(current, available);
+
+  @override
+  VideoTrack? alternateLine(VideoTrack current, List<VideoTrack> available) =>
+      _isLocal(current) ? null : delegate.alternateLine(current, available);
+
+  bool _isLocal(VideoTrack track) => track.url.startsWith('file:');
 }
 
 /// 番剧播放页:media_kit(libmpv)播放一集。取源的 [MangaSource.getVideo] 拿清晰度/线路,
@@ -166,6 +205,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   MangaSource? _source;
   PlayerAdapter? _adapter;
   Future<List<VideoTrack>> Function(String episodeId)? _loadTracks;
+  VideoTrack? Function(String episodeId)? _localTrackForEpisode;
   Widget Function(BoxFit fit)? _videoBuilder;
   PlaybackSessionController? _session;
   StreamSubscription<PlaybackState>? _stateSubscription;
@@ -187,6 +227,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         adapter: injected.player,
         tracks: injected.tracks,
         loadTracks: injected.loadTracks,
+        localTrackForEpisode: injected.localTrackForEpisode,
         videoBuilder: injected.videoBuilder,
       );
       unawaited(_load());
@@ -232,6 +273,19 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       final dio = Dio();
       Future<List<VideoTrack>> loadTracks(String episodeId) =>
           source.getVideo(widget.animeId, episodeId);
+      VideoTrack? localTrackForEpisode(String episodeId) {
+        final manifest = AnimeDownloadScope.maybeRead(context)?.localManifest(
+          widget.meta.id,
+          widget.animeId,
+          episodeId,
+        );
+        if (manifest == null) return null;
+        return VideoTrack(
+          url: Uri.file(manifest, windows: Platform.isWindows).toString(),
+          quality: '离线',
+        );
+      }
+
       final resolver = TrackResolver(
         fetchPlaylist: (uri, headers) async {
           final response = await dio.get<String>(
@@ -255,6 +309,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         tracks: resolver,
         loadTracks: (episodeId) async =>
             resolver.resolve(await loadTracks(episodeId)),
+        localTrackForEpisode: localTrackForEpisode,
         videoBuilder: (fit) => Video(controller: videoController, fit: fit),
       );
       await _load();
@@ -273,11 +328,21 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     required PlaybackTrackProvider tracks,
     required Future<List<VideoTrack>> Function(String episodeId) loadTracks,
     required Widget Function(BoxFit fit) videoBuilder,
+    VideoTrack? Function(String episodeId)? localTrackForEpisode,
   }) {
     _adapter = adapter;
     _loadTracks = loadTracks;
+    _localTrackForEpisode = localTrackForEpisode;
     _videoBuilder = videoBuilder;
-    final session = PlaybackSessionController(player: adapter, tracks: tracks);
+    final session = PlaybackSessionController(
+      player: adapter,
+      tracks: localTrackForEpisode == null
+          ? tracks
+          : _OfflineAwareTracks(
+              delegate: tracks,
+              localTrack: () => localTrackForEpisode(_ep.id),
+            ),
+    );
     _session = session;
     _stateSubscription = session.states.listen((state) {
       if (!mounted) return;
@@ -296,7 +361,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           ));
     }
     try {
-      final tracks = await _loadTracks!(_ep.id);
+      final local = _localTrackForEpisode?.call(_ep.id);
+      final tracks = local == null ? await _loadTracks!(_ep.id) : [local];
       if (_disposed || generation != _loadGeneration) return;
       if (tracks.isEmpty) throw StateError('没有解析到可播放的线路');
       _tracks = tracks;

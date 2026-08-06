@@ -178,6 +178,50 @@ void main() {
     expect(adapter.opened.last, _track360);
     expect(loadCalls, 1);
   });
+
+  testWidgets('complete offline episode bypasses online track resolution',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    var onlineLoads = 0;
+    const offline = VideoTrack(
+      url: 'file:///offline/index.m3u8',
+      quality: '离线',
+      hls: true,
+    );
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async {
+        onlineLoads++;
+        return const [_track];
+      },
+      localTrackForEpisode: (_) => offline,
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+        index: 0,
+        dependencies: dependencies,
+      ),
+    ));
+    await tester.pump();
+
+    expect(adapter.opened, [offline]);
+    expect(onlineLoads, 0);
+  });
 }
 
 class _PageFakeAdapter implements PlayerAdapter {
