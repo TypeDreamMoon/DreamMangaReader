@@ -145,6 +145,48 @@ void main() {
     await controller.dispose();
   });
 
+  test('pending seek near the beginning does not accept transient zero',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+    );
+    await controller.start(const [_track480], _track480);
+
+    await controller.seekTo(
+      const Duration(seconds: 2),
+      resumeAfterSeek: true,
+    );
+    adapter.positionController.add(Duration.zero);
+
+    expect(controller.state.pendingSeekTarget, const Duration(seconds: 2));
+    expect(controller.state.seeking, isTrue);
+    expect(adapter.playCalls, 0);
+    await controller.dispose();
+  });
+
+  test('pending seek accepts a coarse backend jump up to ten seconds ahead',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+    );
+    await controller.start(const [_track480], _track480);
+
+    await controller.seekTo(
+      const Duration(minutes: 5),
+      resumeAfterSeek: false,
+    );
+    adapter.positionController.add(const Duration(minutes: 5, seconds: 8));
+
+    expect(controller.state.pendingSeekTarget, isNull);
+    expect(controller.state.position, const Duration(minutes: 5, seconds: 8));
+    expect(controller.state.seeking, isFalse);
+    await controller.dispose();
+  });
+
   test('a stalled near-end session seek recovers at the explicit target', () {
     fakeAsync((async) {
       final adapter = _FakePlayerAdapter();

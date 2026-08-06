@@ -53,6 +53,7 @@ class PlaybackSessionController {
     Duration(seconds: 4),
   ];
   static const _seekConfirmationTolerance = Duration(seconds: 3);
+  static const _seekConfirmationAheadTolerance = Duration(seconds: 10);
 
   final PlayerAdapter _player;
   final PlaybackTrackProvider _tracks;
@@ -252,8 +253,12 @@ class PlaybackSessionController {
     if (_disposed) return;
     final pendingTarget = _pendingSeekTarget;
     if (pendingTarget != null) {
-      final distance = (position - pendingTarget).abs();
-      if (distance > _seekConfirmationTolerance) return;
+      if (position == Duration.zero && pendingTarget > Duration.zero) return;
+      final delta = position - pendingTarget;
+      if (delta < -_seekConfirmationTolerance ||
+          delta > _seekConfirmationAheadTolerance) {
+        return;
+      }
 
       final seekGeneration = _seekGeneration;
       final shouldResume = _resumeAfterSeek;
