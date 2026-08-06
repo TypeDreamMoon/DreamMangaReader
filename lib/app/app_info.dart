@@ -7,7 +7,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.6.0';
+  static const version = '1.7.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -19,6 +19,7 @@ class AppInfo {
     '小说排版:字号行距页边距、阅读主题、屏幕常亮 · 键盘 / 滚轮 / 触摸翻页',
     '小说导入:本地 TXT(UTF-8 / GBK / Big5 自动识别)与可重排 EPUB',
     '番剧在线观看:HLS 播放器(libmpv)· 悬浮控制面板(选集/线路/倍速)',
+    '番剧断线自愈:退避重连 → 刷新地址 → 自动降码率 / 换线路 · 本地分片缓存与预取',
     '哔哩哔哩番剧:扫码登录 · DASH 高清 · 追番 / 热门 · Bangumi 评分',
     '瀑布流发现页 + 随机飞入动画(漫画 / 小说共用布局与列数设置)',
     '详情页封面飞入 + 封面主题色(KMeans)+ Bangumi 评分',
@@ -26,8 +27,10 @@ class AppInfo {
     '离线下载 · 阅读进度记忆 · 阅读历史',
     '云同步:WebDAV / 账号登录(IAM 浏览器授权)· 可选类别双向合并',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓 · 刷新后脚本立即生效',
+    '私有源认证:登录凭据存入系统安全存储 · 多源共用一份登录 · 备份 / 同步不带凭据',
     '分页集合协议:超大章节表 / 图片集分批拉取(上限 500 次续拉)',
     'Base64 内联图页:阅读、保存 / 分享、离线下载全支持',
+    'Android 后台更新:前台服务续传 · 通知栏进度 / 取消 · 校验后一键安装',
     '书架备份 / 恢复 · 源可用性自检',
     '普通 / 日漫 / 竖翻 / 滚动 四种阅读模式 · 缩放适配 · 色彩滤镜',
     '每漫画模式记忆 + 高瘦条漫自动识别 · 条漫自动滚动 · 保存/分享页',
