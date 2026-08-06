@@ -92,7 +92,8 @@ final class DownloadCoordinator extends ChangeNotifier {
       final next = {..._tasks};
       var changed = false;
       for (final task in imports) {
-        if (next.containsKey(task.id)) continue;
+        final existing = next[task.id];
+        if (existing?.state == DownloadTaskState.completed) continue;
         next[task.id] = task;
         changed = true;
       }

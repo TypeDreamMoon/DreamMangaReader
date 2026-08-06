@@ -75,6 +75,21 @@ void main() {
     expect(repository.saved.single, [completed]);
   });
 
+  test('completed imports reconcile an unfinished matching task', () async {
+    final queued = taskFixture(id: 'content:manga:chapter');
+    final completed = taskFixture(
+      id: queued.id,
+      state: DownloadTaskState.completed,
+    );
+    repository.loaded = [queued];
+    await coordinator.load();
+
+    await coordinator.importCompleted([completed]);
+
+    expect(coordinator.task(queued.id), completed);
+    expect(repository.saved.last, [completed]);
+  });
+
   test('completed imports reject active tasks', () async {
     await coordinator.load();
 
