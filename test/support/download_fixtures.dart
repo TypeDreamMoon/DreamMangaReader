@@ -1,4 +1,15 @@
 import 'package:dream_manga_reader/core/downloads/download_task.dart';
+import 'package:dream_manga_reader/core/downloads/download_policy.dart';
+
+const unrestrictedEnvironment = DownloadEnvironment(
+  connected: true,
+  wifi: true,
+  metered: false,
+  roaming: false,
+  batteryLow: false,
+  storageAvailable: true,
+  freeBytes: 8 * gibibyte,
+);
 
 DownloadTask taskFixture({
   String id = 'manga:source:book:chapter',

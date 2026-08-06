@@ -18,6 +18,8 @@ enum DownloadTaskState {
 enum DownloadPauseReason {
   user,
   wifi,
+  roaming,
+  battery,
   storage,
   auth,
   sourceRefresh,
