@@ -137,6 +137,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   String? savedSourceId,
   _FakeAnimeSource Function(SourceMeta meta, int buildIndex)? sourceFactory,
   NavigatorObserver? navigatorObserver,
+  AnimeSearchVariants? searchVariants,
   bool settle = true,
 }) async {
   SharedPreferences.setMockInitialValues({
@@ -171,6 +172,7 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
           body: AnimeBrowser(
             sourceBuilder: build,
             sourceCatalog: sources,
+            searchVariants: searchVariants,
           ),
         ),
       ),
@@ -498,5 +500,156 @@ void main() {
     expect(find.text('混合 · 全部源'), findsOneWidget);
     expect(instances['anime-a']!.last.discoveryCalls, 1);
     expect(instances['anime-b']!.last.discoveryCalls, 1);
+
+    final mixedA = instances['anime-a']!.last;
+    final mixedB = instances['anime-b']!.last;
+    harness.library.setSourceEnabled('anime-b', false, 2);
+    await tester.pumpAndSettle();
+
+    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(mixedA.disposed, isTrue);
+    expect(mixedB.disposed, isTrue);
+    expect(instances['anime-a']!.last.discoveryCalls, 1);
+  });
+
+  testWidgets('stale anime results do not survive a new search',
+      (tester) async {
+    final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: true,
+      instances: instances,
+      sources: const [
+        SourceMeta(id: 'anime-a', name: '番剧 A', script: '', kind: 'anime'),
+      ],
+      settle: false,
+      sourceFactory: (meta, _) => _FakeAnimeSource(
+        meta,
+        gate: gate.future,
+        discoveryResult: const Paged([Manga(id: 'old', title: '旧结果')]),
+        searchResult: const Paged([Manga(id: 'new', title: '新结果')]),
+      ),
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    tester.state<AnimeBrowserState>(find.byType(AnimeBrowser)).runSearch('新查询');
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('旧结果'), findsNothing);
+    expect(find.text('新结果'), findsOneWidget);
+    expect(instances['anime-a']!.single.searchCalls, 1);
+  });
+
+  testWidgets('mixed translation fallback is prepared once after all sources',
+      (tester) async {
+    var variantCalls = 0;
+    String? variantQuery;
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      searchVariants: (query, library) async {
+        variantCalls++;
+        variantQuery = query;
+        return const ['翻译名称'];
+      },
+      sourceFactory: (meta, _) => _FakeAnimeSource(
+        meta,
+        searchHandler: (query, page) async =>
+            query == '翻译名称' && meta.id == 'anime-a'
+                ? const Paged([Manga(id: 'translated', title: '翻译命中')])
+                : const Paged([]),
+      ),
+    );
+    addTearDown(() {
+      harness.library.dispose();
+      harness.controller.dispose();
+    });
+
+    tester
+        .state<AnimeBrowserState>(find.byType(AnimeBrowser))
+        .runSearch('原始名称');
+    await tester.pumpAndSettle();
+
+    expect(variantCalls, 1);
+    expect(variantQuery, '原始名称');
+    expect(find.text('翻译命中'), findsOneWidget);
+    expect(instances['anime-a']!.single.searchCalls, 2);
+    expect(instances['anime-b']!.single.searchCalls, 2);
+  });
+
+  testWidgets('Bili login bar is limited to the selected Bili source',
+      (tester) async {
+    const bili = SourceMeta(
+      id: kBiliSourceId,
+      name: '哔哩哔哩',
+      script: '',
+      kind: 'anime',
+    );
+    final mixedInstances = <String, List<_FakeAnimeSource>>{};
+    final mixed = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: mixedInstances,
+      sources: const [
+        bili,
+        SourceMeta(id: 'anime-a', name: '番剧 A', script: '', kind: 'anime'),
+      ],
+    );
+    expect(find.textContaining('登录后可看追番'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    mixed.library.dispose();
+    mixed.controller.dispose();
+
+    final selectedInstances = <String, List<_FakeAnimeSource>>{};
+    final selected = await _pumpBrowser(
+      tester,
+      showSourcePicker: true,
+      instances: selectedInstances,
+      sources: const [bili],
+    );
+    addTearDown(() {
+      selected.library.dispose();
+      selected.controller.dispose();
+    });
+    expect(find.textContaining('登录后可看追番'), findsOneWidget);
+  });
+
+  testWidgets('disposing anime browser invalidates pending source loads',
+      (tester) async {
+    final gate = Completer<void>();
+    final instances = <String, List<_FakeAnimeSource>>{};
+    final harness = await _pumpBrowser(
+      tester,
+      showSourcePicker: false,
+      instances: instances,
+      settle: false,
+      sourceFactory: (meta, _) => _FakeAnimeSource(
+        meta,
+        gate: gate.future,
+        discoveryResult: const Paged([Manga(id: 'late', title: '迟到结果')]),
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    gate.complete();
+    await tester.pump();
+
+    expect(
+      instances.values.expand((sources) => sources).every((s) => s.disposed),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+    harness.library.dispose();
+    harness.controller.dispose();
   });
 }

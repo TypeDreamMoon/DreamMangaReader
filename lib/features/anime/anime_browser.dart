@@ -114,19 +114,22 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     final showSourcePicker = library.showSourcePicker;
     final signature = _enabledSources.map((source) => source.id).join('|');
     final enabledSourcesChanged = signature != _enabledSourceSignature;
-    final pickerWasEnabled = _showSourcePicker == true;
+    final settingChanged = showSourcePicker != _showSourcePicker;
     final mustConfigure = !_initialized ||
         controllerChanged ||
         enabledSourcesChanged ||
-        (!showSourcePicker && !_mixed) ||
-        (showSourcePicker && !pickerWasEnabled);
+        settingChanged;
 
-    _initialized = true;
-    _showSourcePicker = showSourcePicker;
-    _enabledSourceSignature = signature;
     if (mustConfigure) {
-      // 隐藏选择器时始终使用混合源；首次显示或从隐藏切回显示时恢复保存的单源。
-      _mixed = !showSourcePicker;
+      if (!showSourcePicker) {
+        _mixed = true;
+      } else if (!_initialized || settingChanged) {
+        // 首次显示或从强制混合切回时，恢复保存的单源。
+        _mixed = false;
+      }
+      _initialized = true;
+      _showSourcePicker = showSourcePicker;
+      _enabledSourceSignature = signature;
       _configureSources();
     }
   }
@@ -235,7 +238,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
         _error = null;
         _sortResults();
       });
-      _maybeFallback(); // 搜索首页零结果 → 尝试译名回退
+      await _maybeFallback(generation); // 搜索首页零结果 → 尝试译名回退
     } catch (e) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
@@ -279,7 +282,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
         cursor.loading = false;
         if (mounted) {
           setState(_recomputeMixedFlags);
-          _maybeFallback();
+          await _maybeFallback(generation);
         }
       }
     }
@@ -325,29 +328,33 @@ class AnimeBrowserState extends State<AnimeBrowser> {
 
   /// 搜索翻译回退:一轮搜索结束且零结果时,把原查询翻成 简/繁/英/日 逐个重搜,直到有
   /// 结果或全试完。默认开(设置「搜索翻译回退」可关)。番剧单源、顺序加载,无需代际守卫。
-  void _maybeFallback() {
-    if (!mounted || _loading) return;
-    if (_query.isEmpty || _results.isNotEmpty || _error != null) return;
-    if (!LibraryScope.read(context).translateSearch) return;
-    if (_fallbackQueue == null) {
-      _prepareFallback();
-    } else if (_fallbackQueue!.isNotEmpty) {
-      _query = _fallbackQueue!.removeAt(0);
-      _reset();
+  Future<void> _maybeFallback(int generation) async {
+    if (!mounted ||
+        generation != _loadGeneration ||
+        _loading ||
+        _query.isEmpty ||
+        _results.isNotEmpty ||
+        _error != null ||
+        !LibraryScope.read(context).translateSearch) {
+      return;
     }
-  }
-
-  Future<void> _prepareFallback() async {
-    _fallbackQueue = const []; // 占位:翻译在途期间不再重入
-    final orig = _origQuery;
-    if (orig.isEmpty) return;
-    final store = LibraryScope.read(context);
-    final queue = await TranslatedSearch.variants(orig,
-        providers: store.translateProviderOrder,
-        targets: store.translateTargetsFor(orig),
-        llm: store.translateLlm);
-    if (!mounted || _origQuery != orig) return; // 用户中途换了查询 → 放弃
-    _fallbackQueue = List.of(queue);
+    if (_fallbackQueue == null) {
+      _fallbackQueue = const [];
+      final original = _origQuery;
+      final store = LibraryScope.read(context);
+      final variants = widget.searchVariants != null
+          ? await widget.searchVariants!(original, store)
+          : await TranslatedSearch.variants(
+              original,
+              providers: store.translateProviderOrder,
+              targets: store.translateTargetsFor(original),
+              llm: store.translateLlm,
+            );
+      if (!mounted || generation != _loadGeneration || _origQuery != original) {
+        return;
+      }
+      _fallbackQueue = List.of(variants);
+    }
     if (_fallbackQueue!.isNotEmpty) {
       _query = _fallbackQueue!.removeAt(0);
       _reset();
