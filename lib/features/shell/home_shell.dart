@@ -27,9 +27,9 @@ class _HomeShellState extends State<HomeShell>
   int _index = 0;
   final Set<int> _built = {0}; // 懒加载:只构建访问过的页,减轻启动 + 语义树负担
 
-  // 切页动画:IndexedStack 保留各页状态,切换时让新页「淡入 + 轻微上滑」。
+  // IndexedStack 立即隐藏旧页,只让新页做短促入场,避免透明页面交叠。
   late final AnimationController _ac = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 300));
+      vsync: this, duration: const Duration(milliseconds: 120));
   late final Animation<double> _t =
       CurvedAnimation(parent: _ac, curve: Curves.easeOutCubic);
 
@@ -100,14 +100,20 @@ class _HomeShellState extends State<HomeShell>
     // 切页入场只做整页淡入;方向性平移交给各页(标题栏落下、内容升起,见 TabEntrance),
     // 不再整页统一上移——否则标题栏也跟着一起上移,做不出「上下对开」。
     final body = FadeTransition(
-      opacity: _t.drive(Tween(begin: 0.4, end: 1)),
+      key: const Key('home-tab-transition'),
+      opacity: _t.drive(Tween(begin: 0.88, end: 1)),
       child: TabEntrance(
         animation: _t,
         child: IndexedStack(
           index: _index,
           children: [
             for (var i = 0; i < _pages.length; i++)
-              _built.contains(i) ? _pages[i] : const SizedBox.shrink(),
+              _built.contains(i)
+                  ? KeyedSubtree(
+                      key: ValueKey('home-tab-$i'),
+                      child: _pages[i],
+                    )
+                  : const SizedBox.shrink(),
           ],
         ),
       ),
