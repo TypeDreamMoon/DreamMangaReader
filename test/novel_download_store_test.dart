@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:dream_manga_reader/app/novel_download_store.dart';
+import 'package:dream_manga_reader/core/downloads/content_download_task.dart';
+import 'package:dream_manga_reader/core/downloads/download_executor.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/novel/novel_document_cache.dart';
 import 'package:dream_manga_reader/core/novel/novel_source.dart';
@@ -80,6 +82,7 @@ class _FakeNovelSource implements NovelSource {
 void main() {
   late Directory temp;
   late _FakeNovelSource source;
+  late List<SourceMeta> previousSources;
   const meta = SourceMeta(
     id: 'source',
     name: '小说源',
@@ -99,9 +102,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     temp = await Directory.systemTemp.createTemp('novel-download-test-');
     source = _FakeNovelSource();
+    previousSources = registeredSources;
+    registeredSources = const [meta];
   });
 
   tearDown(() async {
+    registeredSources = previousSources;
     if (await temp.exists()) await temp.delete(recursive: true);
   });
 
@@ -125,6 +131,40 @@ void main() {
         await restored.localDocument('source', 'novel', 'chapter'), isNotNull);
     store.dispose();
     restored.dispose();
+  });
+
+  test('coordinator execution reports bytes and updates legacy index',
+      () async {
+    final store = makeStore();
+    await store.load();
+    final progress = <(int, int)>[];
+    final task = ContentDownloadTask.novel(
+      sourceId: 'source',
+      contentId: 'novel',
+      contentTitle: '测试小说',
+      chapterId: 'chapter',
+      chapterTitle: '第一章',
+      now: 1,
+    );
+
+    await store.execute(
+      DownloadExecutionContext(
+        cancellation: DownloadCancellation(),
+        reportProgress: (completed, total) async {
+          progress.add((completed, total));
+        },
+        checkpoint: () async {},
+      ),
+      task,
+    );
+
+    expect(store.isDownloaded('source', 'novel', 'chapter'), isTrue);
+    expect(await store.localDocument('source', 'novel', 'chapter'), isNotNull);
+    expect(progress, hasLength(1));
+    expect(progress.single.$1, greaterThan(0));
+    expect(progress.single.$1, progress.single.$2);
+    expect(source.disposed, isTrue);
+    store.dispose();
   });
 
   test('failed chapter is retryable and never marked complete', () async {

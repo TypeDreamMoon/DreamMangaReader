@@ -7,6 +7,9 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/downloads/content_download_task.dart';
+import '../core/downloads/download_executor.dart';
+import '../core/downloads/download_task.dart';
 import '../core/novel/models.dart';
 import '../core/novel/novel_document_cache.dart';
 import '../core/novel/novel_source.dart';
@@ -122,7 +125,7 @@ class _NovelDownloadJob {
   String get key => _chapterKey(source.id, novel.id, chapter.id);
 }
 
-class NovelDownloadStore extends ChangeNotifier {
+class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   NovelDownloadStore({
     NovelDownloadRootProvider? rootProvider,
     NovelSourceBuilder sourceBuilder = buildNovelSource,
@@ -176,6 +179,48 @@ class NovelDownloadStore extends ChangeNotifier {
   }
 
   int get activeCount => _progress.length;
+
+  @override
+  DownloadContentKind get kind => DownloadContentKind.novel;
+
+  @override
+  Future<void> execute(
+    DownloadExecutionContext context,
+    DownloadTask task,
+  ) async {
+    final request = ContentDownloadRequest.fromTask(task);
+    final source = _sourceById(request.sourceId);
+    if (!source.isNovel) {
+      throw StateError('source is not a novel source: ${source.id}');
+    }
+    final job = _NovelDownloadJob(
+      source,
+      Novel(id: request.contentId, title: task.title),
+      NovelChapter(id: request.chapterId, title: task.itemTitle),
+      0,
+    );
+    if (_completed.containsKey(job.key)) return;
+    _progress[job.key] = 0;
+    _notify();
+    try {
+      await _download(job, context: context);
+      _failures.remove(job.key);
+    } catch (error) {
+      if (!context.cancellation.isCancelled) {
+        _failures[job.key] = NovelDownloadFailure(
+          source: job.source,
+          novel: job.novel,
+          chapter: job.chapter,
+          error: error,
+          failedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+      rethrow;
+    } finally {
+      _progress.remove(job.key);
+      _notify();
+    }
+  }
 
   Future<void> get idle {
     if (!_running && _queue.isEmpty) return Future.value();
@@ -369,10 +414,35 @@ class NovelDownloadStore extends ChangeNotifier {
   }
 
   Future<void> _run(_NovelDownloadJob job) async {
+    try {
+      await _download(job);
+      _failures.remove(job.key);
+    } catch (error) {
+      if (!_isCancelled(job)) {
+        _failures[job.key] = NovelDownloadFailure(
+          source: job.source,
+          novel: job.novel,
+          chapter: job.chapter,
+          error: error,
+          failedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+    } finally {
+      if (_generations[job.key] == job.generation) {
+        _progress.remove(job.key);
+      }
+      _notify();
+    }
+  }
+
+  Future<void> _download(
+    _NovelDownloadJob job, {
+    DownloadExecutionContext? context,
+  }) async {
     NovelSource? source;
     CachedNovelDocument? cached;
     try {
-      if (_isCancelled(job)) return;
+      _throwIfCancelled(job, context);
       _progress[job.key] = 0.2;
       _notify();
       source = _sourceBuilder(job.source);
@@ -380,7 +450,7 @@ class NovelDownloadStore extends ChangeNotifier {
         job.novel.id,
         job.chapter.id,
       );
-      if (_isCancelled(job)) return;
+      _throwIfCancelled(job, context);
       _progress[job.key] = 0.6;
       _notify();
       cached = await _requireCache().save(
@@ -390,9 +460,11 @@ class NovelDownloadStore extends ChangeNotifier {
         document,
         headers: imageHeadersOf(job.source),
       );
-      if (_isCancelled(job)) {
+      try {
+        _throwIfCancelled(job, context);
+      } on DownloadCancelledException {
         await _deleteDirectory(cached.directory);
-        return;
+        rethrow;
       }
       final record = DownloadedNovelChapter(
         source: job.source,
@@ -411,25 +483,23 @@ class NovelDownloadStore extends ChangeNotifier {
         await _deleteDirectory(cached.directory);
         rethrow;
       }
-      _failures.remove(job.key);
-    } catch (error) {
-      if (!_isCancelled(job)) {
-        _failures[job.key] = NovelDownloadFailure(
-          source: job.source,
-          novel: job.novel,
-          chapter: job.chapter,
-          error: error,
-          failedAt: DateTime.now().millisecondsSinceEpoch,
-        );
-      }
+      await context?.reportProgress(cached.byteCount, cached.byteCount);
     } finally {
-      if (_generations[job.key] == job.generation) {
-        _progress.remove(job.key);
-      }
       try {
         source?.dispose();
       } catch (_) {}
-      _notify();
+    }
+  }
+
+  void _throwIfCancelled(
+    _NovelDownloadJob job,
+    DownloadExecutionContext? context,
+  ) {
+    if (_disposed) throw const DownloadCancelledException();
+    if (context != null) {
+      context.cancellation.throwIfCancelled();
+    } else if (_isCancelled(job)) {
+      throw const DownloadCancelledException();
     }
   }
 
@@ -459,6 +529,13 @@ class NovelDownloadStore extends ChangeNotifier {
 
   bool _isCancelled(_NovelDownloadJob job) =>
       _disposed || _generations[job.key] != job.generation;
+
+  SourceMeta _sourceById(String id) {
+    for (final source in registeredSources) {
+      if (source.id == id) return source;
+    }
+    throw StateError('novel source is unavailable: $id');
+  }
 
   NovelDocumentCache _requireCache() {
     final cache = _cache;

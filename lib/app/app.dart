@@ -119,6 +119,7 @@ class _AppState extends State<App> {
     }
     if (!mounted) return;
     _downloadCoordinator.registerExecutor(_downloads);
+    _downloadCoordinator.registerExecutor(_novelDownloads);
   }
 
   @override
