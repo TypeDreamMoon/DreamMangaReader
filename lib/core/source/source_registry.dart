@@ -9,6 +9,10 @@ import 'source.dart';
 /// 内置(非脚本)原生源 id。这些源由引擎直接实现,不从仓库脚本加载。
 const String kBiliSourceId = 'bilibili';
 
+/// 内置源 id 集合。这些 id 在 [SourceMeta.credentialKey] 里当保留字处理 ——
+/// 详见 [SourceMeta.credentialKey]。
+const Set<String> kBuiltInSourceIds = {kBiliSourceId};
+
 /// 通用移动端 UA(WebView 与后续图片请求共用;不针对任何具体站点)。
 const String _mobileUa =
     'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 '
@@ -64,7 +68,20 @@ class SourceMeta {
   final bool needsLogin;
   final String? authKey;
 
-  String get credentialKey => authKey ?? id;
+  /// 该源用哪份登录凭据。多个源可通过 [authKey] 共用一份(晓桀的漫画/小说/番剧三源
+  /// 共用一个 GitHub token)。
+  ///
+  /// 但 [authKey] 来自远程仓库清单,而清单内容不受本应用控制:如果放任它取任意值,
+  /// 清单里任何一个脚本源只要声明 `"authKey": "bilibili"`,就能让引擎把用户的 B 站
+  /// 凭据注入自己的脚本上下文。所以内置源 id 一律按保留字处理 —— 只有内置源自己能用。
+  ///
+  /// 脚本源之间的共用不受限制:它们都来自同一个用户配置的仓库,属同一信任域。
+  String get credentialKey {
+    final key = authKey;
+    if (key == null || key.isEmpty) return id;
+    if (key != id && kBuiltInSourceIds.contains(key)) return id;
+    return key;
+  }
 }
 
 /// 加载该源图片(封面/页面)时要带的头(通常是 Referer,防盗链)。
