@@ -15,7 +15,7 @@
 ## File Map
 
 - Modify `lib/core/downloads/download_coordinator.dart`: atomically import completed records without scheduling them.
-- Create `lib/core/downloads/legacy_download_migrator.dart`: stable legacy IDs and manga/novel record conversion.
+- Create `lib/app/legacy_download_migrator.dart`: stable legacy IDs and manga/novel record conversion.
 - Modify `lib/app/app.dart`: wait for the three download stores, then run migration.
 - Modify `test/download_coordinator_test.dart`: cover idempotent completed imports.
 - Create `test/legacy_download_migrator_test.dart`: cover record mapping and no-file-move behavior.
@@ -80,4 +80,3 @@ unawaited(Future.wait([
 - [ ] During the later consolidated verification stage, run focused migration tests, then `flutter analyze`, `flutter test`, Android real-device migration checks, and Windows migration checks.
 
 - [ ] Confirm old indexes and files still exist after migration, repeated startup does not duplicate tasks, and offline reading still resolves the old local files.
-
