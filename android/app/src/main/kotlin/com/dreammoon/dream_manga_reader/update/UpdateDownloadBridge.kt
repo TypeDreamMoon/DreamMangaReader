@@ -33,7 +33,7 @@ class UpdateDownloadBridge(private val activity: Activity) :
             val state = UpdateStateStore.readState(activity)
             eventSink?.success(state.toJson().toMap())
             if (state.status == "ready" && resumed && state.taskKey != lastAutoInstalledTask) {
-                installReady(state)
+                installReadySafely(state)
             }
         }
     }
@@ -136,7 +136,7 @@ class UpdateDownloadBridge(private val activity: Activity) :
         if (pendingInstall) {
             pendingInstall = false
             val state = UpdateStateStore.readState(activity)
-            if (state.taskKey != lastAutoInstalledTask) installReady(state)
+            if (state.taskKey != lastAutoInstalledTask) installReadySafely(state)
         }
     }
 
@@ -150,8 +150,34 @@ class UpdateDownloadBridge(private val activity: Activity) :
 
     private fun handleIntent(intent: Intent?) {
         if (intent?.action != ACTION_INSTALL_READY_UPDATE) return
-        if (resumed) installReady(UpdateStateStore.readState(activity)) else pendingInstall = true
+        if (resumed) {
+            installReadySafely(UpdateStateStore.readState(activity))
+        } else {
+            pendingInstall = true
+        }
         intent.action = null
+    }
+
+    /**
+     * 自动安装路径(广播回调、onResume、通知点击)不能抛异常:这些回调抛出会直接崩溃进程。
+     * 安装包被清理软件删掉、或设备没有包安装器都会让 [installReady] 失败,这里降级为一条
+     * 错误事件交给 Flutter 层提示。MethodChannel 路径仍用会抛的版本,由调用方回报错误码。
+     */
+    private fun installReadySafely(state: UpdateDownloadState) {
+        runCatching { installReady(state) }.onFailure { error ->
+            eventSink?.success(
+                UpdateDownloadState(
+                    status = "error",
+                    taskKey = state.taskKey,
+                    versionName = state.versionName,
+                    downloadedBytes = state.downloadedBytes,
+                    totalBytes = state.totalBytes,
+                    percent = state.percent,
+                    message = safeMessage(error),
+                    errorCode = "install_failed",
+                ).toJson().toMap(),
+            )
+        }
     }
 
     private fun installReady(state: UpdateDownloadState) {
