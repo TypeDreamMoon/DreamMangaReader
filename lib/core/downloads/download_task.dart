@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'download_failure.dart';
+
 enum DownloadContentKind { anime, manga, novel, appUpdate }
 
 enum DownloadTaskState {
@@ -37,6 +39,7 @@ final class DownloadTask {
     required this.priority,
     required Map<String, Object?> payload,
     this.pauseReason,
+    this.failure,
     this.completedAt,
   }) : payload = _validatedPayload(payload) {
     if (id.isEmpty) throw ArgumentError.value(id, 'id', 'must not be empty');
@@ -61,6 +64,7 @@ final class DownloadTask {
   final int priority;
   final Map<String, Object?> payload;
   final DownloadPauseReason? pauseReason;
+  final DownloadFailure? failure;
   final int? completedAt;
 
   double get progress {
@@ -82,6 +86,8 @@ final class DownloadTask {
     Map<String, Object?>? payload,
     DownloadPauseReason? pauseReason,
     bool clearPauseReason = false,
+    DownloadFailure? failure,
+    bool clearFailure = false,
     int? completedAt,
     bool clearCompletedAt = false,
   }) {
@@ -98,6 +104,7 @@ final class DownloadTask {
       priority: priority ?? this.priority,
       payload: payload ?? this.payload,
       pauseReason: clearPauseReason ? null : (pauseReason ?? this.pauseReason),
+      failure: clearFailure ? null : (failure ?? this.failure),
       completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
     );
   }
@@ -115,6 +122,7 @@ final class DownloadTask {
         'priority': priority,
         'payload': _mutableJson(payload),
         if (pauseReason != null) 'pauseReason': pauseReason!.name,
+        if (failure != null) 'failure': failure!.toJson(),
         if (completedAt != null) 'completedAt': completedAt,
       };
 
@@ -139,6 +147,11 @@ final class DownloadTask {
               DownloadPauseReason.values,
               _string(json, 'pauseReason'),
             ),
+      failure: json['failure'] == null
+          ? null
+          : DownloadFailure.fromJson(
+              (json['failure'] as Map).cast<String, Object?>(),
+            ),
       completedAt:
           json['completedAt'] == null ? null : _integer(json, 'completedAt'),
     );
@@ -160,6 +173,7 @@ final class DownloadTask {
           priority == other.priority &&
           _deepEquals(payload, other.payload) &&
           pauseReason == other.pauseReason &&
+          failure == other.failure &&
           completedAt == other.completedAt;
 
   @override
@@ -176,6 +190,7 @@ final class DownloadTask {
         priority,
         _deepHash(payload),
         pauseReason,
+        failure,
         completedAt,
       );
 }
