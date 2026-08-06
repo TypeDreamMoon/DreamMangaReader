@@ -52,6 +52,7 @@ class PlaybackSessionController {
     Duration(seconds: 2),
     Duration(seconds: 4),
   ];
+  static const _seekConfirmationTolerance = Duration(seconds: 3);
 
   final PlayerAdapter _player;
   final PlaybackTrackProvider _tracks;
@@ -69,17 +70,22 @@ class PlaybackSessionController {
 
   List<VideoTrack> _available = const [];
   VideoTrack? _selected;
-  Duration _position = Duration.zero;
+  Duration _confirmedPosition = Duration.zero;
+  Duration? _pendingSeekTarget;
   Duration _duration = Duration.zero;
   int? _reportedPositionSecond;
   Timer? _stallTimer;
   Timer? _stableTimer;
   int _generation = 0;
+  int _seekGeneration = 0;
   int _recoveryRound = 0;
   bool _recovering = false;
   bool _playing = false;
   bool _userPaused = false;
+  bool _resumeAfterSeek = false;
   bool _disposed = false;
+
+  Duration get _recoveryPosition => _pendingSeekTarget ?? _confirmedPosition;
 
   Future<void> start(
     List<VideoTrack> available,
@@ -87,26 +93,29 @@ class PlaybackSessionController {
     Duration initialPosition = Duration.zero,
   }) async {
     final generation = ++_generation;
+    _seekGeneration++;
     _cancelTimers();
     _recovering = false;
     _userPaused = false;
+    _resumeAfterSeek = false;
+    _pendingSeekTarget = null;
     _recoveryRound = 0;
     final knownDuration = _duration;
-    _position = _resumePosition(initialPosition, knownDuration);
+    _confirmedPosition = _resumePosition(initialPosition, knownDuration);
     _duration = Duration.zero;
     _reportedPositionSecond = null;
     _available = List.unmodifiable(available);
     _selected = selected;
     _emit(PlaybackState(
       phase: PlaybackPhase.resolving,
-      position: _position,
+      position: _confirmedPosition,
       selectedTrack: selected,
     ));
     try {
       await _open(
         selected,
         generation: generation,
-        resume: _position > Duration.zero,
+        resume: _confirmedPosition > Duration.zero,
       );
     } catch (error) {
       if (_isCurrent(generation)) await _recover(error, generation);
@@ -116,9 +125,36 @@ class PlaybackSessionController {
   void setUserPaused(bool paused) {
     _userPaused = paused;
     if (paused) {
+      _resumeAfterSeek = false;
       _stallTimer?.cancel();
       unawaited(_player.pause());
     }
+  }
+
+  Future<void> seekTo(
+    Duration target, {
+    required bool resumeAfterSeek,
+  }) async {
+    if (_disposed || _selected == null) return;
+    final bounded = target < Duration.zero
+        ? Duration.zero
+        : _duration > Duration.zero && target > _duration
+            ? _duration
+            : target;
+    final seekGeneration = ++_seekGeneration;
+    _pendingSeekTarget = bounded;
+    _resumeAfterSeek = resumeAfterSeek;
+    _stallTimer?.cancel();
+    _stableTimer?.cancel();
+    _emit(_state.copyWith(
+      position: bounded,
+      pendingSeekTarget: bounded,
+      seeking: true,
+    ));
+
+    await _player.pause();
+    if (_disposed || seekGeneration != _seekGeneration) return;
+    await _player.seek(bounded);
   }
 
   void setManualQualityLocked(bool locked) {
@@ -132,19 +168,28 @@ class PlaybackSessionController {
   }) async {
     if (!_isCurrent(generation)) return;
     _selected = track;
+    final resumePosition = _recoveryPosition;
     _emit(_state.copyWith(
       phase: PlaybackPhase.opening,
-      position: _position,
+      position: resumePosition,
       duration: _duration,
       selectedTrack: track,
     ));
     await _player.open(track);
     if (!_isCurrent(generation)) return;
-    if (resume && _position > Duration.zero) await _player.seek(_position);
+    final currentResumePosition = _recoveryPosition;
+    if (resume && currentResumePosition > Duration.zero) {
+      await _player.seek(currentResumePosition);
+    }
   }
 
   void _onPlaying(bool playing) {
     if (_disposed) return;
+    if (_pendingSeekTarget != null) {
+      _playing = false;
+      _stallTimer?.cancel();
+      return;
+    }
     final wasPlaying = _playing;
     _playing = playing;
     if (!playing) {
@@ -154,7 +199,7 @@ class PlaybackSessionController {
     _stallTimer?.cancel();
     _emit(_state.copyWith(
       phase: PlaybackPhase.playing,
-      position: _position,
+      position: _confirmedPosition,
       duration: _duration,
       selectedTrack: _selected,
     ));
@@ -168,13 +213,19 @@ class PlaybackSessionController {
   }
 
   void _onBuffering(bool buffering) {
-    if (_disposed || _userPaused) return;
+    if (_disposed) return;
+    final pendingSeek = _pendingSeekTarget != null;
+    if (_userPaused && !pendingSeek) {
+      _stallTimer?.cancel();
+      return;
+    }
     if (!buffering) {
       _stallTimer?.cancel();
+      if (pendingSeek) return;
       if (_playing && _state.phase == PlaybackPhase.buffering) {
         _emit(_state.copyWith(
           phase: PlaybackPhase.playing,
-          position: _position,
+          position: _confirmedPosition,
           duration: _duration,
           selectedTrack: _selected,
         ));
@@ -183,14 +234,15 @@ class PlaybackSessionController {
     }
     _emit(_state.copyWith(
       phase: PlaybackPhase.buffering,
-      position: _position,
+      position: _recoveryPosition,
       duration: _duration,
       selectedTrack: _selected,
     ));
     _stallTimer?.cancel();
     final generation = _generation;
     _stallTimer = Timer(stallThreshold, () {
-      if (_isCurrent(generation) && !_userPaused) {
+      if (_isCurrent(generation) &&
+          (!_userPaused || _pendingSeekTarget != null)) {
         unawaited(_recover(StateError('播放缓冲超时'), generation));
       }
     });
@@ -198,7 +250,33 @@ class PlaybackSessionController {
 
   void _onPosition(Duration position) {
     if (_disposed) return;
-    _position = position;
+    final pendingTarget = _pendingSeekTarget;
+    if (pendingTarget != null) {
+      final distance = (position - pendingTarget).abs();
+      if (distance > _seekConfirmationTolerance) return;
+
+      final seekGeneration = _seekGeneration;
+      final shouldResume = _resumeAfterSeek;
+      _confirmedPosition = position;
+      _pendingSeekTarget = null;
+      _resumeAfterSeek = false;
+      _emit(_state.copyWith(
+        position: position,
+        clearPendingSeekTarget: true,
+        seeking: false,
+      ));
+      _reportProgress(position);
+      if (shouldResume) {
+        unawaited(_playAfterSeekConfirmation(seekGeneration));
+      }
+      return;
+    }
+
+    _confirmedPosition = position;
+    _reportProgress(position);
+  }
+
+  void _reportProgress(Duration position) {
     final second = position.inSeconds;
     if (_reportedPositionSecond == second) return;
     _reportedPositionSecond = second;
@@ -208,6 +286,11 @@ class PlaybackSessionController {
     );
   }
 
+  Future<void> _playAfterSeekConfirmation(int seekGeneration) async {
+    if (_disposed || seekGeneration != _seekGeneration) return;
+    await _player.play();
+  }
+
   void _onDuration(Duration duration) {
     if (_disposed) return;
     _duration = duration;
@@ -215,18 +298,18 @@ class PlaybackSessionController {
   }
 
   void _onCompleted(bool completed) {
-    if (!completed || _disposed) return;
+    if (!completed || _disposed || _pendingSeekTarget != null) return;
     _cancelTimers();
     _emit(_state.copyWith(
       phase: PlaybackPhase.idle,
-      position: _position,
+      position: _confirmedPosition,
       duration: _duration,
       selectedTrack: _selected,
     ));
   }
 
   void _onError(Object error) {
-    if (_disposed || _userPaused) return;
+    if (_disposed || (_userPaused && _pendingSeekTarget == null)) return;
     unawaited(_recover(error, _generation));
   }
 
@@ -241,7 +324,7 @@ class PlaybackSessionController {
       for (var round = _recoveryRound; round < _backoff.length; round++) {
         _emit(_state.copyWith(
           phase: PlaybackPhase.recovering,
-          position: _position,
+          position: _recoveryPosition,
           duration: _duration,
           attempt: round + 1,
           selectedTrack: _selected,
@@ -290,11 +373,13 @@ class PlaybackSessionController {
       if (_isCurrent(generation)) {
         _emit(PlaybackState(
           phase: PlaybackPhase.failed,
-          position: _position,
+          position: _recoveryPosition,
           duration: _duration,
           attempt: _backoff.length,
           selectedTrack: _selected,
           manualQualityLocked: _state.manualQualityLocked,
+          pendingSeekTarget: _pendingSeekTarget,
+          seeking: _pendingSeekTarget != null,
           message: '播放恢复失败：$lastError',
         ));
       }
@@ -329,6 +414,7 @@ class PlaybackSessionController {
     if (_disposed) return;
     _disposed = true;
     _generation++;
+    _seekGeneration++;
     _cancelTimers();
     for (final subscription in _subscriptions) {
       await subscription.cancel();

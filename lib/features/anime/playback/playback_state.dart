@@ -19,6 +19,8 @@ class PlaybackState {
     this.attempt = 0,
     this.selectedTrack,
     this.manualQualityLocked = false,
+    this.pendingSeekTarget,
+    this.seeking = false,
   });
 
   const PlaybackState.idle() : this(phase: PlaybackPhase.idle);
@@ -30,6 +32,8 @@ class PlaybackState {
   final int attempt;
   final VideoTrack? selectedTrack;
   final bool manualQualityLocked;
+  final Duration? pendingSeekTarget;
+  final bool seeking;
 
   PlaybackState copyWith({
     PlaybackPhase? phase,
@@ -39,6 +43,9 @@ class PlaybackState {
     int? attempt,
     VideoTrack? selectedTrack,
     bool? manualQualityLocked,
+    Duration? pendingSeekTarget,
+    bool clearPendingSeekTarget = false,
+    bool? seeking,
   }) =>
       PlaybackState(
         phase: phase ?? this.phase,
@@ -48,5 +55,9 @@ class PlaybackState {
         attempt: attempt ?? this.attempt,
         selectedTrack: selectedTrack ?? this.selectedTrack,
         manualQualityLocked: manualQualityLocked ?? this.manualQualityLocked,
+        pendingSeekTarget: clearPendingSeekTarget
+            ? null
+            : pendingSeekTarget ?? this.pendingSeekTarget,
+        seeking: seeking ?? this.seeking,
       );
 }

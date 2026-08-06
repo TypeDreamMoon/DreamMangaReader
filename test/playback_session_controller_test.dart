@@ -28,7 +28,10 @@ class _FakePlayerAdapter implements PlayerAdapter {
 
   final List<VideoTrack> opened = [];
   final List<Duration> seeks = [];
+  final List<Completer<void>> pauseGates = [];
   bool failOpen = false;
+  int playCalls = 0;
+  int pauseCalls = 0;
 
   @override
   Stream<bool> get playing => playingController.stream;
@@ -52,9 +55,13 @@ class _FakePlayerAdapter implements PlayerAdapter {
   @override
   Future<void> seek(Duration position) async => seeks.add(position);
   @override
-  Future<void> play() async {}
+  Future<void> play() async => playCalls++;
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async {
+    pauseCalls++;
+    if (pauseGates.isNotEmpty) await pauseGates.removeAt(0).future;
+  }
+
   @override
   Future<void> setRate(double rate) async {}
   @override
@@ -94,6 +101,179 @@ class _FakeTrackProvider implements PlaybackTrackProvider {
 }
 
 void main() {
+  test('PlaybackState copyWith can explicitly clear a pending seek', () {
+    final state = const PlaybackState(
+      phase: PlaybackPhase.playing,
+      pendingSeekTarget: Duration(minutes: 4),
+      seeking: true,
+    ).copyWith(
+      clearPendingSeekTarget: true,
+      seeking: false,
+    );
+
+    expect(state.pendingSeekTarget, isNull);
+    expect(state.seeking, isFalse);
+  });
+
+  test('pending seek ignores zero and recovery uses the pending target',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final progress = <Duration>[];
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+      onProgress: (position, _) => progress.add(position),
+    );
+    await controller.start(const [_track480], _track480);
+    adapter.playingController.add(true);
+    adapter.positionController.add(const Duration(seconds: 40));
+
+    await controller.seekTo(
+      const Duration(minutes: 8),
+      resumeAfterSeek: true,
+    );
+    adapter.positionController.add(Duration.zero);
+    adapter.positionController.add(const Duration(seconds: 41));
+    adapter.errorController.add(StateError('decoder boundary'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state.pendingSeekTarget, const Duration(minutes: 8));
+    expect(controller.state.position, const Duration(minutes: 8));
+    expect(progress, [const Duration(seconds: 40)]);
+    expect(adapter.seeks.last, const Duration(minutes: 8));
+    await controller.dispose();
+  });
+
+  test('a stalled near-end session seek recovers at the explicit target', () {
+    fakeAsync((async) {
+      final adapter = _FakePlayerAdapter();
+      final controller = PlaybackSessionController(
+        player: adapter,
+        tracks: _FakeTrackProvider(),
+        delay: (_) async {},
+      );
+      controller.start(const [_track480], _track480);
+      async.flushMicrotasks();
+      adapter.durationController.add(const Duration(seconds: 100));
+
+      controller.seekTo(
+        const Duration(seconds: 95),
+        resumeAfterSeek: true,
+      );
+      async.flushMicrotasks();
+      adapter.bufferingController.add(true);
+      expect(controller.state.position, const Duration(seconds: 95));
+      async.elapse(const Duration(seconds: 8));
+      async.flushMicrotasks();
+
+      expect(adapter.opened, hasLength(2));
+      expect(adapter.seeks.last, const Duration(seconds: 95));
+      expect(controller.state.position, const Duration(seconds: 95));
+      controller.dispose();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('a newer seek supersedes delayed work from an older seek', () async {
+    final adapter = _FakePlayerAdapter();
+    final firstPause = Completer<void>();
+    adapter.pauseGates.add(firstPause);
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    await controller.start(const [_track480], _track480);
+
+    final first = controller.seekTo(
+      const Duration(minutes: 3),
+      resumeAfterSeek: true,
+    );
+    final second = controller.seekTo(
+      const Duration(minutes: 7),
+      resumeAfterSeek: false,
+    );
+    await second;
+    firstPause.complete();
+    await first;
+
+    expect(adapter.seeks, [const Duration(minutes: 7)]);
+    expect(controller.state.pendingSeekTarget, const Duration(minutes: 7));
+    expect(controller.state.position, const Duration(minutes: 7));
+    await controller.dispose();
+  });
+
+  test('a backend position near the target confirms the pending seek',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    await controller.start(const [_track480], _track480);
+
+    await controller.seekTo(
+      const Duration(minutes: 8),
+      resumeAfterSeek: false,
+    );
+    adapter.positionController.add(
+      const Duration(minutes: 8, seconds: 2),
+    );
+
+    expect(controller.state.pendingSeekTarget, isNull);
+    expect(controller.state.seeking, isFalse);
+    expect(
+      controller.state.position,
+      const Duration(minutes: 8, seconds: 2),
+    );
+    await controller.dispose();
+  });
+
+  test('a confirmed seek does not resume when resumeAfterSeek is false',
+      () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    await controller.start(const [_track480], _track480);
+
+    await controller.seekTo(
+      const Duration(minutes: 5),
+      resumeAfterSeek: false,
+    );
+    adapter.positionController.add(const Duration(minutes: 5));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(adapter.playCalls, 0);
+    await controller.dispose();
+  });
+
+  test('a confirmed seek resumes when resumeAfterSeek is true', () async {
+    final adapter = _FakePlayerAdapter();
+    final controller = PlaybackSessionController(
+      player: adapter,
+      tracks: _FakeTrackProvider(),
+      delay: (_) async {},
+    );
+    await controller.start(const [_track480], _track480);
+
+    await controller.seekTo(
+      const Duration(minutes: 5),
+      resumeAfterSeek: true,
+    );
+    expect(adapter.playCalls, 0);
+
+    adapter.positionController.add(const Duration(minutes: 5));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(adapter.playCalls, 1);
+    await controller.dispose();
+  });
+
   test('initial playback seeks only after opening the track', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
