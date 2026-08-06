@@ -1599,9 +1599,6 @@ class LibraryScope extends InheritedNotifier<LibraryStore> {
     return scope!.notifier!;
   }
 
-  static LibraryStore? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<LibraryScope>()?.notifier;
-
   /// 只读取、**不注册依赖**——阅读器频繁写进度会触发 notify,不能让自己因此重建。
   static LibraryStore read(BuildContext context) {
     final scope = context.getInheritedWidgetOfExactType<LibraryScope>();
