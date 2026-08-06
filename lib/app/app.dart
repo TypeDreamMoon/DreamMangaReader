@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart'
@@ -9,9 +10,11 @@ import '../l10n/app_localizations.dart';
 import '../core/downloads/download_coordinator.dart';
 import '../core/downloads/download_policy.dart';
 import '../core/downloads/download_task_repository.dart';
+import '../core/log/app_log.dart';
 import 'auth_store.dart';
 import 'download_coordinator_scope.dart';
 import 'download_store.dart';
+import 'legacy_download_migrator.dart';
 import 'library_store.dart';
 import 'novel_library_store.dart';
 import 'novel_download_store.dart';
@@ -59,7 +62,7 @@ class _AppState extends State<App> {
           environment: _initialDownloadEnvironment,
           settings: DownloadPolicySettings.new,
         );
-    _downloadCoordinator.load();
+    unawaited(_loadDownloadState());
     _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
     _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
     // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
@@ -82,9 +85,29 @@ class _AppState extends State<App> {
         SourceRepository.instance,
       );
     });
-    _downloads.load();
-    _novelDownloads.load();
     _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+  }
+
+  Future<void> _loadDownloadState() async {
+    try {
+      await Future.wait([
+        _downloadCoordinator.load(),
+        _downloads.load(),
+        _novelDownloads.load(),
+      ]);
+      if (!mounted) return;
+      await LegacyDownloadMigrator.migrate(
+        coordinator: _downloadCoordinator,
+        mangaDownloads: _downloads,
+        novelDownloads: _novelDownloads,
+      );
+    } catch (error) {
+      AppLog.i.err(
+        LogCat.download,
+        '旧下载记录迁移失败，继续使用原索引',
+        detail: '$error',
+      );
+    }
   }
 
   @override
