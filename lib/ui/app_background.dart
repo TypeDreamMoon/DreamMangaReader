@@ -33,8 +33,12 @@ class AppBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lib = LibraryScope.of(context);
-    final p = context.palette;
+    final theme = Theme.of(context);
+    final lib = LibraryScope.maybeOf(context);
+    final p = theme.extension<AppTokens>()?.palette;
+    if (lib == null || p == null) {
+      return ColoredBox(color: theme.scaffoldBackgroundColor);
+    }
     if (lib.bgImage.isEmpty) return ColoredBox(color: p.background);
     return ValueListenableBuilder<Color?>(
       valueListenable: DetailTint.color,
