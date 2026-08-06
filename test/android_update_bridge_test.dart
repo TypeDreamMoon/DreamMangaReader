@@ -205,6 +205,31 @@ void main() {
     expect(sanitized, isNot(contains('secret')));
     expect(sanitized, isNot(contains('token=')));
     expect(sanitized, isNot(contains('ts=')));
+    // 整个 query 必须消失,而不只是那些恰好叫 token/ts 的参数。
+    expect(sanitized, isNot(contains('?')));
+  });
+
+  test('strips arbitrary signature parameters, not just token and ts', () {
+    final sanitized = sanitizeUpdateError(
+      'download failed https://cdn.example.com/app.apk'
+      '?X-Amz-Signature=deadbeef&sig=zzz&expires=1',
+    );
+
+    expect(sanitized, contains('https://cdn.example.com/app.apk'));
+    expect(sanitized, isNot(contains('deadbeef')));
+    expect(sanitized, isNot(contains('zzz')));
+    expect(sanitized, isNot(contains('X-Amz-Signature')));
+  });
+
+  test('redacts bare credential parameters without emitting a literal group ref',
+      () {
+    // 这些 token 不在 URL 里,所以走的是分组替换那一步。用 replaceAll 时 Dart 不解释
+    // `$1`,输出会变成字面量 "$1=[redacted]"。
+    final sanitized = sanitizeUpdateError('auth failed token=abc123 ts=99');
+
+    expect(sanitized, 'auth failed token=[redacted] ts=[redacted]');
+    expect(sanitized, isNot(contains(r'$1')));
+    expect(sanitized, isNot(contains('abc123')));
   });
 
   test('bridge invokes the native method contract', () async {
