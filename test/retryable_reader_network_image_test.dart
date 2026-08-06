@@ -18,6 +18,7 @@ class _RetryCacheManager implements BaseCacheManager {
   int loads = 0;
   int removes = 0;
   Completer<void>? removeBarrier;
+  final loadHeaders = <Map<String, String>?>[];
 
   @override
   Stream<FileResponse> getFileStream(
@@ -27,6 +28,7 @@ class _RetryCacheManager implements BaseCacheManager {
     bool withProgress = false,
   }) async* {
     loads++;
+    loadHeaders.add(headers == null ? null : Map.of(headers));
     final bytes = loads == 1 ? <int>[0, 1, 2, 3] : base64Decode(_onePixelPng);
     final file = _fileSystem.systemTempDirectory.childFile('page-$loads.png');
     await file.writeAsBytes(bytes);
@@ -69,6 +71,12 @@ Widget _host(_RetryCacheManager cacheManager) => MaterialApp(
     );
 
 void main() {
+  setUp(() {
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+  });
+
   testWidgets('tap evicts only the failed image and retries successfully',
       (tester) async {
     final cacheManager = _RetryCacheManager();
@@ -88,5 +96,42 @@ void main() {
     expect(find.byType(CachedNetworkImage), findsOneWidget);
     expect(find.byKey(const Key('reader-image-retry')), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('retry ignores repeated taps and preserves image parameters',
+      (tester) async {
+    final cacheManager = _RetryCacheManager();
+    await tester.pumpWidget(_host(cacheManager));
+    await tester.pumpAndSettle();
+
+    cacheManager.removeBarrier = Completer<void>();
+    final retryTarget = find.byKey(
+      const Key('reader-network-image-retry-target'),
+    );
+    await tester.tap(retryTarget);
+    await tester.pump();
+
+    final disabledTarget = tester.widget<GestureDetector>(retryTarget);
+    expect(disabledTarget.onTap, isNull);
+    await tester.tap(retryTarget, warnIfMissed: false);
+    await tester.pump();
+
+    expect(cacheManager.removes, 1);
+    expect(cacheManager.loads, 1);
+
+    cacheManager.removeBarrier!.complete();
+    await tester.pumpAndSettle();
+
+    expect(cacheManager.loads, 2);
+    expect(cacheManager.loadHeaders, const [
+      {'Referer': 'https://example.test/'},
+      {'Referer': 'https://example.test/'},
+    ]);
+    final image = tester.widget<CachedNetworkImage>(
+      find.byType(CachedNetworkImage),
+    );
+    expect(image.fit, BoxFit.contain);
+    expect(image.width, 320);
+    expect(image.height, 480);
   });
 }
