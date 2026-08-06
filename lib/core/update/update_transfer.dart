@@ -4,8 +4,13 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../net/url_redaction.dart';
 import 'update_models.dart';
 import 'update_resolver.dart';
+
+/// 更新路径的错误脱敏。Android 与 Windows 两条传输路径都必须经过这里 ——
+/// 之前只有 Android 路径做了脱敏。实现共享自 [redactUrlCredentials]。
+String sanitizeUpdateError(String value) => redactUrlCredentials(value);
 
 enum UpdateTransferStage {
   idle,
@@ -164,7 +169,7 @@ class WindowsUpdateTransferCoordinator implements UpdateTransferCoordinator {
           taskKey: taskKey,
           versionName: candidate.version,
           totalBytes: asset.sizeBytes,
-          message: '$error',
+          message: sanitizeUpdateError('$error'),
         ));
       }
     } catch (error) {
@@ -176,7 +181,7 @@ class WindowsUpdateTransferCoordinator implements UpdateTransferCoordinator {
           taskKey: taskKey,
           versionName: candidate.version,
           totalBytes: asset.sizeBytes,
-          message: '$error',
+          message: sanitizeUpdateError('$error'),
         ));
       }
     } finally {

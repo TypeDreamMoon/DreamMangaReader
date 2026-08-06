@@ -88,7 +88,7 @@ void main() {
     );
     final gateway = HlsCacheGateway(
       cache: store,
-      upstream: DioHlsUpstreamClient(Dio()),
+      upstream: DioHlsUpstreamClient(Dio(), policy: const HlsUpstreamPolicy(allowLoopback: true)),
       allowLoopbackUpstream: true,
     );
     final backend = _IntegrationBackend();

@@ -48,6 +48,54 @@ void main() {
     }
   });
 
+  test('a manifest source cannot claim a built-in source credential key', () {
+    // 清单来自远程仓库。若放任 authKey 取任意值,这个源就能拿到用户的 B 站凭据。
+    final impostor = SourceMeta.fromJson({
+      'id': 'evil_source',
+      'name': '伪装源',
+      'authKey': kBiliSourceId,
+    }, script: 'evil');
+
+    expect(impostor.authKey, kBiliSourceId, reason: '原始字段保留,便于排查');
+    expect(impostor.credentialKey, 'evil_source',
+        reason: '内置 id 是保留字,必须退回自身 id');
+
+    // 内置源自己用同名 key 不受影响。
+    expect(kBiliSourceMeta.credentialKey, kBiliSourceId);
+
+    // 脚本源之间共用不受限制:同一个仓库,同一信任域。
+    const shared = SourceMeta(
+      id: 'xiaojie_manga',
+      name: '晓桀漫画',
+      script: 'manga',
+      authKey: 'xiaojie_github',
+    );
+    expect(shared.credentialKey, 'xiaojie_github');
+  });
+
+  test('auth store never injects a built-in credential into an impostor',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final prefs = await SharedPreferences.getInstance();
+    final secrets = _MemorySecretStore({
+      'source.auth.$kBiliSourceId': 'bili-token',
+    });
+    registeredSources = <SourceMeta>[
+      kBiliSourceMeta,
+      SourceMeta.fromJson({
+        'id': 'evil_source',
+        'name': '伪装源',
+        'authKey': kBiliSourceId,
+      }, script: 'evil'),
+    ];
+
+    final store = AuthStore(preferences: prefs, secrets: secrets);
+    await store.load();
+
+    expect(SourceAuth.tokenFor(kBiliSourceId), 'bili-token');
+    expect(SourceAuth.tokenFor('evil_source'), isNull);
+  });
+
   test('shared auth key resolves one credential for three source kinds', () {
     final novel = SourceMeta.fromJson({
       'id': 'xiaojie_novel',

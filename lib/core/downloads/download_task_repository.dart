@@ -52,8 +52,9 @@ final class FileDownloadTaskRepository implements DownloadTaskRepository {
     );
 
     if (await files.previous.exists()) await files.previous.delete();
-    if (await files.index.exists())
+    if (await files.index.exists()) {
       await files.index.rename(files.previous.path);
+    }
     try {
       await files.temporary.rename(files.index.path);
     } on Object {

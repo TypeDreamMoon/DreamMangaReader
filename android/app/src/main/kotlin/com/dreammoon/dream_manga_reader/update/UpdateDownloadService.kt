@@ -48,12 +48,17 @@ class UpdateDownloadService : Service() {
             cancelActiveTask()
             return START_NOT_STICKY
         }
+        // 这条路径由 startForegroundService() 拉起,系统要求 5 秒内进入前台,否则抛
+        // ForegroundServiceDidNotStartInTimeException。计划解析可能失败(例如 START_REDELIVER_INTENT
+        // 重投递了一个 schema 已变的旧 intent),所以先用占位通知满足这个约定再解析。
+        startAsForeground(null)
         val plan = runCatching {
             intent?.getStringExtra(EXTRA_PLAN)?.let { UpdateDownloadPlan.parse(org.json.JSONObject(it)) }
                 ?: UpdateStateStore.readPlan(this)
                 ?: throw IllegalArgumentException("No saved update plan")
         }.getOrElse {
             publishError(null, "invalid_plan", "更新下载计划无效")
+            stopForegroundCompat()
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -344,12 +349,12 @@ class UpdateDownloadService : Service() {
         NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, errorNotification(state))
     }
 
-    private fun startAsForeground(plan: UpdateDownloadPlan) {
+    private fun startAsForeground(plan: UpdateDownloadPlan?) {
         val state = UpdateDownloadState(
             status = "downloading",
-            taskKey = plan.taskKey,
-            versionName = plan.versionName,
-            totalBytes = plan.sizeBytes,
+            taskKey = plan?.taskKey,
+            versionName = plan?.versionName,
+            totalBytes = plan?.sizeBytes ?: 0L,
             message = "准备下载更新",
         )
         val notification = progressNotification(state)

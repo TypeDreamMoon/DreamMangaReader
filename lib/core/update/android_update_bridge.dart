@@ -6,6 +6,8 @@ import 'update_models.dart';
 import 'update_resolver.dart';
 import 'update_transfer.dart';
 
+export 'update_transfer.dart' show sanitizeUpdateError;
+
 class AndroidUpdatePlan {
   AndroidUpdatePlan._(this._json);
 
@@ -344,24 +346,5 @@ class AndroidUpdateTransferCoordinator implements UpdateTransferCoordinator {
   }
 }
 
-String sanitizeUpdateError(String value) {
-  final withoutQueries = value.replaceAllMapped(
-    RegExp(r'https?://[^\s<>"' ']+'),
-    (match) {
-      final raw = match.group(0)!;
-      final trailing = RegExp(r'[),.;:]+$').firstMatch(raw)?.group(0) ?? '';
-      final url = trailing.isEmpty
-          ? raw
-          : raw.substring(0, raw.length - trailing.length);
-      final uri = Uri.tryParse(url);
-      if (uri == null) return '[download URL]$trailing';
-      return uri.replace(query: null).toString() + trailing;
-    },
-  );
-  return withoutQueries
-      .replaceAll(
-        RegExp(r'(token|ts)=[^\s&]+', caseSensitive: false),
-        r'$1=[redacted]',
-      )
-      .trim();
-}
+// sanitizeUpdateError 已移到 update_transfer.dart,让 Windows / Android 两条传输路径
+// 共用同一份脱敏实现。这里继续导出,保持既有 import 点不变。
