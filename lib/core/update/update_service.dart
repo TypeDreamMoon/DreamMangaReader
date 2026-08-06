@@ -5,8 +5,10 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app/anime_library_store.dart';
 import '../../app/app_info.dart';
 import '../../app/library_store.dart';
+import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
 import '../l10n/app_strings.dart';
@@ -92,6 +94,17 @@ typedef UpdateManualCallback = Future<void> Function(Uri uri);
 typedef UpdateRefreshCallback = Future<UpdateCandidate?> Function(
   UpdateSource preferred,
 );
+
+Future<void> flushLibraryStoresBeforeExit(
+  LibraryStore manga,
+  NovelLibraryStore novel,
+  AnimeLibraryStore anime,
+) =>
+    Future.wait([
+      manga.flushPending(),
+      novel.flushPending(),
+      anime.flushPending(),
+    ]);
 
 @immutable
 class UpdateDialogDependencies {
@@ -375,7 +388,11 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     if (mounted) setState(() => _installing = true);
     try {
       await widget.dependencies.coordinator.install(
-        onBeforeExit: () => LibraryScope.read(context).flushPending(),
+        onBeforeExit: () => flushLibraryStoresBeforeExit(
+          LibraryScope.read(context),
+          NovelLibraryScope.read(context),
+          AnimeLibraryScope.read(context),
+        ),
       );
       if (mounted) {
         setState(() {
