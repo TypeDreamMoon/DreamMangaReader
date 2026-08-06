@@ -67,6 +67,63 @@ two.ts
     expect(progress.last.$1, progress.last.$2);
   });
 
+  test('withholds credential headers from cross-host offline resources',
+      () async {
+    // 清单由上游控制,可以把变体/分片/密钥指向任意主机。原站的 Authorization
+    // 只能回源到原主机,否则下载一集就把用户凭据递给了第三方。
+    final upstream = _FakeUpstream({
+      'https://video.test/master.m3u8': _text('''
+#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080
+https://cdn.evil.test/1080/index.m3u8
+'''),
+      'https://cdn.evil.test/1080/index.m3u8': _text('''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://keys.evil.test/key.bin"
+#EXTINF:4,
+https://video.test/same-host.ts
+#EXTINF:4,
+foreign.ts
+#EXT-X-ENDLIST
+'''),
+      'https://keys.evil.test/key.bin': _bytes(List<int>.generate(16, (i) => i)),
+      'https://video.test/same-host.ts': _bytes([1, 2, 3]),
+      'https://cdn.evil.test/1080/foreign.ts': _bytes([4, 5]),
+    });
+
+    await AnimeHlsPackageWriter(upstream).write(
+      playlistUri: Uri.parse('https://video.test/master.m3u8'),
+      headers: const {
+        'Authorization': 'Bearer origin-only',
+        'Cookie': 'session=origin-only',
+        'Referer': 'https://video.test/',
+      },
+      directory: root,
+      context: _context([]),
+    );
+
+    for (final url in [
+      'https://cdn.evil.test/1080/index.m3u8',
+      'https://keys.evil.test/key.bin',
+      'https://cdn.evil.test/1080/foreign.ts',
+    ]) {
+      final sent = upstream.sentHeaders[url];
+      expect(sent, isNotNull, reason: url);
+      expect(sent!.containsKey('Authorization'), isFalse, reason: url);
+      expect(sent.containsKey('Cookie'), isFalse, reason: url);
+      // 非凭据头(如 Referer)不受影响,防盗链仍然可用。
+      expect(sent['Referer'], 'https://video.test/', reason: url);
+    }
+
+    // 回到原主机的分片仍然带完整凭据。
+    final origin = upstream.sentHeaders['https://video.test/same-host.ts'];
+    expect(origin?['Authorization'], 'Bearer origin-only');
+    expect(origin?['Cookie'], 'session=origin-only');
+  });
+
   test('materializes byte ranges and removes remote offsets', () async {
     final upstream = _FakeUpstream({
       'https://video.test/media.m3u8': _text('''
@@ -216,6 +273,7 @@ class _FakeUpstream implements HlsUpstreamClient {
   final Map<String, HlsUpstreamResponse> responses;
   final List<String> requested = [];
   final List<(int, int)> ranges = [];
+  final Map<String, Map<String, String>> sentHeaders = {};
 
   @override
   Future<HlsUpstreamResponse> get(
@@ -225,6 +283,7 @@ class _FakeUpstream implements HlsUpstreamClient {
     int? rangeLength,
   }) async {
     requested.add(uri.toString());
+    sentHeaders[uri.toString()] = Map<String, String>.of(headers);
     final response = responses[uri.toString()];
     if (response == null) throw StateError('Unexpected request: $uri');
     if (rangeStart != null && rangeLength != null) {

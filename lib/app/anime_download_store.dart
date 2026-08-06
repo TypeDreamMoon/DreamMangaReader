@@ -319,7 +319,14 @@ class AnimeHlsPackageWriter {
         File('${directory.path}${Platform.pathSeparator}index.m3u8');
     if (await manifest.exists()) await manifest.delete();
 
-    final resolved = await _resolveMediaPlaylist(playlistUri, headers);
+    // 凭据只认原始清单的主机。变体/分片/密钥的 URI 都由上游清单决定,
+    // 跨主机时必须脱掉认证头(与播放网关同一条规则)。
+    final originHost = playlistUri.host;
+    final resolved = await _resolveMediaPlaylist(
+      playlistUri,
+      headers,
+      originHost,
+    );
     final playlist = resolved.playlist;
     if (playlist.isLive) {
       throw const UnsupportedAnimePlaylist('暂不支持下载直播 HLS 清单');
@@ -362,6 +369,7 @@ class AnimeHlsPackageWriter {
       await _downloadResource(
         uri: entry.value.uri!,
         headers: headers,
+        originHost: originHost,
         output: file,
         context: context,
       );
@@ -392,6 +400,7 @@ class AnimeHlsPackageWriter {
       await _downloadResource(
         uri: sourceInit.uri,
         headers: headers,
+        originHost: originHost,
         output: file,
         context: context,
         rangeStart: start,
@@ -417,6 +426,7 @@ class AnimeHlsPackageWriter {
       await _downloadResource(
         uri: source.uri,
         headers: headers,
+        originHost: originHost,
         output: file,
         context: context,
         rangeStart: start,
@@ -469,8 +479,9 @@ class AnimeHlsPackageWriter {
   Future<({HlsMediaPlaylist playlist, Uri uri})> _resolveMediaPlaylist(
     Uri uri,
     Map<String, String> headers,
+    String originHost,
   ) async {
-    final root = await _fetchPlaylist(uri, headers);
+    final root = await _fetchPlaylist(uri, headers, originHost);
     if (root is HlsMediaPlaylist) return (playlist: root, uri: uri);
     if (root is! HlsMasterPlaylist || root.variants.isEmpty) {
       throw const UnsupportedAnimePlaylist('未知或空的 HLS 清单');
@@ -486,7 +497,7 @@ class AnimeHlsPackageWriter {
     final eligible = variants.where((variant) => (variant.height ?? 0) <= 1080);
     final selected = eligible.isNotEmpty ? eligible.last : variants.first;
     final selectedUri = selected.uri;
-    final media = await _fetchPlaylist(selectedUri, headers);
+    final media = await _fetchPlaylist(selectedUri, headers, originHost);
     if (media is! HlsMediaPlaylist) {
       throw const UnsupportedAnimePlaylist('HLS 变体不是媒体清单');
     }
@@ -496,8 +507,16 @@ class AnimeHlsPackageWriter {
   Future<HlsPlaylist> _fetchPlaylist(
     Uri uri,
     Map<String, String> headers,
+    String originHost,
   ) async {
-    final response = await upstream.get(uri, headers: headers);
+    final response = await upstream.get(
+      uri,
+      headers: scopeHlsCredentialHeaders(
+        headers,
+        originHost: originHost,
+        target: uri,
+      ),
+    );
     _requireSuccess(uri, response);
     final parsed = HlsParser.parse(
       utf8.decode(response.bytes),
@@ -509,6 +528,7 @@ class AnimeHlsPackageWriter {
   Future<void> _downloadResource({
     required Uri uri,
     required Map<String, String> headers,
+    required String originHost,
     required File output,
     required DownloadExecutionContext context,
     int? rangeStart,
@@ -518,7 +538,11 @@ class AnimeHlsPackageWriter {
     context.cancellation.throwIfCancelled();
     final response = await upstream.get(
       uri,
-      headers: headers,
+      headers: scopeHlsCredentialHeaders(
+        headers,
+        originHost: originHost,
+        target: uri,
+      ),
       rangeStart: rangeStart,
       rangeLength: rangeLength,
     );

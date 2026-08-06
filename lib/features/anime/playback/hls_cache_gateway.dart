@@ -228,6 +228,23 @@ const Set<String> _credentialHeaders = {
   'x-auth-token',
 };
 
+/// 清单由上游控制,可以把分片/密钥指向任意主机;原站凭据只能回源到原主机,
+/// 否则一个被改写的清单就能把用户在原站的凭据递给第三方。
+/// 播放(网关)和离线下载(AnimeHlsPackageWriter)必须共用这一条规则,
+/// 各写一份的结果就是其中一份忘记收口。
+Map<String, String> scopeHlsCredentialHeaders(
+  Map<String, String> headers, {
+  required String originHost,
+  required Uri target,
+}) {
+  if (target.host.toLowerCase() == originHost.toLowerCase()) return headers;
+  return {
+    for (final entry in headers.entries)
+      if (!_credentialHeaders.contains(entry.key.toLowerCase()))
+        entry.key: entry.value,
+  };
+}
+
 abstract interface class HlsSessionGateway {
   Future<HlsSession> open(
     VideoTrack track, {
@@ -840,14 +857,12 @@ class HlsCacheGateway implements HlsSessionGateway {
   /// 清单里的 URI 可以指向任意主机,而 [_SessionData.headers] 来自原始 track
   /// (可能带 Cookie / Authorization / Referer)。只有回源到同一主机时才带认证头,
   /// 否则一个被改写的清单就能把用户在原站的凭据送给第三方。
-  Map<String, String> _headersFor(_SessionData session, Uri target) {
-    if (target.host.toLowerCase() == session.originHost) return session.headers;
-    return {
-      for (final entry in session.headers.entries)
-        if (!_credentialHeaders.contains(entry.key.toLowerCase()))
-          entry.key: entry.value,
-    };
-  }
+  Map<String, String> _headersFor(_SessionData session, Uri target) =>
+      scopeHlsCredentialHeaders(
+        session.headers,
+        originHost: session.originHost,
+        target: target,
+      );
 
   Uri _localUri(String sessionId, String resourceId) => Uri.parse(
         'http://${InternetAddress.loopbackIPv4.address}:${_server!.port}/'
