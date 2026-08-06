@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/download_store.dart';
+import '../../app/download_coordinator_scope.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/ui_signals.dart';
 import '../../core/bangumi/bangumi_api.dart';
 import '../../core/color/cover_palette.dart';
+import '../../core/downloads/content_download_task.dart';
+import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/chapter_number.dart';
@@ -72,7 +75,9 @@ class _DetailPageState extends State<DetailPage> {
     return Manga(
       id: widget.manga.id,
       title: d.title.isNotEmpty ? d.title : widget.manga.title,
-      cover: (d.cover != null && d.cover!.isNotEmpty) ? d.cover : widget.manga.cover,
+      cover: (d.cover != null && d.cover!.isNotEmpty)
+          ? d.cover
+          : widget.manga.cover,
       url: (d.url != null && d.url!.isNotEmpty) ? d.url : widget.manga.url,
       authors: d.authors.isNotEmpty ? d.authors : widget.manga.authors,
       genres: d.genres.isNotEmpty ? d.genres : widget.manga.genres,
@@ -234,11 +239,8 @@ class _DetailPageState extends State<DetailPage> {
     for (final c in current) {
       final order = chapterOrder(c, rows.length);
       final n = order.number;
-      final row = _MergedChapter(
-          n,
-          c.name,
-          [_ChapterProvider(widget.meta, _source, c, widget.manga.id)],
-          order);
+      final row = _MergedChapter(n, c.name,
+          [_ChapterProvider(widget.meta, _source, c, widget.manga.id)], order);
       rows.add(row);
       if (n != null) (currentByNumber[n] ??= []).add(row);
     }
@@ -269,8 +271,8 @@ class _DetailPageState extends State<DetailPage> {
     }
     // 按显式话数、发布时间或标题话数稳定升序。
     final indexed = [for (var i = 0; i < rows.length; i++) (i, rows[i])];
-    indexed.sort((left, right) =>
-        compareChapterOrder(left.$2.order, right.$2.order));
+    indexed.sort(
+        (left, right) => compareChapterOrder(left.$2.order, right.$2.order));
     return [for (final e in indexed) e.$2];
   }
 
@@ -310,8 +312,7 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _showChapterSourceMenu(Offset pos, _MergedChapter row,
       {int initialPage = 0}) async {
     final p = context.palette;
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final picked = await showMenu<_ChapterProvider>(
       context: context,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy,
@@ -434,8 +435,8 @@ class _DetailPageState extends State<DetailPage> {
           kind: AppNotifyKind.info);
       return;
     }
-    Navigator.of(context).push(
-        appRoute(DetailPage(manga: found.manga, meta: found.meta)));
+    Navigator.of(context)
+        .push(appRoute(DetailPage(manga: found.manga, meta: found.meta)));
   }
 
   /// 相关推荐:横向封面条(Bangumi 相关条目 + 题材同类)。点击去源里找并打开。
@@ -729,6 +730,7 @@ class _DetailPageState extends State<DetailPage> {
     final acc = _cover?.primary ?? p.accent; // 封面主题色
     final store = LibraryScope.of(context); // 依赖:收藏/进度变了自动重建
     final dl = DownloadScope.of(context); // 依赖:下载状态变了刷新按钮
+    DownloadCoordinatorScope.maybeOf(context); // 统一队列状态变化时刷新章节按钮
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -782,7 +784,8 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   /// 竖屏:信息 + 章节单列纵向滚动。
-  Widget _narrowBody(AppPalette p, LibraryStore store, DownloadStore dl) => Center(
+  Widget _narrowBody(AppPalette p, LibraryStore store, DownloadStore dl) =>
+      Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 820),
           child: CustomScrollView(
@@ -936,11 +939,12 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                       if (m.authors.isNotEmpty) ...[
                         const SizedBox(height: 4),
-                        Text(context.l10n.detail_authorPrefix(m.authors.join('、')),
+                        Text(
+                            context.l10n
+                                .detail_authorPrefix(m.authors.join('、')),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:
-                                TextStyle(color: p.textMuted, fontSize: 12)),
+                            style: TextStyle(color: p.textMuted, fontSize: 12)),
                       ],
                       const SizedBox(height: 8),
                       Wrap(
@@ -1062,8 +1066,8 @@ class _DetailPageState extends State<DetailPage> {
               onPressed: !canRead
                   ? null
                   : (resume != null
-                      ? () => _openChapter(resume.chapter,
-                          initialPage: resume.page)
+                      ? () =>
+                          _openChapter(resume.chapter, initialPage: resume.page)
                       : () => _openChapter(chapters.first)), // 升序:第一条=第1话
               style: FilledButton.styleFrom(
                   backgroundColor: acc,
@@ -1073,13 +1077,17 @@ class _DetailPageState extends State<DetailPage> {
                 mainAxisSize: MainAxisSize.max,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(resume != null ? Icons.play_circle_fill_rounded : Icons.play_arrow_rounded,
+                  Icon(
+                      resume != null
+                          ? Icons.play_circle_fill_rounded
+                          : Icons.play_arrow_rounded,
                       size: 20),
                   const SizedBox(width: 8),
                   Flexible(
                     child: Text(
                       resume != null
-                          ? context.l10n.detail_continueChapter(resume.chapter.name)
+                          ? context.l10n
+                              .detail_continueChapter(resume.chapter.name)
                           : context.l10n.detail_startFromBeginning,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1124,9 +1132,17 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _downloadAll(DownloadStore dl, List<Chapter> chapters) async {
-    final todo = chapters
-        .where((c) => !dl.isDownloaded(widget.meta.id, widget.manga.id, c.id))
-        .toList();
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    final todo = chapters.where((chapter) {
+      if (dl.isDownloaded(widget.meta.id, widget.manga.id, chapter.id)) {
+        return false;
+      }
+      final task = coordinator?.task(_downloadTaskId(chapter));
+      return task == null ||
+          task.state == DownloadTaskState.paused ||
+          task.state == DownloadTaskState.failed ||
+          task.state == DownloadTaskState.cancelled;
+    }).toList();
     if (todo.isEmpty) return;
     final ok = await showDialog<bool>(
       context: context,
@@ -1145,11 +1161,55 @@ class _DetailPageState extends State<DetailPage> {
     );
     if (ok != true) return;
     for (final c in todo) {
-      dl.enqueue(widget.meta, widget.manga, c, _imgHeaders);
+      await _queueDownload(c);
     }
     if (mounted) {
       showAppNotify(context, context.l10n.detail_addedToQueueN(todo.length),
           kind: AppNotifyKind.success);
+    }
+  }
+
+  String _downloadTaskId(Chapter chapter) => contentDownloadTaskId(
+        DownloadContentKind.manga,
+        widget.meta.id,
+        widget.manga.id,
+        chapter.id,
+      );
+
+  Future<void> _queueDownload(Chapter chapter) async {
+    final downloads = DownloadScope.read(context);
+    if (downloads.isDownloaded(widget.meta.id, widget.manga.id, chapter.id)) {
+      return;
+    }
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    if (coordinator == null) {
+      downloads.enqueue(widget.meta, widget.manga, chapter, _imgHeaders);
+      return;
+    }
+    final taskId = _downloadTaskId(chapter);
+    final existing = coordinator.task(taskId);
+    if (existing == null) {
+      await coordinator.enqueue(ContentDownloadTask.manga(
+        sourceId: widget.meta.id,
+        contentId: widget.manga.id,
+        contentTitle: widget.manga.title,
+        chapterId: chapter.id,
+        chapterTitle: chapter.name,
+        now: DateTime.now().millisecondsSinceEpoch,
+      ));
+      return;
+    }
+    switch (existing.state) {
+      case DownloadTaskState.paused:
+        await coordinator.resume(taskId);
+      case DownloadTaskState.failed || DownloadTaskState.cancelled:
+        await coordinator.retry(taskId);
+      case DownloadTaskState.resolving ||
+            DownloadTaskState.queued ||
+            DownloadTaskState.running ||
+            DownloadTaskState.verifying ||
+            DownloadTaskState.completed:
+        return;
     }
   }
 
@@ -1246,7 +1306,10 @@ class _DetailPageState extends State<DetailPage> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_descExpanded ? context.l10n.detail_collapse : context.l10n.detail_expandAll,
+                    Text(
+                        _descExpanded
+                            ? context.l10n.detail_collapse
+                            : context.l10n.detail_expandAll,
                         style: TextStyle(
                             color: acc,
                             fontSize: 12,
@@ -1268,7 +1331,8 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _bgmIcon(AppPalette p, IconData icon, String tip, VoidCallback onTap) =>
+  Widget _bgmIcon(
+          AppPalette p, IconData icon, String tip, VoidCallback onTap) =>
       IconButton(
         onPressed: onTap,
         icon: Icon(icon, size: 16),
@@ -1527,9 +1591,17 @@ class _DetailPageState extends State<DetailPage> {
     // 下载仅当前源提供时可用(他源专属话不在本详情页下载范围)。
     final downloaded = cur != null &&
         dl.isDownloaded(widget.meta.id, widget.manga.id, cur.chapter.id);
-    final prog = cur != null
-        ? dl.progressOf(widget.meta.id, widget.manga.id, cur.chapter.id)
-        : null;
+    final downloadTask = cur == null
+        ? null
+        : DownloadCoordinatorScope.maybeRead(context)
+            ?.task(_downloadTaskId(cur.chapter));
+    final unifiedCompleted = downloadTask?.state == DownloadTaskState.completed;
+    final activeDownload = downloadTask != null &&
+        (downloadTask.state == DownloadTaskState.resolving ||
+            downloadTask.state == DownloadTaskState.queued ||
+            downloadTask.state == DownloadTaskState.running ||
+            downloadTask.state == DownloadTaskState.verifying);
+    final prog = activeDownload ? downloadTask.progress : null;
 
     Widget status;
     if (finished) {
@@ -1539,11 +1611,13 @@ class _DetailPageState extends State<DetailPage> {
           context.l10n.detail_readTo(
               '${mark.page + 1}${mark.total > 0 ? '/${mark.total}' : ''}'),
           style: TextStyle(
-              color: p.accentSoft, fontSize: 10.5, fontWeight: FontWeight.w700));
+              color: p.accentSoft,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700));
     } else if (read) {
       // 他源读过(本源无页码明细)→ 空心勾。
-      status =
-          Icon(Icons.check_circle_outline_rounded, size: 15, color: p.accentSoft);
+      status = Icon(Icons.check_circle_outline_rounded,
+          size: 15, color: p.accentSoft);
     } else {
       status = const SizedBox.shrink();
     }
@@ -1611,11 +1685,10 @@ class _DetailPageState extends State<DetailPage> {
               // 下载状态/按钮(仅当前源提供本话时显示)。
               if (cur != null)
                 GestureDetector(
-                  onTap: (downloaded || prog != null)
+                  onTap: (downloaded || unifiedCompleted || prog != null)
                       ? null
-                      : () => dl.enqueue(
-                          widget.meta, widget.manga, cur!.chapter, _imgHeaders),
-                  child: downloaded
+                      : () => _queueDownload(cur!.chapter),
+                  child: (downloaded || unifiedCompleted)
                       ? Icon(Icons.download_done_rounded,
                           size: 17, color: p.accent)
                       : prog != null
@@ -1642,7 +1715,8 @@ class _DetailPageState extends State<DetailPage> {
       AppPalette p, LibraryStore store, DownloadStore dl) {
     final acc = _cover?.primary ?? p.accent;
     // 合并跨源章节(当前源 + 库里同名书的他源;无他源时 = 当前源本身)。
-    final merged = _chapters == null ? const <_MergedChapter>[] : _mergedChapters();
+    final merged =
+        _chapters == null ? const <_MergedChapter>[] : _mergedChapters();
     final extra = merged.length - (_chapters?.length ?? 0); // 他源补进来的话数
     // 倒序:新章在上(几千章免从头下拉);全局设置,记住选择。展示时翻转,
     // 数据模型不动(每行自包含,_openMerged 照常按行对象打开)。
@@ -1661,7 +1735,9 @@ class _DetailPageState extends State<DetailPage> {
                         (extra > 0
                             ? context.l10n.detail_extraFromOthers(extra)
                             : '') +
-                        (_mergeLoading ? context.l10n.detail_findingOthers : ''),
+                        (_mergeLoading
+                            ? context.l10n.detail_findingOthers
+                            : ''),
                 style: TextStyle(
                     color: Color.lerp(p.textPrimary, acc, 0.4), // 融入封面主题色
                     fontWeight: FontWeight.w700,
@@ -1673,7 +1749,8 @@ class _DetailPageState extends State<DetailPage> {
               Pressable(
                 onTap: () => store.chaptersDesc = !desc,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1791,8 +1868,8 @@ class _DetailPageState extends State<DetailPage> {
 
 /// 库里同名书某个「他源」的章节表(合并跨源章节列表用)。
 class _SrcChapters {
-  _SrcChapters(
-      this.meta, this.source, this.mangaId, this.title, this.cover, this.chapters);
+  _SrcChapters(this.meta, this.source, this.mangaId, this.title, this.cover,
+      this.chapters);
   final SourceMeta meta;
   final MangaSource source;
   final String mangaId;

@@ -7,11 +7,14 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/library_store.dart';
+import '../../app/download_coordinator_scope.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/ui_signals.dart';
 import '../../core/color/cover_palette.dart';
+import '../../core/downloads/content_download_task.dart';
+import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
@@ -260,19 +263,61 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     ));
   }
 
-  void _downloadChapter(NovelChapter chapter) {
-    NovelDownloadScope.read(context).enqueue(_meta, _novel, chapter);
+  String _downloadTaskId(NovelChapter chapter) => contentDownloadTaskId(
+        DownloadContentKind.novel,
+        _meta.id,
+        _novel.id,
+        chapter.id,
+      );
+
+  Future<void> _downloadChapter(NovelChapter chapter) async {
+    final legacy = NovelDownloadScope.read(context);
+    if (legacy.isDownloaded(_meta.id, _novel.id, chapter.id)) return;
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    if (coordinator == null) {
+      legacy.enqueue(_meta, _novel, chapter);
+      return;
+    }
+    final taskId = _downloadTaskId(chapter);
+    final existing = coordinator.task(taskId);
+    if (existing == null) {
+      await coordinator.enqueue(ContentDownloadTask.novel(
+        sourceId: _meta.id,
+        contentId: _novel.id,
+        contentTitle: _novel.title,
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
+        now: DateTime.now().millisecondsSinceEpoch,
+      ));
+      return;
+    }
+    switch (existing.state) {
+      case DownloadTaskState.paused:
+        await coordinator.resume(taskId);
+      case DownloadTaskState.failed || DownloadTaskState.cancelled:
+        await coordinator.retry(taskId);
+      case DownloadTaskState.resolving ||
+            DownloadTaskState.queued ||
+            DownloadTaskState.running ||
+            DownloadTaskState.verifying ||
+            DownloadTaskState.completed:
+        return;
+    }
   }
 
   Future<void> _downloadAll() async {
     final downloads = NovelDownloadScope.read(context);
-    final pending = _chapters
-        .where((chapter) => !downloads.isDownloaded(
-              _meta.id,
-              _novel.id,
-              chapter.id,
-            ))
-        .toList(growable: false);
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    final pending = _chapters.where((chapter) {
+      if (downloads.isDownloaded(_meta.id, _novel.id, chapter.id)) {
+        return false;
+      }
+      final task = coordinator?.task(_downloadTaskId(chapter));
+      return task == null ||
+          task.state == DownloadTaskState.paused ||
+          task.state == DownloadTaskState.failed ||
+          task.state == DownloadTaskState.cancelled;
+    }).toList(growable: false);
     if (pending.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -293,7 +338,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
     if (confirmed != true) return;
     for (final chapter in pending) {
-      downloads.enqueue(_meta, _novel, chapter);
+      await _downloadChapter(chapter);
     }
     if (mounted) {
       showAppNotify(context, context.l10n.detail_addedToQueueN(pending.length),
@@ -305,6 +350,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
   Widget build(BuildContext context) {
     final p = context.palette;
     final novelLibrary = NovelLibraryScope.of(context);
+    DownloadCoordinatorScope.maybeOf(context);
     final favorite = novelLibrary.entryFor(_libraryKey)?.favorite == true;
     final activeId = novelLibrary.progressFor(_libraryKey)?.chapterId;
     return Scaffold(
@@ -531,8 +577,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                       if (authors.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
-                          context.l10n
-                              .detail_authorPrefix(authors.join('、')),
+                          context.l10n.detail_authorPrefix(authors.join('、')),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(color: p.textMuted, fontSize: 12),
@@ -678,9 +723,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                 ScaleTransition(scale: anim, child: child),
             child: Icon(icon,
                 key: ValueKey('$icon$active'),
-                color: onTap == null
-                    ? p.textMuted
-                    : (active ? a : p.textPrimary),
+                color:
+                    onTap == null ? p.textMuted : (active ? a : p.textPrimary),
                 size: 20),
           ),
         ),
@@ -828,6 +872,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     final showVolume = chapter.volumeId != null &&
         (previous == null || previous.volumeId != chapter.volumeId);
     final downloads = NovelDownloadScope.read(context);
+    final task = DownloadCoordinatorScope.maybeRead(context)?.task(
+      _downloadTaskId(chapter),
+    );
     final active = chapter.id == activeId;
     final row = Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -871,34 +918,42 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     return Icon(Icons.download_done_rounded,
                         size: 17, color: p.accent);
                   }
-                  final progress =
-                      downloads.progressOf(_meta.id, _novel.id, chapter.id);
-                  if (progress != null) {
+                  if (task?.state == DownloadTaskState.completed) {
+                    return Icon(Icons.download_done_rounded,
+                        size: 17, color: p.accent);
+                  }
+                  final active = task != null &&
+                      (task.state == DownloadTaskState.resolving ||
+                          task.state == DownloadTaskState.queued ||
+                          task.state == DownloadTaskState.running ||
+                          task.state == DownloadTaskState.verifying);
+                  if (active) {
                     return SizedBox(
                       width: 15,
                       height: 15,
                       child: CircularProgressIndicator(
-                          value: progress > 0 ? progress : null,
+                          value: task.progress > 0 ? task.progress : null,
                           strokeWidth: 2,
                           color: p.accent),
                     );
                   }
-                  final failure =
+                  final legacyFailure =
                       downloads.failureOf(_meta.id, _novel.id, chapter.id);
+                  final failed = task?.state == DownloadTaskState.failed ||
+                      task?.state == DownloadTaskState.cancelled ||
+                      legacyFailure != null;
                   return GestureDetector(
-                    onTap: failure == null
-                        ? () => _downloadChapter(chapter)
-                        : () => downloads.retry(_meta.id, _novel.id, chapter.id),
+                    onTap: () => _downloadChapter(chapter),
                     child: Tooltip(
-                      message: failure == null
+                      message: !failed
                           ? context.l10n.novel_downloadChapter
                           : context.l10n.novel_retryDownload,
                       child: Icon(
-                          failure == null
+                          !failed
                               ? Icons.download_rounded
                               : Icons.refresh_rounded,
                           size: 17,
-                          color: failure == null ? p.textMuted : p.statusFail),
+                          color: failed ? p.statusFail : p.textMuted),
                     ),
                   );
                 },
@@ -919,7 +974,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
     if (!showVolume) {
       return active
-          ? KeyedSubtree(key: const Key('novel-chapter-active'), child: animated)
+          ? KeyedSubtree(
+              key: const Key('novel-chapter-active'), child: animated)
           : animated;
     }
     final grouped = Column(

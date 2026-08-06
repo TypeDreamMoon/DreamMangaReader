@@ -22,4 +22,12 @@ class DownloadCoordinatorScope extends InheritedNotifier<DownloadCoordinator> {
     assert(scope != null, 'DownloadCoordinatorScope not found');
     return scope!.notifier!;
   }
+
+  static DownloadCoordinator? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<DownloadCoordinatorScope>()
+      ?.notifier;
+
+  static DownloadCoordinator? maybeRead(BuildContext context) => context
+      .getInheritedWidgetOfExactType<DownloadCoordinatorScope>()
+      ?.notifier;
 }

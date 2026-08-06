@@ -82,5 +82,7 @@ void main() {
       () => DownloadCoordinatorScope.read(context),
       throwsA(isA<AssertionError>()),
     );
+    expect(DownloadCoordinatorScope.maybeRead(context), isNull);
+    expect(DownloadCoordinatorScope.maybeOf(context), isNull);
   });
 }
