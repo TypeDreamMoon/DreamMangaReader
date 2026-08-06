@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:dream_manga_reader/core/downloads/download_coordinator.dart';
+import 'package:dream_manga_reader/core/downloads/download_executor.dart';
 import 'package:dream_manga_reader/core/downloads/download_failure.dart';
 import 'package:dream_manga_reader/core/downloads/download_policy.dart';
 import 'package:dream_manga_reader/core/downloads/download_task.dart';
@@ -123,4 +126,158 @@ void main() {
     expect(coordinator.task('second'), isNull);
     expect(repository.saved.last.map((task) => task.id), ['first']);
   });
+
+  test('restart returns transient states to queued', () async {
+    final runningTask = taskFixture(state: DownloadTaskState.running);
+    final verifyingTask = taskFixture(
+      id: 'novel:source:book:chapter',
+      kind: DownloadContentKind.novel,
+      state: DownloadTaskState.verifying,
+    );
+    final completedTask = taskFixture(
+      id: 'anime:source:show:episode',
+      kind: DownloadContentKind.anime,
+      state: DownloadTaskState.completed,
+    );
+    repository.loaded = [runningTask, verifyingTask, completedTask];
+
+    await coordinator.load();
+
+    expect(coordinator.task(runningTask.id)!.state, DownloadTaskState.queued);
+    expect(
+      coordinator.task(verifyingTask.id)!.state,
+      DownloadTaskState.queued,
+    );
+    expect(
+      coordinator.task(completedTask.id)!.state,
+      DownloadTaskState.completed,
+    );
+    expect(repository.saved, isNotEmpty);
+  });
+
+  test('scheduler starts higher priority first with bounded concurrency',
+      () async {
+    repository.loaded = [
+      taskFixture(id: 'low', priority: 0),
+      taskFixture(id: 'high', priority: 3),
+      taskFixture(id: 'middle', priority: 2),
+    ];
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+
+    await executor.waitForStarted(2);
+
+    expect(executor.started, ['high', 'middle']);
+    expect(coordinator.task('low')!.state, DownloadTaskState.queued);
+    executor.complete('high');
+    await executor.waitForStarted(3);
+    expect(executor.started.last, 'low');
+    executor.completeAll();
+    await coordinator.idle;
+    expect(
+      coordinator.tasks.every(
+        (task) => task.state == DownloadTaskState.completed,
+      ),
+      isTrue,
+    );
+  });
+
+  test('one executor failure does not stop another queued task', () async {
+    repository.loaded = [taskFixture(id: 'bad'), taskFixture(id: 'good')];
+    final executor = _ControlledExecutor(failingIds: {'bad'});
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+
+    await executor.waitForStarted(2);
+    executor.complete('good');
+    await coordinator.idle;
+
+    expect(coordinator.task('bad')!.state, DownloadTaskState.failed);
+    expect(coordinator.task('good')!.state, DownloadTaskState.completed);
+  });
+
+  test('policy-paused tasks return to queue after reevaluation', () async {
+    var currentEnvironment = unrestrictedEnvironment.copyWith(wifi: false);
+    coordinator.dispose();
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => currentEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+    );
+    repository.loaded = [taskFixture()];
+    await coordinator.load();
+
+    await coordinator.reevaluate();
+    expect(coordinator.tasks.single.state, DownloadTaskState.paused);
+    expect(coordinator.tasks.single.pauseReason, DownloadPauseReason.wifi);
+
+    currentEnvironment = unrestrictedEnvironment;
+    await coordinator.reevaluate();
+    expect(coordinator.tasks.single.state, DownloadTaskState.queued);
+    expect(coordinator.tasks.single.pauseReason, isNull);
+  });
+
+  test('removing a running task invalidates late executor callbacks', () async {
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture());
+    await executor.waitForStarted(1);
+
+    await coordinator.remove(taskFixture().id);
+    executor.complete(taskFixture().id);
+    await coordinator.idle;
+
+    expect(coordinator.task(taskFixture().id), isNull);
+  });
+}
+
+final class _ControlledExecutor implements DownloadExecutor {
+  _ControlledExecutor({this.failingIds = const {}});
+
+  final Set<String> failingIds;
+  final List<String> started = [];
+  final Map<String, Completer<void>> _releases = {};
+  final List<Completer<void>> _waiters = [];
+
+  @override
+  DownloadContentKind get kind => DownloadContentKind.manga;
+
+  @override
+  Future<void> execute(
+    DownloadExecutionContext context,
+    DownloadTask task,
+  ) async {
+    started.add(task.id);
+    _releases[task.id] = Completer<void>();
+    for (final waiter in _waiters.toList()) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    if (failingIds.contains(task.id)) throw StateError('failed ${task.id}');
+    await _releases[task.id]!.future;
+    context.cancellation.throwIfCancelled();
+    await context.reportProgress(100, 100);
+  }
+
+  Future<void> waitForStarted(int count) async {
+    while (started.length < count) {
+      final waiter = Completer<void>();
+      _waiters.add(waiter);
+      await waiter.future;
+      _waiters.remove(waiter);
+    }
+  }
+
+  void complete(String id) {
+    final release = _releases[id];
+    if (release != null && !release.isCompleted) release.complete();
+  }
+
+  void completeAll() {
+    for (final release in _releases.values) {
+      if (!release.isCompleted) release.complete();
+    }
+  }
 }
