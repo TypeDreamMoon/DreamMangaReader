@@ -79,7 +79,9 @@ class _AppState extends State<App> {
     _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
     // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
     // 能补传上次退出前漏掉的变化),再跑启动自动同步(源仓已在 main 里 load 好)。
-    final libraryLoad = _library.load().then((_) {
+    // 原生窗口在收到关闭偏好之前会吞掉 WM_CLOSE。读档抛错时也必须同步一次
+    // (此时用的是默认值),否则关闭按钮和 Alt+F4 会在整个进程生命周期内失效。
+    final libraryLoad = _library.load().whenComplete(() {
       if (mounted) _syncWindowsCloseBehavior();
     });
     Future.wait([
