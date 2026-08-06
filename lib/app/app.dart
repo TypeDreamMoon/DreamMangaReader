@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../l10n/app_localizations.dart';
 import '../core/downloads/download_coordinator.dart';
+import '../core/downloads/android_download_foreground.dart';
 import '../core/downloads/download_policy.dart';
 import '../core/downloads/download_task_repository.dart';
 import '../core/log/app_log.dart';
@@ -53,6 +54,8 @@ class _AppState extends State<App> {
   final AuthStore _auth = AuthStore();
   late final DownloadCoordinator _downloadCoordinator;
   late final bool _ownsDownloadCoordinator;
+  final AndroidDownloadForegroundBridge _androidDownloadForeground =
+      AndroidDownloadForegroundBridge();
 
   @override
   void initState() {
@@ -127,12 +130,28 @@ class _AppState extends State<App> {
     _downloadCoordinator.registerExecutor(_downloads);
     _downloadCoordinator.registerExecutor(_novelDownloads);
     _downloadCoordinator.registerExecutor(_animeDownloads);
+    _downloadCoordinator.addListener(_syncAndroidDownloadForeground);
+    _syncAndroidDownloadForeground();
     _downloadSettings.addListener(_reevaluateDownloads);
     await _downloadCoordinator.reevaluate();
   }
 
   void _reevaluateDownloads() {
     unawaited(_downloadCoordinator.reevaluate());
+  }
+
+  void _syncAndroidDownloadForeground() {
+    unawaited(
+      _androidDownloadForeground.sync(_downloadCoordinator.tasks).catchError(
+        (Object error) {
+          AppLog.i.warn(
+            LogCat.download,
+            'Android 后台下载通知同步失败',
+            detail: '$error',
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -229,6 +248,7 @@ class _AppState extends State<App> {
     _novelDownloads.dispose();
     _animeDownloads.dispose();
     _downloadSettings.removeListener(_reevaluateDownloads);
+    _downloadCoordinator.removeListener(_syncAndroidDownloadForeground);
     _downloadSettings.dispose();
     if (_ownsDownloadCoordinator) _downloadCoordinator.dispose();
     _auth.dispose();
