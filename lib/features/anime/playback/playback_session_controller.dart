@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../../core/net/url_redaction.dart';
 import '../../../core/source/models.dart';
 import 'playback_state.dart';
 import 'player_adapter.dart';
@@ -255,7 +256,8 @@ class PlaybackSessionController {
           attempt: _backoff.length,
           selectedTrack: _selected,
           manualQualityLocked: _state.manualQualityLocked,
-          message: '播放恢复失败：$lastError',
+          // 播放地址常带签名参数,原始异常会带出完整 URL,不能直接进 UI。
+          message: '播放恢复失败：${redactUrlCredentials('$lastError')}',
         ));
       }
     } finally {

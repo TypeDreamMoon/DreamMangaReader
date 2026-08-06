@@ -41,7 +41,7 @@ void main() {
     upstream = await FaultHttpServer.start();
     gateway = HlsCacheGateway(
       cache: HlsCacheStore(directory: temp, limitBytes: 1024 * 1024),
-      upstream: DioHlsUpstreamClient(Dio()),
+      upstream: DioHlsUpstreamClient(Dio(), policy: const HlsUpstreamPolicy(allowLoopback: true)),
       allowLoopbackUpstream: true,
     );
   });
@@ -264,5 +264,48 @@ media.mp4
     final response = await _get(session.localUri);
     expect(response.status, HttpStatus.notImplemented);
     expect(response.text, contains('unsupported-hls-encryption'));
+  });
+
+  test('withholds credential headers from cross-host playlist resources',
+      () async {
+    // 清单由上游控制,可以把分片指向任意主机。原站的 Authorization 只能回源到原主机,
+    // 否则一个被改写的清单就能把用户凭据递给第三方。
+    // localhost 与 127.0.0.1 指向同一台机器但 host 串不同,正好用来模拟换主机。
+    final foreign = 'http://localhost:${upstream.baseUri.port}';
+    upstream.addText('/index.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+same.ts
+#EXTINF:4,
+$foreign/foreign.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/same.ts', const [1]);
+    upstream.addBytes('/foreign.ts', const [2]);
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('index.m3u8').toString(),
+        hls: true,
+        headers: const {
+          'Authorization': 'Bearer origin-only',
+          'Referer': 'https://origin.example.com/',
+        },
+      ),
+      authScope: 'xiaojie_github',
+    );
+
+    final mediaResponse = await _get(session.localUri);
+    final media = HlsParser.parse(mediaResponse.text) as HlsMediaPlaylist;
+    expect(media.segments, hasLength(2));
+
+    await _get(media.segments[0].uri);
+    await _get(media.segments[1].uri);
+
+    final same = upstream.requests.lastWhere((r) => r.path == '/same.ts');
+    final cross = upstream.requests.lastWhere((r) => r.path == '/foreign.ts');
+    expect(same.authorization, 'Bearer origin-only');
+    expect(cross.authorization, isNull);
   });
 }

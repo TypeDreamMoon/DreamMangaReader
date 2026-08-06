@@ -36,10 +36,76 @@ abstract interface class HlsUpstreamClient {
   });
 }
 
+/// HLS 上游地址准入策略。
+///
+/// 清单内容由上游站点控制,里面的每个 URI 都可能指向任意主机,所以注册资源前和跟随
+/// 重定向时都必须过这里。只校验字面量 IP —— 域名解析后落到内网(DNS rebinding)不在
+/// 本策略覆盖范围内,那需要解析并锁定地址,代价高得多。
+class HlsUpstreamPolicy {
+  const HlsUpstreamPolicy({this.allowLoopback = false});
+
+  final bool allowLoopback;
+
+  Uri validate(Uri uri) {
+    if ((uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      throw const FormatException('HLS 上游必须是无凭据 HTTP(S) URL');
+    }
+    if (allowLoopback) return uri;
+    final host = uri.host.toLowerCase();
+    if (host == 'localhost' || host.endsWith('.localhost')) {
+      throw const FormatException('HLS 上游不能指向回环网络');
+    }
+    final address = InternetAddress.tryParse(host);
+    if (address != null && !_isPublic(address)) {
+      throw const FormatException('HLS 上游不能指向回环或内网地址');
+    }
+    return uri;
+  }
+
+  static bool _isPublic(InternetAddress address) {
+    if (address.isLoopback || address.isLinkLocal || address.isMulticast) {
+      return false;
+    }
+    final raw = address.rawAddress;
+    if (address.type == InternetAddressType.IPv4) {
+      final a = raw[0];
+      final b = raw[1];
+      if (a == 0 || a == 10 || a == 127) return false; // 本网段 / 私有 / 回环
+      if (a == 172 && b >= 16 && b <= 31) return false; // 172.16/12
+      if (a == 192 && b == 168) return false; // 192.168/16
+      if (a == 100 && b >= 64 && b <= 127) return false; // CGNAT 100.64/10
+      if (a == 169 && b == 254) return false; // 云元数据 169.254.169.254
+      if (a >= 224) return false; // 组播 / 保留
+      return true;
+    }
+    if (raw.every((byte) => byte == 0)) return false; // ::
+    if ((raw[0] & 0xfe) == 0xfc) return false; // fc00::/7 唯一本地地址
+    if (raw[0] == 0xfe && (raw[1] & 0xc0) == 0x80) return false; // fe80::/10
+    // ::ffff:a.b.c.d —— IPv4 映射地址要按 IPv4 规则再判一次。
+    final mapped = raw.take(10).every((byte) => byte == 0) &&
+        raw[10] == 0xff &&
+        raw[11] == 0xff;
+    if (mapped) {
+      return _isPublic(InternetAddress.fromRawAddress(
+        Uint8List.fromList(raw.sublist(12)),
+      ));
+    }
+    return true;
+  }
+}
+
 class DioHlsUpstreamClient implements HlsUpstreamClient {
-  const DioHlsUpstreamClient(this.dio);
+  const DioHlsUpstreamClient(
+    this.dio, {
+    this.policy = const HlsUpstreamPolicy(),
+    this.maxRedirects = 5,
+  });
 
   final Dio dio;
+  final HlsUpstreamPolicy policy;
+  final int maxRedirects;
 
   @override
   Future<HlsUpstreamResponse> get(
@@ -53,21 +119,48 @@ class DioHlsUpstreamClient implements HlsUpstreamClient {
       requestHeaders[HttpHeaders.rangeHeader] =
           'bytes=$rangeStart-${rangeStart + rangeLength - 1}';
     }
-    final response = await dio.get<List<int>>(
-      uri.toString(),
-      options: Options(
-        responseType: ResponseType.bytes,
-        headers: requestHeaders,
-        validateStatus: (_) => true,
-      ),
-    );
-    return HlsUpstreamResponse(
-      statusCode: response.statusCode ?? 0,
-      bytes: response.data ?? const [],
-      headers: response.headers.map,
-    );
+    // 自动跟随重定向会绕过 policy:上游只要 302 到 127.0.0.1 / 内网就穿透了准入检查。
+    // 所以关掉 Dio 的自动跳转,自己逐跳校验 Location。
+    var target = policy.validate(uri);
+    for (var hop = 0; hop <= maxRedirects; hop++) {
+      final response = await dio.get<List<int>>(
+        target.toString(),
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: requestHeaders,
+          validateStatus: (_) => true,
+          followRedirects: false,
+          maxRedirects: 0,
+        ),
+      );
+      final status = response.statusCode ?? 0;
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (status < 300 || status > 399 || location == null) {
+        return HlsUpstreamResponse(
+          statusCode: status,
+          bytes: response.data ?? const [],
+          headers: response.headers.map,
+        );
+      }
+      final next = policy.validate(target.resolve(location));
+      // 跨主机跳转不得携带原站认证头。
+      if (next.host.toLowerCase() != target.host.toLowerCase()) {
+        requestHeaders.removeWhere(
+          (key, _) => _credentialHeaders.contains(key.toLowerCase()),
+        );
+      }
+      target = next;
+    }
+    throw const FormatException('HLS 上游重定向次数过多');
   }
 }
+
+const Set<String> _credentialHeaders = {
+  'authorization',
+  'cookie',
+  'proxy-authorization',
+  'x-auth-token',
+};
 
 class UnsupportedHlsEncryption implements Exception {
   const UnsupportedHlsEncryption();
@@ -86,11 +179,13 @@ class HlsCacheGateway implements HlsSessionGateway {
     required HlsUpstreamClient upstream,
     this.allowLoopbackUpstream = false,
   })  : _cache = cache,
-        _upstream = upstream;
+        _upstream = upstream,
+        _policy = HlsUpstreamPolicy(allowLoopback: allowLoopbackUpstream);
 
   final HlsCacheStore _cache;
   final HlsUpstreamClient _upstream;
   final bool allowLoopbackUpstream;
+  final HlsUpstreamPolicy _policy;
   final Random _random = Random.secure();
   final Map<String, _SessionData> _sessions = {};
   final Set<Future<void>> _activeRequests = {};
@@ -104,12 +199,13 @@ class HlsCacheGateway implements HlsSessionGateway {
   }) async {
     if (!track.hls) throw ArgumentError.value(track.url, 'track', '不是 HLS');
     await _ensureServer();
-    final source = _validateUpstream(Uri.parse(track.url));
+    final source = _policy.validate(Uri.parse(track.url));
     final id = _randomId();
     final data = _SessionData(
       id: id,
       headers: Map.unmodifiable(track.headers ?? const {}),
       authScope: authScope,
+      originHost: source.host.toLowerCase(),
     );
     _sessions[id] = data;
     final root = _register(data, source, _ResourceKind.playlist);
@@ -428,7 +524,7 @@ class HlsCacheGateway implements HlsSessionGateway {
       try {
         final response = await _upstream.get(
           resource.uri,
-          headers: session.headers,
+          headers: _headersFor(session, resource.uri),
           rangeStart: resource.rangeStart,
           rangeLength: resource.rangeLength,
         );
@@ -468,21 +564,18 @@ class HlsCacheGateway implements HlsSessionGateway {
     return resource;
   }
 
-  Uri _validateUpstream(Uri uri) {
-    if ((uri.scheme != 'http' && uri.scheme != 'https') ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty) {
-      throw const FormatException('HLS 上游必须是无凭据 HTTP(S) URL');
-    }
-    final host = uri.host.toLowerCase();
-    final address = InternetAddress.tryParse(host);
-    if (!allowLoopbackUpstream &&
-        (host == 'localhost' ||
-            host.endsWith('.localhost') ||
-            (address?.isLoopback ?? false))) {
-      throw const FormatException('HLS 上游不能指向回环网络');
-    }
-    return uri;
+  Uri _validateUpstream(Uri uri) => _policy.validate(uri);
+
+  /// 清单里的 URI 可以指向任意主机,而 [_SessionData.headers] 来自原始 track
+  /// (可能带 Cookie / Authorization / Referer)。只有回源到同一主机时才带认证头,
+  /// 否则一个被改写的清单就能把用户在原站的凭据送给第三方。
+  Map<String, String> _headersFor(_SessionData session, Uri target) {
+    if (target.host.toLowerCase() == session.originHost) return session.headers;
+    return {
+      for (final entry in session.headers.entries)
+        if (!_credentialHeaders.contains(entry.key.toLowerCase()))
+          entry.key: entry.value,
+    };
   }
 
   Uri _localUri(String sessionId, String resourceId) => Uri.parse(
@@ -579,11 +672,13 @@ class _SessionData {
     required this.id,
     required this.headers,
     required this.authScope,
+    required this.originHost,
   });
 
   final String id;
   final Map<String, String> headers;
   final String authScope;
+  final String originHost;
   final Map<String, _Resource> resources = {};
   final Map<String, String> signatures = {};
   final Map<String, Uint8List> keyBytes = {};

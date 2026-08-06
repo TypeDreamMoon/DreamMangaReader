@@ -7,11 +7,17 @@ class FaultRoute {
     required this.body,
     this.contentType = 'application/octet-stream',
     this.failuresBeforeSuccess = 0,
+    this.redirectTo,
+    this.redirectStatus = HttpStatus.movedTemporarily,
   });
 
   final List<int> body;
   final String contentType;
   int failuresBeforeSuccess;
+
+  /// 非空时该路由返回一个跳转而不是内容,用来验证上游准入策略是否逐跳校验。
+  final String? redirectTo;
+  final int redirectStatus;
 }
 
 class RecordedRequest {
@@ -71,6 +77,18 @@ class FaultHttpServer {
     );
   }
 
+  void addRedirect(
+    String path,
+    String location, {
+    int status = HttpStatus.movedTemporarily,
+  }) {
+    routes[path] = FaultRoute(
+      body: const [],
+      redirectTo: location,
+      redirectStatus: status,
+    );
+  }
+
   Future<void> _handle(HttpRequest request) async {
     requests.add(RecordedRequest(
       path: request.uri.path,
@@ -80,6 +98,13 @@ class FaultHttpServer {
     final route = routes[request.uri.path];
     if (route == null) {
       request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    final redirectTo = route.redirectTo;
+    if (redirectTo != null) {
+      request.response.statusCode = route.redirectStatus;
+      request.response.headers.set(HttpHeaders.locationHeader, redirectTo);
       await request.response.close();
       return;
     }
