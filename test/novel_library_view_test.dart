@@ -7,7 +7,6 @@ import 'package:dream_manga_reader/app/anime_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/features/library/history_page.dart';
-import 'package:dream_manga_reader/features/library/library_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_library_view.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
@@ -24,23 +23,6 @@ void main() {
 
   tearDown(() async {
     if (await sandbox.exists()) await sandbox.delete(recursive: true);
-  });
-
-  testWidgets('library kind switch never renders manga and novel together',
-      (tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      locale: Locale('zh'),
-      supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      home: _SwitchHarness(),
-    ));
-
-    expect(find.text('漫画甲'), findsOneWidget);
-    expect(find.text('小说乙'), findsNothing);
-    await tester.tap(find.text('小说'));
-    await tester.pumpAndSettle();
-    expect(find.text('小说乙'), findsOneWidget);
-    expect(find.text('漫画甲'), findsNothing);
   });
 
   test('local TXT loader slices normalized UTF-8 byte offsets', () async {
@@ -314,28 +296,4 @@ void main() {
     novelStore.dispose();
     animeStore.dispose();
   });
-}
-
-class _SwitchHarness extends StatefulWidget {
-  const _SwitchHarness();
-
-  @override
-  State<_SwitchHarness> createState() => _SwitchHarnessState();
-}
-
-class _SwitchHarnessState extends State<_SwitchHarness> {
-  var _kind = LibraryKind.manga;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: LibraryKindSwitch(
-          selected: _kind,
-          onSelected: (value) => setState(() => _kind = value),
-        ),
-      ),
-      body: _kind == LibraryKind.manga ? const Text('漫画甲') : const Text('小说乙'),
-    );
-  }
 }

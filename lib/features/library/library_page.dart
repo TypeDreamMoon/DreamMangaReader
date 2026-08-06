@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../app/anime_library_store.dart';
 import '../../app/library_store.dart';
+import '../../app/novel_library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/novel/models.dart';
 import '../../core/source/chinese_fold.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart' show MangaSource;
@@ -15,110 +18,36 @@ import '../common/animations.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
+import '../anime/anime_detail_page.dart';
+import '../anime/anime_history_resume.dart';
 import '../novel/novel_import_sheet.dart';
+import '../novel/novel_cover.dart';
 import '../novel/novel_library_view.dart';
 import 'history_page.dart';
-import 'library_kind_switch.dart';
 import 'manga_cover.dart';
 import 'masonry_feed.dart';
 import 'recommend_controller.dart';
+import 'unified_history.dart';
 
-export 'library_kind_switch.dart';
+class LibraryPage extends StatelessWidget {
+  const LibraryPage({
+    super.key,
+    this.recommendController,
+  });
 
-class LibraryPage extends StatefulWidget {
-  const LibraryPage({super.key});
-
-  @override
-  State<LibraryPage> createState() => _LibraryPageState();
-}
-
-class _LibraryPageState extends State<LibraryPage> {
-  LibraryKind _kind = LibraryKind.manga;
+  final RecommendController? recommendController;
 
   @override
-  Widget build(BuildContext context) {
-    return switch (_kind) {
-      LibraryKind.manga => _MangaLibraryPage(
-          onKindChanged: (value) => setState(() => _kind = value),
-        ),
-      LibraryKind.novel => _NovelLibraryPage(
-          onKindChanged: (value) => setState(() => _kind = value),
-        ),
-    };
-  }
+  Widget build(BuildContext context) => _MangaLibraryPage(
+        recommendController: recommendController,
+      );
 }
 
-/// 小说书架页。外壳(毛玻璃标题栏 / 入场动画 / 搜索开关)与 [_MangaLibraryPage] 保持
-/// 同一副长相 —— 两边靠顶部分段器互切,壳不一样切过去会「换了个 App」。
-///
-/// 唯一的动作差异是漫画那边的刷新键:它重拉的是底部混合源浏览区,小说书架只有本地
-/// 导入 + 收藏(store 变更自动重建),没有可刷新的东西,那个位置改放导入。
-class _NovelLibraryPage extends StatefulWidget {
-  const _NovelLibraryPage({required this.onKindChanged});
-
-  final ValueChanged<LibraryKind> onKindChanged;
-
-  @override
-  State<_NovelLibraryPage> createState() => _NovelLibraryPageState();
-}
-
-class _NovelLibraryPageState extends State<_NovelLibraryPage> {
-  bool _showShelfSearch = false;
-
-  @override
-  Widget build(BuildContext context) {
-    // 与漫画书架同构:内容延伸到毛玻璃标题栏之后,body 手动留出顶部内边距。
-    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: GlassTitleBar(
-        title: Text(
-          context.l10n.navBookshelf,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
-        ),
-        actions: [
-          LibraryKindSwitch(
-            selected: LibraryKind.novel,
-            onSelected: widget.onKindChanged,
-          ),
-          IconButton(
-            tooltip: context.l10n.novel_librarySearchHint,
-            onPressed: () =>
-                setState(() => _showShelfSearch = !_showShelfSearch),
-            icon: Icon(
-              _showShelfSearch ? Icons.search_off_rounded : Icons.search_rounded,
-            ),
-          ),
-          const NovelImportButton(compact: true),
-          IconButton(
-            tooltip: context.l10n.novel_historyTooltip,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const HistoryPage(showNovelInitially: true),
-              ),
-            ),
-            icon: const Icon(Icons.history_rounded),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      // 内容自下而上升起(标题栏则自上而下落,合成「上下对开」入场)。
-      body: EntranceSlide(
-        begin: const Offset(0, 0.06),
-        child: Padding(
-          padding: EdgeInsets.only(top: topInset),
-          child: NovelLibraryView(searchVisible: _showShelfSearch),
-        ),
-      ),
-    );
-  }
-}
-
-/// 漫画书架原有内容。小说书架由 [NovelLibraryView] 独立持有。
+/// 保留原漫画书架的推荐和跨源能力，在同一页面加入三类收藏与统一历史。
 class _MangaLibraryPage extends StatefulWidget {
-  const _MangaLibraryPage({required this.onKindChanged});
+  const _MangaLibraryPage({this.recommendController});
 
-  final ValueChanged<LibraryKind> onKindChanged;
+  final RecommendController? recommendController;
 
   @override
   State<_MangaLibraryPage> createState() => _MangaLibraryPageState();
@@ -143,7 +72,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
   String _shelfQuery = ''; // 非空 = 在收藏里筛选
   final ScrollController _continueScroll = ScrollController();
   final ScrollController _recScroll = ScrollController();
-  final RecommendController _recs = RecommendController();
+  late final RecommendController _recs =
+      widget.recommendController ?? RecommendController();
   String _lastRecSig = ''; // 上次触发推荐刷新时的书架签名(变了才重触发)
 
   @override
@@ -152,7 +82,7 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     _shelfCtrl.dispose();
     _continueScroll.dispose();
     _recScroll.dispose();
-    _recs.dispose();
+    if (widget.recommendController == null) _recs.dispose();
     super.dispose();
   }
 
@@ -233,7 +163,9 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     for (final m in items) {
       final key = ChineseFold.dedupKey(m.title);
       if (key.isEmpty) {
-        if (_feedItems.length < _feedCap) _feedItems.add((manga: m, meta: meta));
+        if (_feedItems.length < _feedCap) {
+          _feedItems.add((manga: m, meta: meta));
+        }
         continue;
       }
       final pos = _feedPos[key];
@@ -274,7 +206,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
   bool _crossOpening = false; // 同名查找进行中(防连点重复扇出)
 
   /// 在(除 [excludeSourceId] 外的)启用漫画源里搜同名并打开详情页。
-  Future<void> _openInOtherSource(String title, {String? excludeSourceId}) async {
+  Future<void> _openInOtherSource(String title,
+      {String? excludeSourceId}) async {
     if (_crossOpening) return;
     final store = LibraryScope.read(context);
     final metas = [
@@ -381,9 +314,17 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
       GestureDetector(
         behavior: HitTestBehavior.translucent,
         onLongPressStart: (d) => _showEntryMenu(d.globalPosition,
-            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag),
+            title: title,
+            sourceId: sourceId,
+            mangaId: mangaId,
+            cover: cover,
+            heroTag: heroTag),
         onSecondaryTapUp: (d) => _showEntryMenu(d.globalPosition,
-            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag),
+            title: title,
+            sourceId: sourceId,
+            mangaId: mangaId,
+            cover: cover,
+            heroTag: heroTag),
         child: child,
       );
 
@@ -398,8 +339,7 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     final p = context.palette;
     final store = LibraryScope.read(context);
     final w = _workEntries(store, title, sourceId: sourceId, mangaId: mangaId);
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     PopupMenuItem<String> item(String v, IconData ic, String label,
             {Color? color}) =>
         PopupMenuItem<String>(
@@ -409,8 +349,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
             Icon(ic, size: 17, color: color ?? p.textMuted),
             const SizedBox(width: 10),
             Text(label,
-                style: TextStyle(
-                    fontSize: 13.5, color: color ?? p.textPrimary)),
+                style:
+                    TextStyle(fontSize: 13.5, color: color ?? p.textPrimary)),
           ]),
         );
     final picked = await showMenu<String>(
@@ -423,12 +363,15 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
           side: BorderSide(color: p.line)),
       items: [
         item('open', Icons.menu_book_rounded, context.l10n.shelf_menuOpen),
-        item('other', Icons.swap_horiz_rounded, context.l10n.shelf_menuOpenOther),
+        item('other', Icons.swap_horiz_rounded,
+            context.l10n.shelf_menuOpenOther),
         if (w.favs.isNotEmpty)
-          item('unfav', Icons.favorite_border_rounded, context.l10n.shelf_menuUnfav,
+          item('unfav', Icons.favorite_border_rounded,
+              context.l10n.shelf_menuUnfav,
               color: p.statusFail),
         if (w.hist.isNotEmpty)
-          item('delhist', Icons.delete_outline_rounded, context.l10n.shelf_menuDelHist,
+          item('delhist', Icons.delete_outline_rounded,
+              context.l10n.shelf_menuDelHist,
               color: p.statusFail),
       ],
     );
@@ -436,7 +379,11 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     switch (picked) {
       case 'open':
         _openEntrySmart(
-            title: title, sourceId: sourceId, mangaId: mangaId, cover: cover, heroTag: heroTag);
+            title: title,
+            sourceId: sourceId,
+            mangaId: mangaId,
+            cover: cover,
+            heroTag: heroTag);
       case 'other':
         _openInOtherSource(title, excludeSourceId: sourceId);
       case 'unfav':
@@ -508,24 +455,21 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     return out;
   }
 
-  /// 继续阅读去重:同作品只留最近读的那条。
-  List<({ReadState rep, int sources})> _dedupHistory(LibraryStore store) {
-    final srcMap = _sourcesByWork(store);
-    final seen = <String>{};
-    final out = <({ReadState rep, int sources})>[];
-    for (final h in store.history) {
-      final core = coreTitle(h.title);
-      final key = core.isEmpty ? 'raw:${h.key}' : _canonKey(core, srcMap.keys);
-      if (!seen.add(key)) continue; // 保留第一条(history 已按最近排序)
-      out.add((rep: h, sources: srcMap[key]?.length ?? 1));
-    }
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
     final store = LibraryScope.of(context); // 依赖:收藏/进度变了自动重建
+    final novelStore = NovelLibraryScope.of(context);
+    final animeStore = AnimeLibraryScope.of(context);
+    final unifiedHistory = UnifiedHistoryProjector.build(
+      manga: store.history,
+      novel: [
+        for (final item in novelStore.history)
+          if (novelStore.entryFor(item.key) case final entry?)
+            UnifiedNovelHistoryInput(entry: entry, progress: item.value),
+      ],
+      anime: animeStore.history,
+    );
     final meta = _sc?.current; // 可能未配置源 → null
     // 书架内容变了(签名变)才后台重算「为你推荐」;post-frame 触发,避免 build 期改 controller。
     final recSig = RecommendController.signatureOf(store);
@@ -550,10 +494,6 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
         title: Text(context.l10n.navBookshelf,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
-          LibraryKindSwitch(
-            selected: LibraryKind.manga,
-            onSelected: widget.onKindChanged,
-          ),
           IconButton(
             tooltip: context.l10n.shelf_searchInFavsTooltip,
             onPressed: () => setState(() {
@@ -563,15 +503,19 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
                 _shelfQuery = '';
               }
             }),
-            icon: Icon(_showShelfSearch ? Icons.search_off_rounded : Icons.search_rounded),
+            icon: Icon(_showShelfSearch
+                ? Icons.search_off_rounded
+                : Icons.search_rounded),
           ),
+          const NovelImportButton(compact: true),
           IconButton(
             tooltip: context.l10n.shelf_historyTooltip,
-            onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const HistoryPage())),
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const HistoryPage())),
             icon: const Icon(Icons.history_rounded),
           ),
-          IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh_rounded)),
+          IconButton(
+              onPressed: _refresh, icon: const Icon(Icons.refresh_rounded)),
           const SizedBox(width: 8),
         ],
       ),
@@ -595,16 +539,17 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
               ),
               Expanded(
                 child: _shelfQuery.isNotEmpty
-                    ? _shelfResults(p, store)
+                    ? _shelfResults(p, store, novelStore, animeStore)
                     : AppScrollView(
                         padding: const EdgeInsets.only(bottom: 24),
                         children: [
-                          if (store.history.isNotEmpty) _continueStrip(p, store),
-                          if (store.favorites.isNotEmpty)
-                            _favoritesSection(p, store),
+                          _unifiedHistoryStrip(p, unifiedHistory),
+                          _favoritesSection(p, store),
+                          _novelFavoritesSection(p, novelStore),
+                          _animeFavoritesSection(p, animeStore),
                           _recommendStrip(p, store),
                           if (meta != null) ...[
-                           _sectionHeader(p, context.l10n.shelf_recommend),
+                            _sectionHeader(p, context.l10n.shelf_recommend),
                             if (store.showSourcePicker)
                               _sourcePicker(p, meta, store),
                             _browse(p, store),
@@ -631,7 +576,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
             isDense: true,
             hintText: context.l10n.shelf_searchInFavsHint,
             hintStyle: TextStyle(color: p.textMuted, fontSize: 13),
-            prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
+            prefixIcon:
+                Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             filled: true,
             fillColor: p.surface,
             contentPadding:
@@ -646,22 +592,54 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
         ),
       );
 
-  Widget _shelfResults(AppPalette p, LibraryStore store) {
+  Widget _shelfResults(
+    AppPalette p,
+    LibraryStore store,
+    NovelLibraryStore novelStore,
+    AnimeLibraryStore animeStore,
+  ) {
     final q = _shelfQuery.toLowerCase();
     final favs = _dedupFavs(store)
         .where((e) => e.rep.title.toLowerCase().contains(q))
         .toList();
-    if (favs.isEmpty) {
+    final novels = novelStore.entries
+        .where((entry) =>
+            entry.favorite &&
+            (entry.title.toLowerCase().contains(q) ||
+                entry.authors
+                    .any((author) => author.toLowerCase().contains(q))))
+        .toList(growable: false);
+    final anime = animeStore.favorites
+        .where((entry) => entry.title.toLowerCase().contains(q))
+        .toList(growable: false);
+    if (favs.isEmpty && novels.isEmpty && anime.isEmpty) {
       return EmptyState(title: context.l10n.shelf_noFavMatch(_shelfQuery));
     }
-    final layout = store.feedLayout;
-    return FeedView(
-      layout: layout,
-      columns: store.gridColumns,
-      itemCount: favs.length,
+    return AppScrollView(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
-      cardBuilder: (context, i) => _favCard(p, favs[i], layout, 'search'),
-      tileBuilder: (context, i) => _favTile(p, favs[i], 'searchl'),
+      children: [
+        if (favs.isNotEmpty)
+          _favoritesSection(
+            p,
+            store,
+            favorites: favs,
+            contentPadding: EdgeInsets.zero,
+          ),
+        if (novels.isNotEmpty)
+          _novelFavoritesSection(
+            p,
+            novelStore,
+            favorites: novels,
+            contentPadding: EdgeInsets.zero,
+          ),
+        if (anime.isNotEmpty)
+          _animeFavoritesSection(
+            p,
+            animeStore,
+            favorites: anime,
+            contentPadding: EdgeInsets.zero,
+          ),
+      ],
     );
   }
 
@@ -690,8 +668,10 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
           final noteCode = _recs.noteCode;
           // 空态里只有「可重试」的提示(失败 / 暂时性)才占位显示 —— 「书架太少」这类
           // 需用户去收藏、重试无用的,直接不占位。
-          final showNote =
-              recs.isEmpty && !_recs.loading && noteCode != null && _recs.canRetry;
+          final showNote = recs.isEmpty &&
+              !_recs.loading &&
+              noteCode != null &&
+              _recs.canRetry;
           if (recs.isEmpty && !_recs.loading && !showNote) {
             return const SizedBox.shrink();
           }
@@ -703,7 +683,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
                 child: Row(
                   children: [
                     // Row 给子级无界宽度,带尾线(内部 Expanded)会炸布局 → 关掉尾线。
-                    AppSectionHeading(context.l10n.shelf_forYou, trailingRule: false),
+                    AppSectionHeading(context.l10n.shelf_forYou,
+                        trailingRule: false),
                     const SizedBox(width: 10),
                     if (_recs.loading)
                       SizedBox(
@@ -805,123 +786,327 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
             const SizedBox(height: 8),
             Text(context.l10n.shelf_noSourceDesc,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
+                style:
+                    TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
           ],
         ),
       );
 
-  // 卡片进度文案:优先「作品级共享进度」的章(话数)—— 同名书跨源共用、各副本一致;
-  // 无共享进度(话数解析不出)时退回本源页码/章名。
-  String _progressText(LibraryStore store, ReadState h) {
-    final wp = store.workProgressFor(h.title);
-    if (wp != null && wp.chapterLabel.isNotEmpty) {
-      return context.l10n.detail_readTo(wp.chapterLabel);
-    }
-    if (h.lastTotal > 0) {
-      return context.l10n.detail_readTo('${h.lastPage + 1}/${h.lastTotal}');
-    }
-    return h.lastChapterName;
-  }
-
-  // 继续阅读:横向卡片条(同名书跨源去重为一张,带「N源」角标)。
-  Widget _continueStrip(AppPalette p, LibraryStore store) {
-    final items = _dedupHistory(store).take(12).toList();
+  // 三类历史统一按时间排序，首页最多展示 12 条。
+  Widget _unifiedHistoryStrip(
+    AppPalette p,
+    List<UnifiedHistoryItem> history,
+  ) {
+    final items = history.take(12).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, context.l10n.shelf_continueReading),
-        SizedBox(
-          height: 172,
-          // 桌面:竖向滚轮转横向滚动 + 允许鼠标拖拽(AppHStrip 统一处理)。
-          child: AppHStrip.separated(
-            controller: _continueScroll,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (context, i) {
-              final h = items[i].rep;
-              final meta = _metaById(h.sourceId);
-              final m = Manga(id: h.mangaId, title: h.title, cover: h.cover);
-              final tag = meta != null ? 'cont:${meta.id}:${m.id}' : null;
-              return _withEntryMenu(
-                title: h.title,
-                sourceId: h.sourceId,
-                mangaId: h.mangaId,
-                cover: h.cover,
-                heroTag: tag,
-                child: SizedBox(
-                width: 92,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 封面用 Flexible 包住:文字取自然高度后,封面自适应剩余高度
-                    // (最多缩一两像素),无论字体行高多大都不会撑破固定高卡片。
-                    Flexible(
-                      child: MangaCover(
-                        manga: m,
-                        sourceCount: items[i].sources,
-                        headers: meta != null ? imageHeadersOf(meta) : const {},
-                        heroTag: tag,
-                        // 源被删也能点:自动在其它源找同名打开。
-                        onTap: () => _openEntrySmart(
-                            title: h.title,
-                            sourceId: h.sourceId,
-                            mangaId: h.mangaId,
-                            cover: h.cover,
-                            heroTag: tag),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    // CJK 回退字体默认行高很高(~1.5),两行标题+进度会撑破固定
-                    // 高的横排卡片;显式 height 收紧行高,配合上面的 Flexible 兜底。
-                    Text(h.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 11.5,
-                            height: 1.25,
-                            fontWeight: FontWeight.w700,
-                            color: p.textPrimary)),
-                    Text(
-                      _progressText(store, h),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          TextStyle(fontSize: 10, height: 1.25, color: p.accentSoft),
-                    ),
-                  ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 14),
+          child: Row(
+            children: [
+              const Expanded(child: AppSectionHeading('历史记录')),
+              IconButton(
+                tooltip: context.l10n.shelf_historyTooltip,
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const HistoryPage()),
                 ),
+                icon: const Icon(Icons.chevron_right_rounded),
               ),
-              );
-            },
+            ],
           ),
         ),
+        if (items.isEmpty)
+          _compactEmpty(p, '暂无历史记录')
+        else
+          SizedBox(
+            height: 172,
+            child: AppHStrip.separated(
+              controller: _continueScroll,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) =>
+                  _unifiedHistoryCard(p, items[index]),
+            ),
+          ),
         const SizedBox(height: 14),
       ],
     );
   }
 
+  Widget _unifiedHistoryCard(AppPalette p, UnifiedHistoryItem item) {
+    late final Widget cover;
+    late final String progress;
+    VoidCallback? onTap;
+    switch (item.kind) {
+      case UnifiedHistoryKind.manga:
+        final history = item.manga!;
+        final meta = _metaById(history.sourceId);
+        final manga = Manga(
+          id: history.mangaId,
+          title: history.title,
+          cover: history.cover,
+        );
+        cover = MangaCover(
+          manga: manga,
+          headers: meta == null ? const {} : imageHeadersOf(meta),
+          radius: 8,
+        );
+        progress = history.lastChapterName;
+        onTap = () => _openEntrySmart(
+              title: history.title,
+              sourceId: history.sourceId,
+              mangaId: history.mangaId,
+              cover: history.cover,
+            );
+      case UnifiedHistoryKind.novel:
+        final entry = item.novelEntry!;
+        final novel = Novel(
+          id: entry.novelId ?? entry.fingerprint ?? entry.key,
+          title: entry.title,
+          cover: entry.cover,
+          authors: entry.authors,
+        );
+        cover = NovelCover(novel: novel, radius: 8);
+        progress = item.novelProgress!.locator.chapterId;
+        if (entry.available) {
+          onTap = () => openNovelLibraryEntry(context, entry);
+        }
+      case UnifiedHistoryKind.anime:
+        final history = item.anime!;
+        final meta = _metaById(history.sourceId);
+        cover = MangaCover(
+          manga: Manga(
+            id: history.animeId,
+            title: history.title,
+            cover: history.cover,
+          ),
+          headers: meta == null ? const {} : imageHeadersOf(meta),
+          radius: 8,
+        );
+        progress = '${history.episodeName} · '
+            '${_formatClock(history.positionSeconds)}';
+        onTap = () => openAnimeHistory(context, history);
+    }
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 92,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Flexible(child: cover),
+            const SizedBox(height: 6),
+            Text(
+              item.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.25,
+                fontWeight: FontWeight.w700,
+                color: p.textPrimary,
+              ),
+            ),
+            Text(
+              progress,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.25,
+                color: p.accentSoft,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatClock(int totalSeconds) {
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final tail = '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+    return hours > 0 ? '$hours:$tail' : tail;
+  }
+
   // 收藏网格。
-  Widget _favoritesSection(AppPalette p, LibraryStore store) {
-    final favs = _dedupFavs(store); // 同名书跨源去重为一张卡(带「N源」角标)
+  Widget _favoritesSection(
+    AppPalette p,
+    LibraryStore store, {
+    List<({FavoriteEntry rep, int sources})>? favorites,
+    EdgeInsets contentPadding = const EdgeInsets.fromLTRB(16, 0, 16, 4),
+  }) {
+    final favs = favorites ?? _dedupFavs(store); // 同名书跨源去重为一张卡(带「N源」角标)
     final layout = store.feedLayout;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader(p, context.l10n.shelf_favoritesN(favs.length)),
-        FeedView(
-          layout: layout,
-          shrinkWrap: true, // 嵌在书架外层 ListView 里,自身不滚
-          columns: store.gridColumns,
-          itemCount: favs.length,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-          cardBuilder: (context, i) => _favCard(p, favs[i], layout, 'fav'),
-          tileBuilder: (context, i) => _favTile(p, favs[i], 'favl'),
-        ),
+        _sectionHeader(p, '漫画收藏'),
+        if (favs.isEmpty)
+          _compactEmpty(p, '暂无漫画收藏')
+        else
+          FeedView(
+            layout: layout,
+            shrinkWrap: true, // 嵌在书架外层 ListView 里,自身不滚
+            columns: store.gridColumns,
+            itemCount: favs.length,
+            padding: contentPadding,
+            cardBuilder: (context, i) => _favCard(p, favs[i], layout, 'fav'),
+            tileBuilder: (context, i) => _favTile(p, favs[i], 'favl'),
+          ),
         const SizedBox(height: 14),
       ],
     );
   }
+
+  Widget _novelFavoritesSection(
+    AppPalette p,
+    NovelLibraryStore store, {
+    List<NovelLibraryEntry>? favorites,
+    EdgeInsets contentPadding = const EdgeInsets.symmetric(horizontal: 16),
+  }) {
+    final entries = favorites ??
+        (store.entries.where((entry) => entry.favorite).toList(growable: false)
+          ..sort((a, b) => b.addedAt.compareTo(a.addedAt)));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(p, '小说收藏'),
+        if (entries.isEmpty)
+          _compactEmpty(p, '暂无小说收藏')
+        else
+          SizedBox(
+            height: 172,
+            child: AppHStrip.separated(
+              padding: contentPadding,
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final entry = entries[index];
+                final novel = Novel(
+                  id: entry.novelId ?? entry.fingerprint ?? entry.key,
+                  title: entry.title,
+                  cover: entry.cover,
+                  authors: entry.authors,
+                );
+                return SizedBox(
+                  width: 92,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Flexible(
+                        child: GestureDetector(
+                          onTap: entry.available
+                              ? () => openNovelLibraryEntry(context, entry)
+                              : null,
+                          child: NovelCover(
+                            novel: novel,
+                            radius: 8,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        entry.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  Widget _animeFavoritesSection(
+    AppPalette p,
+    AnimeLibraryStore store, {
+    List<AnimeFavoriteEntry>? favorites,
+    EdgeInsets contentPadding = const EdgeInsets.symmetric(horizontal: 16),
+  }) {
+    final entries = favorites ?? store.favorites;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(p, '番剧收藏'),
+        if (entries.isEmpty)
+          _compactEmpty(p, '暂无番剧收藏')
+        else
+          SizedBox(
+            height: 172,
+            child: AppHStrip.separated(
+              padding: contentPadding,
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final entry = entries[index];
+                final meta = _metaById(entry.sourceId);
+                final anime = Manga(
+                  id: entry.animeId,
+                  title: entry.title,
+                  cover: entry.cover,
+                );
+                return SizedBox(
+                  width: 92,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Flexible(
+                        child: MangaCover(
+                          manga: anime,
+                          headers:
+                              meta == null ? const {} : imageHeadersOf(meta),
+                          radius: 8,
+                          onTap: meta == null
+                              ? null
+                              : () => Navigator.of(context).push(appRoute(
+                                    AnimeDetailPage(meta: meta, anime: anime),
+                                  )),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        entry.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: p.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  Widget _compactEmpty(AppPalette p, String message) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Text(
+          message,
+          style: TextStyle(color: p.textMuted, fontSize: 12.5),
+        ),
+      );
 
   // 收藏卡(瀑布流/网格):封面 + 标题。网格用 Flexible 防固定高单元格溢出;瀑布流取自然高。
   Widget _favCard(AppPalette p, ({FavoriteEntry rep, int sources}) item,
@@ -967,8 +1152,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
     );
   }
 
-  Widget _favTile(AppPalette p, ({FavoriteEntry rep, int sources}) item,
-      String tagPrefix) {
+  Widget _favTile(
+      AppPalette p, ({FavoriteEntry rep, int sources}) item, String tagPrefix) {
     final f = item.rep;
     final meta = _metaById(f.sourceId);
     final m = Manga(id: f.mangaId, title: f.title, cover: f.cover);
@@ -1040,7 +1225,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
   }
 
   // 浏览卡(瀑布流/网格):封面 + 标题 + 作者。网格用 Flexible 防固定高溢出;瀑布流取自然高。
-  Widget _browseCard(AppPalette p, LibraryStore store, int i, FeedLayout layout) {
+  Widget _browseCard(
+      AppPalette p, LibraryStore store, int i, FeedLayout layout) {
     final item = _feedItems[i];
     final m = item.manga;
     // 带下标:源 feed 可能重复同一本,避免 Hero tag 撞车。
@@ -1108,7 +1294,8 @@ class _MangaLibraryPageState extends State<_MangaLibraryPage> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.textMuted, fontSize: 12)),
               const SizedBox(height: 14),
-              FilledButton(onPressed: _refresh, child: Text(context.l10n.retry)),
+              FilledButton(
+                  onPressed: _refresh, child: Text(context.l10n.retry)),
             ],
           ),
         ),

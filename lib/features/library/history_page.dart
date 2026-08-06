@@ -20,13 +20,7 @@ import 'unified_history.dart';
 
 /// 漫画、小说和番剧共用一条按最近时间排序的历史记录。
 class HistoryPage extends StatelessWidget {
-  const HistoryPage({
-    super.key,
-    this.showNovelInitially = false,
-  });
-
-  /// 兼容旧导航调用；统一历史不再按内容类型切换。
-  final bool showNovelInitially;
+  const HistoryPage({super.key});
 
   SourceMeta? _metaById(String id) {
     for (final source in registeredSources) {
