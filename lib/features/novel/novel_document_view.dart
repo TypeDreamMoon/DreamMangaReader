@@ -878,6 +878,27 @@ const novelReaderBridgeScript = r'''
       return null;
     }
   };
+  const documentTextMap = () => {
+    const entries = [];
+    let text = '';
+    for (const block of blocks()) {
+      const value = block.textContent || '';
+      const start = text.length;
+      text += value;
+      entries.push({block, start, end: text.length});
+    }
+    return {text, entries};
+  };
+  const pointAtDocumentOffset = (mapping, rawOffset) => {
+    const offset = Math.max(0, Math.min(mapping.text.length, Number(rawOffset) || 0));
+    for (const entry of mapping.entries) {
+      if (offset <= entry.end) {
+        return {block: entry.block, offset: offset - entry.start};
+      }
+    }
+    const entry = mapping.entries.at(-1);
+    return entry ? {block: entry.block, offset: entry.end - entry.start} : null;
+  };
   const directRange = (annotation) => {
     const start = annotation.start || {};
     const end = annotation.end || {};
@@ -905,19 +926,57 @@ const novelReaderBridgeScript = r'''
     if (!quote) return null;
     const prefix = String(annotation.start?.prefix || '');
     const suffix = String(annotation.end?.suffix || '');
-    for (const block of blocks()) {
-      const text = block.textContent || '';
-      let from = 0;
-      while (from <= text.length) {
-        const index = text.indexOf(quote, from);
-        if (index < 0) break;
-        const before = text.slice(Math.max(0, index - prefix.length), index);
-        const after = text.slice(index + quote.length, index + quote.length + suffix.length);
-        if ((!prefix || before.endsWith(prefix)) && (!suffix || after.startsWith(suffix))) {
-          return rangeFromOffsets(block, index, block, index + quote.length);
+    const endPrefix = String(annotation.end?.prefix || '');
+    const mapping = documentTextMap();
+    const text = mapping.text;
+    let from = 0;
+    while (from <= text.length) {
+      const startDocumentOffset = text.indexOf(quote, from);
+      if (startDocumentOffset < 0) break;
+      const before = text.slice(
+        Math.max(0, startDocumentOffset - prefix.length),
+        startDocumentOffset
+      );
+      let endDocumentOffset = startDocumentOffset + quote.length;
+      if (quote.length >= 256) {
+        const endContext = `${endPrefix}${suffix}`;
+        const contextFrom = Math.max(
+          startDocumentOffset,
+          endDocumentOffset - endPrefix.length
+        );
+        const contextAt = endContext ? text.indexOf(endContext, contextFrom) : -1;
+        if (contextAt >= 0) {
+          endDocumentOffset = contextAt + endPrefix.length;
+        } else if (suffix) {
+          const suffixAt = text.indexOf(suffix, endDocumentOffset);
+          if (suffixAt < 0) {
+            from = startDocumentOffset + 1;
+            continue;
+          }
+          endDocumentOffset = suffixAt;
+        } else {
+          from = startDocumentOffset + 1;
+          continue;
         }
-        from = index + 1;
       }
+      const after = text.slice(
+        endDocumentOffset,
+        endDocumentOffset + suffix.length
+      );
+      if ((!prefix || before.endsWith(prefix)) &&
+          (!suffix || after.startsWith(suffix))) {
+        const start = pointAtDocumentOffset(mapping, startDocumentOffset);
+        const end = pointAtDocumentOffset(mapping, endDocumentOffset);
+        if (start && end) {
+          return rangeFromOffsets(
+            start.block,
+            start.offset,
+            end.block,
+            end.offset
+          );
+        }
+      }
+      from = startDocumentOffset + 1;
     }
     return null;
   };

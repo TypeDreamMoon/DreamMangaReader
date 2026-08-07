@@ -420,12 +420,20 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   void _pauseControls() {
     _controlsTimer?.cancel();
-    _controlsPaused = true;
+    if (_controlsPaused) return;
+    if (mounted) {
+      setState(() => _controlsPaused = true);
+    } else {
+      _controlsPaused = true;
+    }
   }
 
   void _resumeControls() {
-    _controlsPaused = false;
-    if (!mounted) return;
+    if (!mounted) {
+      _controlsPaused = false;
+      return;
+    }
+    if (_controlsPaused) setState(() => _controlsPaused = false);
     _focusNode.requestFocus();
     _showReaderControls();
   }

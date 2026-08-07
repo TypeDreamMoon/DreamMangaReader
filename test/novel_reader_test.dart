@@ -11,6 +11,7 @@ import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dar
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_reader_input.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
@@ -306,6 +307,59 @@ void main() {
     );
     expect(controller.appliedAnnotations, hasLength(1));
     expect(controller.clearSelectionCalls, 1);
+  });
+
+  testWidgets('editing a stored annotation blocks reader input',
+      (tester) async {
+    final dataStore = _MemoryNovelReaderDataStore();
+    final annotation = NovelAnnotation.create(
+      bookKey: 'remote:s:n1',
+      range: NovelAnnotationRange.fromSelection(
+        const NovelSelection(
+          text: '测试正文',
+          start: NovelLocator(
+            chapterId: 'c1',
+            blockId: 'dmr-1',
+            charOffset: 0,
+          ),
+          end: NovelLocator(
+            chapterId: 'c1',
+            blockId: 'dmr-1',
+            charOffset: 4,
+          ),
+        ),
+      ),
+      colorId: 'yellow',
+      note: '原笔记',
+      createdAt: 1000,
+    );
+    dataStore.values['remote:s:n1'] = NovelReaderBookData(
+      bookKey: 'remote:s:n1',
+      annotations: {annotation.id: annotation},
+    );
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      readerDataStore: dataStore,
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-tools-tab-notes')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('编辑笔记'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-note-editor')), findsOneWidget);
+    expect(
+      tester.widget<NovelReaderInput>(find.byType(NovelReaderInput)).blocked,
+      isTrue,
+    );
   });
 
   testWidgets('cached paging saves progress only after settlement',

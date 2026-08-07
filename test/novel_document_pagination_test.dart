@@ -114,6 +114,13 @@ void main() {
     expect(novelReaderBridgeScript, contains('end.suffix ='));
   });
 
+  test('annotation quote fallback maps ranges across document blocks', () {
+    expect(novelReaderBridgeScript, contains('const documentTextMap'));
+    expect(novelReaderBridgeScript, contains('pointAtDocumentOffset'));
+    expect(novelReaderBridgeScript, contains('startDocumentOffset'));
+    expect(novelReaderBridgeScript, contains('endDocumentOffset'));
+  });
+
   test('sanitized documents assign stable IDs to common text blocks', () {
     final html = buildNovelReaderHtml(
       NovelDocument(
