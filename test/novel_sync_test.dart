@@ -4,9 +4,12 @@ import 'dart:io';
 import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
 import 'package:dream_manga_reader/core/source/source_repository.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/core/storage/secret_store.dart';
+import 'package:dream_manga_reader/core/sync/sync_controller.dart';
 import 'package:dream_manga_reader/core/sync/sync_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +26,68 @@ class _MemorySecretStore implements SecretStore {
   @override
   Future<void> write(String key, String value) async => values[key] = value;
 }
+
+NovelReaderDataStore _readerStore(Directory directory) => NovelReaderDataStore(
+      applicationSupportDirectory: () async => directory,
+      writeDelay: const Duration(days: 1),
+    );
+
+Map<String, dynamic> _bookmark({
+  required String id,
+  required String bookKey,
+  required int updatedAt,
+  int? deletedAt,
+}) =>
+    {
+      'id': id,
+      'bookKey': bookKey,
+      'locator': {'chapterId': 'chapter-1', 'fraction': .25},
+      'excerpt': 'portable excerpt',
+      'createdAt': 1,
+      'updatedAt': updatedAt,
+      if (deletedAt != null) 'deletedAt': deletedAt,
+    };
+
+Map<String, dynamic> _annotation({
+  required String id,
+  required String bookKey,
+  required int updatedAt,
+  String note = 'portable note',
+}) =>
+    {
+      'id': id,
+      'bookKey': bookKey,
+      'range': {
+        'start': {'chapterId': 'chapter-1', 'charOffset': 2},
+        'end': {'chapterId': 'chapter-1', 'charOffset': 8},
+        'quote': 'selected text',
+      },
+      'colorId': 'yellow',
+      'createdAt': 1,
+      'updatedAt': updatedAt,
+      'note': note,
+    };
+
+Map<String, dynamic> _readerNotes(
+  String bookKey, {
+  List<Map<String, dynamic>> bookmarks = const [],
+  List<Map<String, dynamic>> annotations = const [],
+}) =>
+    {
+      'schema': 1,
+      'books': {
+        bookKey: {
+          'schema': 1,
+          'bookKey': bookKey,
+          'bookmarks': {
+            for (final item in bookmarks) item['id'] as String: item
+          },
+          'annotations': {
+            for (final item in annotations) item['id'] as String: item,
+          },
+        },
+      },
+    };
 
 void main() {
   late Directory sandbox;
@@ -151,6 +216,251 @@ void main() {
     expect(encoded, isNot(contains(directory.path)));
     manga.dispose();
     novels.dispose();
+  });
+
+  test('reader notes are independent and recursively sanitized on sync build',
+      () async {
+    const bookKey = 'local:portable-book';
+    const forbidden = 'DEVICE_ONLY_SENTINEL_2d54';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final raw = _readerNotes(
+      bookKey,
+      bookmarks: [_bookmark(id: 'bookmark-1', bookKey: bookKey, updatedAt: 2)],
+      annotations: [
+        _annotation(id: 'annotation-1', bookKey: bookKey, updatedAt: 3),
+      ],
+    );
+    final book = ((raw['books'] as Map)[bookKey] as Map);
+    book['chapterText'] = forbidden;
+    book['nested'] = {
+      'searchIndex': forbidden,
+      'localPath': forbidden,
+      'sourceToken': forbidden,
+      'fontBytes': forbidden,
+      'backgroundBytes': forbidden,
+      'pageScreenshot': forbidden,
+    };
+
+    final notesOnly = SyncData.build(
+      manga,
+      novels,
+      SourceRepository.instance,
+      categories: {SyncCategory.readerNotes},
+      readerNotes: raw,
+    );
+    final historyOnly = SyncData.build(
+      manga,
+      novels,
+      SourceRepository.instance,
+      categories: {SyncCategory.history},
+      readerNotes: raw,
+    );
+    final encoded = jsonEncode(notesOnly);
+    final novelData = notesOnly['novels'] as Map;
+
+    expect(novelData['readerNotes'], isA<Map>());
+    expect(novelData, isNot(contains('history')));
+    expect(encoded, contains('portable note'));
+    expect(encoded, isNot(contains(forbidden)));
+    expect(encoded, isNot(contains('chapterText')));
+    expect(encoded, isNot(contains('searchIndex')));
+    expect(encoded, isNot(contains('localPath')));
+    expect(encoded, isNot(contains('sourceToken')));
+    expect(encoded, isNot(contains('fontBytes')));
+    expect(encoded, isNot(contains('backgroundBytes')));
+    expect(encoded, isNot(contains('pageScreenshot')));
+    expect(historyOnly['novels'] as Map, isNot(contains('readerNotes')));
+    manga.dispose();
+    novels.dispose();
+  });
+
+  test('reader note merge uses book key then item id LWW including tombstones',
+      () {
+    const bookKey = 'remote:source:book';
+    Map<String, dynamic> blob(int syncedAt, Map<String, dynamic> notes) => {
+          'v': 1,
+          'syncedAt': syncedAt,
+          'library': {'v': 1},
+          'novels': {'schema': 1, 'readerNotes': notes},
+        };
+    final local = blob(
+      100,
+      _readerNotes(
+        bookKey,
+        bookmarks: [
+          _bookmark(id: 'same', bookKey: bookKey, updatedAt: 10),
+          _bookmark(id: 'local-only', bookKey: bookKey, updatedAt: 12),
+        ],
+        annotations: [
+          _annotation(
+            id: 'same-annotation',
+            bookKey: bookKey,
+            updatedAt: 30,
+            note: 'newer local note',
+          ),
+        ],
+      ),
+    );
+    final remote = blob(
+      200,
+      _readerNotes(
+        bookKey,
+        bookmarks: [
+          _bookmark(
+            id: 'same',
+            bookKey: bookKey,
+            updatedAt: 20,
+            deletedAt: 20,
+          ),
+          _bookmark(id: 'remote-only', bookKey: bookKey, updatedAt: 15),
+        ],
+        annotations: [
+          _annotation(
+            id: 'same-annotation',
+            bookKey: bookKey,
+            updatedAt: 25,
+            note: 'older remote note',
+          ),
+        ],
+      ),
+    );
+
+    final notes = ((SyncData.merge(local, remote)['novels']
+        as Map)['readerNotes'] as Map);
+    final book = ((notes['books'] as Map)[bookKey] as Map);
+    final bookmarks = book['bookmarks'] as Map;
+    final annotations = book['annotations'] as Map;
+
+    expect(bookmarks.keys, containsAll(['same', 'local-only', 'remote-only']));
+    expect((bookmarks['same'] as Map)['deletedAt'], 20);
+    expect((annotations['same-annotation'] as Map)['note'], 'newer local note');
+  });
+
+  test('reader note apply appends by item and flushes before returning',
+      () async {
+    const bookKey = 'local:append-book';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final store = _readerStore(sandbox);
+    store.saveBook(NovelReaderBookData.fromJson(
+      ((_readerNotes(
+        bookKey,
+        bookmarks: [
+          _bookmark(id: 'local-only', bookKey: bookKey, updatedAt: 10),
+        ],
+      )['books'] as Map)[bookKey] as Map)
+          .cast<String, dynamic>(),
+    ));
+
+    await SyncData.apply(
+      {
+        'v': 1,
+        'library': {'v': 1},
+        'novels': {
+          'schema': 1,
+          'readerNotes': _readerNotes(
+            bookKey,
+            bookmarks: [
+              _bookmark(id: 'remote-only', bookKey: bookKey, updatedAt: 20),
+            ],
+          ),
+        },
+      },
+      manga,
+      novels,
+      SourceRepository.instance,
+      modes: {SyncCategory.readerNotes: true},
+      readerDataStore: store,
+    );
+
+    final persisted = await _readerStore(sandbox).loadBook(bookKey);
+    expect(
+        persisted.bookmarks.keys, containsAll(['local-only', 'remote-only']));
+    store.dispose();
+    manga.dispose();
+    novels.dispose();
+  });
+
+  test('reader note replace clears books absent from the selected payload',
+      () async {
+    const keptBook = 'local:kept-book';
+    const removedBook = 'local:removed-book';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final store = _readerStore(sandbox);
+    for (final bookKey in [keptBook, removedBook]) {
+      store.saveBook(NovelReaderBookData.fromJson(
+        ((_readerNotes(
+          bookKey,
+          bookmarks: [
+            _bookmark(id: 'old', bookKey: bookKey, updatedAt: 10),
+          ],
+        )['books'] as Map)[bookKey] as Map)
+            .cast<String, dynamic>(),
+      ));
+    }
+    await store.flushPending();
+
+    await SyncData.apply(
+      {
+        'v': 1,
+        'library': {'v': 1},
+        'novels': {
+          'schema': 1,
+          'readerNotes': _readerNotes(
+            keptBook,
+            annotations: [
+              _annotation(id: 'replacement', bookKey: keptBook, updatedAt: 20),
+            ],
+          ),
+        },
+      },
+      manga,
+      novels,
+      SourceRepository.instance,
+      modes: {SyncCategory.readerNotes: false},
+      readerDataStore: store,
+    );
+
+    final persisted = _readerStore(sandbox);
+    expect((await persisted.loadBook(keptBook)).bookmarks, isEmpty);
+    expect((await persisted.loadBook(keptBook)).annotations,
+        contains('replacement'));
+    expect((await persisted.loadBook(removedBook)).bookmarks, isEmpty);
+    expect(SyncData.supportsAppend(SyncCategory.readerNotes), isTrue);
+    store.dispose();
+    persisted.dispose();
+    manga.dispose();
+    novels.dispose();
+  });
+
+  test('reader notes migration follows the previous history selection once',
+      () {
+    expect(
+      SyncController.categoriesFromPreferences(
+        const ['favorites', 'history'],
+        migrateReaderNotes: true,
+      ),
+      contains(SyncCategory.readerNotes),
+    );
+    expect(
+      SyncController.categoriesFromPreferences(
+        const ['favorites'],
+        migrateReaderNotes: true,
+      ),
+      isNot(contains(SyncCategory.readerNotes)),
+    );
+    expect(
+      SyncController.categoriesFromPreferences(
+        const ['history'],
+        migrateReaderNotes: false,
+      ),
+      isNot(contains(SyncCategory.readerNotes)),
+    );
   });
 
   test('novel merge keeps metadata and newest locator per stable identity', () {

@@ -341,6 +341,80 @@ NovelReaderBookData mergeNovelReaderBookData(
   );
 }
 
+Map<String, dynamic> sanitizePortableNovelReaderData(Object? value) {
+  if (value is! Map || value['schema'] != 1 || value['books'] is! Map) {
+    return <String, dynamic>{'schema': 1, 'books': <String, dynamic>{}};
+  }
+  final books = <String, NovelReaderBookData>{};
+  for (final entry in (value['books'] as Map).entries) {
+    if (entry.key is! String || entry.value is! Map) continue;
+    try {
+      final book = NovelReaderBookData.fromJson(
+        (entry.value as Map).cast<String, dynamic>(),
+      );
+      if (book.bookKey == entry.key) books[book.bookKey] = book;
+    } catch (_) {
+      continue;
+    }
+  }
+  return _portableReaderDataFromBooks(books);
+}
+
+Map<String, dynamic> mergePortableNovelReaderData(
+  Object? local,
+  Object? remote,
+) {
+  final localBooks = _portableReaderBooks(local);
+  final remoteBooks = _portableReaderBooks(remote);
+  final merged = <String, NovelReaderBookData>{...localBooks};
+  for (final entry in remoteBooks.entries) {
+    final current = merged[entry.key];
+    merged[entry.key] = current == null
+        ? entry.value
+        : mergeNovelReaderBookData(current, entry.value);
+  }
+  return _portableReaderDataFromBooks(merged);
+}
+
+Map<String, NovelReaderBookData> _portableReaderBooks(Object? value) {
+  final sanitized = sanitizePortableNovelReaderData(value);
+  final books = <String, NovelReaderBookData>{};
+  for (final entry in (sanitized['books'] as Map).entries) {
+    books[entry.key as String] = NovelReaderBookData.fromJson(
+      (entry.value as Map).cast<String, dynamic>(),
+    );
+  }
+  return books;
+}
+
+Map<String, dynamic> _portableReaderDataFromBooks(
+  Map<String, NovelReaderBookData> books,
+) {
+  final bookKeys = books.keys.toList()..sort();
+  return <String, dynamic>{
+    'schema': 1,
+    'books': <String, dynamic>{
+      for (final bookKey in bookKeys)
+        bookKey: _sortedNovelReaderBookJson(books[bookKey]!),
+    },
+  };
+}
+
+Map<String, dynamic> _sortedNovelReaderBookJson(NovelReaderBookData book) {
+  final bookmarkIds = book.bookmarks.keys.toList()..sort();
+  final annotationIds = book.annotations.keys.toList()..sort();
+  return <String, dynamic>{
+    'schema': 1,
+    'bookKey': book.bookKey,
+    'bookmarks': <String, dynamic>{
+      for (final id in bookmarkIds) id: book.bookmarks[id]!.toJson(),
+    },
+    'annotations': <String, dynamic>{
+      for (final id in annotationIds) id: book.annotations[id]!.toJson(),
+    },
+  };
+}
+
 Map<String, T> _mergeByTimestamp<T>(
   Map<String, T> local,
   Map<String, T> remote,

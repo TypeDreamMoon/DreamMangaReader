@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'novel_reader_data.dart';
@@ -10,7 +11,7 @@ import 'novel_reader_data.dart';
 typedef NovelReaderDataDirectory = Future<Directory> Function();
 typedef NovelReaderDataClock = int Function();
 
-class NovelReaderDataStore {
+class NovelReaderDataStore extends ChangeNotifier {
   NovelReaderDataStore({
     NovelReaderDataDirectory? applicationSupportDirectory,
     this.writeDelay = const Duration(milliseconds: 350),
@@ -27,14 +28,28 @@ class NovelReaderDataStore {
   final Map<String, Timer> _timers = {};
   final Map<String, Future<void>> _writes = {};
   final Set<String> _dirty = {};
+  Map<String, dynamic> _portableSnapshot = const {
+    'schema': 1,
+    'books': <String, dynamic>{},
+  };
   bool _disposed = false;
 
-  Future<File> fileForBook(String bookKey) async {
+  static final NovelReaderDataStore instance = NovelReaderDataStore();
+
+  Map<String, dynamic> get portableSnapshot =>
+      sanitizePortableNovelReaderData(_portableSnapshot);
+
+  Future<Directory> _dataDirectory() async {
     final support = await _applicationSupportDirectory();
     final directory = Directory(
       '${support.path}${Platform.pathSeparator}novel_reader_data',
     );
     await directory.create(recursive: true);
+    return directory;
+  }
+
+  Future<File> fileForBook(String bookKey) async {
+    final directory = await _dataDirectory();
     final digest = sha256.convert(utf8.encode(bookKey)).toString();
     return File('${directory.path}${Platform.pathSeparator}$digest.json');
   }
@@ -66,12 +81,94 @@ class NovelReaderDataStore {
   void saveBook(NovelReaderBookData data) {
     _ensureActive();
     _cache[data.bookKey] = data;
+    _updatePortableBook(data);
     _versions[data.bookKey] = (_versions[data.bookKey] ?? 0) + 1;
     _dirty.add(data.bookKey);
     _timers.remove(data.bookKey)?.cancel();
     _timers[data.bookKey] = Timer(writeDelay, () {
       _timers.remove(data.bookKey);
       unawaited(_flushBook(data.bookKey).catchError((_) {}));
+    });
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> exportPortableData() async {
+    _ensureActive();
+    await flushPending();
+    final books = await _loadAllBooks();
+    _portableSnapshot = sanitizePortableNovelReaderData({
+      'schema': 1,
+      'books': {
+        for (final entry in books.entries) entry.key: entry.value.toJson(),
+      },
+    });
+    return portableSnapshot;
+  }
+
+  Future<void> importPortableData(
+    Object? value, {
+    required bool append,
+  }) async {
+    _ensureActive();
+    final incoming = _booksFromPortable(value);
+    final current = await _loadAllBooks();
+    final next = append
+        ? <String, NovelReaderBookData>{
+            ...current,
+            for (final entry in incoming.entries)
+              entry.key: current[entry.key] == null
+                  ? entry.value
+                  : mergeNovelReaderBookData(current[entry.key]!, entry.value),
+          }
+        : incoming;
+    final keys = append
+        ? next.keys.toSet()
+        : <String>{...current.keys, ...incoming.keys};
+    for (final bookKey in keys) {
+      saveBook(next[bookKey] ?? NovelReaderBookData.empty(bookKey));
+    }
+    await flushPending();
+    await exportPortableData();
+  }
+
+  Future<Map<String, NovelReaderBookData>> _loadAllBooks() async {
+    final books = <String, NovelReaderBookData>{};
+    final directory = await _dataDirectory();
+    await for (final entity in directory.list()) {
+      if (entity is! File || !entity.path.endsWith('.json')) continue;
+      try {
+        final decoded = jsonDecode(await entity.readAsString(encoding: utf8));
+        if (decoded is! Map) continue;
+        final book = NovelReaderBookData.fromJson(
+          decoded.cast<String, dynamic>(),
+        );
+        books[book.bookKey] = book;
+      } catch (_) {
+        continue;
+      }
+    }
+    books.addAll(_cache);
+    return books;
+  }
+
+  Map<String, NovelReaderBookData> _booksFromPortable(Object? value) {
+    final sanitized = sanitizePortableNovelReaderData(value);
+    return <String, NovelReaderBookData>{
+      for (final entry in (sanitized['books'] as Map).entries)
+        entry.key as String: NovelReaderBookData.fromJson(
+          (entry.value as Map).cast<String, dynamic>(),
+        ),
+    };
+  }
+
+  void _updatePortableBook(NovelReaderBookData data) {
+    final books = Map<String, dynamic>.from(
+      (_portableSnapshot['books'] as Map?)?.cast<String, dynamic>() ?? const {},
+    );
+    books[data.bookKey] = data.toJson();
+    _portableSnapshot = sanitizePortableNovelReaderData({
+      'schema': 1,
+      'books': books,
     });
   }
 
@@ -162,6 +259,7 @@ class NovelReaderDataStore {
     if (_disposed) throw StateError('NovelReaderDataStore is disposed.');
   }
 
+  @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -169,5 +267,6 @@ class NovelReaderDataStore {
       timer.cancel();
     }
     _timers.clear();
+    super.dispose();
   }
 }

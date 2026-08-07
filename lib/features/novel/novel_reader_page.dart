@@ -75,7 +75,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   late final NovelDocumentController _controller =
       widget.controller ?? WebNovelDocumentController();
   late final NovelReaderDataStore _readerDataStore =
-      widget.readerDataStore ?? NovelReaderDataStore();
+      widget.readerDataStore ?? NovelReaderDataStore.instance;
   late final NovelSearchIndex _searchIndex =
       widget.searchIndex ?? NovelSearchIndex();
   late NovelReaderBookData _readerData =
@@ -1613,9 +1613,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
     final readerFlush = _readerDataStore.flushPending();
     unawaited(_library.flushPending());
-    if (widget.readerDataStore == null) {
-      unawaited(readerFlush.whenComplete(_readerDataStore.dispose));
-    }
+    unawaited(readerFlush);
     if (Platform.isAndroid) {
       unawaited(ReaderKeys.setActive(false));
       ReaderKeys.clearHandler();

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../core/novel/reader/novel_reader_data.dart';
+import '../core/novel/reader/novel_reader_data_store.dart';
 import 'library_store.dart';
 import 'novel_library_store.dart';
 
@@ -15,15 +17,29 @@ Future<String> backupPath() async {
 /// 导出书架(收藏 + 阅读进度 + 阅读设置)到备份文件,返回路径。
 Map<String, dynamic> buildBackupData(
   LibraryStore store,
-  NovelLibraryStore novels,
-) =>
-    sanitizeBackupData({
-      ...store.exportData(),
-      'novels': novels.exportData(),
-    });
+  NovelLibraryStore novels, {
+  Map<String, dynamic>? readerNotes,
+}) {
+  final novelData = novels.exportData();
+  if (readerNotes != null) {
+    novelData['readerNotes'] = sanitizePortableNovelReaderData(readerNotes);
+  }
+  return sanitizeBackupData({
+    ...store.exportData(),
+    'novels': novelData,
+  });
+}
 
-Map<String, dynamic> sanitizeBackupData(Map<String, dynamic> data) =>
-    _sanitizePortableValue(data) as Map<String, dynamic>;
+Map<String, dynamic> sanitizeBackupData(Map<String, dynamic> data) {
+  final sanitized =
+      (_sanitizePortableValue(data) as Map).cast<String, dynamic>();
+  final novels = sanitized['novels'];
+  if (novels is Map && novels.containsKey('readerNotes')) {
+    novels['readerNotes'] =
+        sanitizePortableNovelReaderData(novels['readerNotes']);
+  }
+  return sanitized;
+}
 
 Object? _sanitizePortableValue(Object? value) {
   if (value is Map) {
@@ -39,42 +55,78 @@ Object? _sanitizePortableValue(Object? value) {
   return value;
 }
 
-bool _isDeviceSecretKey(String key) =>
-    key == 'sources.token' ||
-    key == 'source.repository.token' ||
-    (key.startsWith('auth.') && key.endsWith('.token'));
+bool _isDeviceSecretKey(String key) {
+  final normalized = key.toLowerCase();
+  return normalized == 'sources.token' ||
+      normalized == 'source.repository.token' ||
+      (normalized.startsWith('auth.') && normalized.endsWith('.token')) ||
+      const {
+        'chaptertext',
+        'booktext',
+        'fulltext',
+        'searchindex',
+        'privatepath',
+        'localpath',
+        'sourcetoken',
+        'fontbytes',
+        'backgroundbytes',
+        'bgimage',
+        'bgimagedata',
+        'pagescreenshot',
+      }.contains(normalized);
+}
 
 Future<void> restoreBackupData(
   LibraryStore store,
   NovelLibraryStore novels,
-  Map<String, dynamic> data,
-) async {
+  Map<String, dynamic> data, {
+  NovelReaderDataStore? readerDataStore,
+  bool appendReaderNotes = false,
+}) async {
   final portable = sanitizeBackupData(data);
   await store.importData(portable);
   final novelData = portable['novels'];
   if (novelData is Map) {
     await novels.importData(novelData.cast<String, dynamic>());
+    if (novelData['readerNotes'] is Map) {
+      await (readerDataStore ?? NovelReaderDataStore.instance)
+          .importPortableData(
+        novelData['readerNotes'],
+        append: appendReaderNotes,
+      );
+    }
   }
 }
 
 Future<String> exportBackup(
   LibraryStore store,
-  NovelLibraryStore novels,
-) async {
+  NovelLibraryStore novels, {
+  NovelReaderDataStore? readerDataStore,
+}) async {
   final path = await backupPath();
+  final readerNotes = await (readerDataStore ?? NovelReaderDataStore.instance)
+      .exportPortableData();
   await File(path).writeAsString(const JsonEncoder.withIndent('  ')
-      .convert(buildBackupData(store, novels)));
+      .convert(buildBackupData(store, novels, readerNotes: readerNotes)));
   return path;
 }
 
 /// 从备份文件恢复。文件不存在返回 false。
 Future<bool> importBackup(
   LibraryStore store,
-  NovelLibraryStore novels,
-) async {
+  NovelLibraryStore novels, {
+  NovelReaderDataStore? readerDataStore,
+  bool appendReaderNotes = false,
+}) async {
   final file = File(await backupPath());
   if (!file.existsSync()) return false;
   final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-  await restoreBackupData(store, novels, data);
+  await restoreBackupData(
+    store,
+    novels,
+    data,
+    readerDataStore: readerDataStore,
+    appendReaderNotes: appendReaderNotes,
+  );
   return true;
 }
