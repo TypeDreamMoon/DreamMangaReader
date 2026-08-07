@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../models.dart';
 
 enum NovelPageTurnMode { curl, cover, translate, none, scroll }
@@ -84,11 +86,11 @@ class NovelPageFrame {
     required this.key,
     required this.viewport,
     required List<int> bytes,
-  }) : bytes = List<int>.unmodifiable(bytes);
+  }) : bytes = Uint8List.fromList(bytes).asUnmodifiableView();
 
   final NovelPageKey key;
   final NovelViewport viewport;
-  final List<int> bytes;
+  final Uint8List bytes;
 
   int get byteSize => bytes.length;
 }
