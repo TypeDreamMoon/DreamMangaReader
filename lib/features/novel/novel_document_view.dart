@@ -20,6 +20,12 @@ abstract interface class NovelDocumentController {
   ValueChanged<NovelLocator>? get onLocatorChanged;
   set onLocatorChanged(ValueChanged<NovelLocator>? value);
 
+  ValueChanged<NovelSelection?>? get onSelectionChanged;
+  set onSelectionChanged(ValueChanged<NovelSelection?>? value);
+
+  ValueChanged<bool>? get onCaptureStateChanged;
+  set onCaptureStateChanged(ValueChanged<bool>? value);
+
   Future<void> loadChapter(
     String chapterId,
     NovelDocument document,
@@ -27,6 +33,9 @@ abstract interface class NovelDocumentController {
   );
 
   Future<NovelLocator> captureLocator();
+  Future<NovelPageMetrics> pageMetrics();
+  Future<NovelPageFrame?> capturePage(int pageIndex);
+  Future<void> showPage(int pageIndex);
   Future<void> restoreLocator(NovelLocator locator);
   Future<void> applyPreferences(NovelReaderPreferences preferences);
   Future<bool> nextPage();
@@ -47,6 +56,12 @@ class WebNovelDocumentController implements NovelDocumentController {
   @override
   ValueChanged<NovelLocator>? onLocatorChanged;
 
+  @override
+  ValueChanged<NovelSelection?>? onSelectionChanged;
+
+  @override
+  ValueChanged<bool>? onCaptureStateChanged;
+
   Future<void> attach(InAppWebViewController controller) async {
     _webView = controller;
     controller.addJavaScriptHandler(
@@ -65,8 +80,23 @@ class WebNovelDocumentController implements NovelDocumentController {
       handlerName: 'dmrLocator',
       callback: (arguments) {
         if (arguments.isEmpty) return;
-        final locator = _locatorFromValue(arguments.first, _chapterId);
+        final locator = parseNovelLocatorValue(
+          arguments.first,
+          chapterId: _chapterId,
+        );
         if (locator != null) onLocatorChanged?.call(locator);
+      },
+    );
+    controller.addJavaScriptHandler(
+      handlerName: 'dmrSelection',
+      callback: (arguments) {
+        if (arguments.isEmpty) {
+          onSelectionChanged?.call(null);
+          return;
+        }
+        onSelectionChanged?.call(
+          parseNovelSelectionValue(arguments.first, chapterId: _chapterId),
+        );
       },
     );
     final document = _pendingDocument;
@@ -124,10 +154,63 @@ class WebNovelDocumentController implements NovelDocumentController {
       return NovelLocator(chapterId: _chapterId);
     }
     final value = await webView.evaluateJavascript(
-      source: 'window.__dmrCapture ? window.__dmrCapture() : null',
+      source: 'window.__dmrCaptureAnchor ? '
+          'window.__dmrCaptureAnchor() : '
+          '(window.__dmrCapture ? window.__dmrCapture() : null)',
     );
-    return _locatorFromValue(value, _chapterId) ??
+    return parseNovelLocatorValue(value, chapterId: _chapterId) ??
         NovelLocator(chapterId: _chapterId);
+  }
+
+  @override
+  Future<NovelPageMetrics> pageMetrics() async {
+    final webView = _webView;
+    if (webView == null || !_loaded) return _emptyPageMetrics;
+    final value = await webView.evaluateJavascript(
+      source: 'window.__dmrMetrics ? '
+          'JSON.stringify(window.__dmrMetrics()) : null',
+    );
+    return parseNovelPageMetrics(value) ?? _emptyPageMetrics;
+  }
+
+  @override
+  Future<NovelPageFrame?> capturePage(int pageIndex) async {
+    final webView = _webView;
+    if (webView == null || !_loaded || _chapterId.isEmpty) return null;
+    final original = await pageMetrics();
+    final target = clampNovelPageIndex(pageIndex, original.pageCount);
+    onCaptureStateChanged?.call(true);
+    try {
+      await showPage(target);
+      await _waitForPagePaint(webView);
+      final bytes = await webView.takeScreenshot();
+      if (bytes == null || bytes.isEmpty) return null;
+      return NovelPageFrame(
+        key: NovelPageKey(
+          chapterId: _chapterId,
+          pageIndex: target,
+          layoutFingerprint: original.layoutFingerprint,
+        ),
+        viewport: original.viewport,
+        bytes: bytes,
+      );
+    } finally {
+      try {
+        await showPage(original.currentPageIndex);
+        await _waitForPagePaint(webView);
+      } finally {
+        onCaptureStateChanged?.call(false);
+      }
+    }
+  }
+
+  @override
+  Future<void> showPage(int pageIndex) async {
+    final webView = _webView;
+    if (webView == null || !_loaded) return;
+    await webView.evaluateJavascript(
+      source: 'window.__dmrShowPage && window.__dmrShowPage($pageIndex)',
+    );
   }
 
   @override
@@ -139,10 +222,16 @@ class WebNovelDocumentController implements NovelDocumentController {
     }
     final payload = jsonEncode({
       'blockId': locator.blockId,
+      'charOffset': locator.charOffset,
+      'quote': locator.quote,
+      'prefix': locator.prefix,
+      'suffix': locator.suffix,
       'fraction': locator.fraction,
     });
     await webView.evaluateJavascript(
-      source: 'window.__dmrRestore && window.__dmrRestore($payload)',
+      source: 'window.__dmrRestoreAnchor ? '
+          'window.__dmrRestoreAnchor($payload) : '
+          '(window.__dmrRestore && window.__dmrRestore($payload))',
     );
   }
 
@@ -179,7 +268,23 @@ class WebNovelDocumentController implements NovelDocumentController {
     );
     return value == true || value == 1 || value == 'true';
   }
+
+  static Future<void> _waitForPagePaint(
+    InAppWebViewController webView,
+  ) async {
+    await webView.evaluateJavascript(
+      source: 'new Promise((resolve) => requestAnimationFrame(() => '
+          'requestAnimationFrame(resolve)))',
+    );
+  }
 }
+
+const _emptyPageMetrics = NovelPageMetrics(
+  pageCount: 1,
+  currentPageIndex: 0,
+  viewport: NovelViewport(width: 0, height: 0),
+  layoutFingerprint: '',
+);
 
 class NovelDocumentView extends StatefulWidget {
   const NovelDocumentView({
@@ -243,19 +348,99 @@ class _NovelDocumentViewState extends State<NovelDocumentView> {
   }
 }
 
-NovelLocator? _locatorFromValue(Object? value, String chapterId) {
+int clampNovelPageIndex(int pageIndex, int pageCount) {
+  if (pageCount <= 0 || pageIndex <= 0) return 0;
+  final lastPage = pageCount - 1;
+  return pageIndex > lastPage ? lastPage : pageIndex;
+}
+
+NovelPageMetrics? parseNovelPageMetrics(Object? value) {
   try {
-    final decoded = value is String ? jsonDecode(value) : value;
+    final decoded = _decodeBridgeValue(value);
     if (decoded is! Map) return null;
     final map = decoded.cast<String, dynamic>();
+    final rawPageCount = (map['pageCount'] as num?)?.toInt() ?? 1;
+    final pageCount = rawPageCount > 0 ? rawPageCount : 1;
+    final rawPageIndex = (map['currentPageIndex'] as num?)?.toInt() ?? 0;
+    final width = _finiteDouble(map['viewportWidth']) ?? 0;
+    final height = _finiteDouble(map['viewportHeight']) ?? 0;
+    final pixelRatio = _finiteDouble(map['devicePixelRatio']) ?? 1;
+    return NovelPageMetrics(
+      pageCount: pageCount,
+      currentPageIndex: clampNovelPageIndex(rawPageIndex, pageCount),
+      viewport: NovelViewport(
+        width: width < 0 ? 0 : width,
+        height: height < 0 ? 0 : height,
+        devicePixelRatio: pixelRatio <= 0 ? 1 : pixelRatio,
+      ),
+      layoutFingerprint: map['layoutFingerprint']?.toString() ?? '',
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+NovelLocator? parseNovelLocatorValue(
+  Object? value, {
+  required String chapterId,
+}) {
+  try {
+    final decoded = _decodeBridgeValue(value);
+    if (decoded is! Map) return null;
+    final map = decoded.cast<String, dynamic>();
+    final rawOffset = (map['charOffset'] as num?)?.toInt();
     return NovelLocator(
       chapterId: chapterId,
       blockId: map['blockId'] as String?,
+      charOffset: rawOffset == null || rawOffset < 0 ? null : rawOffset,
+      quote: _boundedContext(map['quote'], keepTail: false),
+      prefix: _boundedContext(map['prefix'], keepTail: true),
+      suffix: _boundedContext(map['suffix'], keepTail: false),
       fraction: (map['fraction'] as num?)?.toDouble() ?? 0,
     );
   } catch (_) {
     return null;
   }
+}
+
+NovelSelection? parseNovelSelectionValue(
+  Object? value, {
+  required String chapterId,
+}) {
+  try {
+    final decoded = _decodeBridgeValue(value);
+    if (decoded is! Map) return null;
+    final map = decoded.cast<String, dynamic>();
+    final text = map['text']?.toString() ?? '';
+    if (text.isEmpty) return null;
+    final start = parseNovelLocatorValue(
+      map['start'],
+      chapterId: chapterId,
+    );
+    final end = parseNovelLocatorValue(map['end'], chapterId: chapterId);
+    if (start == null || end == null) return null;
+    return NovelSelection(text: text, start: start, end: end);
+  } catch (_) {
+    return null;
+  }
+}
+
+Object? _decodeBridgeValue(Object? value) {
+  if (value is String) return jsonDecode(value);
+  return value;
+}
+
+double? _finiteDouble(Object? value) {
+  final result = value is num ? value.toDouble() : null;
+  return result != null && result.isFinite ? result : null;
+}
+
+String? _boundedContext(Object? value, {required bool keepTail}) {
+  if (value == null) return null;
+  final text = value.toString();
+  if (text.isEmpty) return null;
+  if (text.length <= 32) return text;
+  return keepTail ? text.substring(text.length - 32) : text.substring(0, 32);
 }
 
 String buildNovelReaderHtml(NovelDocument document, {String? chapterId}) {
@@ -303,47 +488,201 @@ const novelReaderBridgeScript = r'''
   let reportTimer = 0;
   const root = document.scrollingElement || document.documentElement;
   const blocks = () => [...document.querySelectorAll('[data-dmr-block]')];
-  const metrics = () => mode === 'paged'
+  const scrollMetrics = () => mode === 'paged'
     ? {pos: root.scrollLeft, max: Math.max(0, root.scrollWidth - innerWidth)}
     : {pos: root.scrollTop, max: Math.max(0, root.scrollHeight - innerHeight)};
-  const capture = () => {
-    const block = blocks().find((el) => {
-      const rect = el.getBoundingClientRect();
-      return mode === 'paged'
-        ? rect.right > 0 && rect.left < innerWidth
-        : rect.bottom > 0 && rect.top < innerHeight;
-    });
-    const m = metrics();
+  const pageCount = () => mode === 'paged'
+    ? Math.max(1, Math.ceil(root.scrollWidth / Math.max(1, innerWidth)))
+    : 1;
+  const clampPage = (value) => Math.max(
+    0,
+    Math.min(pageCount() - 1, Math.trunc(Number(value) || 0))
+  );
+  const layoutFingerprint = () => document.body?.dataset?.dmrLayout || [
+    mode, innerWidth, innerHeight, devicePixelRatio || 1,
+    root.scrollWidth, root.scrollHeight
+  ].join('|');
+  const pageMetrics = () => ({
+    pageCount: pageCount(),
+    currentPageIndex: mode === 'paged'
+      ? clampPage(Math.round(root.scrollLeft / Math.max(1, innerWidth)))
+      : 0,
+    viewportWidth: innerWidth,
+    viewportHeight: innerHeight,
+    devicePixelRatio: devicePixelRatio || 1,
+    layoutFingerprint: layoutFingerprint()
+  });
+  const textNodes = (block) => {
+    const nodes = [];
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    return nodes;
+  };
+  const offsetWithin = (block, node, offset) => {
+    try {
+      const range = document.createRange();
+      range.setStart(block, 0);
+      range.setEnd(node, Math.max(0, offset));
+      return range.toString().length;
+    } catch (_) {
+      return 0;
+    }
+  };
+  const anchorForPoint = (block, node, offset) => {
+    if (!block) return null;
+    const text = block.textContent || '';
+    const charOffset = Math.max(
+      0,
+      Math.min(text.length, offsetWithin(block, node || block, offset || 0))
+    );
+    return {
+      blockId: block.dataset.dmrBlock || null,
+      charOffset,
+      quote: text.slice(charOffset, charOffset + 32),
+      prefix: text.slice(Math.max(0, charOffset - 32), charOffset),
+      suffix: text.slice(charOffset + 32, charOffset + 64)
+    };
+  };
+  const visibleBlock = () => blocks().find((el) => {
+    const rect = el.getBoundingClientRect();
+    return mode === 'paged'
+      ? rect.right > 0 && rect.left < innerWidth
+      : rect.bottom > 0 && rect.top < innerHeight;
+  });
+  const captureAnchor = () => {
+    const block = visibleBlock();
+    const rect = block?.getBoundingClientRect();
+    const x = Math.max(1, Math.min(innerWidth - 1, (rect?.left || 0) + 1));
+    const y = Math.max(1, Math.min(innerHeight - 1, (rect?.top || 0) + 1));
+    const caret = document.caretPositionFromPoint?.(x, y);
+    const legacyRange = caret ? null : document.caretRangeFromPoint?.(x, y);
+    const anchor = anchorForPoint(
+      block,
+      caret?.offsetNode || legacyRange?.startContainer,
+      caret?.offset ?? legacyRange?.startOffset ?? 0
+    ) || {};
+    const m = scrollMetrics();
+    const paging = pageMetrics();
     return JSON.stringify({
-      blockId: block ? block.dataset.dmrBlock : null,
+      ...anchor,
       fraction: m.max > 0 ? Math.max(0, Math.min(1, m.pos / m.max)) : 0,
-      pageIndex: mode === 'paged' ? Math.round(m.pos / innerWidth) : 0,
-      pageCount: mode === 'paged' ? Math.max(1, Math.ceil(root.scrollWidth / innerWidth)) : 1,
+      pageIndex: paging.currentPageIndex,
+      pageCount: paging.pageCount
     });
   };
-  const report = () => {
-    clearTimeout(reportTimer);
-    reportTimer = setTimeout(() => {
-      window.flutter_inappwebview?.callHandler('dmrLocator', capture());
-    }, 120);
-  };
-  window.__dmrCapture = capture;
-  window.__dmrRestore = (locator) => {
-    const block = locator.blockId
+  const resolveAnchor = (locator) => {
+    let block = locator.blockId
       ? document.querySelector(`[data-dmr-block="${CSS.escape(locator.blockId)}"]`)
       : null;
-    if (block) block.scrollIntoView({block: 'start', inline: 'start'});
+    let charOffset = Math.max(0, Number(locator.charOffset) || 0);
+    if (!block && locator.quote) {
+      for (const candidate of blocks()) {
+        const text = candidate.textContent || '';
+        const index = text.indexOf(String(locator.quote));
+        if (index < 0) continue;
+        const prefix = String(locator.prefix || '');
+        const suffix = String(locator.suffix || '');
+        const before = text.slice(Math.max(0, index - prefix.length), index);
+        const after = text.slice(
+          index + String(locator.quote).length,
+          index + String(locator.quote).length + suffix.length
+        );
+        if ((!prefix || before.endsWith(prefix)) && (!suffix || after.startsWith(suffix))) {
+          block = candidate;
+          charOffset = index;
+          break;
+        }
+      }
+    }
+    return block ? {block, charOffset} : null;
+  };
+  const scrollToAnchor = (resolved) => {
+    const nodes = textNodes(resolved.block);
+    let remaining = resolved.charOffset;
+    let node = nodes[0] || resolved.block;
+    let offset = 0;
+    for (const candidate of nodes) {
+      const length = candidate.textContent?.length || 0;
+      node = candidate;
+      offset = length;
+      if (remaining <= length) {
+        offset = remaining;
+        break;
+      }
+      remaining -= length;
+    }
+    try {
+      const range = document.createRange();
+      range.setStart(node, Math.min(offset, node.textContent?.length || 0));
+      range.collapse(true);
+      node.parentElement?.scrollIntoView({block: 'start', inline: 'start'});
+      return range;
+    } catch (_) {
+      resolved.block.scrollIntoView({block: 'start', inline: 'start'});
+      return null;
+    }
+  };
+  const restoreAnchor = (locator) => {
+    const resolved = resolveAnchor(locator || {});
+    if (resolved) scrollToAnchor(resolved);
     else {
-      const m = metrics();
-      const target = Math.max(0, Math.min(1, Number(locator.fraction) || 0)) * m.max;
+      const m = scrollMetrics();
+      const target = Math.max(0, Math.min(1, Number(locator?.fraction) || 0)) * m.max;
       if (mode === 'paged') root.scrollLeft = target;
       else root.scrollTop = target;
     }
     report();
   };
+  const selectionAnchor = (node, offset) => {
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    const block = element?.closest?.('[data-dmr-block]');
+    return anchorForPoint(block, node, offset);
+  };
+  const captureSelection = () => {
+    const selection = getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const start = selectionAnchor(range.startContainer, range.startOffset);
+    const end = selectionAnchor(range.endContainer, range.endOffset);
+    if (!start || !end) return null;
+    return {text: String(selection).slice(0, 4096), start, end};
+  };
+  window.__dmrMetrics = pageMetrics;
+  window.__dmrShowPage = (pageIndex) => {
+    if (mode !== 'paged') return 0;
+    const target = clampPage(pageIndex);
+    root.scrollLeft = Math.min(
+      Math.max(0, root.scrollWidth - innerWidth),
+      target * innerWidth
+    );
+    return target;
+  };
+  window.__dmrCaptureAnchor = captureAnchor;
+  window.__dmrRestoreAnchor = restoreAnchor;
+  window.__dmrSelection = captureSelection;
+  window.__dmrCapture = captureAnchor;
+  window.__dmrRestore = restoreAnchor;
+  const report = () => {
+    clearTimeout(reportTimer);
+    reportTimer = setTimeout(() => {
+      window.flutter_inappwebview?.callHandler('dmrLocator', captureAnchor());
+    }, 120);
+  };
   window.__dmrApply = (p) => {
     mode = p.mode === 'scroll' ? 'scroll' : 'paged';
     document.documentElement.dataset.mode = mode;
+    document.body.dataset.dmrLayout = JSON.stringify([
+      mode,
+      p.fontFamily || '',
+      Number(p.fontSize) || 0,
+      Number(p.lineHeight) || 0,
+      Number(p.paragraphSpacing) || 0,
+      Number(p.horizontalMargin) || 0,
+      p.theme || '',
+      innerWidth,
+      innerHeight,
+      devicePixelRatio || 1
+    ]);
     const colors = {
       dark: ['#17191c', '#e8e8e8'], black: ['#000', '#ddd'],
       white: ['#fff', '#202124'], sepia: ['#f3ead3', '#3e3427']
@@ -358,7 +697,7 @@ const novelReaderBridgeScript = r'''
     `;
   };
   window.__dmrTurn = (direction) => {
-    const m = metrics();
+    const m = scrollMetrics();
     if (mode === 'paged') {
       const target = root.scrollLeft + direction * innerWidth;
       if (target < -1 || target > m.max + 1) return false;
@@ -372,6 +711,17 @@ const novelReaderBridgeScript = r'''
     report();
     return true;
   };
+  let selectionTimer = 0;
+  document.addEventListener('selectionchange', () => {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      const selection = captureSelection();
+      window.flutter_inappwebview?.callHandler(
+        'dmrSelection',
+        selection ? JSON.stringify(selection) : null
+      );
+    }, 80);
+  });
   const isInteractiveTarget = (target) => Boolean(
     target?.closest?.('a,button,input,textarea,select,[contenteditable]')
   );

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
@@ -31,6 +32,12 @@ class _FakeController implements NovelDocumentController {
   ValueChanged<NovelLocator>? onLocatorChanged;
 
   @override
+  ValueChanged<NovelSelection?>? onSelectionChanged;
+
+  @override
+  ValueChanged<bool>? onCaptureStateChanged;
+
+  @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
     applyPreferenceCalls++;
     appliedPreferences = preferences;
@@ -41,6 +48,20 @@ class _FakeController implements NovelDocumentController {
     await captureGate?.future;
     return locator;
   }
+
+  @override
+  Future<NovelPageFrame?> capturePage(int pageIndex) async => null;
+
+  @override
+  Future<NovelPageMetrics> pageMetrics() async => const NovelPageMetrics(
+        pageCount: 1,
+        currentPageIndex: 0,
+        viewport: NovelViewport(width: 1000, height: 1600),
+        layoutFingerprint: 'test',
+      );
+
+  @override
+  Future<void> showPage(int pageIndex) async {}
 
   @override
   Future<void> loadChapter(
