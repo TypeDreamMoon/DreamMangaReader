@@ -68,11 +68,36 @@ void main() {
     expect(index.wasCancelled, isTrue);
     expect(find.text('已取消'), findsOneWidget);
   });
+
+  testWidgets('search controls and completion states are localized',
+      (tester) async {
+    final index = _FakeSearchIndex(empty: true);
+    await tester.pumpWidget(_app(
+      NovelReaderSearchSheet(
+        index: index,
+        bookKey: 'remote:s:n1',
+        sourceFingerprint: 'v1',
+        chapters: const [NovelChapter(id: 'c1', title: 'Chapter 1')],
+        loadCachedDocument: (_) async => null,
+        onResultSelected: (_) {},
+      ),
+      locale: const Locale('en'),
+    ));
+
+    expect(find.text('Cached'), findsOneWidget);
+    expect(find.text('Full book'), findsOneWidget);
+    expect(find.byTooltip('Search'), findsOneWidget);
+    expect(find.byKey(const Key('novel-search-query')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('novel-search-query')), 'none');
+    await tester.tap(find.byKey(const Key('novel-search-submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('No results found'), findsOneWidget);
+  });
 }
 
-Widget _app(Widget home) => MaterialApp(
+Widget _app(Widget home, {Locale locale = const Locale('zh')}) => MaterialApp(
       theme: buildTheme(AppThemeVariant.light),
-      locale: const Locale('zh'),
+      locale: locale,
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(body: home),
@@ -84,10 +109,11 @@ NovelDocument _document(String value) => NovelDocument(
     );
 
 class _FakeSearchIndex extends NovelSearchIndex {
-  _FakeSearchIndex({this.waitForCancellation = false})
+  _FakeSearchIndex({this.waitForCancellation = false, this.empty = false})
       : super(rootDirectory: () async => Directory.systemTemp);
 
   final bool waitForCancellation;
+  final bool empty;
   bool? lastFetchMissing;
   bool wasCancelled = false;
 
@@ -114,6 +140,10 @@ class _FakeSearchIndex extends NovelSearchIndex {
       }
       wasCancelled = true;
       yield const NovelSearchCancelled();
+      return;
+    }
+    if (empty) {
+      yield const NovelSearchCompleted(resultCount: 0);
       return;
     }
     yield NovelSearchResultBatch([

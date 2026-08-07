@@ -773,7 +773,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
             await _restorePreferencesAfterFailure(
               previousPreferences,
               locator,
-              message: '字体加载失败，已恢复上一字体。',
+              message: context.l10n.novel_readerFontLoadFailed,
             );
             return;
           }
@@ -788,8 +788,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
           previousPreferences,
           locator,
           message: preferences.fontFamily != previousPreferences.fontFamily
-              ? '字体加载失败，已恢复上一字体。'
-              : '阅读设置应用失败，已恢复之前设置。',
+              ? context.l10n.novel_readerFontLoadFailed
+              : context.l10n.novel_readerSettingsApplyFailed,
         );
       }
     });
@@ -809,7 +809,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       if (locator != null) await _controller.restoreLocator(locator);
     } catch (_) {
       if (mounted) {
-        _showRecoverableReaderError('阅读设置恢复失败，请重新打开阅读器。');
+        _showRecoverableReaderError(
+          context.l10n.novel_readerSettingsRestoreFailed,
+        );
       }
       return;
     }
@@ -888,7 +890,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       return await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('笔记'),
+          title: Text(context.l10n.novel_readerNoteTitle),
           content: TextField(
             key: const Key('novel-note-editor'),
             controller: controller,
@@ -896,16 +898,18 @@ class _NovelReaderPageState extends State<NovelReaderPage>
             minLines: 3,
             maxLines: 7,
             maxLength: 1000,
-            decoration: const InputDecoration(hintText: '记录你的想法'),
+            decoration: InputDecoration(
+              hintText: context.l10n.novel_readerNoteHint,
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('保存'),
+              child: Text(context.l10n.save),
             ),
           ],
         ),
@@ -1633,5 +1637,5 @@ String _themeLabel(BuildContext context, NovelReaderTheme theme) =>
       NovelReaderTheme.eyeCare => context.l10n.novel_readerThemeSepia,
       NovelReaderTheme.dark => context.l10n.novel_readerThemeDark,
       NovelReaderTheme.black => context.l10n.novel_readerThemeBlack,
-      NovelReaderTheme.paper => '纸张',
+      NovelReaderTheme.paper => context.l10n.novel_readerThemePaper,
     };

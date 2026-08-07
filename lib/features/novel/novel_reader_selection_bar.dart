@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 
 class NovelReaderSelectionBar extends StatelessWidget {
@@ -31,31 +32,33 @@ class NovelReaderSelectionBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
       clipBehavior: Clip.antiAlias,
       child: Semantics(
-        label: '已选择 ${selection.text.length} 个字符',
+        label: context.l10n.novel_readerSelectedCharacters(
+          selection.text.length,
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             _action(
               key: const Key('novel-selection-copy'),
-              tooltip: '复制',
+              tooltip: context.l10n.novel_readerCopy,
               icon: Icons.content_copy_rounded,
               onPressed: onCopy,
             ),
             _action(
               key: const Key('novel-selection-highlight'),
-              tooltip: '高亮',
+              tooltip: context.l10n.novel_readerHighlight,
               icon: Icons.border_color_rounded,
               onPressed: onHighlight,
             ),
             _action(
               key: const Key('novel-selection-note'),
-              tooltip: '笔记',
+              tooltip: context.l10n.novel_readerNoteTitle,
               icon: Icons.edit_note_rounded,
               onPressed: onNote,
             ),
             _action(
               key: const Key('novel-selection-search'),
-              tooltip: '书内搜索',
+              tooltip: context.l10n.novel_readerSearchInBook,
               icon: Icons.search_rounded,
               onPressed: onSearch,
             ),

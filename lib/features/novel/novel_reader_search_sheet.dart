@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/reader/novel_search_index.dart';
 
@@ -86,10 +87,12 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
               _results.addAll(event.results);
             case NovelSearchCompleted():
               _searching = false;
-              _status = event.resultCount == 0 ? '没有找到结果' : null;
+              _status = event.resultCount == 0
+                  ? context.l10n.novel_readerSearchNoResults
+                  : null;
             case NovelSearchCancelled():
               _searching = false;
-              _status = '已取消';
+              _status = context.l10n.novel_readerSearchCancelled;
           }
         });
       }
@@ -97,7 +100,7 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
       if (!mounted || generation != _generation) return;
       setState(() {
         _searching = false;
-        _status = '搜索失败：$error';
+        _status = context.l10n.novel_readerSearchFailed('$error');
       });
     }
   }
@@ -120,9 +123,9 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
                         controller: _query,
                         autofocus: true,
                         textInputAction: TextInputAction.search,
-                        decoration: const InputDecoration(
-                          hintText: '搜索书内文字',
-                          prefixIcon: Icon(Icons.search_rounded),
+                        decoration: InputDecoration(
+                          hintText: context.l10n.novel_readerSearchHint,
+                          prefixIcon: const Icon(Icons.search_rounded),
                         ),
                         onSubmitted: (_) => unawaited(_startSearch()),
                       ),
@@ -130,7 +133,7 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
                     const SizedBox(width: 8),
                     IconButton.filled(
                       key: const Key('novel-search-submit'),
-                      tooltip: '搜索',
+                      tooltip: context.l10n.novel_readerSearch,
                       onPressed:
                           _searching ? null : () => unawaited(_startSearch()),
                       icon: const Icon(Icons.search_rounded),
@@ -142,19 +145,23 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
                   children: [
                     Expanded(
                       child: SegmentedButton<NovelSearchScope>(
-                        segments: const [
+                        segments: [
                           ButtonSegment(
                             value: NovelSearchScope.cached,
-                            label: Text('已缓存'),
-                            icon: Icon(
+                            label: Text(
+                              context.l10n.novel_readerSearchCached,
+                            ),
+                            icon: const Icon(
                               Icons.offline_pin_outlined,
                               key: Key('novel-search-scope-cached'),
                             ),
                           ),
                           ButtonSegment(
                             value: NovelSearchScope.fullBook,
-                            label: Text('全书'),
-                            icon: Icon(
+                            label: Text(
+                              context.l10n.novel_readerSearchFullBook,
+                            ),
+                            icon: const Icon(
                               Icons.cloud_download_outlined,
                               key: Key('novel-search-scope-full'),
                             ),
@@ -172,7 +179,7 @@ class _NovelReaderSearchSheetState extends State<NovelReaderSearchSheet> {
                       const SizedBox(width: 8),
                       IconButton(
                         key: const Key('novel-search-cancel'),
-                        tooltip: '取消搜索',
+                        tooltip: context.l10n.novel_readerSearchCancel,
                         onPressed: _cancellation?.cancel,
                         icon: const Icon(Icons.stop_circle_outlined),
                       ),

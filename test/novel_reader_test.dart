@@ -175,9 +175,6 @@ class _MemoryNovelReaderDataStore extends NovelReaderDataStore {
 
   @override
   Future<void> flushPending() async {}
-
-  @override
-  void dispose() {}
 }
 
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(

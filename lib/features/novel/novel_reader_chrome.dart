@@ -140,13 +140,13 @@ class NovelReaderChrome extends StatelessWidget {
                   ),
                   _iconButton(
                     key: const Key('novel-reader-bookmark'),
-                    tooltip: '书签',
+                    tooltip: context.l10n.novel_readerBookmark,
                     icon: Icons.bookmark_border_rounded,
                     onPressed: onBookmark,
                   ),
                   _iconButton(
                     key: const Key('novel-reader-more'),
-                    tooltip: '更多',
+                    tooltip: context.l10n.novel_readerMore,
                     icon: Icons.more_horiz_rounded,
                     onPressed: onMore,
                   ),
@@ -177,7 +177,7 @@ class NovelReaderChrome extends StatelessWidget {
                     children: [
                       _iconButton(
                         key: const Key('novel-reader-previous-chapter'),
-                        tooltip: '上一章',
+                        tooltip: context.l10n.novel_readerPreviousChapter,
                         icon: Icons.skip_previous_rounded,
                         onPressed:
                             canPreviousChapter ? onPreviousChapter : null,
@@ -185,7 +185,7 @@ class NovelReaderChrome extends StatelessWidget {
                       Expanded(child: _progress(context)),
                       _iconButton(
                         key: const Key('novel-reader-next-chapter'),
-                        tooltip: '下一章',
+                        tooltip: context.l10n.novel_readerNextChapter,
                         icon: Icons.skip_next_rounded,
                         onPressed: canNextChapter ? onNextChapter : null,
                       ),
@@ -200,7 +200,7 @@ class NovelReaderChrome extends StatelessWidget {
                       else ...[
                         _iconButton(
                           key: const Key('novel-reader-search'),
-                          tooltip: '搜索',
+                          tooltip: context.l10n.novel_readerSearch,
                           icon: Icons.search_rounded,
                           onPressed: onSearch,
                         ),
@@ -242,6 +242,10 @@ class NovelReaderChrome extends StatelessWidget {
           child: Slider(
             key: const Key('novel-reader-progress-slider'),
             value: progress.clamp(0, 1),
+            semanticFormatterCallback: (value) =>
+                context.l10n.novel_readerProgressPercent(
+              (value * 100).round(),
+            ),
             onChanged: (value) {
               onInteraction();
               onProgressChanged(value);
@@ -271,7 +275,7 @@ class NovelReaderChrome extends StatelessWidget {
   Widget _secondaryMenu(BuildContext context) {
     return PopupMenuButton<_NovelReaderSecondaryCommand>(
       key: const Key('novel-reader-secondary-overflow'),
-      tooltip: '更多阅读工具',
+      tooltip: context.l10n.novel_readerMoreTools,
       color: backgroundColor,
       iconColor: foregroundColor,
       onOpened: onInteraction,
@@ -290,7 +294,7 @@ class NovelReaderChrome extends StatelessWidget {
         _menuItem(
           _NovelReaderSecondaryCommand.search,
           Icons.search_rounded,
-          '搜索',
+          context.l10n.novel_readerSearch,
         ),
         _menuItem(
           _NovelReaderSecondaryCommand.theme,

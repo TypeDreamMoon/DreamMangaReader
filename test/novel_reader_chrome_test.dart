@@ -89,10 +89,36 @@ void main() {
       expect(find.byKey(Key(key)), findsNothing);
     }
   });
+
+  testWidgets('chrome commands use localized accessible labels',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _harness(chromeVisible: true, locale: const Locale('en')),
+    );
+    await tester.pumpAndSettle();
+
+    for (final label in const [
+      'Bookmark',
+      'More',
+      'Previous chapter',
+      'Next chapter',
+      'Search',
+    ]) {
+      expect(find.byTooltip(label), findsOneWidget);
+    }
+    final slider = tester.widget<Slider>(
+      find.byKey(const Key('novel-reader-progress-slider')),
+    );
+    expect(slider.semanticFormatterCallback, isNotNull);
+    expect(slider.semanticFormatterCallback!(.42), '42%');
+  });
 }
 
 Widget _harness({
   required bool chromeVisible,
+  Locale locale = const Locale('zh'),
   bool showChapterName = true,
   bool showPageNumber = true,
   bool showBookProgress = true,
@@ -101,7 +127,7 @@ Widget _harness({
 }) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
-    locale: const Locale('zh'),
+    locale: locale,
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: Scaffold(

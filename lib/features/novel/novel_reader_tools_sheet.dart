@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/reader/novel_reader_data.dart';
 
@@ -49,27 +50,27 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
             child: SegmentedButton<NovelReaderToolsTab>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: NovelReaderToolsTab.directory,
-                  label: Text('目录'),
-                  icon: Icon(
+                  label: Text(context.l10n.novel_readerToolsDirectory),
+                  icon: const Icon(
                     Icons.format_list_bulleted_rounded,
                     key: Key('novel-tools-tab-directory'),
                   ),
                 ),
                 ButtonSegment(
                   value: NovelReaderToolsTab.bookmarks,
-                  label: Text('书签'),
-                  icon: Icon(
+                  label: Text(context.l10n.novel_readerToolsBookmarks),
+                  icon: const Icon(
                     Icons.bookmarks_outlined,
                     key: Key('novel-tools-tab-bookmarks'),
                   ),
                 ),
                 ButtonSegment(
                   value: NovelReaderToolsTab.notes,
-                  label: Text('笔记'),
-                  icon: Icon(
+                  label: Text(context.l10n.novel_readerToolsNotes),
+                  icon: const Icon(
                     Icons.edit_note_rounded,
                     key: Key('novel-tools-tab-notes'),
                   ),
@@ -118,7 +119,9 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
         .where((value) => !value.isDeleted)
         .toList(growable: false)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    if (values.isEmpty) return const Center(child: Text('暂无书签'));
+    if (values.isEmpty) {
+      return Center(child: Text(context.l10n.novel_readerNoBookmarks));
+    }
     return ListView.builder(
       key: const Key('novel-tools-bookmark-list'),
       itemCount: values.length,
@@ -130,7 +133,7 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
           subtitle: Text(_chapterTitle(bookmark.locator.chapterId)),
           onTap: () => widget.onBookmarkSelected(bookmark),
           trailing: IconButton(
-            tooltip: '删除书签',
+            tooltip: context.l10n.novel_readerDeleteBookmark,
             onPressed: () => widget.onDeleteBookmark(bookmark),
             icon: const Icon(Icons.delete_outline_rounded),
           ),
@@ -144,7 +147,9 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
         .where((value) => !value.isDeleted)
         .toList(growable: false)
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    if (values.isEmpty) return const Center(child: Text('暂无笔记或高亮'));
+    if (values.isEmpty) {
+      return Center(child: Text(context.l10n.novel_readerNoNotes));
+    }
     return ListView.builder(
       key: const Key('novel-tools-note-list'),
       itemCount: values.length,
@@ -160,7 +165,7 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
           title: Text(note ?? annotation.range.quote),
           subtitle: Text(
             unresolved
-                ? '待重新定位'
+                ? context.l10n.novel_readerRelocatePending
                 : _chapterTitle(annotation.range.start.chapterId),
           ),
           onTap: () => widget.onAnnotationSelected(annotation),
@@ -168,12 +173,12 @@ class _NovelReaderToolsSheetState extends State<NovelReaderToolsSheet> {
             spacing: 0,
             children: [
               IconButton(
-                tooltip: '编辑笔记',
+                tooltip: context.l10n.novel_readerEditNote,
                 onPressed: () => widget.onEditAnnotation(annotation),
                 icon: const Icon(Icons.edit_outlined),
               ),
               IconButton(
-                tooltip: '删除',
+                tooltip: context.l10n.delete,
                 onPressed: () => widget.onDeleteAnnotation(annotation),
                 icon: const Icon(Icons.delete_outline_rounded),
               ),

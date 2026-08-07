@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/features/novel/novel_reader_selection_bar.dar
 import 'package:dream_manga_reader/features/novel/novel_reader_tools_sheet.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -96,12 +97,66 @@ void main() {
     expect(calls, contains('bookmark:${bookmark.id}'));
     expect(calls, contains('annotation:${annotation.id}'));
   });
+
+  testWidgets('selection actions are localized and keyboard reachable',
+      (tester) async {
+    var copies = 0;
+    await tester.pumpWidget(_app(
+      NovelReaderSelectionBar(
+        selection: _selection(),
+        onCopy: () => copies++,
+        onHighlight: () {},
+        onNote: () {},
+        onSearch: () {},
+        backgroundColor: const Color(0xe6ffffff),
+        foregroundColor: const Color(0xff202124),
+      ),
+      locale: const Locale('en'),
+    ));
+
+    for (final label in const ['Copy', 'Highlight', 'Note', 'Search in book']) {
+      expect(find.byTooltip(label), findsOneWidget);
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(copies, 1);
+  });
+
+  testWidgets('reader tools tabs and empty states are localized',
+      (tester) async {
+    await tester.pumpWidget(_app(
+      SizedBox(
+        width: 360,
+        height: 600,
+        child: NovelReaderToolsSheet(
+          chapters: const [],
+          currentChapterId: '',
+          data: NovelReaderBookData.empty('book-key'),
+          unresolvedAnnotationIds: const {},
+          initialTab: NovelReaderToolsTab.bookmarks,
+          onChapterSelected: (_) {},
+          onBookmarkSelected: (_) {},
+          onAnnotationSelected: (_) {},
+          onEditAnnotation: (_) {},
+          onDeleteBookmark: (_) {},
+          onDeleteAnnotation: (_) {},
+        ),
+      ),
+      locale: const Locale('en'),
+    ));
+
+    expect(find.text('Directory'), findsOneWidget);
+    expect(find.text('Bookmarks'), findsOneWidget);
+    expect(find.text('Notes'), findsOneWidget);
+    expect(find.text('No bookmarks yet'), findsOneWidget);
+  });
 }
 
-Widget _app(Widget home) {
+Widget _app(Widget home, {Locale locale = const Locale('zh')}) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
-    locale: const Locale('zh'),
+    locale: locale,
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: Scaffold(body: Center(child: home)),

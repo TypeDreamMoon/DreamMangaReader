@@ -123,22 +123,24 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   }
 
   Future<void> _importFont() async {
+    final l10n = context.l10n;
     try {
       final source = await (widget.pickFontFile?.call() ?? _pickFontFile());
       if (source == null) return;
       final font = await _fontStore.importFont(source);
       await _reloadImportedFonts();
       if (mounted) _update(_value.copyWith(fontFamily: font.id));
-    } on NovelFontImportException catch (error) {
-      _showFontError(error.message);
+    } on NovelFontImportException {
+      _showFontError(l10n.novel_readerFontImportFailed);
     } catch (_) {
-      _showFontError('字体导入失败，请检查文件后重试。');
+      _showFontError(l10n.novel_readerFontImportFailed);
     }
   }
 
   Future<void> _deleteSelectedFont() async {
     final selected = normalizeNovelFontId(_value.fontFamily);
     if (!selected.startsWith(NovelFontIds.importedPrefix)) return;
+    final l10n = context.l10n;
     try {
       final fallback = await _fontStore.deleteFont(
         selected,
@@ -148,11 +150,12 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
       _update(_value.copyWith(fontFamily: fallback));
       await _reloadImportedFonts();
     } catch (_) {
-      _showFontError('字体删除失败，请稍后重试。');
+      _showFontError(l10n.novel_readerFontDeleteFailed);
     }
   }
 
   Future<void> _importBackground() async {
+    final l10n = context.l10n;
     try {
       final source =
           await (widget.pickBackgroundFile?.call() ?? _pickBackgroundFile());
@@ -162,10 +165,10 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
         _update(_value.copyWith(backgroundAssetId: background.id));
         await _backgroundStore.deleteUnreferenced({background.id});
       }
-    } on NovelBackgroundException catch (error) {
-      _showFontError(error.message);
+    } on NovelBackgroundException {
+      _showFontError(l10n.novel_readerBackgroundImportFailed);
     } catch (_) {
-      _showFontError('背景导入失败，请检查图片后重试。');
+      _showFontError(l10n.novel_readerBackgroundImportFailed);
     }
   }
 
@@ -244,6 +247,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     key: const Key('novel-font-picker'),
+                    isExpanded: true,
                     initialValue: normalizeNovelFontId(_value.fontFamily),
                     decoration: InputDecoration(
                       labelText: context.l10n.novel_readerFont,
@@ -262,7 +266,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                       if (selectedImportPending)
                         DropdownMenuItem(
                           value: selectedFontId,
-                          child: const Text('正在检查自定义字体...'),
+                          child: Text(context.l10n.novel_readerFontChecking),
                         ),
                     ],
                     onChanged: (value) {
@@ -275,13 +279,13 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                 const SizedBox(width: 8),
                 IconButton(
                   key: const Key('novel-font-import'),
-                  tooltip: '导入 TTF/OTF 字体',
+                  tooltip: context.l10n.novel_readerFontImport,
                   onPressed: _importFont,
                   icon: const Icon(Icons.add_rounded),
                 ),
                 IconButton(
                   key: const Key('novel-font-delete'),
-                  tooltip: '删除当前导入字体',
+                  tooltip: context.l10n.novel_readerFontDelete,
                   onPressed: normalizeNovelFontId(_value.fontFamily)
                           .startsWith(NovelFontIds.importedPrefix)
                       ? _deleteSelectedFont
@@ -299,32 +303,35 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                 NovelReaderTheme.eyeCare: context.l10n.novel_readerThemeSepia,
                 NovelReaderTheme.dark: context.l10n.novel_readerThemeDark,
                 NovelReaderTheme.black: context.l10n.novel_readerThemeBlack,
-                NovelReaderTheme.paper: '纸张',
+                NovelReaderTheme.paper: context.l10n.novel_readerThemePaper,
               },
               onChanged: (value) => _update(_value.copyWith(theme: value)),
             ),
             const SizedBox(height: 12),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 OutlinedButton.icon(
                   key: const Key('novel-background-import'),
                   onPressed: _importBackground,
                   icon: const Icon(Icons.image_outlined),
-                  label: const Text('导入背景'),
+                  label: Text(context.l10n.novel_readerBackgroundImport),
                 ),
-                const SizedBox(width: 8),
                 IconButton(
                   key: const Key('novel-background-clear'),
-                  tooltip: '清除自定义背景',
+                  tooltip: context.l10n.novel_readerBackgroundClear,
                   onPressed: _value.backgroundAssetId == null
                       ? null
                       : () async => _clearBackground(),
                   icon: const Icon(Icons.delete_outline_rounded),
                 ),
                 if (_value.backgroundAssetId != null)
-                  const Expanded(
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 200),
                     child: Text(
-                      '已使用本地背景',
+                      context.l10n.novel_readerBackgroundActive,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
@@ -342,9 +349,12 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                     key: Key('novel-background-fit-${fit.name}'),
                     selected: _value.backgroundFit == fit,
                     label: Text(switch (fit) {
-                      NovelBackgroundFit.crop => '裁剪',
-                      NovelBackgroundFit.tile => '平铺',
-                      NovelBackgroundFit.fill => '填充',
+                      NovelBackgroundFit.crop =>
+                        context.l10n.novel_readerBackgroundCrop,
+                      NovelBackgroundFit.tile =>
+                        context.l10n.novel_readerBackgroundTile,
+                      NovelBackgroundFit.fill =>
+                        context.l10n.novel_readerBackgroundFill,
                     }),
                     onSelected: (_) =>
                         _update(_value.copyWith(backgroundFit: fit)),
@@ -353,31 +363,50 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _SettingSlider(
               key: const Key('novel-background-strength'),
-              label: '纹理强度',
+              label: context.l10n.novel_readerTextureStrength,
               value: _value.textureStrength,
               min: 0,
               max: 1,
               divisions: 20,
               valueLabel: '${(_value.textureStrength * 100).round()}%',
+              semanticFormatter: (value) =>
+                  context.l10n.novel_readerProgressPercent(
+                (value * 100).round(),
+              ),
               onChanged: (value) =>
                   _update(_value.copyWith(textureStrength: value)),
             ),
-            SegmentedButton<int?>(
-              key: const Key('novel-foreground-mode'),
-              segments: const [
-                ButtonSegment(value: null, label: Text('自动')),
-                ButtonSegment(value: 0xff202124, label: Text('深色字')),
-                ButtonSegment(value: 0xffeeeeee, label: Text('浅色字')),
-              ],
-              selected: {_value.foregroundArgb},
-              onSelectionChanged: (selection) {
-                final selected = selection.first;
-                _update(
-                  selected == null
-                      ? _value.copyWith(clearForeground: true)
-                      : _value.copyWith(foregroundArgb: selected),
-                );
-              },
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<int?>(
+                key: const Key('novel-foreground-mode'),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: [
+                  ButtonSegment(
+                    value: null,
+                    label: Text(context.l10n.novel_readerForegroundAuto),
+                  ),
+                  ButtonSegment(
+                    value: 0xff202124,
+                    label: Text(context.l10n.novel_readerForegroundDark),
+                  ),
+                  ButtonSegment(
+                    value: 0xffeeeeee,
+                    label: Text(context.l10n.novel_readerForegroundLight),
+                  ),
+                ],
+                selected: {_value.foregroundArgb},
+                onSelectionChanged: (selection) {
+                  final selected = selection.first;
+                  _update(
+                    selected == null
+                        ? _value.copyWith(clearForeground: true)
+                        : _value.copyWith(foregroundArgb: selected),
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 14),
             _FontSizeStepper(
@@ -389,12 +418,16 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _SettingSlider(
               key: const Key('novel-setting-brightness'),
-              label: '亮度',
+              label: context.l10n.novel_readerBrightness,
               value: _value.brightness,
               min: .6,
               max: 1.4,
               divisions: 16,
               valueLabel: '${(_value.brightness * 100).round()}%',
+              semanticFormatter: (value) =>
+                  context.l10n.novel_readerProgressPercent(
+                (value * 100).round(),
+              ),
               onChanged: (value) => _update(_value.copyWith(brightness: value)),
             ),
             _SettingSlider(
@@ -428,7 +461,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _SettingSlider(
               key: const Key('novel-setting-top-margin'),
-              label: '上边距',
+              label: context.l10n.novel_readerTopMargin,
               value: _value.topMargin,
               min: 0,
               max: 96,
@@ -437,7 +470,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _SettingSlider(
               key: const Key('novel-setting-bottom-margin'),
-              label: '下边距',
+              label: context.l10n.novel_readerBottomMargin,
               value: _value.bottomMargin,
               min: 0,
               max: 96,
@@ -447,7 +480,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _SettingSlider(
               key: const Key('novel-setting-first-line-indent'),
-              label: '首行缩进',
+              label: context.l10n.novel_readerFirstLineIndent,
               value: _value.firstLineIndent,
               min: 0,
               max: 4,
@@ -459,14 +492,14 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               key: const Key('novel-setting-alignment'),
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: SegmentedButton<NovelTextAlignment>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: NovelTextAlignment.start,
-                    label: Text('左对齐'),
+                    label: Text(context.l10n.novel_readerAlignLeft),
                   ),
                   ButtonSegment(
                     value: NovelTextAlignment.justify,
-                    label: Text('两端对齐'),
+                    label: Text(context.l10n.novel_readerAlignJustify),
                   ),
                 ],
                 selected: {_value.textAlignment},
@@ -486,6 +519,9 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                   : context.l10n.novel_readerSeconds(
                       _value.toolbarAutoHideSeconds,
                     ),
+              semanticFormatter: (value) => value.round() == 0
+                  ? context.l10n.novel_readerAutoHideOff
+                  : context.l10n.novel_readerSeconds(value.round()),
               onChanged: (value) => _update(
                 _value.copyWith(toolbarAutoHideSeconds: value.round()),
               ),
@@ -493,7 +529,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             SwitchListTile(
               key: const Key('novel-setting-single-hand'),
               contentPadding: EdgeInsets.zero,
-              title: const Text('单手翻下一页'),
+              title: Text(context.l10n.novel_readerSingleHand),
               value: _value.singleHandNext,
               onChanged: (value) =>
                   _update(_value.copyWith(singleHandNext: value)),
@@ -507,34 +543,34 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
             ),
             _statusSwitch(
               key: const Key('novel-setting-status-chapter'),
-              label: '显示章节名',
+              label: context.l10n.novel_readerStatusChapter,
               value: _value.showChapterName,
               onChanged: (value) =>
                   _update(_value.copyWith(showChapterName: value)),
             ),
             _statusSwitch(
               key: const Key('novel-setting-status-page'),
-              label: '显示页码',
+              label: context.l10n.novel_readerStatusPage,
               value: _value.showPageNumber,
               onChanged: (value) =>
                   _update(_value.copyWith(showPageNumber: value)),
             ),
             _statusSwitch(
               key: const Key('novel-setting-status-progress'),
-              label: '显示全书进度',
+              label: context.l10n.novel_readerStatusProgress,
               value: _value.showBookProgress,
               onChanged: (value) =>
                   _update(_value.copyWith(showBookProgress: value)),
             ),
             _statusSwitch(
               key: const Key('novel-setting-status-time'),
-              label: '显示时间',
+              label: context.l10n.novel_readerStatusTime,
               value: _value.showTime,
               onChanged: (value) => _update(_value.copyWith(showTime: value)),
             ),
             _statusSwitch(
               key: const Key('novel-setting-status-battery'),
-              label: '显示电量',
+              label: context.l10n.novel_readerStatusBattery,
               value: _value.showBattery,
               onChanged: (value) =>
                   _update(_value.copyWith(showBattery: value)),
@@ -544,7 +580,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               key: const Key('novel-setting-reset'),
               onPressed: () => _update(const NovelReaderPreferences()),
               icon: const Icon(Icons.restart_alt_rounded),
-              label: const Text('恢复默认设置'),
+              label: Text(context.l10n.novel_readerReset),
             ),
           ],
         ),
@@ -582,6 +618,7 @@ class _SettingSlider extends StatelessWidget {
     required this.divisions,
     required this.onChanged,
     this.valueLabel,
+    this.semanticFormatter,
   });
 
   final String label;
@@ -591,6 +628,7 @@ class _SettingSlider extends StatelessWidget {
   final int divisions;
   final ValueChanged<double> onChanged;
   final String? valueLabel;
+  final String Function(double value)? semanticFormatter;
 
   @override
   Widget build(BuildContext context) {
@@ -605,6 +643,10 @@ class _SettingSlider extends StatelessWidget {
             divisions: divisions,
             label: valueLabel ??
                 value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1),
+            semanticFormatterCallback: semanticFormatter ??
+                (value) => value.toStringAsFixed(
+                      value == value.roundToDouble() ? 0 : 1,
+                    ),
             onChanged: onChanged,
           ),
         ),
@@ -624,10 +666,10 @@ class _SettingSlider extends StatelessWidget {
 
 String _turnModeLabel(BuildContext context, NovelPageTurnMode mode) =>
     switch (mode) {
-      NovelPageTurnMode.curl => '仿真',
-      NovelPageTurnMode.cover => '覆盖',
-      NovelPageTurnMode.translate => '平移',
-      NovelPageTurnMode.none => '无动画',
+      NovelPageTurnMode.curl => context.l10n.novel_readerTurnCurl,
+      NovelPageTurnMode.cover => context.l10n.novel_readerTurnCover,
+      NovelPageTurnMode.translate => context.l10n.novel_readerTurnTranslate,
+      NovelPageTurnMode.none => context.l10n.novel_readerTurnNone,
       NovelPageTurnMode.scroll => context.l10n.novel_readerScroll,
     };
 
@@ -718,33 +760,39 @@ class _ThemePicker extends StatelessWidget {
             runSpacing: 8,
             children: [
               for (final theme in NovelReaderTheme.values)
-                Tooltip(
-                  message: labels[theme] ?? theme.name,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: () => onChanged(theme),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: _colors[theme],
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: value == theme ? p.accent : p.line,
-                          width: value == theme ? 3 : 1,
+                Semantics(
+                  key: Key('novel-theme-${theme.name}'),
+                  label: labels[theme] ?? theme.name,
+                  button: true,
+                  selected: value == theme,
+                  child: Tooltip(
+                    message: labels[theme] ?? theme.name,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => onChanged(theme),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: _colors[theme],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: value == theme ? p.accent : p.line,
+                            width: value == theme ? 3 : 1,
+                          ),
                         ),
+                        child: value == theme
+                            ? Icon(
+                                Icons.check_rounded,
+                                size: 18,
+                                color: theme == NovelReaderTheme.dark ||
+                                        theme == NovelReaderTheme.black
+                                    ? Colors.white
+                                    : Colors.black87,
+                              )
+                            : null,
                       ),
-                      child: value == theme
-                          ? Icon(
-                              Icons.check_rounded,
-                              size: 18,
-                              color: theme == NovelReaderTheme.dark ||
-                                      theme == NovelReaderTheme.black
-                                  ? Colors.white
-                                  : Colors.black87,
-                            )
-                          : null,
                     ),
                   ),
                 ),
