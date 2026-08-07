@@ -8,8 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import '../../app/novel_library_store.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_document_sanitizer.dart';
+import '../../core/novel/reader/novel_reader_models.dart';
 
-enum NovelReaderCommand { previous, next, toggleControls }
+export '../../core/novel/reader/novel_reader_models.dart'
+    show NovelReaderCommand;
 
 abstract interface class NovelDocumentController {
   ValueChanged<NovelReaderCommand>? get onCommand;

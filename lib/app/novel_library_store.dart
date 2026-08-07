@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/novel/models.dart';
+import '../core/novel/reader/novel_reader_models.dart';
 
 enum NovelReaderMode { paged, scroll }
 
@@ -13,86 +14,176 @@ enum NovelReaderTheme { dark, black, white, sepia }
 
 class NovelReaderPreferences {
   const NovelReaderPreferences({
-    this.mode = NovelReaderMode.paged,
+    NovelPageTurnMode? turnMode,
+    NovelReaderMode? mode,
     this.fontFamily = '',
     this.fontSize = 18,
     this.lineHeight = 1.7,
     this.paragraphSpacing = 10,
     this.horizontalMargin = 22,
+    this.topMargin = 16,
+    this.bottomMargin = 20,
+    this.firstLineIndent = 2,
+    this.textAlignment = NovelTextAlignment.justify,
     this.theme = NovelReaderTheme.sepia,
     this.keepScreenOn = true,
     this.toolbarAutoHideSeconds = 4,
-  });
+    this.showChapterName = true,
+    this.showPageNumber = true,
+    this.showBookProgress = true,
+    this.showTime = true,
+    this.showBattery = true,
+    this.singleHandNext = false,
+  }) : turnMode = turnMode ??
+            (mode == NovelReaderMode.scroll
+                ? NovelPageTurnMode.scroll
+                : NovelPageTurnMode.curl);
 
-  final NovelReaderMode mode;
+  final NovelPageTurnMode turnMode;
   final String fontFamily;
   final double fontSize;
   final double lineHeight;
   final double paragraphSpacing;
   final double horizontalMargin;
+  final double topMargin;
+  final double bottomMargin;
+  final double firstLineIndent;
+  final NovelTextAlignment textAlignment;
   final NovelReaderTheme theme;
   final bool keepScreenOn;
   final int toolbarAutoHideSeconds;
+  final bool showChapterName;
+  final bool showPageNumber;
+  final bool showBookProgress;
+  final bool showTime;
+  final bool showBattery;
+  final bool singleHandNext;
+
+  NovelReaderMode get mode => turnMode == NovelPageTurnMode.scroll
+      ? NovelReaderMode.scroll
+      : NovelReaderMode.paged;
 
   NovelReaderPreferences copyWith({
+    NovelPageTurnMode? turnMode,
     NovelReaderMode? mode,
     String? fontFamily,
     double? fontSize,
     double? lineHeight,
     double? paragraphSpacing,
     double? horizontalMargin,
+    double? topMargin,
+    double? bottomMargin,
+    double? firstLineIndent,
+    NovelTextAlignment? textAlignment,
     NovelReaderTheme? theme,
     bool? keepScreenOn,
     int? toolbarAutoHideSeconds,
+    bool? showChapterName,
+    bool? showPageNumber,
+    bool? showBookProgress,
+    bool? showTime,
+    bool? showBattery,
+    bool? singleHandNext,
   }) {
     return NovelReaderPreferences(
-      mode: mode ?? this.mode,
+      turnMode: turnMode ??
+          (mode == null
+              ? this.turnMode
+              : mode == NovelReaderMode.scroll
+                  ? NovelPageTurnMode.scroll
+                  : NovelPageTurnMode.curl),
       fontFamily: fontFamily ?? this.fontFamily,
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
       paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
       horizontalMargin: horizontalMargin ?? this.horizontalMargin,
+      topMargin: topMargin ?? this.topMargin,
+      bottomMargin: bottomMargin ?? this.bottomMargin,
+      firstLineIndent: firstLineIndent ?? this.firstLineIndent,
+      textAlignment: textAlignment ?? this.textAlignment,
       theme: theme ?? this.theme,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       toolbarAutoHideSeconds:
           toolbarAutoHideSeconds ?? this.toolbarAutoHideSeconds,
+      showChapterName: showChapterName ?? this.showChapterName,
+      showPageNumber: showPageNumber ?? this.showPageNumber,
+      showBookProgress: showBookProgress ?? this.showBookProgress,
+      showTime: showTime ?? this.showTime,
+      showBattery: showBattery ?? this.showBattery,
+      singleHandNext: singleHandNext ?? this.singleHandNext,
     );
   }
 
   Map<String, Object?> toJson() => {
-        'mode': mode.name,
+        'schema': 2,
+        'turnMode': turnMode.name,
         'fontFamily': fontFamily,
         'fontSize': fontSize,
         'lineHeight': lineHeight,
         'paragraphSpacing': paragraphSpacing,
         'horizontalMargin': horizontalMargin,
+        'topMargin': topMargin,
+        'bottomMargin': bottomMargin,
+        'firstLineIndent': firstLineIndent,
+        'textAlignment': textAlignment.name,
         'theme': theme.name,
         'keepScreenOn': keepScreenOn,
         'toolbarAutoHideSeconds': toolbarAutoHideSeconds,
+        'showChapterName': showChapterName,
+        'showPageNumber': showPageNumber,
+        'showBookProgress': showBookProgress,
+        'showTime': showTime,
+        'showBattery': showBattery,
+        'singleHandNext': singleHandNext,
       };
 
   factory NovelReaderPreferences.fromJson(Map<String, dynamic> json) {
     return NovelReaderPreferences(
-      mode: NovelReaderMode.values.firstWhere(
-        (value) => value.name == json['mode'],
-        orElse: () => NovelReaderMode.paged,
+      turnMode: NovelPageTurnMode.values.firstWhere(
+        (value) => value.name == json['turnMode'],
+        orElse: () => json['mode'] == NovelReaderMode.scroll.name
+            ? NovelPageTurnMode.scroll
+            : NovelPageTurnMode.curl,
       ),
       fontFamily: json['fontFamily'] as String? ?? '',
-      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
-      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.7,
-      paragraphSpacing: (json['paragraphSpacing'] as num?)?.toDouble() ?? 10,
-      horizontalMargin: (json['horizontalMargin'] as num?)?.toDouble() ?? 22,
+      fontSize: _clampedDouble(json['fontSize'], 18, 12, 32),
+      lineHeight: _clampedDouble(json['lineHeight'], 1.7, 1.2, 2.4),
+      paragraphSpacing: _clampedDouble(json['paragraphSpacing'], 10, 0, 30),
+      horizontalMargin: _clampedDouble(json['horizontalMargin'], 22, 8, 56),
+      topMargin: _clampedDouble(json['topMargin'], 16, 0, 96),
+      bottomMargin: _clampedDouble(json['bottomMargin'], 20, 0, 96),
+      firstLineIndent: _clampedDouble(json['firstLineIndent'], 2, 0, 4),
+      textAlignment: NovelTextAlignment.values.firstWhere(
+        (value) => value.name == json['textAlignment'],
+        orElse: () => NovelTextAlignment.justify,
+      ),
       theme: NovelReaderTheme.values.firstWhere(
         (value) => value.name == json['theme'],
         orElse: () => NovelReaderTheme.sepia,
       ),
       keepScreenOn: json['keepScreenOn'] as bool? ?? true,
       toolbarAutoHideSeconds:
-          ((json['toolbarAutoHideSeconds'] as num?)?.toInt() ?? 4)
-              .clamp(0, 10)
-              .toInt(),
+          _clampedInt(json['toolbarAutoHideSeconds'], 4, 0, 10),
+      showChapterName: json['showChapterName'] as bool? ?? true,
+      showPageNumber: json['showPageNumber'] as bool? ?? true,
+      showBookProgress: json['showBookProgress'] as bool? ?? true,
+      showTime: json['showTime'] as bool? ?? true,
+      showBattery: json['showBattery'] as bool? ?? true,
+      singleHandNext: json['singleHandNext'] as bool? ?? false,
     );
   }
+}
+
+double _clampedDouble(Object? value, double fallback, double min, double max) {
+  final parsed = value is num ? value.toDouble() : fallback;
+  if (!parsed.isFinite) return fallback;
+  return parsed.clamp(min, max).toDouble();
+}
+
+int _clampedInt(Object? value, int fallback, int min, int max) {
+  final parsed = value is num ? value.toDouble() : fallback.toDouble();
+  if (!parsed.isFinite) return fallback;
+  return parsed.clamp(min, max).toInt();
 }
 
 class NovelLibraryEntry {
@@ -277,19 +368,13 @@ class NovelReadingProgress {
   final int updatedAt;
 
   Map<String, Object?> toJson() => {
-        'chapterId': locator.chapterId,
-        if (locator.blockId != null) 'blockId': locator.blockId,
-        'fraction': locator.fraction,
+        ...locator.toJson(),
         'updatedAt': updatedAt,
       };
 
   factory NovelReadingProgress.fromJson(Map<String, dynamic> json) {
     return NovelReadingProgress(
-      locator: NovelLocator(
-        chapterId: json['chapterId'] as String,
-        blockId: json['blockId'] as String?,
-        fraction: (json['fraction'] as num?)?.toDouble() ?? 0,
-      ),
+      locator: NovelLocator.fromJson(json),
       updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
     );
   }
