@@ -13,6 +13,8 @@ import '../../core/novel/models.dart';
 import '../../core/novel/reader/novel_page_cache.dart';
 import '../../core/novel/reader/novel_page_turn_controller.dart';
 import '../../core/novel/reader/novel_page_turn_physics.dart';
+import '../../core/novel/reader/novel_reader_data.dart';
+import '../../core/novel/reader/novel_reader_data_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 import '../../core/novel/reader/novel_reader_theme.dart';
 import '../../core/platform/reader_keys.dart';
@@ -23,6 +25,8 @@ import 'novel_page_turn_surface.dart';
 import 'novel_reader_chrome.dart';
 import 'novel_reader_input.dart';
 import 'novel_reader_settings_sheet.dart';
+import 'novel_reader_selection_bar.dart';
+import 'novel_reader_tools_sheet.dart';
 
 typedef NovelDocumentLoader = Future<NovelDocument> Function(
   NovelChapter chapter,
@@ -42,6 +46,7 @@ class NovelReaderPage extends StatefulWidget {
     required this.loadDocument,
     this.controller,
     this.documentViewBuilder,
+    this.readerDataStore,
   }) : assert(initialIndex >= 0 && initialIndex < chapters.length);
 
   final Novel novel;
@@ -51,6 +56,7 @@ class NovelReaderPage extends StatefulWidget {
   final NovelDocumentLoader loadDocument;
   final NovelDocumentController? controller;
   final NovelDocumentViewBuilder? documentViewBuilder;
+  final NovelReaderDataStore? readerDataStore;
 
   @override
   State<NovelReaderPage> createState() => _NovelReaderPageState();
@@ -62,6 +68,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   late final NovelDocumentController _controller =
       widget.controller ?? WebNovelDocumentController();
+  late final NovelReaderDataStore _readerDataStore =
+      widget.readerDataStore ?? NovelReaderDataStore();
+  late NovelReaderBookData _readerData =
+      NovelReaderBookData.empty(widget.libraryKey);
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
   late NovelReaderPreferences _preferences = _library.preferences;
   late int _chapterIndex = widget.initialIndex;
@@ -86,6 +96,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   double? _progressPreview;
   Object? _error;
   NovelSelection? _selection;
+  Set<String> _unresolvedAnnotationIds = const {};
   NovelPageMetrics? _pageMetrics;
   NovelPageFrame? _previousFrame;
   NovelPageFrame? _currentFrame;
@@ -116,6 +127,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _controller.onLocatorChanged = _saveLocator;
     _controller.onSelectionChanged = _onSelectionChanged;
     _controller.onCaptureStateChanged = _onCaptureStateChanged;
+    _controller.onUnresolvedAnnotationsChanged =
+        _onUnresolvedAnnotationsChanged;
     final webController = _controller;
     if (webController is WebNovelDocumentController) {
       webController.onFontFallback = _onFontFallback;
@@ -134,6 +147,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       unawaited(ReaderKeys.setActive(true));
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_loadReaderData());
       unawaited(_loadChapter());
     });
   }
@@ -167,7 +181,25 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshReaderStatus());
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_flushReaderState());
     }
+  }
+
+  Future<void> _loadReaderData() async {
+    final data = await _readerDataStore.loadBook(widget.libraryKey);
+    if (!mounted) return;
+    setState(() => _readerData = data);
+    await _applyChapterAnnotations();
+  }
+
+  Future<void> _flushReaderState() async {
+    await Future.wait([
+      _readerDataStore.flushPending(),
+      _library.flushPending(),
+    ]);
   }
 
   Future<bool> _loadChapter({
@@ -197,6 +229,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       final document = await widget.loadDocument(chapter);
       if (!mounted || chapter.id != _chapter.id) return false;
       await _controller.loadChapter(chapter.id, document, _preferences);
+      await _applyChapterAnnotations();
       final locator = restore ?? _library.progressFor(widget.libraryKey);
       if (locator != null && locator.chapterId == chapter.id) {
         await _controller.restoreLocator(locator);
@@ -305,6 +338,27 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   void _onSelectionChanged(NovelSelection? selection) {
     if (mounted) setState(() => _selection = selection);
+  }
+
+  void _onUnresolvedAnnotationsChanged(Set<String> values) {
+    if (!mounted) return;
+    final currentIds = _readerData.annotations.values
+        .where((value) => value.range.start.chapterId == _chapter.id)
+        .map((value) => value.id)
+        .toSet();
+    setState(() {
+      _unresolvedAnnotationIds = {
+        ..._unresolvedAnnotationIds.difference(currentIds),
+        ...values,
+      };
+    });
+  }
+
+  Future<void> _applyChapterAnnotations() async {
+    final annotations = _readerData.annotations.values.where(
+      (value) => !value.isDeleted && value.range.start.chapterId == _chapter.id,
+    );
+    await _controller.applyAnnotations(annotations);
   }
 
   void _onCaptureStateChanged(bool active) {
@@ -770,6 +824,211 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     );
   }
 
+  int _readerTimestamp() => DateTime.now().millisecondsSinceEpoch;
+
+  void _saveReaderData(NovelReaderBookData data) {
+    _readerData = data;
+    _readerDataStore.saveBook(data);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _clearSelection() async {
+    await _controller.clearSelection();
+    if (mounted && _selection != null) setState(() => _selection = null);
+  }
+
+  Future<void> _copySelection() async {
+    final selection = _selection;
+    if (selection == null) return;
+    await Clipboard.setData(ClipboardData(text: selection.text));
+    await _clearSelection();
+  }
+
+  Future<void> _createHighlight({String? note}) async {
+    final selection = _selection;
+    if (selection == null) return;
+    final annotation = NovelAnnotation.create(
+      bookKey: widget.libraryKey,
+      range: NovelAnnotationRange.fromSelection(selection),
+      colorId: 'yellow',
+      note: note,
+      createdAt: _readerTimestamp(),
+    );
+    _saveReaderData(
+      _readerData.copyWith(
+        annotations: {..._readerData.annotations, annotation.id: annotation},
+      ),
+    );
+    await _applyChapterAnnotations();
+    await _clearSelection();
+  }
+
+  Future<String?> _editNoteText({String initial = ''}) async {
+    _pauseControls();
+    final controller = TextEditingController(text: initial);
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('笔记'),
+          content: TextField(
+            key: const Key('novel-note-editor'),
+            controller: controller,
+            autofocus: true,
+            minLines: 3,
+            maxLines: 7,
+            maxLength: 1000,
+            decoration: const InputDecoration(hintText: '记录你的想法'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+      _resumeControls();
+    }
+  }
+
+  Future<void> _createNoteFromSelection() async {
+    final value = await _editNoteText();
+    if (value == null || !mounted) return;
+    await _createHighlight(note: value);
+  }
+
+  Future<void> _editAnnotation(NovelAnnotation annotation) async {
+    final value = await _editNoteText(initial: annotation.note ?? '');
+    if (value == null || !mounted) return;
+    final updated = annotation.copyWith(
+      note: value,
+      clearNote: value.trim().isEmpty,
+      updatedAt: _readerTimestamp(),
+    );
+    _saveReaderData(
+      _readerData.copyWith(
+        annotations: {..._readerData.annotations, updated.id: updated},
+      ),
+    );
+    await _applyChapterAnnotations();
+  }
+
+  Future<void> _createBookmark() async {
+    final locator = await _controller.captureLocator();
+    if (!mounted || locator.chapterId.isEmpty) return;
+    final bookmark = NovelBookmark.create(
+      bookKey: widget.libraryKey,
+      locator: locator,
+      excerpt: (locator.quote?.trim().isNotEmpty ?? false)
+          ? locator.quote!.trim()
+          : _chapter.title,
+      createdAt: _readerTimestamp(),
+    );
+    _saveReaderData(
+      _readerData.copyWith(
+        bookmarks: {..._readerData.bookmarks, bookmark.id: bookmark},
+      ),
+    );
+  }
+
+  void _deleteBookmark(NovelBookmark bookmark) {
+    final deleted = bookmark.deleted(_readerTimestamp());
+    _saveReaderData(
+      _readerData.copyWith(
+        bookmarks: {..._readerData.bookmarks, deleted.id: deleted},
+      ),
+    );
+  }
+
+  Future<void> _deleteAnnotation(NovelAnnotation annotation) async {
+    final deleted = annotation.deleted(_readerTimestamp());
+    _saveReaderData(
+      _readerData.copyWith(
+        annotations: {..._readerData.annotations, deleted.id: deleted},
+      ),
+    );
+    await _applyChapterAnnotations();
+  }
+
+  Future<void> _goToLocator(NovelLocator locator) async {
+    final index = widget.chapters.indexWhere(
+      (chapter) => chapter.id == locator.chapterId,
+    );
+    if (index < 0 || !mounted) return;
+    setState(() {
+      _chapterIndex = index;
+      _chapterFraction = locator.fraction;
+    });
+    await _loadChapter(restore: locator);
+  }
+
+  Future<void> _openReaderTools(NovelReaderToolsTab initialTab) async {
+    _pauseControls();
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: SizedBox(
+            height: (MediaQuery.sizeOf(sheetContext).height * .82)
+                .clamp(360, 720)
+                .toDouble(),
+            child: NovelReaderToolsSheet(
+              chapters: widget.chapters,
+              currentChapterId: _chapter.id,
+              data: _readerData,
+              unresolvedAnnotationIds: _unresolvedAnnotationIds,
+              initialTab: initialTab,
+              onChapterSelected: (chapter) {
+                Navigator.pop(sheetContext);
+                unawaited(
+                  _goToLocator(NovelLocator(chapterId: chapter.id)),
+                );
+              },
+              onBookmarkSelected: (bookmark) {
+                Navigator.pop(sheetContext);
+                unawaited(_goToLocator(bookmark.locator));
+              },
+              onAnnotationSelected: (annotation) {
+                Navigator.pop(sheetContext);
+                unawaited(_goToLocator(annotation.range.start));
+              },
+              onEditAnnotation: (annotation) {
+                Navigator.pop(sheetContext);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) unawaited(_editAnnotation(annotation));
+                });
+              },
+              onDeleteBookmark: (bookmark) {
+                Navigator.pop(sheetContext);
+                _deleteBookmark(bookmark);
+              },
+              onDeleteAnnotation: (annotation) {
+                Navigator.pop(sheetContext);
+                unawaited(_deleteAnnotation(annotation));
+              },
+            ),
+          ),
+        ),
+      );
+    } finally {
+      _resumeControls();
+    }
+  }
+
+  Future<void> _exitReader() async {
+    await _flushReaderState();
+    if (mounted) await Navigator.maybePop(context);
+  }
+
   void _refreshPageFramesAfterLayout() {
     final generation = ++_pageGeneration;
     final chapterId = _chapter.id;
@@ -1212,9 +1471,11 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                 previewLabel: _progressLabel(context),
                 canPreviousChapter: _chapterIndex > 0,
                 canNextChapter: _chapterIndex < widget.chapters.length - 1,
-                onBack: () => Navigator.maybePop(context),
-                onBookmark: () {},
-                onMore: () {},
+                onBack: () => unawaited(_exitReader()),
+                onBookmark: () => unawaited(_createBookmark()),
+                onMore: () => unawaited(
+                  _openReaderTools(NovelReaderToolsTab.bookmarks),
+                ),
                 onPreviousChapter: () => unawaited(_jumpChapter(-1)),
                 onNextChapter: () => unawaited(_jumpChapter(1)),
                 onDirectory: () => unawaited(_openDirectory()),
@@ -1227,6 +1488,40 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                 backgroundColor: Color(profile.chromeArgb),
                 foregroundColor: Color(profile.chromeForegroundArgb),
               ),
+              if (_selection case final selection?)
+                Positioned.fill(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final rect = selection.rect;
+                      final left = rect == null
+                          ? (constraints.maxWidth - 208) / 2
+                          : rect.left.clamp(8, constraints.maxWidth - 216);
+                      final top = rect == null
+                          ? 72.0
+                          : (rect.top - 56)
+                              .clamp(8, constraints.maxHeight - 56);
+                      return Stack(
+                        children: [
+                          Positioned(
+                            left: left.toDouble(),
+                            top: top.toDouble(),
+                            child: NovelReaderSelectionBar(
+                              selection: selection,
+                              onCopy: () => unawaited(_copySelection()),
+                              onHighlight: () => unawaited(_createHighlight()),
+                              onNote: () =>
+                                  unawaited(_createNoteFromSelection()),
+                              onSearch: () {},
+                              backgroundColor: Color(profile.chromeArgb),
+                              foregroundColor:
+                                  Color(profile.chromeForegroundArgb),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
             ],
           ),
         ),
@@ -1244,13 +1539,18 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _controller.onLocatorChanged = null;
     _controller.onSelectionChanged = null;
     _controller.onCaptureStateChanged = null;
+    _controller.onUnresolvedAnnotationsChanged = null;
     final webController = _controller;
     if (webController is WebNovelDocumentController) {
       webController.onFontFallback = null;
       webController.onBackgroundFallback = null;
       webController.onRecoverableError = null;
     }
+    final readerFlush = _readerDataStore.flushPending();
     unawaited(_library.flushPending());
+    if (widget.readerDataStore == null) {
+      unawaited(readerFlush.whenComplete(_readerDataStore.dispose));
+    }
     if (Platform.isAndroid) {
       unawaited(ReaderKeys.setActive(false));
       ReaderKeys.clearHandler();

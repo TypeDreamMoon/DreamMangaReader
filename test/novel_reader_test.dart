@@ -6,6 +6,8 @@ import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
@@ -42,6 +44,8 @@ class _FakeController implements NovelDocumentController {
   bool fontLoadFailed = false;
   String? failApplyingFontId;
   final List<NovelReaderPreferences> preferenceHistory = [];
+  final List<NovelAnnotation> appliedAnnotations = [];
+  int clearSelectionCalls = 0;
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -54,6 +58,26 @@ class _FakeController implements NovelDocumentController {
 
   @override
   ValueChanged<bool>? onCaptureStateChanged;
+
+  @override
+  ValueChanged<Set<String>>? onUnresolvedAnnotationsChanged;
+
+  @override
+  Future<Set<String>> applyAnnotations(
+    Iterable<NovelAnnotation> annotations,
+  ) async {
+    appliedAnnotations
+      ..clear()
+      ..addAll(annotations);
+    onUnresolvedAnnotationsChanged?.call(const {});
+    return const {};
+  }
+
+  @override
+  Future<void> clearSelection() async {
+    clearSelectionCalls++;
+    onSelectionChanged?.call(null);
+  }
 
   @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
@@ -131,10 +155,28 @@ class _FakeController implements NovelDocumentController {
   }
 }
 
+class _MemoryNovelReaderDataStore extends NovelReaderDataStore {
+  final Map<String, NovelReaderBookData> values = {};
+
+  @override
+  Future<NovelReaderBookData> loadBook(String bookKey) async =>
+      values.putIfAbsent(bookKey, () => NovelReaderBookData.empty(bookKey));
+
+  @override
+  void saveBook(NovelReaderBookData data) => values[data.bookKey] = data;
+
+  @override
+  Future<void> flushPending() async {}
+
+  @override
+  void dispose() {}
+}
+
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   NovelDocumentController controller, {
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
   NovelDocumentLoader? loadDocument,
+  NovelReaderDataStore? readerDataStore,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -158,6 +200,7 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
         libraryKey: 'remote:s:n1',
         controller: controller,
         documentViewBuilder: (_, __) => const ColoredBox(color: Colors.black),
+        readerDataStore: readerDataStore,
         loadDocument: loadDocument ??
             (chapter) async => NovelDocument(
                   format: NovelDocumentFormat.html,
@@ -205,6 +248,64 @@ class _ImmediateNovelFontStore extends NovelFontStore {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('selection highlight and toolbar bookmark persist reader data',
+      (tester) async {
+    final dataStore = _MemoryNovelReaderDataStore();
+    final controller = _FakeController(
+      locator: const NovelLocator(
+        chapterId: 'c1',
+        blockId: 'dmr-1',
+        charOffset: 0,
+        quote: '测试正文',
+      ),
+    );
+    final harness = await _readerHarness(
+      controller,
+      readerDataStore: dataStore,
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    for (var i = 0; i < 25; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    controller.onSelectionChanged!(
+      const NovelSelection(
+        text: '测试正文',
+        start: NovelLocator(
+          chapterId: 'c1',
+          blockId: 'dmr-1',
+          charOffset: 0,
+          quote: '测试正文',
+        ),
+        end: NovelLocator(
+          chapterId: 'c1',
+          blockId: 'dmr-1',
+          charOffset: 4,
+          quote: '',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-selection-highlight')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-bookmark')));
+    await tester.pump(const Duration(milliseconds: 100));
+    final data = await dataStore.loadBook('remote:s:n1');
+    expect(
+      data.annotations.values.where((value) => !value.isDeleted),
+      hasLength(1),
+    );
+    expect(
+      data.bookmarks.values.where((value) => !value.isDeleted),
+      hasLength(1),
+    );
+    expect(controller.appliedAnnotations, hasLength(1));
+    expect(controller.clearSelectionCalls, 1);
   });
 
   testWidgets('cached paging saves progress only after settlement',

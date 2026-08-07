@@ -90,6 +90,7 @@ void main() {
           'charOffset': 5,
           'quote': '的文字',
         },
+        'rect': {'left': 12, 'top': 34, 'width': 56, 'height': 20},
       },
       chapterId: 'chapter-1',
     );
@@ -99,6 +100,18 @@ void main() {
     expect(selection?.start.charOffset, 3);
     expect(selection?.end.blockId, 'dmr-2');
     expect(selection?.end.charOffset, 5);
+    expect(selection?.rect, const NovelSelectionRect(12, 34, 56, 20));
+  });
+
+  test('annotation bridge uses layout-neutral highlights and recovery order',
+      () {
+    expect(novelReaderBridgeScript, contains('window.__dmrApplyAnnotations'));
+    expect(novelReaderBridgeScript, contains('CSS.highlights'));
+    expect(novelReaderBridgeScript, contains('resolveStoredRange'));
+    expect(novelReaderBridgeScript, contains('directRange'));
+    expect(novelReaderBridgeScript, contains('quoteRange'));
+    expect(novelReaderBridgeScript, contains('window.__dmrClearSelection'));
+    expect(novelReaderBridgeScript, contains('end.suffix ='));
   });
 
   test('sanitized documents assign stable IDs to common text blocks', () {

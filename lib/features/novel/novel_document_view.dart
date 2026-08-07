@@ -10,6 +10,7 @@ import '../../core/novel/models.dart';
 import '../../core/novel/novel_document_sanitizer.dart';
 import '../../core/novel/reader/novel_background_store.dart';
 import '../../core/novel/reader/novel_font_store.dart';
+import '../../core/novel/reader/novel_reader_data.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 import '../../core/novel/reader/novel_reader_theme.dart';
 
@@ -29,6 +30,9 @@ abstract interface class NovelDocumentController {
   ValueChanged<bool>? get onCaptureStateChanged;
   set onCaptureStateChanged(ValueChanged<bool>? value);
 
+  ValueChanged<Set<String>>? get onUnresolvedAnnotationsChanged;
+  set onUnresolvedAnnotationsChanged(ValueChanged<Set<String>>? value);
+
   Future<void> loadChapter(
     String chapterId,
     NovelDocument document,
@@ -41,6 +45,8 @@ abstract interface class NovelDocumentController {
   Future<void> showPage(int pageIndex);
   Future<void> restoreLocator(NovelLocator locator);
   Future<void> applyPreferences(NovelReaderPreferences preferences);
+  Future<Set<String>> applyAnnotations(Iterable<NovelAnnotation> annotations);
+  Future<void> clearSelection();
   Future<bool> nextPage();
   Future<bool> previousPage();
 }
@@ -59,6 +65,8 @@ class WebNovelDocumentController implements NovelDocumentController {
   NovelDocument? _pendingDocument;
   NovelReaderPreferences _preferences = const NovelReaderPreferences();
   NovelLocator? _pendingRestore;
+  List<NovelAnnotation> _pendingAnnotations = const [];
+  Future<void> _annotationApplication = Future.value();
   bool _loaded = false;
   String _appliedFontId = NovelFontIds.notoSerifSc;
 
@@ -77,6 +85,9 @@ class WebNovelDocumentController implements NovelDocumentController {
 
   @override
   ValueChanged<bool>? onCaptureStateChanged;
+
+  @override
+  ValueChanged<Set<String>>? onUnresolvedAnnotationsChanged;
 
   Future<void> attach(InAppWebViewController controller) async {
     _webView = controller;
@@ -196,6 +207,7 @@ class WebNovelDocumentController implements NovelDocumentController {
   Future<NovelPageFrame?> capturePage(int pageIndex) async {
     final webView = _webView;
     if (webView == null || !_loaded || _chapterId.isEmpty) return null;
+    await _annotationApplication;
     final original = await pageMetrics();
     final target = clampNovelPageIndex(pageIndex, original.pageCount);
     onCaptureStateChanged?.call(true);
@@ -297,6 +309,61 @@ class WebNovelDocumentController implements NovelDocumentController {
       return;
     }
     _appliedFontId = font.id;
+    await applyAnnotations(_pendingAnnotations);
+  }
+
+  @override
+  Future<Set<String>> applyAnnotations(
+    Iterable<NovelAnnotation> annotations,
+  ) async {
+    _pendingAnnotations = annotations
+        .where(
+          (value) =>
+              !value.isDeleted && value.range.start.chapterId == _chapterId,
+        )
+        .toList(growable: false);
+    final webView = _webView;
+    if (webView == null || !_loaded) return const {};
+    final payload = jsonEncode([
+      for (final annotation in _pendingAnnotations)
+        {
+          'id': annotation.id,
+          'colorId': annotation.colorId,
+          'quote': annotation.range.quote,
+          'start': annotation.range.start.toJson(),
+          'end': annotation.range.end.toJson(),
+        },
+    ]);
+    Set<String> unresolved = const {};
+    final operation = () async {
+      try {
+        final value = await webView.evaluateJavascript(
+          source: 'window.__dmrApplyAnnotations ? '
+              'JSON.stringify(window.__dmrApplyAnnotations($payload)) : "[]"',
+        );
+        final decoded = _decodeBridgeValue(value);
+        if (decoded is List) {
+          unresolved = decoded.map((item) => item.toString()).toSet();
+        }
+      } catch (_) {
+        unresolved = _pendingAnnotations.map((value) => value.id).toSet();
+      }
+      onUnresolvedAnnotationsChanged?.call(unresolved);
+    }();
+    _annotationApplication = operation;
+    await operation;
+    return unresolved;
+  }
+
+  @override
+  Future<void> clearSelection() async {
+    final webView = _webView;
+    if (webView != null && _loaded) {
+      await webView.evaluateJavascript(
+        source: 'window.__dmrClearSelection && window.__dmrClearSelection()',
+      );
+    }
+    onSelectionChanged?.call(null);
   }
 
   Future<void> _applyPreferencesToWebView(
@@ -522,7 +589,19 @@ NovelSelection? parseNovelSelectionValue(
     );
     final end = parseNovelLocatorValue(map['end'], chapterId: chapterId);
     if (start == null || end == null) return null;
-    return NovelSelection(text: text, start: start, end: end);
+    NovelSelectionRect? rect;
+    final rawRect = map['rect'];
+    if (rawRect is Map) {
+      final values = rawRect.cast<String, dynamic>();
+      final left = _finiteDouble(values['left']);
+      final top = _finiteDouble(values['top']);
+      final width = _finiteDouble(values['width']);
+      final height = _finiteDouble(values['height']);
+      if (left != null && top != null && width != null && height != null) {
+        rect = NovelSelectionRect(left, top, width, height);
+      }
+    }
+    return NovelSelection(text: text, start: start, end: end, rect: rect);
   } catch (_) {
     return null;
   }
@@ -757,8 +836,120 @@ const novelReaderBridgeScript = r'''
     const start = selectionAnchor(range.startContainer, range.startOffset);
     const end = selectionAnchor(range.endContainer, range.endOffset);
     if (!start || !end) return null;
-    return {text: String(selection).slice(0, 4096), start, end};
+    const endElement = range.endContainer?.nodeType === Node.ELEMENT_NODE
+      ? range.endContainer
+      : range.endContainer?.parentElement;
+    const endBlock = endElement?.closest?.('[data-dmr-block]');
+    const endText = endBlock?.textContent || '';
+    end.suffix = endText.slice(end.charOffset, end.charOffset + 32);
+    const rect = range.getBoundingClientRect();
+    return {
+      text: String(selection).slice(0, 4096),
+      start,
+      end,
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+      }
+    };
   };
+  const pointAtOffset = (block, rawOffset) => {
+    let remaining = Math.max(0, Number(rawOffset) || 0);
+    const nodes = textNodes(block);
+    for (const node of nodes) {
+      const length = node.textContent?.length || 0;
+      if (remaining <= length) return {node, offset: remaining};
+      remaining -= length;
+    }
+    const node = nodes.at(-1) || block;
+    return {node, offset: node.textContent?.length || 0};
+  };
+  const rangeFromOffsets = (startBlock, startOffset, endBlock, endOffset) => {
+    try {
+      const start = pointAtOffset(startBlock, startOffset);
+      const end = pointAtOffset(endBlock, endOffset);
+      const range = document.createRange();
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset);
+      return range.collapsed ? null : range;
+    } catch (_) {
+      return null;
+    }
+  };
+  const directRange = (annotation) => {
+    const start = annotation.start || {};
+    const end = annotation.end || {};
+    const startBlock = start.blockId
+      ? document.querySelector(`[data-dmr-block="${CSS.escape(start.blockId)}"]`)
+      : null;
+    const endBlock = end.blockId
+      ? document.querySelector(`[data-dmr-block="${CSS.escape(end.blockId)}"]`)
+      : null;
+    if (!startBlock || !endBlock) return null;
+    const range = rangeFromOffsets(
+      startBlock,
+      start.charOffset,
+      endBlock,
+      end.charOffset
+    );
+    if (!range) return null;
+    const quote = String(annotation.quote || '');
+    return !quote || range.toString().slice(0, quote.length) === quote
+      ? range
+      : null;
+  };
+  const quoteRange = (annotation) => {
+    const quote = String(annotation.quote || '');
+    if (!quote) return null;
+    const prefix = String(annotation.start?.prefix || '');
+    const suffix = String(annotation.end?.suffix || '');
+    for (const block of blocks()) {
+      const text = block.textContent || '';
+      let from = 0;
+      while (from <= text.length) {
+        const index = text.indexOf(quote, from);
+        if (index < 0) break;
+        const before = text.slice(Math.max(0, index - prefix.length), index);
+        const after = text.slice(index + quote.length, index + quote.length + suffix.length);
+        if ((!prefix || before.endsWith(prefix)) && (!suffix || after.startsWith(suffix))) {
+          return rangeFromOffsets(block, index, block, index + quote.length);
+        }
+        from = index + 1;
+      }
+    }
+    return null;
+  };
+  const resolveStoredRange = (annotation) =>
+    directRange(annotation) || quoteRange(annotation);
+  window.__dmrApplyAnnotations = (annotations) => {
+    const values = Array.isArray(annotations) ? annotations : [];
+    const unresolved = [];
+    if (!globalThis.Highlight || !CSS?.highlights) {
+      return values.map((value) => String(value.id || ''));
+    }
+    for (const name of ['yellow', 'green', 'blue', 'pink']) {
+      CSS.highlights.delete(`dmr-${name}`);
+    }
+    const grouped = {yellow: [], green: [], blue: [], pink: []};
+    for (const annotation of values) {
+      const range = resolveStoredRange(annotation);
+      if (!range) {
+        unresolved.push(String(annotation.id || ''));
+        continue;
+      }
+      const color = Object.hasOwn(grouped, annotation.colorId)
+        ? annotation.colorId
+        : 'yellow';
+      grouped[color].push(range);
+    }
+    for (const [color, ranges] of Object.entries(grouped)) {
+      if (ranges.length) CSS.highlights.set(`dmr-${color}`, new Highlight(...ranges));
+    }
+    return unresolved;
+  };
+  window.__dmrClearSelection = () => getSelection()?.removeAllRanges();
   window.__dmrMetrics = pageMetrics;
   window.__dmrShowPage = (pageIndex) => {
     if (mode !== 'paged') return 0;
@@ -815,6 +1006,7 @@ const novelReaderBridgeScript = r'''
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
       body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:${p.topMargin}px var(--dmr-side) ${p.bottomMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere;filter:brightness(${p.brightness})}
       p{margin:0 0 ${p.paragraphSpacing}px;text-indent:${p.firstLineIndent}em;text-align:${p.textAlignment === 'justify' ? 'justify' : 'start'}} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
+      ::highlight(dmr-yellow){background:rgba(255,214,64,.52)} ::highlight(dmr-green){background:rgba(91,190,120,.46)} ::highlight(dmr-blue){background:rgba(77,154,235,.42)} ::highlight(dmr-pink){background:rgba(230,100,155,.42)}
       html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;
