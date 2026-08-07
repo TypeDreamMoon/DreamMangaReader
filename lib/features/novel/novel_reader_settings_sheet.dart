@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/novel/reader/novel_background_store.dart';
 import '../../core/novel/reader/novel_font_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 
 typedef NovelFontFilePicker = Future<File?> Function();
+typedef NovelBackgroundFilePicker = Future<File?> Function();
 
 Future<void> showNovelReaderSettings({
   required BuildContext context,
@@ -67,12 +69,16 @@ class NovelReaderSettingsSheet extends StatefulWidget {
     required this.onChanged,
     this.fontStore,
     this.pickFontFile,
+    this.backgroundStore,
+    this.pickBackgroundFile,
   });
 
   final NovelReaderPreferences value;
   final ValueChanged<NovelReaderPreferences> onChanged;
   final NovelFontStore? fontStore;
   final NovelFontFilePicker? pickFontFile;
+  final NovelBackgroundStore? backgroundStore;
+  final NovelBackgroundFilePicker? pickBackgroundFile;
 
   @override
   State<NovelReaderSettingsSheet> createState() =>
@@ -82,6 +88,8 @@ class NovelReaderSettingsSheet extends StatefulWidget {
 class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   late NovelReaderPreferences _value = widget.value;
   late final NovelFontStore _fontStore = widget.fontStore ?? NovelFontStore();
+  late final NovelBackgroundStore _backgroundStore =
+      widget.backgroundStore ?? NovelBackgroundStore();
   List<NovelFontRecord> _importedFonts = const [];
 
   @override
@@ -142,6 +150,28 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
     } catch (_) {
       _showFontError('字体删除失败，请稍后重试。');
     }
+  }
+
+  Future<void> _importBackground() async {
+    try {
+      final source =
+          await (widget.pickBackgroundFile?.call() ?? _pickBackgroundFile());
+      if (source == null) return;
+      final background = await _backgroundStore.importImage(source);
+      if (mounted) {
+        _update(_value.copyWith(backgroundAssetId: background.id));
+        await _backgroundStore.deleteUnreferenced({background.id});
+      }
+    } on NovelBackgroundException catch (error) {
+      _showFontError(error.message);
+    } catch (_) {
+      _showFontError('背景导入失败，请检查图片后重试。');
+    }
+  }
+
+  Future<void> _clearBackground() async {
+    _update(_value.copyWith(clearBackgroundAsset: true));
+    await _backgroundStore.deleteUnreferenced(const {});
   }
 
   void _showFontError(String message) {
@@ -265,12 +295,89 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               label: context.l10n.novel_readerTheme,
               value: _value.theme,
               labels: {
-                NovelReaderTheme.sepia: context.l10n.novel_readerThemeSepia,
                 NovelReaderTheme.white: context.l10n.novel_readerThemeWhite,
+                NovelReaderTheme.eyeCare: context.l10n.novel_readerThemeSepia,
                 NovelReaderTheme.dark: context.l10n.novel_readerThemeDark,
                 NovelReaderTheme.black: context.l10n.novel_readerThemeBlack,
+                NovelReaderTheme.paper: '纸张',
               },
               onChanged: (value) => _update(_value.copyWith(theme: value)),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('novel-background-import'),
+                  onPressed: _importBackground,
+                  icon: const Icon(Icons.image_outlined),
+                  label: const Text('导入背景'),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('novel-background-clear'),
+                  tooltip: '清除自定义背景',
+                  onPressed: _value.backgroundAssetId == null
+                      ? null
+                      : () async => _clearBackground(),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
+                if (_value.backgroundAssetId != null)
+                  const Expanded(
+                    child: Text(
+                      '已使用本地背景',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final fit in NovelBackgroundFit.values)
+                  ChoiceChip(
+                    key: Key('novel-background-fit-${fit.name}'),
+                    selected: _value.backgroundFit == fit,
+                    label: Text(switch (fit) {
+                      NovelBackgroundFit.crop => '裁剪',
+                      NovelBackgroundFit.tile => '平铺',
+                      NovelBackgroundFit.fill => '填充',
+                    }),
+                    onSelected: (_) =>
+                        _update(_value.copyWith(backgroundFit: fit)),
+                  ),
+              ],
+            ),
+            _SettingSlider(
+              key: const Key('novel-background-strength'),
+              label: '纹理强度',
+              value: _value.textureStrength,
+              min: 0,
+              max: 1,
+              divisions: 20,
+              valueLabel: '${(_value.textureStrength * 100).round()}%',
+              onChanged: (value) =>
+                  _update(_value.copyWith(textureStrength: value)),
+            ),
+            SegmentedButton<int?>(
+              key: const Key('novel-foreground-mode'),
+              segments: const [
+                ButtonSegment(value: null, label: Text('自动')),
+                ButtonSegment(value: 0xff202124, label: Text('深色字')),
+                ButtonSegment(value: 0xffeeeeee, label: Text('浅色字')),
+              ],
+              selected: {_value.foregroundArgb},
+              onSelectionChanged: (selection) {
+                final selected = selection.first;
+                _update(
+                  selected == null
+                      ? _value.copyWith(clearForeground: true)
+                      : _value.copyWith(foregroundArgb: selected),
+                );
+              },
             ),
             const SizedBox(height: 14),
             _FontSizeStepper(
@@ -456,6 +563,15 @@ Future<File?> _pickFontFile() async {
   return path == null || path.isEmpty ? null : File(path);
 }
 
+Future<File?> _pickBackgroundFile() async {
+  final selection = await FilePicker.pickFiles(
+    type: FileType.image,
+    allowMultiple: false,
+  );
+  final path = selection?.files.single.path;
+  return path == null || path.isEmpty ? null : File(path);
+}
+
 class _SettingSlider extends StatelessWidget {
   const _SettingSlider({
     super.key,
@@ -579,10 +695,11 @@ class _ThemePicker extends StatelessWidget {
   final ValueChanged<NovelReaderTheme> onChanged;
 
   static const _colors = {
-    NovelReaderTheme.sepia: Color(0xfff2e8cf),
     NovelReaderTheme.white: Color(0xffffffff),
+    NovelReaderTheme.eyeCare: Color(0xffdfe8cf),
     NovelReaderTheme.dark: Color(0xff292b2f),
     NovelReaderTheme.black: Color(0xff050505),
+    NovelReaderTheme.paper: Color(0xffeee5d1),
   };
 
   @override

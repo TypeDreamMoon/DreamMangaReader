@@ -49,7 +49,9 @@ void main() {
 
   test('copies a built-in font under application support before WebView use',
       () async {
-    final bytes = _minimalFont('otf');
+    final bytes = await File(
+      'assets/fonts/NotoSerifSC-Regular.otf',
+    ).readAsBytes();
     final loadedAssets = <String>[];
     final builtInStore = NovelFontStore(
       applicationSupportDirectory: () async => support,
@@ -110,6 +112,45 @@ void main() {
     await expectLater(
       store.importFont(malformed),
       throwsA(isA<NovelFontImportException>()),
+    );
+  });
+
+  test('rejects fonts missing required OpenType tables', () async {
+    final source = await _writeFixture(
+      sandbox,
+      'missing-tables.ttf',
+      _singleTableFont('ttf'),
+    );
+
+    await expectLater(
+      store.importFont(source),
+      throwsA(
+        isA<NovelFontImportException>().having(
+          (error) => error.code,
+          'code',
+          NovelFontImportError.invalidStructure,
+        ),
+      ),
+    );
+  });
+
+  test('rejects fonts larger than the import limit before reading them',
+      () async {
+    final source = File('${sandbox.path}${Platform.pathSeparator}huge.ttf');
+    final handle = await source.open(mode: FileMode.write);
+    await handle.writeFrom(_minimalFont('ttf'));
+    await handle.truncate(64 * 1024 * 1024 + 1);
+    await handle.close();
+
+    await expectLater(
+      store.importFont(source),
+      throwsA(
+        isA<NovelFontImportException>().having(
+          (error) => error.code.name,
+          'code',
+          'fileTooLarge',
+        ),
+      ),
     );
   });
 
@@ -176,6 +217,41 @@ void main() {
     expect(await store.resolveFont(imported.id), isNull);
   });
 
+  test('does not resolve a hash-named import after its contents change',
+      () async {
+    final source = await _writeFixture(
+      sandbox,
+      'mutable.ttf',
+      _minimalFont('ttf'),
+    );
+    final imported = await store.importFont(source);
+    final modified = await imported.file.readAsBytes();
+    modified[modified.length - 1] ^= 0xff;
+    await imported.file.writeAsBytes(modified, flush: true);
+
+    expect(await store.resolveFont(imported.id), isNull);
+  });
+
+  test('rewrites a modified built-in cache from the official asset', () async {
+    final bytes = await File(
+      'assets/fonts/NotoSerifSC-Regular.otf',
+    ).readAsBytes();
+    final builtInStore = NovelFontStore(
+      applicationSupportDirectory: () async => support,
+      loadAsset: (_) async => bytes,
+    );
+    final first = await builtInStore.resolveForUse(NovelFontIds.notoSerifSc);
+    final modified = await first.file.readAsBytes();
+    modified[modified.length - 1] ^= 0xff;
+    await first.file.writeAsBytes(modified, flush: true);
+
+    final restored = await builtInStore.resolveForUse(
+      NovelFontIds.notoSerifSc,
+    );
+
+    expect(await restored.file.readAsBytes(), bytes);
+  });
+
   test('preferences migrate legacy families and serialize only stable IDs', () {
     final legacy = NovelReaderPreferences.fromJson(const {
       'fontFamily': 'serif',
@@ -199,6 +275,7 @@ void main() {
       () {
     expect(novelReaderBridgeScript, contains('p.fontFaceCss'));
     expect(novelReaderBridgeScript, contains('document.fonts.load'));
+    expect(novelReaderBridgeScript, contains('loadedFaces.length === 0'));
     expect(novelReaderBridgeScript, contains('visibleTextLength'));
 
     final metrics = parseNovelPageMetrics({
@@ -233,14 +310,74 @@ List<int> _minimalFont(String format) {
   final signature = format == 'otf'
       ? const [0x4f, 0x54, 0x54, 0x4f]
       : const [0x00, 0x01, 0x00, 0x00];
+  final tags = <String>[
+    'OS/2',
+    'cmap',
+    'head',
+    'hhea',
+    'hmtx',
+    'maxp',
+    'name',
+    'post',
+    if (format == 'otf') 'CFF ' else ...['glyf', 'loca'],
+  ];
+  final dataStart = 12 + tags.length * 16;
   return <int>[
     ...signature,
-    0x00, 0x01, // numTables
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x6e, 0x61, 0x6d, 0x65, // table tag: name
-    0x00, 0x00, 0x00, 0x00, // checksum
-    0x00, 0x00, 0x00, 0x1c, // offset 28
-    0x00, 0x00, 0x00, 0x04, // length 4
-    0x00, 0x00, 0x00, 0x00,
+    ..._uint16(tags.length),
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    for (var index = 0; index < tags.length; index++) ...[
+      ...tags[index].codeUnits,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      ..._uint32(dataStart + index),
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+    ],
+    ...List<int>.filled(tags.length, 0),
   ];
 }
+
+List<int> _singleTableFont(String format) => [
+      if (format == 'otf') ...[0x4f, 0x54, 0x54, 0x4f] else ...[0, 1, 0, 0],
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      ...'name'.codeUnits,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x1c,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+    ];
+
+List<int> _uint16(int value) => [value >> 8 & 0xff, value & 0xff];
+
+List<int> _uint32(int value) => [
+      value >> 24 & 0xff,
+      value >> 16 & 0xff,
+      value >> 8 & 0xff,
+      value & 0xff,
+    ];

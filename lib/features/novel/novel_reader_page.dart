@@ -13,6 +13,7 @@ import '../../core/novel/reader/novel_page_cache.dart';
 import '../../core/novel/reader/novel_page_turn_controller.dart';
 import '../../core/novel/reader/novel_page_turn_physics.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
+import '../../core/novel/reader/novel_reader_theme.dart';
 import '../../core/platform/reader_keys.dart';
 import '../../ui/ui.dart';
 import 'novel_book_progress.dart';
@@ -113,6 +114,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final webController = _controller;
     if (webController is WebNovelDocumentController) {
       webController.onFontFallback = _onFontFallback;
+      webController.onBackgroundFallback = _onBackgroundFallback;
       webController.onRecoverableError = _showRecoverableReaderError;
     }
     _setWakeLock(_preferences.keepScreenOn);
@@ -602,41 +604,79 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _setWakeLock(preferences.keepScreenOn);
     setState(() {});
     _settingsQueue = _settingsQueue.then((_) async {
-      if (!mounted || generation != _settingsGeneration) return;
-      final locator = await _controller.captureLocator();
-      if (!mounted || generation != _settingsGeneration) return;
-      await _controller.applyPreferences(preferences);
-      if (!mounted || generation != _settingsGeneration) return;
-      await Future<void>.delayed(const Duration(milliseconds: 32));
-      if (!mounted || generation != _settingsGeneration) return;
-      if (preferences.fontFamily != previousPreferences.fontFamily) {
-        final metrics = await _controller.pageMetrics();
+      NovelLocator? locator;
+      try {
         if (!mounted || generation != _settingsGeneration) return;
-        if (metrics.visibleTextLength == 0) {
-          await _controller.applyPreferences(previousPreferences);
+        locator = await _controller.captureLocator();
+        if (!mounted || generation != _settingsGeneration) return;
+        await _controller.applyPreferences(preferences);
+        if (!mounted || generation != _settingsGeneration) return;
+        await Future<void>.delayed(const Duration(milliseconds: 32));
+        if (!mounted || generation != _settingsGeneration) return;
+        if (preferences.fontFamily != previousPreferences.fontFamily) {
+          final metrics = await _controller.pageMetrics();
           if (!mounted || generation != _settingsGeneration) return;
-          _preferences = previousPreferences;
-          _library.setPreferences(previousPreferences);
-          _setWakeLock(previousPreferences.keepScreenOn);
-          setState(() {});
-          await _controller.restoreLocator(locator);
-          if (!mounted || generation != _settingsGeneration) return;
-          _showRecoverableReaderError('字体加载失败，已恢复上一字体。');
-          _refreshPageFramesAfterLayout();
-          _scheduleControlsHide();
-          return;
+          if (metrics.fontLoadFailed || metrics.visibleTextLength == 0) {
+            await _restorePreferencesAfterFailure(
+              previousPreferences,
+              locator,
+              message: '字体加载失败，已恢复上一字体。',
+            );
+            return;
+          }
         }
+        await _controller.restoreLocator(locator);
+        if (!mounted || generation != _settingsGeneration) return;
+        _refreshPageFramesAfterLayout();
+        _scheduleControlsHide();
+      } catch (_) {
+        if (!mounted || generation != _settingsGeneration) return;
+        await _restorePreferencesAfterFailure(
+          previousPreferences,
+          locator,
+          message: preferences.fontFamily != previousPreferences.fontFamily
+              ? '字体加载失败，已恢复上一字体。'
+              : '阅读设置应用失败，已恢复之前设置。',
+        );
       }
-      await _controller.restoreLocator(locator);
-      if (!mounted || generation != _settingsGeneration) return;
-      _refreshPageFramesAfterLayout();
-      _scheduleControlsHide();
-    }).catchError((_) {});
+    });
+  }
+
+  Future<void> _restorePreferencesAfterFailure(
+    NovelReaderPreferences preferences,
+    NovelLocator? locator, {
+    required String message,
+  }) async {
+    _preferences = preferences;
+    _library.setPreferences(preferences);
+    _setWakeLock(preferences.keepScreenOn);
+    if (mounted) setState(() {});
+    try {
+      await _controller.applyPreferences(preferences);
+      if (locator != null) await _controller.restoreLocator(locator);
+    } catch (_) {
+      if (mounted) {
+        _showRecoverableReaderError('阅读设置恢复失败，请重新打开阅读器。');
+      }
+      return;
+    }
+    if (!mounted) return;
+    _showRecoverableReaderError(message);
+    _refreshPageFramesAfterLayout();
+    _scheduleControlsHide();
   }
 
   void _onFontFallback(String fontId) {
     if (!mounted || _preferences.fontFamily == fontId) return;
     final restored = _preferences.copyWith(fontFamily: fontId);
+    _preferences = restored;
+    _library.setPreferences(restored);
+    setState(() {});
+  }
+
+  void _onBackgroundFallback() {
+    if (!mounted || _preferences.backgroundAssetId == null) return;
+    final restored = _preferences.copyWith(clearBackgroundAsset: true);
     _preferences = restored;
     _library.setPreferences(restored);
     setState(() {});
@@ -977,95 +1017,115 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   @override
   Widget build(BuildContext context) {
-    final p = context.palette;
-    return Scaffold(
-      backgroundColor: p.background,
-      body: Focus(
-        focusNode: _focusNode,
-        autofocus: true,
-        onKeyEvent: _onKeyEvent,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            NovelReaderInput(
-              controller: _turnController,
-              blocked: _controlsPaused ||
-                  _selection != null ||
-                  _loading ||
-                  _error != null,
-              dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
-              singleHandNext: _preferences.singleHandNext,
-              onStateChanged: _onInputStateChanged,
-              onDecision: _onTurnDecision,
-              onDiscrete: _requestDiscrete,
-              onToggleControls: _toggleReaderControls,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _documentView(),
-                  if (_showTurnSurface)
-                    NovelPageTurnSurface(
-                      key: const Key('novel-page-turn-surface'),
-                      mode: _preferences.turnMode,
-                      state: _turnState,
-                      settlement: _settlement,
-                      previousFrame: _previousFrame,
-                      currentFrame: _currentFrame!,
-                      nextFrame: _nextFrame,
-                      pageBackColor: _themeColor(_preferences.theme),
-                      onCommitted: (direction) =>
-                          unawaited(_onSurfaceCommitted(direction)),
-                      onSettled: _onSurfaceSettled,
-                    ),
-                ],
+    final profile = novelReaderThemeProfile(
+      _preferences.theme,
+      foregroundOverrideArgb: _preferences.foregroundArgb,
+    );
+    final systemBarUsesLightForeground =
+        colorContrastRatio(profile.systemBarArgb, 0xffeeeeee) >=
+            colorContrastRatio(profile.systemBarArgb, 0xff202124);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: Color(profile.systemBarArgb),
+        statusBarIconBrightness:
+            systemBarUsesLightForeground ? Brightness.light : Brightness.dark,
+        statusBarBrightness:
+            systemBarUsesLightForeground ? Brightness.dark : Brightness.light,
+        systemNavigationBarColor: Color(profile.systemBarArgb),
+        systemNavigationBarIconBrightness:
+            systemBarUsesLightForeground ? Brightness.light : Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: Color(profile.backgroundArgb),
+        body: Focus(
+          focusNode: _focusNode,
+          autofocus: true,
+          onKeyEvent: _onKeyEvent,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              NovelReaderInput(
+                controller: _turnController,
+                blocked: _controlsPaused ||
+                    _selection != null ||
+                    _loading ||
+                    _error != null,
+                dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
+                singleHandNext: _preferences.singleHandNext,
+                onStateChanged: _onInputStateChanged,
+                onDecision: _onTurnDecision,
+                onDiscrete: _requestDiscrete,
+                onToggleControls: _toggleReaderControls,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _documentView(),
+                    if (_showTurnSurface)
+                      NovelPageTurnSurface(
+                        key: const Key('novel-page-turn-surface'),
+                        mode: _preferences.turnMode,
+                        state: _turnState,
+                        settlement: _settlement,
+                        previousFrame: _previousFrame,
+                        currentFrame: _currentFrame!,
+                        nextFrame: _nextFrame,
+                        pageBackColor: _themeColor(_preferences.theme),
+                        onCommitted: (direction) =>
+                            unawaited(_onSurfaceCommitted(direction)),
+                        onSettled: _onSurfaceSettled,
+                      ),
+                  ],
+                ),
               ),
-            ),
-            if (_loading && !_retainFrameWhileLoading)
-              const ColoredBox(
-                color: Color(0x55000000),
-                child: Center(child: CircularProgressIndicator()),
-              ),
-            if (_retainFrameWhileLoading)
-              const SafeArea(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: SizedBox(
-                      key: Key('novel-reader-edge-loading'),
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
+              if (_loading && !_retainFrameWhileLoading)
+                const ColoredBox(
+                  color: Color(0x55000000),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (_retainFrameWhileLoading)
+                const SafeArea(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: SizedBox(
+                        key: Key('novel-reader-edge-loading'),
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            if (_error != null)
-              ColoredBox(
-                // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
-                // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
-                color: Colors.black.withValues(alpha: 0.86),
-                child: AppErrorView(
-                  onDark: true,
-                  message: context.l10n.novel_readerLoadFailed('$_error'),
-                  onRetry: _loadChapter,
+              if (_error != null)
+                ColoredBox(
+                  // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
+                  // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
+                  color: Colors.black.withValues(alpha: 0.86),
+                  child: AppErrorView(
+                    onDark: true,
+                    message: context.l10n.novel_readerLoadFailed('$_error'),
+                    onRetry: _loadChapter,
+                  ),
                 ),
+              NovelReaderChrome(
+                visible: _showControls,
+                bookTitle: widget.novel.title,
+                chapterTitle: _chapter.title,
+                progress: _progressPreview ?? _bookProgress,
+                previewLabel: _progressLabel(context),
+                onBack: () => Navigator.maybePop(context),
+                onDirectory: () => unawaited(_openDirectory()),
+                onTheme: () => unawaited(_openTheme()),
+                onSettings: () => unawaited(_openSettings()),
+                onProgressChanged: _onProgressChanged,
+                onProgressChangeEnd: _onProgressChangeEnd,
+                onInteraction: _scheduleControlsHide,
+                backgroundColor: Color(profile.chromeArgb),
+                foregroundColor: Color(profile.chromeForegroundArgb),
               ),
-            NovelReaderChrome(
-              visible: _showControls,
-              bookTitle: widget.novel.title,
-              chapterTitle: _chapter.title,
-              progress: _progressPreview ?? _bookProgress,
-              previewLabel: _progressLabel(context),
-              onBack: () => Navigator.maybePop(context),
-              onDirectory: () => unawaited(_openDirectory()),
-              onTheme: () => unawaited(_openTheme()),
-              onSettings: () => unawaited(_openSettings()),
-              onProgressChanged: _onProgressChanged,
-              onProgressChangeEnd: _onProgressChangeEnd,
-              onInteraction: _scheduleControlsHide,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1083,6 +1143,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final webController = _controller;
     if (webController is WebNovelDocumentController) {
       webController.onFontFallback = null;
+      webController.onBackgroundFallback = null;
       webController.onRecoverableError = null;
     }
     unawaited(_library.flushPending());
@@ -1096,17 +1157,14 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 }
 
-Color _themeColor(NovelReaderTheme theme) => switch (theme) {
-      NovelReaderTheme.sepia => const Color(0xfff2e8cf),
-      NovelReaderTheme.white => Colors.white,
-      NovelReaderTheme.dark => const Color(0xff292b2f),
-      NovelReaderTheme.black => const Color(0xff050505),
-    };
+Color _themeColor(NovelReaderTheme theme) =>
+    Color(novelReaderThemeProfile(theme).backgroundArgb);
 
 String _themeLabel(BuildContext context, NovelReaderTheme theme) =>
     switch (theme) {
-      NovelReaderTheme.sepia => context.l10n.novel_readerThemeSepia,
       NovelReaderTheme.white => context.l10n.novel_readerThemeWhite,
+      NovelReaderTheme.eyeCare => context.l10n.novel_readerThemeSepia,
       NovelReaderTheme.dark => context.l10n.novel_readerThemeDark,
       NovelReaderTheme.black => context.l10n.novel_readerThemeBlack,
+      NovelReaderTheme.paper => '纸张',
     };

@@ -8,8 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import '../../app/novel_library_store.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_document_sanitizer.dart';
+import '../../core/novel/reader/novel_background_store.dart';
 import '../../core/novel/reader/novel_font_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
+import '../../core/novel/reader/novel_reader_theme.dart';
 
 export '../../core/novel/reader/novel_reader_models.dart'
     show NovelReaderCommand;
@@ -44,10 +46,14 @@ abstract interface class NovelDocumentController {
 }
 
 class WebNovelDocumentController implements NovelDocumentController {
-  WebNovelDocumentController({NovelFontStore? fontStore})
-      : _fontStore = fontStore ?? NovelFontStore();
+  WebNovelDocumentController({
+    NovelFontStore? fontStore,
+    NovelBackgroundStore? backgroundStore,
+  })  : _fontStore = fontStore ?? NovelFontStore(),
+        _backgroundStore = backgroundStore ?? NovelBackgroundStore();
 
   final NovelFontStore _fontStore;
+  final NovelBackgroundStore _backgroundStore;
   InAppWebViewController? _webView;
   String _chapterId = '';
   NovelDocument? _pendingDocument;
@@ -58,6 +64,7 @@ class WebNovelDocumentController implements NovelDocumentController {
 
   ValueChanged<String>? onRecoverableError;
   ValueChanged<String>? onFontFallback;
+  VoidCallback? onBackgroundFallback;
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -256,16 +263,34 @@ class WebNovelDocumentController implements NovelDocumentController {
       onFontFallback?.call(font.id);
       onRecoverableError?.call('所选字体文件已不可用，已恢复内置字体。');
     }
+    NovelBackgroundRecord? background;
+    final requestedBackground = applied.backgroundAssetId;
+    if (requestedBackground != null) {
+      background = await _backgroundStore.resolve(requestedBackground);
+      if (background == null) {
+        applied = applied.copyWith(clearBackgroundAsset: true);
+        onBackgroundFallback?.call();
+        onRecoverableError?.call('背景图片已不可用，已恢复主题底色。');
+      }
+    } else if (applied.theme == NovelReaderTheme.paper) {
+      background = await _backgroundStore.paperTexture(seed: 20260807);
+    }
     _preferences = applied;
     final webView = _webView;
     if (webView == null || !_loaded) return;
     final previous = _preferences.copyWith(fontFamily: _appliedFontId);
-    await _applyPreferencesToWebView(webView, applied, font);
+    await _applyPreferencesToWebView(webView, applied, font, background);
     final metrics = await pageMetrics();
-    if (font.id != _appliedFontId && metrics.visibleTextLength == 0) {
+    if (font.id != _appliedFontId &&
+        (metrics.fontLoadFailed || metrics.visibleTextLength == 0)) {
       final previousFont = await _fontStore.resolveForUse(_appliedFontId);
       applied = previous.copyWith(fontFamily: previousFont.id);
-      await _applyPreferencesToWebView(webView, applied, previousFont);
+      await _applyPreferencesToWebView(
+        webView,
+        applied,
+        previousFont,
+        background,
+      );
       _preferences = applied;
       onFontFallback?.call(previousFont.id);
       onRecoverableError?.call('字体加载后正文不可见，已恢复上一字体。');
@@ -278,7 +303,20 @@ class WebNovelDocumentController implements NovelDocumentController {
     InAppWebViewController webView,
     NovelReaderPreferences preferences,
     NovelFontRecord font,
+    NovelBackgroundRecord? background,
   ) async {
+    final baseProfile = novelReaderThemeProfile(preferences.theme);
+    final profile = novelReaderThemeProfile(
+      preferences.theme,
+      foregroundOverrideArgb: preferences.foregroundArgb,
+      readabilityBackgroundArgb: background == null
+          ? null
+          : blendNovelReaderArgb(
+              baseProfile.backgroundArgb,
+              background.averageArgb,
+              preferences.textureStrength,
+            ),
+    );
     final payload = jsonEncode({
       'mode': preferences.mode.name,
       'fontFamily': font.cssFamily,
@@ -293,6 +331,18 @@ class WebNovelDocumentController implements NovelDocumentController {
       'textAlignment': preferences.textAlignment.name,
       'brightness': preferences.brightness,
       'theme': preferences.theme.name,
+      'backgroundColor': cssColorFromArgb(profile.backgroundArgb),
+      'foregroundColor': cssColorFromArgb(profile.foregroundArgb),
+      'backgroundAssetId': preferences.backgroundAssetId ?? '',
+      'backgroundFit': preferences.backgroundFit.name,
+      'textureStrength': preferences.textureStrength,
+      'backgroundCss': background == null
+          ? ''
+          : buildNovelBackgroundCss(
+              uri: background.file.uri,
+              fit: preferences.backgroundFit,
+              strength: preferences.textureStrength,
+            ),
     });
     await webView.evaluateJavascript(
       source: 'window.__dmrApply && window.__dmrApply($payload)',
@@ -426,6 +476,7 @@ NovelPageMetrics? parseNovelPageMetrics(Object? value) {
       layoutFingerprint: map['layoutFingerprint']?.toString() ?? '',
       visibleTextLength:
           ((map['visibleTextLength'] as num?)?.toInt() ?? 0).clamp(0, 1 << 31),
+      fontLoadFailed: map['fontLoadFailed'] == true,
     );
   } catch (_) {
     return null;
@@ -538,6 +589,7 @@ const novelReaderBridgeScript = r'''
   window.__dmrInstalled = true;
   let mode = 'paged';
   let reportTimer = 0;
+  let fontLoadFailed = false;
   const root = document.scrollingElement || document.documentElement;
   const blocks = () => [...document.querySelectorAll('[data-dmr-block]')];
   const scrollMetrics = () => mode === 'paged'
@@ -569,7 +621,8 @@ const novelReaderBridgeScript = r'''
         return rect.right > 0 && rect.left < innerWidth &&
           rect.bottom > 0 && rect.top < innerHeight;
       })
-      .reduce((total, el) => total + String(el.textContent || '').trim().length, 0)
+      .reduce((total, el) => total + String(el.textContent || '').trim().length, 0),
+    fontLoadFailed
   });
   const textNodes = (block) => {
     const nodes = [];
@@ -743,25 +796,36 @@ const novelReaderBridgeScript = r'''
       p.textAlignment || '',
       Number(p.brightness) || 1,
       p.theme || '',
+      p.backgroundAssetId || '',
+      p.backgroundFit || '',
+      Number(p.textureStrength) || 0,
+      p.foregroundColor || '',
       innerWidth,
       innerHeight,
       devicePixelRatio || 1
     ]);
-    const colors = {
-      dark: ['#17191c', '#e8e8e8'], black: ['#000', '#ddd'],
-      white: ['#fff', '#202124'], sepia: ['#f3ead3', '#3e3427']
-    }[p.theme] || ['#f3ead3', '#3e3427'];
+    const colors = [
+      String(p.backgroundColor || '#dfe8cf'),
+      String(p.foregroundColor || '#202124')
+    ];
     const family = String(p.fontFamily || '').replace(/["'\\]/g, '');
     document.getElementById('dmr-style').textContent = `
       ${String(p.fontFaceCss || '')}
+      ${String(p.backgroundCss || '')}
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
       body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:${p.topMargin}px var(--dmr-side) ${p.bottomMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere;filter:brightness(${p.brightness})}
       p{margin:0 0 ${p.paragraphSpacing}px;text-indent:${p.firstLineIndent}em;text-align:${p.textAlignment === 'justify' ? 'justify' : 'start'}} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
       html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;
+    fontLoadFailed = false;
     if (family && document.fonts?.load) {
-      try { await document.fonts.load(`1em "${family}"`); } catch (_) {}
+      try {
+        const loadedFaces = await document.fonts.load(`1em "${family}"`);
+        fontLoadFailed = loadedFaces.length === 0;
+      } catch (_) {
+        fontLoadFailed = true;
+      }
     }
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return pageMetrics();

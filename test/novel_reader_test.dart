@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -35,6 +39,8 @@ class _FakeController implements NovelDocumentController {
   Completer<void>? captureGate;
   int applyPreferenceCalls = 0;
   int visibleTextLength = 100;
+  bool fontLoadFailed = false;
+  String? failApplyingFontId;
   final List<NovelReaderPreferences> preferenceHistory = [];
 
   @override
@@ -54,6 +60,9 @@ class _FakeController implements NovelDocumentController {
     applyPreferenceCalls++;
     appliedPreferences = preferences;
     preferenceHistory.add(preferences);
+    if (preferences.fontFamily == failApplyingFontId) {
+      throw StateError('font apply failed');
+    }
   }
 
   @override
@@ -83,6 +92,7 @@ class _FakeController implements NovelDocumentController {
         viewport: const NovelViewport(width: 1000, height: 1600),
         layoutFingerprint: 'test-layout',
         visibleTextLength: visibleTextLength,
+        fontLoadFailed: fontLoadFailed,
       );
 
   @override
@@ -122,7 +132,7 @@ class _FakeController implements NovelDocumentController {
 }
 
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
-  _FakeController controller, {
+  NovelDocumentController controller, {
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
   NovelDocumentLoader? loadDocument,
 }) async {
@@ -175,6 +185,21 @@ NovelPageFrame _testPageFrame({
       'AAAADUlEQVR42mNk+M/wHwAF/gL+X1n0WQAAAABJRU5ErkJggg==',
     ),
   );
+}
+
+class _MissingNovelBackgroundStore extends NovelBackgroundStore {
+  @override
+  Future<NovelBackgroundRecord?> resolve(String id) async => null;
+}
+
+class _ImmediateNovelFontStore extends NovelFontStore {
+  @override
+  Future<NovelFontRecord> resolveForUse(String id) async => NovelFontRecord(
+        id: NovelFontIds.notoSerifSc,
+        displayName: 'Noto Serif SC',
+        cssFamily: 'DMR Noto Serif SC',
+        file: File('font.otf'),
+      );
 }
 
 void main() {
@@ -302,14 +327,15 @@ void main() {
     expect(controller.lastRestored?.fraction, .3);
   });
 
-  testWidgets('zero visible text rolls a font change back with an error',
+  testWidgets(
+      'reported font load failure rolls a font change back with an error',
       (tester) async {
     final controller = _FakeController();
     final harness = await _readerHarness(controller);
     addTearDown(harness.store.dispose);
     await tester.pumpWidget(harness.widget);
     await tester.pumpAndSettle();
-    controller.visibleTextLength = 0;
+    controller.fontLoadFailed = true;
 
     controller.onCommand!(NovelReaderCommand.toggleControls);
     await tester.pump();
@@ -327,6 +353,74 @@ void main() {
     expect(
         controller.preferenceHistory.last.fontFamily, NovelFontIds.notoSerifSc);
     expect(find.textContaining('字体加载失败'), findsOneWidget);
+  });
+
+  testWidgets('font application exception restores the previous preference',
+      (tester) async {
+    final controller = _FakeController()
+      ..failApplyingFontId = NovelFontIds.lxgwWenKai;
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontFamily: NovelFontIds.lxgwWenKai),
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.store.preferences.fontFamily, NovelFontIds.notoSerifSc);
+    expect(
+      controller.preferenceHistory.last.fontFamily,
+      NovelFontIds.notoSerifSc,
+    );
+    expect(controller.lastRestored?.chapterId, 'c1');
+    expect(find.textContaining('字体加载失败'), findsOneWidget);
+  });
+
+  testWidgets('missing background fallback clears the persisted local ID',
+      (tester) async {
+    final backgroundId =
+        '${NovelBackgroundIds.importedPrefix}${List.filled(64, 'd').join()}';
+    final controller = WebNovelDocumentController(
+      fontStore: _ImmediateNovelFontStore(),
+      backgroundStore: _MissingNovelBackgroundStore(),
+    );
+    final harness = await _readerHarness(
+      controller,
+      preferences: NovelReaderPreferences(backgroundAssetId: backgroundId),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      harness.store.preferences.copyWith(fontSize: 19),
+    );
+    await tester.pumpAndSettle();
+    await harness.store.flushPending();
+
+    final restored = NovelLibraryStore();
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.preferences.backgroundAssetId, isNull);
+    for (var attempt = 0; attempt < 21; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
   });
 
   testWidgets('directory selection loads the selected chapter', (tester) async {
@@ -439,6 +533,44 @@ void main() {
     controller.onCommand!(NovelReaderCommand.toggleControls);
     await tester.pump();
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+  });
+
+  testWidgets('reader theme drives solid chrome and system bar contrast',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(
+        theme: NovelReaderTheme.white,
+        toolbarAutoHideSeconds: 0,
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+
+    final profile = novelReaderThemeProfile(NovelReaderTheme.white);
+    final bottomBar = tester.widget<DecoratedBox>(
+      find.byKey(const Key('novel-reader-bottom-bar')),
+    );
+    final decoration = bottomBar.decoration as BoxDecoration;
+    expect(decoration.color, Color(profile.chromeArgb));
+    expect(decoration.gradient, isNull);
+
+    final overlays = tester.widgetList<AnnotatedRegion<SystemUiOverlayStyle>>(
+      find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+    );
+    expect(
+      overlays.any(
+        (region) =>
+            region.value.statusBarColor == Color(profile.systemBarArgb) &&
+            region.value.statusBarIconBrightness == Brightness.dark,
+      ),
+      isTrue,
+    );
   });
 
   testWidgets('reader auto-hides chrome after configured delay',

@@ -61,6 +61,7 @@ class NovelPageMetrics {
     required this.viewport,
     required this.layoutFingerprint,
     this.visibleTextLength = 0,
+    this.fontLoadFailed = false,
   });
 
   final int pageCount;
@@ -68,6 +69,7 @@ class NovelPageMetrics {
   final NovelViewport viewport;
   final String layoutFingerprint;
   final int visibleTextLength;
+  final bool fontLoadFailed;
 
   @override
   bool operator ==(Object other) =>
@@ -77,7 +79,8 @@ class NovelPageMetrics {
           currentPageIndex == other.currentPageIndex &&
           viewport == other.viewport &&
           layoutFingerprint == other.layoutFingerprint &&
-          visibleTextLength == other.visibleTextLength;
+          visibleTextLength == other.visibleTextLength &&
+          fontLoadFailed == other.fontLoadFailed;
 
   @override
   int get hashCode => Object.hash(
@@ -86,6 +89,7 @@ class NovelPageMetrics {
         viewport,
         layoutFingerprint,
         visibleTextLength,
+        fontLoadFailed,
       );
 }
 

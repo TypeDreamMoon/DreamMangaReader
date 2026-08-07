@@ -7,11 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/novel/models.dart';
 import '../core/novel/reader/novel_font_store.dart';
+import '../core/novel/reader/novel_background_store.dart';
 import '../core/novel/reader/novel_reader_models.dart';
+import '../core/novel/reader/novel_reader_theme.dart';
+
+export '../core/novel/reader/novel_reader_theme.dart'
+    show NovelBackgroundFit, NovelReaderTheme;
 
 enum NovelReaderMode { paged, scroll }
-
-enum NovelReaderTheme { dark, black, white, sepia }
 
 class NovelReaderPreferences {
   const NovelReaderPreferences({
@@ -26,7 +29,11 @@ class NovelReaderPreferences {
     this.bottomMargin = 20,
     this.firstLineIndent = 2,
     this.textAlignment = NovelTextAlignment.justify,
-    this.theme = NovelReaderTheme.sepia,
+    this.theme = NovelReaderTheme.eyeCare,
+    this.backgroundAssetId,
+    this.backgroundFit = NovelBackgroundFit.crop,
+    this.textureStrength = .55,
+    this.foregroundArgb,
     this.keepScreenOn = true,
     this.toolbarAutoHideSeconds = 4,
     this.showChapterName = true,
@@ -52,6 +59,10 @@ class NovelReaderPreferences {
   final double firstLineIndent;
   final NovelTextAlignment textAlignment;
   final NovelReaderTheme theme;
+  final String? backgroundAssetId;
+  final NovelBackgroundFit backgroundFit;
+  final double textureStrength;
+  final int? foregroundArgb;
   final bool keepScreenOn;
   final int toolbarAutoHideSeconds;
   final bool showChapterName;
@@ -79,6 +90,12 @@ class NovelReaderPreferences {
     double? firstLineIndent,
     NovelTextAlignment? textAlignment,
     NovelReaderTheme? theme,
+    String? backgroundAssetId,
+    bool clearBackgroundAsset = false,
+    NovelBackgroundFit? backgroundFit,
+    double? textureStrength,
+    int? foregroundArgb,
+    bool clearForeground = false,
     bool? keepScreenOn,
     int? toolbarAutoHideSeconds,
     bool? showChapterName,
@@ -106,6 +123,13 @@ class NovelReaderPreferences {
       firstLineIndent: firstLineIndent ?? this.firstLineIndent,
       textAlignment: textAlignment ?? this.textAlignment,
       theme: theme ?? this.theme,
+      backgroundAssetId: clearBackgroundAsset
+          ? null
+          : backgroundAssetId ?? this.backgroundAssetId,
+      backgroundFit: backgroundFit ?? this.backgroundFit,
+      textureStrength: textureStrength ?? this.textureStrength,
+      foregroundArgb:
+          clearForeground ? null : foregroundArgb ?? this.foregroundArgb,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       toolbarAutoHideSeconds:
           toolbarAutoHideSeconds ?? this.toolbarAutoHideSeconds,
@@ -119,7 +143,7 @@ class NovelReaderPreferences {
     );
   }
 
-  Map<String, Object?> toJson() => {
+  Map<String, Object?> toJson({bool includeLocalAssets = true}) => {
         'schema': 2,
         'turnMode': turnMode.name,
         'fontFamily': normalizeNovelFontId(fontFamily),
@@ -132,6 +156,12 @@ class NovelReaderPreferences {
         'firstLineIndent': firstLineIndent,
         'textAlignment': textAlignment.name,
         'theme': theme.name,
+        if (_portableBackgroundId(backgroundAssetId, includeLocalAssets)
+            case final backgroundId?)
+          'backgroundAssetId': backgroundId,
+        'backgroundFit': backgroundFit.name,
+        'textureStrength': textureStrength,
+        if (foregroundArgb case final foreground?) 'foregroundArgb': foreground,
         'keepScreenOn': keepScreenOn,
         'toolbarAutoHideSeconds': toolbarAutoHideSeconds,
         'showChapterName': showChapterName,
@@ -163,10 +193,14 @@ class NovelReaderPreferences {
         (value) => value.name == json['textAlignment'],
         orElse: () => NovelTextAlignment.justify,
       ),
-      theme: NovelReaderTheme.values.firstWhere(
-        (value) => value.name == json['theme'],
-        orElse: () => NovelReaderTheme.sepia,
+      theme: _parseReaderTheme(json['theme']),
+      backgroundAssetId: _parseBackgroundId(json['backgroundAssetId']),
+      backgroundFit: NovelBackgroundFit.values.firstWhere(
+        (value) => value.name == json['backgroundFit'],
+        orElse: () => NovelBackgroundFit.crop,
       ),
+      textureStrength: _clampedDouble(json['textureStrength'], .55, 0, 1),
+      foregroundArgb: _parseArgb(json['foregroundArgb']),
       keepScreenOn: json['keepScreenOn'] as bool? ?? true,
       toolbarAutoHideSeconds:
           _clampedInt(json['toolbarAutoHideSeconds'], 4, 0, 10),
@@ -179,6 +213,39 @@ class NovelReaderPreferences {
       brightness: _clampedDouble(json['brightness'], 1, .6, 1.4),
     );
   }
+}
+
+NovelReaderTheme _parseReaderTheme(Object? value) {
+  if (value == 'sepia') return NovelReaderTheme.eyeCare;
+  return NovelReaderTheme.values.firstWhere(
+    (theme) => theme.name == value,
+    orElse: () => NovelReaderTheme.eyeCare,
+  );
+}
+
+String? _parseBackgroundId(Object? value) {
+  if (value is! String) return null;
+  final id = value.trim().toLowerCase();
+  if (RegExp(r'^imported:[a-f0-9]{64}$').hasMatch(id) ||
+      RegExp(r'^builtin:paper--?\d+-\d+$').hasMatch(id)) {
+    return id;
+  }
+  return null;
+}
+
+String? _portableBackgroundId(String? id, bool includeLocalAssets) {
+  final normalized = _parseBackgroundId(id);
+  if (includeLocalAssets ||
+      normalized?.startsWith(NovelBackgroundIds.paperPrefix) == true) {
+    return normalized;
+  }
+  return null;
+}
+
+int? _parseArgb(Object? value) {
+  if (value is! num) return null;
+  final parsed = value.toInt();
+  return parsed >= 0 && parsed <= 0xffffffff ? parsed : null;
 }
 
 double _clampedDouble(Object? value, double fallback, double min, double max) {
@@ -598,7 +665,9 @@ class NovelLibraryStore extends ChangeNotifier {
         'history': {
           for (final item in _history.entries) item.key: item.value.toJson(),
         },
-        'settings': preferences.toJson(),
+        'settings': preferences.toJson(
+          includeLocalAssets: includeLocalPaths,
+        ),
       };
 
   Future<void> importData(

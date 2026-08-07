@@ -56,6 +56,8 @@ dependencies:
   charset_converter: 2.3.0
   # epubx 4 锁定 image 3,与图标工具的 image 4 冲突;epub_plus 是兼容 API 的 Dart 3 维护分支。
   epub_plus: ^5.1.0
+  # 小说阅读器自有纸张纹理生成及用户背景图片解码/规范化。
+  image: 4.3.0
   shared_preferences: ^2.5.5
   # IAM 账号登录后 access/refresh token 的安全存储(Android Keystore / Windows DPAPI)。
   flutter_secure_storage: ^9.2.4

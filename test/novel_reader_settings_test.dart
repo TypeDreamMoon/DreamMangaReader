@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
@@ -20,6 +21,12 @@ void main() {
     for (final key in const [
       'novel-font-picker',
       'novel-font-import',
+      'novel-background-import',
+      'novel-background-fit-crop',
+      'novel-background-fit-tile',
+      'novel-background-fit-fill',
+      'novel-background-strength',
+      'novel-foreground-mode',
       'novel-setting-brightness',
       'novel-setting-line-height',
       'novel-setting-paragraph-spacing',
@@ -135,6 +142,58 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(changes.last.fontFamily, NovelFontIds.notoSerifSc);
   });
+
+  testWidgets('background controls import, configure and clear local images',
+      (tester) async {
+    final source = File('Reader Background.png');
+    final importedId =
+        '${NovelBackgroundIds.importedPrefix}${List.filled(64, 'c').join()}';
+    final changes = <NovelReaderPreferences>[];
+    final backgroundStore = _FakeNovelBackgroundStore(
+      NovelBackgroundRecord(
+        id: importedId,
+        file: File('support/background.png'),
+        width: 120,
+        height: 80,
+      ),
+    );
+    await tester.pumpWidget(
+      _harness(
+        onChanged: changes.add,
+        backgroundStore: backgroundStore,
+        pickBackgroundFile: () async => source,
+      ),
+    );
+
+    await _scrollToBuilt(tester, const Key('novel-background-import'));
+    await tester.tap(find.byKey(const Key('novel-background-import')));
+    await tester.pumpAndSettle();
+    expect(changes.last.backgroundAssetId, importedId);
+    expect(backgroundStore.retainedIds.last, {importedId});
+
+    await tester.tap(find.byKey(const Key('novel-background-fit-fill')));
+    await tester.pump();
+    expect(changes.last.backgroundFit, NovelBackgroundFit.fill);
+
+    final strength = tester.widget<Slider>(
+      find.descendant(
+        of: find.byKey(const Key('novel-background-strength')),
+        matching: find.byType(Slider),
+      ),
+    );
+    strength.onChanged!(.75);
+    await tester.pump();
+    expect(changes.last.textureStrength, .75);
+
+    await tester.tap(find.text('浅色字'));
+    await tester.pump();
+    expect(changes.last.foregroundArgb, 0xffeeeeee);
+
+    await tester.tap(find.byKey(const Key('novel-background-clear')));
+    await tester.pumpAndSettle();
+    expect(changes.last.backgroundAssetId, isNull);
+    expect(backgroundStore.retainedIds.last, isEmpty);
+  });
 }
 
 class _FakeNovelFontStore extends NovelFontStore {
@@ -154,6 +213,21 @@ class _FakeNovelFontStore extends NovelFontStore {
       _imported ? [record] : const [];
 }
 
+class _FakeNovelBackgroundStore extends NovelBackgroundStore {
+  _FakeNovelBackgroundStore(this.record);
+
+  final NovelBackgroundRecord record;
+  final List<Set<String>> retainedIds = [];
+
+  @override
+  Future<NovelBackgroundRecord> importImage(File source) async => record;
+
+  @override
+  Future<void> deleteUnreferenced(Set<String> retainedIds) async {
+    this.retainedIds.add(Set.of(retainedIds));
+  }
+}
+
 Future<void> _scrollToBuilt(WidgetTester tester, Key key) async {
   final finder = find.byKey(key);
   for (var attempt = 0; attempt < 20 && finder.evaluate().isEmpty; attempt++) {
@@ -171,6 +245,8 @@ Widget _harness({
   required ValueChanged<NovelReaderPreferences> onChanged,
   NovelFontStore? fontStore,
   Future<File?> Function()? pickFontFile,
+  NovelBackgroundStore? backgroundStore,
+  Future<File?> Function()? pickBackgroundFile,
 }) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
@@ -183,6 +259,8 @@ Widget _harness({
         onChanged: onChanged,
         fontStore: fontStore,
         pickFontFile: pickFontFile,
+        backgroundStore: backgroundStore,
+        pickBackgroundFile: pickBackgroundFile,
       ),
     ),
   );

@@ -93,7 +93,7 @@ void main() {
     expect(preferences.lineHeight, 1.8);
     expect(preferences.paragraphSpacing, 14);
     expect(preferences.horizontalMargin, 28);
-    expect(preferences.theme, NovelReaderTheme.sepia);
+    expect(preferences.theme, NovelReaderTheme.eyeCare);
     expect(preferences.keepScreenOn, isFalse);
     expect(preferences.toolbarAutoHideSeconds, 7);
     expect(preferences.topMargin, 16);

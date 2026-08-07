@@ -32,6 +32,7 @@ void main() {
       'devicePixelRatio': 2.75,
       'layoutFingerprint': 'layout-v2',
       'visibleTextLength': 0,
+      'fontLoadFailed': true,
     });
 
     expect(
@@ -46,9 +47,11 @@ void main() {
         ),
         layoutFingerprint: 'layout-v2',
         visibleTextLength: 0,
+        fontLoadFailed: true,
       ),
     );
     expect(metrics!.visibleTextLength, 0);
+    expect(metrics.fontLoadFailed, isTrue);
     expect(parseNovelPageMetrics(null), isNull);
   });
 
