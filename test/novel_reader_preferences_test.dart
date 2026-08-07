@@ -135,6 +135,7 @@ void main() {
       showTime: false,
       showBattery: false,
       singleHandNext: true,
+      brightness: 1.15,
     );
 
     final json = preferences.toJson();
@@ -162,6 +163,7 @@ void main() {
     expect(restored.showTime, isFalse);
     expect(restored.showBattery, isFalse);
     expect(restored.singleHandNext, isTrue);
+    expect(restored.brightness, 1.15);
   });
 
   test('deserialization clamps every numeric preference', () {
@@ -174,6 +176,7 @@ void main() {
       'bottomMargin': -1,
       'firstLineIndent': -1,
       'toolbarAutoHideSeconds': -1,
+      'brightness': -1,
     });
     final high = NovelReaderPreferences.fromJson(const {
       'fontSize': 999,
@@ -184,6 +187,7 @@ void main() {
       'bottomMargin': 999,
       'firstLineIndent': 999,
       'toolbarAutoHideSeconds': 999,
+      'brightness': 999,
     });
 
     expect(low.fontSize, 12);
@@ -194,6 +198,7 @@ void main() {
     expect(low.bottomMargin, 0);
     expect(low.firstLineIndent, 0);
     expect(low.toolbarAutoHideSeconds, 0);
+    expect(low.brightness, .6);
     expect(high.fontSize, 32);
     expect(high.lineHeight, 2.4);
     expect(high.paragraphSpacing, 30);
@@ -202,6 +207,7 @@ void main() {
     expect(high.bottomMargin, 96);
     expect(high.firstLineIndent, 4);
     expect(high.toolbarAutoHideSeconds, 10);
+    expect(high.brightness, 1.4);
   });
 
   test('non-finite numeric preferences fall back to defaults', () {

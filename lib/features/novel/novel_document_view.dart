@@ -250,6 +250,11 @@ class WebNovelDocumentController implements NovelDocumentController {
       'lineHeight': preferences.lineHeight,
       'paragraphSpacing': preferences.paragraphSpacing,
       'horizontalMargin': preferences.horizontalMargin,
+      'topMargin': preferences.topMargin,
+      'bottomMargin': preferences.bottomMargin,
+      'firstLineIndent': preferences.firstLineIndent,
+      'textAlignment': preferences.textAlignment.name,
+      'brightness': preferences.brightness,
       'theme': preferences.theme.name,
     });
     await webView.evaluateJavascript(
@@ -681,6 +686,11 @@ const novelReaderBridgeScript = r'''
       Number(p.lineHeight) || 0,
       Number(p.paragraphSpacing) || 0,
       Number(p.horizontalMargin) || 0,
+      Number(p.topMargin) || 0,
+      Number(p.bottomMargin) || 0,
+      Number(p.firstLineIndent) || 0,
+      p.textAlignment || '',
+      Number(p.brightness) || 1,
       p.theme || '',
       innerWidth,
       innerHeight,
@@ -693,8 +703,8 @@ const novelReaderBridgeScript = r'''
     const family = String(p.fontFamily || '').replace(/["'\\]/g, '');
     document.getElementById('dmr-style').textContent = `
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
-      body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:22px var(--dmr-side);font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere}
-      p{margin:0 0 ${p.paragraphSpacing}px} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
+      body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:${p.topMargin}px var(--dmr-side) ${p.bottomMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere;filter:brightness(${p.brightness})}
+      p{margin:0 0 ${p.paragraphSpacing}px;text-indent:${p.firstLineIndent}em;text-align:${p.textAlignment === 'justify' ? 'justify' : 'start'}} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
       html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;

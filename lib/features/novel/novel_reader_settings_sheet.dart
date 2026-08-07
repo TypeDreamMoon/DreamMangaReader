@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/novel/reader/novel_reader_models.dart';
 
 Future<void> showNovelReaderSettings({
   required BuildContext context,
@@ -76,6 +77,21 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
     widget.onChanged(value);
   }
 
+  Widget _statusSwitch({
+    required Key key,
+    required String label,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      key: key,
+      contentPadding: EdgeInsets.zero,
+      title: Text(label),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
@@ -95,23 +111,19 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            SegmentedButton<NovelReaderMode>(
-              segments: [
-                ButtonSegment(
-                  value: NovelReaderMode.paged,
-                  icon: const Icon(Icons.menu_book_rounded),
-                  label: Text(context.l10n.novel_readerPaged),
-                ),
-                ButtonSegment(
-                  value: NovelReaderMode.scroll,
-                  icon: const Icon(Icons.view_stream_rounded),
-                  label: Text(context.l10n.novel_readerScroll),
-                ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final mode in NovelPageTurnMode.values)
+                  ChoiceChip(
+                    key: Key('novel-turn-mode-${mode.name}'),
+                    selected: _value.turnMode == mode,
+                    label: Text(_turnModeLabel(context, mode)),
+                    avatar: Icon(_turnModeIcon(mode), size: 18),
+                    onSelected: (_) => _update(_value.copyWith(turnMode: mode)),
+                  ),
               ],
-              selected: {_value.mode},
-              onSelectionChanged: (selection) {
-                _update(_value.copyWith(mode: selection.first));
-              },
             ),
             const SizedBox(height: 18),
             DropdownButtonFormField<String>(
@@ -164,6 +176,17 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-brightness'),
+              label: '亮度',
+              value: _value.brightness,
+              min: .6,
+              max: 1.4,
+              divisions: 16,
+              valueLabel: '${(_value.brightness * 100).round()}%',
+              onChanged: (value) => _update(_value.copyWith(brightness: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-line-height'),
               label: context.l10n.novel_readerLineHeight,
               value: _value.lineHeight,
               min: 1.2,
@@ -172,6 +195,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) => _update(_value.copyWith(lineHeight: value)),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-paragraph-spacing'),
               label: context.l10n.novel_readerParagraphSpacing,
               value: _value.paragraphSpacing,
               min: 0,
@@ -181,6 +205,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                   _update(_value.copyWith(paragraphSpacing: value)),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-horizontal-margin'),
               label: context.l10n.novel_readerHorizontalMargin,
               value: _value.horizontalMargin,
               min: 8,
@@ -188,6 +213,55 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               divisions: 24,
               onChanged: (value) =>
                   _update(_value.copyWith(horizontalMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-top-margin'),
+              label: '上边距',
+              value: _value.topMargin,
+              min: 0,
+              max: 96,
+              divisions: 24,
+              onChanged: (value) => _update(_value.copyWith(topMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-bottom-margin'),
+              label: '下边距',
+              value: _value.bottomMargin,
+              min: 0,
+              max: 96,
+              divisions: 24,
+              onChanged: (value) =>
+                  _update(_value.copyWith(bottomMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-first-line-indent'),
+              label: '首行缩进',
+              value: _value.firstLineIndent,
+              min: 0,
+              max: 4,
+              divisions: 8,
+              onChanged: (value) =>
+                  _update(_value.copyWith(firstLineIndent: value)),
+            ),
+            Padding(
+              key: const Key('novel-setting-alignment'),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: SegmentedButton<NovelTextAlignment>(
+                segments: const [
+                  ButtonSegment(
+                    value: NovelTextAlignment.start,
+                    label: Text('左对齐'),
+                  ),
+                  ButtonSegment(
+                    value: NovelTextAlignment.justify,
+                    label: Text('两端对齐'),
+                  ),
+                ],
+                selected: {_value.textAlignment},
+                onSelectionChanged: (selection) => _update(
+                  _value.copyWith(textAlignment: selection.first),
+                ),
+              ),
             ),
             _SettingSlider(
               label: context.l10n.novel_readerAutoHide,
@@ -205,11 +279,60 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ),
             ),
             SwitchListTile(
+              key: const Key('novel-setting-single-hand'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('单手翻下一页'),
+              value: _value.singleHandNext,
+              onChanged: (value) =>
+                  _update(_value.copyWith(singleHandNext: value)),
+            ),
+            SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(context.l10n.novel_readerKeepScreenOn),
               value: _value.keepScreenOn,
               onChanged: (value) =>
                   _update(_value.copyWith(keepScreenOn: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-chapter'),
+              label: '显示章节名',
+              value: _value.showChapterName,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showChapterName: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-page'),
+              label: '显示页码',
+              value: _value.showPageNumber,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showPageNumber: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-progress'),
+              label: '显示全书进度',
+              value: _value.showBookProgress,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showBookProgress: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-time'),
+              label: '显示时间',
+              value: _value.showTime,
+              onChanged: (value) => _update(_value.copyWith(showTime: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-battery'),
+              label: '显示电量',
+              value: _value.showBattery,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showBattery: value)),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('novel-setting-reset'),
+              onPressed: () => _update(const NovelReaderPreferences()),
+              icon: const Icon(Icons.restart_alt_rounded),
+              label: const Text('恢复默认设置'),
             ),
           ],
         ),
@@ -220,6 +343,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
 
 class _SettingSlider extends StatelessWidget {
   const _SettingSlider({
+    super.key,
     required this.label,
     required this.value,
     required this.min,
@@ -266,6 +390,23 @@ class _SettingSlider extends StatelessWidget {
     );
   }
 }
+
+String _turnModeLabel(BuildContext context, NovelPageTurnMode mode) =>
+    switch (mode) {
+      NovelPageTurnMode.curl => '仿真',
+      NovelPageTurnMode.cover => '覆盖',
+      NovelPageTurnMode.translate => '平移',
+      NovelPageTurnMode.none => '无动画',
+      NovelPageTurnMode.scroll => context.l10n.novel_readerScroll,
+    };
+
+IconData _turnModeIcon(NovelPageTurnMode mode) => switch (mode) {
+      NovelPageTurnMode.curl => Icons.auto_stories_rounded,
+      NovelPageTurnMode.cover => Icons.flip_rounded,
+      NovelPageTurnMode.translate => Icons.swap_horiz_rounded,
+      NovelPageTurnMode.none => Icons.hide_source_rounded,
+      NovelPageTurnMode.scroll => Icons.view_stream_rounded,
+    };
 
 class _FontSizeStepper extends StatelessWidget {
   const _FontSizeStepper({

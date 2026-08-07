@@ -34,6 +34,7 @@ class NovelReaderPreferences {
     this.showTime = true,
     this.showBattery = true,
     this.singleHandNext = false,
+    this.brightness = 1,
   }) : turnMode = turnMode ??
             (mode == NovelReaderMode.scroll
                 ? NovelPageTurnMode.scroll
@@ -58,6 +59,7 @@ class NovelReaderPreferences {
   final bool showTime;
   final bool showBattery;
   final bool singleHandNext;
+  final double brightness;
 
   NovelReaderMode get mode => turnMode == NovelPageTurnMode.scroll
       ? NovelReaderMode.scroll
@@ -84,6 +86,7 @@ class NovelReaderPreferences {
     bool? showTime,
     bool? showBattery,
     bool? singleHandNext,
+    double? brightness,
   }) {
     return NovelReaderPreferences(
       turnMode: turnMode ??
@@ -111,6 +114,7 @@ class NovelReaderPreferences {
       showTime: showTime ?? this.showTime,
       showBattery: showBattery ?? this.showBattery,
       singleHandNext: singleHandNext ?? this.singleHandNext,
+      brightness: brightness ?? this.brightness,
     );
   }
 
@@ -135,6 +139,7 @@ class NovelReaderPreferences {
         'showTime': showTime,
         'showBattery': showBattery,
         'singleHandNext': singleHandNext,
+        'brightness': brightness,
       };
 
   factory NovelReaderPreferences.fromJson(Map<String, dynamic> json) {
@@ -170,6 +175,7 @@ class NovelReaderPreferences {
       showTime: json['showTime'] as bool? ?? true,
       showBattery: json['showBattery'] as bool? ?? true,
       singleHandNext: json['singleHandNext'] as bool? ?? false,
+      brightness: _clampedDouble(json['brightness'], 1, .6, 1.4),
     );
   }
 }
