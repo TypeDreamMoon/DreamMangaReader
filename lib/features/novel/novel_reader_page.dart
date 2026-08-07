@@ -9,11 +9,17 @@ import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
+import '../../core/novel/reader/novel_page_cache.dart';
+import '../../core/novel/reader/novel_page_turn_controller.dart';
+import '../../core/novel/reader/novel_page_turn_physics.dart';
+import '../../core/novel/reader/novel_reader_models.dart';
 import '../../core/platform/reader_keys.dart';
 import '../../ui/ui.dart';
 import 'novel_book_progress.dart';
 import 'novel_document_view.dart';
+import 'novel_page_turn_surface.dart';
 import 'novel_reader_chrome.dart';
+import 'novel_reader_input.dart';
 import 'novel_reader_settings_sheet.dart';
 
 typedef NovelDocumentLoader = Future<NovelDocument> Function(
@@ -48,7 +54,8 @@ class NovelReaderPage extends StatefulWidget {
   State<NovelReaderPage> createState() => _NovelReaderPageState();
 }
 
-class _NovelReaderPageState extends State<NovelReaderPage> {
+class _NovelReaderPageState extends State<NovelReaderPage>
+    with WidgetsBindingObserver {
   static int _wakeCount = 0;
 
   late final NovelDocumentController _controller =
@@ -57,6 +64,10 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   late NovelReaderPreferences _preferences = _library.preferences;
   late int _chapterIndex = widget.initialIndex;
   final FocusNode _focusNode = FocusNode(debugLabel: 'novel-reader');
+  final NovelPageTurnController _turnController = NovelPageTurnController();
+  late final NovelPageCache _pageCache = NovelPageCache(
+    byteBudget: Platform.isAndroid ? 48 * 1024 * 1024 : 96 * 1024 * 1024,
+  );
 
   Future<void> _settingsQueue = Future.value();
   int _settingsGeneration = 0;
@@ -65,15 +76,26 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   bool _controlsPaused = false;
   bool _loading = true;
   bool _wakeActive = false;
+  bool _captureActive = false;
+  bool _retainFrameWhileLoading = false;
   double _chapterFraction = 0;
   double? _progressPreview;
   Object? _error;
+  NovelSelection? _selection;
+  NovelPageMetrics? _pageMetrics;
+  NovelPageFrame? _previousFrame;
+  NovelPageFrame? _currentFrame;
+  NovelPageFrame? _nextFrame;
+  NovelTurnState _turnState = const NovelTurnState.idle();
+  NovelTurnDecision? _settlement;
+  int _pageGeneration = 0;
 
   NovelChapter get _chapter => widget.chapters[_chapterIndex];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final saved = _library.progressFor(widget.libraryKey);
     if (saved != null) {
       final index = widget.chapters.indexWhere(
@@ -86,11 +108,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     }
     _controller.onCommand = _onCommand;
     _controller.onLocatorChanged = _saveLocator;
+    _controller.onSelectionChanged = _onSelectionChanged;
+    _controller.onCaptureStateChanged = _onCaptureStateChanged;
     _setWakeLock(_preferences.keepScreenOn);
     if (Platform.isAndroid) {
       ReaderKeys.setHandler((direction) {
         if (!mounted) return;
-        direction > 0 ? _next() : _previous();
+        _requestDiscrete(
+          direction > 0 ? NovelTurnDirection.next : NovelTurnDirection.previous,
+        );
       });
       unawaited(ReaderKeys.setActive(true));
     }
@@ -99,11 +125,26 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     });
   }
 
-  Future<bool> _loadChapter({NovelLocator? restore}) async {
+  Future<bool> _loadChapter({
+    NovelLocator? restore,
+    bool retainCurrentFrame = false,
+  }) async {
+    final pageGeneration = ++_pageGeneration;
+    _turnController.cancel();
+    final retainFrame = retainCurrentFrame && _currentFrame != null;
     if (mounted) {
       setState(() {
         _loading = true;
         _error = null;
+        _pageMetrics = null;
+        _retainFrameWhileLoading = retainFrame;
+        if (!retainFrame) {
+          _previousFrame = null;
+          _currentFrame = null;
+          _nextFrame = null;
+        }
+        _turnState = _turnController.state;
+        _settlement = null;
       });
     }
     final chapter = _chapter;
@@ -121,6 +162,14 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
           _chapterFraction =
               locator?.chapterId == chapter.id ? locator!.fraction : 0;
         });
+        unawaited(
+          _primePageFrames(chapter.id, pageGeneration).whenComplete(() {
+            if (_pageRequestIsCurrent(chapter.id, pageGeneration) &&
+                _retainFrameWhileLoading) {
+              setState(() => _retainFrameWhileLoading = false);
+            }
+          }),
+        );
       }
       return true;
     } catch (error) {
@@ -131,6 +180,106 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       });
       return false;
     }
+  }
+
+  Future<void> _primePageFrames(String chapterId, int generation) async {
+    if (_preferences.turnMode == NovelPageTurnMode.scroll) return;
+    final metrics = await _waitForPageMetrics(chapterId, generation);
+    if (metrics == null) return;
+    final current = await _controller.capturePage(metrics.currentPageIndex);
+    if (!_pageRequestIsCurrent(chapterId, generation) || current == null) {
+      return;
+    }
+    _pageCache
+      ..invalidateLayout(metrics.layoutFingerprint)
+      ..put(current)
+      ..pinCurrent(current.key)
+      ..invalidateLayout(metrics.layoutFingerprint);
+
+    NovelPageFrame? previous;
+    NovelPageFrame? next;
+    if (metrics.currentPageIndex > 0) {
+      previous = await _controller.capturePage(metrics.currentPageIndex - 1);
+      if (previous != null) _pageCache.put(previous);
+    }
+    if (metrics.currentPageIndex < metrics.pageCount - 1) {
+      next = await _controller.capturePage(metrics.currentPageIndex + 1);
+      if (next != null) _pageCache.put(next);
+    }
+    if (!_pageRequestIsCurrent(chapterId, generation)) return;
+    setState(() {
+      _pageMetrics = metrics;
+      _previousFrame = previous;
+      _currentFrame = current;
+      _nextFrame = next;
+      _retainFrameWhileLoading = false;
+    });
+    _prefetchBoundaryDocuments(metrics);
+  }
+
+  Future<NovelPageMetrics?> _waitForPageMetrics(
+    String chapterId,
+    int generation,
+  ) async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      if (!_pageRequestIsCurrent(chapterId, generation)) return null;
+      final metrics = await _controller.pageMetrics();
+      if (metrics.layoutFingerprint.isNotEmpty &&
+          metrics.viewport.width > 0 &&
+          metrics.viewport.height > 0) {
+        return metrics;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    return null;
+  }
+
+  bool _pageRequestIsCurrent(String chapterId, int generation) {
+    return mounted && generation == _pageGeneration && chapterId == _chapter.id;
+  }
+
+  void _prefetchBoundaryDocuments(NovelPageMetrics metrics) {
+    if (metrics.currentPageIndex <= 1 && _chapterIndex > 0) {
+      unawaited(
+        widget
+            .loadDocument(widget.chapters[_chapterIndex - 1])
+            .then<void>((_) {})
+            .catchError((_) {}),
+      );
+    }
+    if (metrics.currentPageIndex >= metrics.pageCount - 2 &&
+        _chapterIndex < widget.chapters.length - 1) {
+      unawaited(
+        widget
+            .loadDocument(widget.chapters[_chapterIndex + 1])
+            .then<void>((_) {})
+            .catchError((_) {}),
+      );
+    }
+  }
+
+  void _onSelectionChanged(NovelSelection? selection) {
+    if (mounted) setState(() => _selection = selection);
+  }
+
+  void _onCaptureStateChanged(bool active) {
+    if (mounted && active != _captureActive) {
+      setState(() => _captureActive = active);
+    }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    _pageCache.shrinkForMemoryPressure();
+    if (!mounted) return;
+    setState(() {
+      final currentKey = _currentFrame?.key;
+      if (currentKey != null) {
+        _currentFrame = _pageCache.get(currentKey);
+      }
+      _previousFrame = null;
+      _nextFrame = null;
+    });
   }
 
   double get _bookProgress => novelBookProgress(
@@ -185,12 +334,206 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   void _onCommand(NovelReaderCommand command) {
     switch (command) {
       case NovelReaderCommand.previous:
-        _previous();
+        _requestDiscrete(NovelTurnDirection.previous);
       case NovelReaderCommand.next:
-        _next();
+        _requestDiscrete(NovelTurnDirection.next);
       case NovelReaderCommand.toggleControls:
         _toggleReaderControls();
     }
+  }
+
+  void _onInputStateChanged() {
+    if (mounted) setState(() => _turnState = _turnController.state);
+  }
+
+  void _onTurnDecision(NovelTurnDecision decision) {
+    if (!mounted) return;
+    setState(() {
+      _turnState = _turnController.state;
+      _settlement = decision;
+    });
+    if (decision.commit && _targetFrame(decision.direction) == null) {
+      unawaited(_prepareMissingTarget(decision.direction));
+    }
+  }
+
+  void _requestDiscrete(NovelTurnDirection direction) {
+    if (_loading || _error != null || _selection != null || _controlsPaused) {
+      return;
+    }
+    if (_preferences.turnMode == NovelPageTurnMode.scroll ||
+        _currentFrame == null ||
+        _pageMetrics == null) {
+      unawaited(_legacyTurn(direction));
+      return;
+    }
+    if (_turnController.state.phase != NovelTurnPhase.idle) {
+      _turnController.queueDiscrete(direction);
+      return;
+    }
+    if (_targetFrame(direction) == null) {
+      unawaited(_prepareMissingTarget(direction, startDiscrete: true));
+      return;
+    }
+    _startDiscrete(direction);
+  }
+
+  void _startDiscrete(NovelTurnDirection direction) {
+    final decision = _turnController.startDiscrete(direction);
+    setState(() {
+      _turnState = _turnController.state;
+      _settlement = decision;
+    });
+  }
+
+  NovelPageFrame? _targetFrame(NovelTurnDirection direction) {
+    return direction == NovelTurnDirection.next ? _nextFrame : _previousFrame;
+  }
+
+  Future<void> _prepareMissingTarget(
+    NovelTurnDirection direction, {
+    bool startDiscrete = false,
+  }) async {
+    final current = _currentFrame;
+    final metrics = _pageMetrics;
+    if (current == null || metrics == null) return;
+    final targetIndex =
+        current.key.pageIndex + (direction == NovelTurnDirection.next ? 1 : -1);
+    if (targetIndex < 0 || targetIndex >= metrics.pageCount) {
+      _turnController.cancel();
+      if (mounted) {
+        setState(() {
+          _turnState = _turnController.state;
+          _settlement = null;
+        });
+      }
+      await _legacyTurn(direction);
+      return;
+    }
+    final frame = await _controller.capturePage(targetIndex);
+    if (!mounted) return;
+    if (frame == null || frame.key.chapterId != _chapter.id) {
+      _turnController.cancel();
+      setState(() {
+        _turnState = _turnController.state;
+        _settlement = null;
+      });
+      return;
+    }
+    _pageCache.put(frame);
+    setState(() {
+      if (direction == NovelTurnDirection.next) {
+        _nextFrame = frame;
+      } else {
+        _previousFrame = frame;
+      }
+    });
+    if (startDiscrete && _turnController.state.phase == NovelTurnPhase.idle) {
+      _startDiscrete(direction);
+    }
+  }
+
+  Future<void> _legacyTurn(NovelTurnDirection direction) {
+    return direction == NovelTurnDirection.next ? _next() : _previous();
+  }
+
+  void _onSurfaceSettled() {
+    if (_settlement?.commit != false) return;
+    _turnController.completeSettlement();
+    final queued = _turnController.takeQueuedDirection();
+    if (mounted) {
+      setState(() {
+        _turnState = _turnController.state;
+        _settlement = null;
+      });
+    }
+    if (queued != null) _requestDiscrete(queued);
+  }
+
+  Future<void> _onSurfaceCommitted(NovelTurnDirection direction) async {
+    _turnController.completeSettlement();
+    final committed = _turnController.consumeCommittedDirection();
+    if (committed != direction) return;
+    if (mounted) setState(() => _turnState = _turnController.state);
+    final target = _targetFrame(direction);
+    if (target == null) {
+      _turnController.cancel();
+      return;
+    }
+    try {
+      await _controller.showPage(target.key.pageIndex);
+      final locator = await _controller.captureLocator();
+      if (!mounted || locator.chapterId != _chapter.id) {
+        _turnController.cancel();
+        if (mounted) {
+          setState(() {
+            _turnState = _turnController.state;
+            _settlement = null;
+          });
+        }
+        return;
+      }
+      final oldCurrent = _currentFrame;
+      _pageCache.pinCurrent(target.key);
+      _persistLocator(locator);
+      _turnController.completeCommit();
+      final queued = _turnController.takeQueuedDirection();
+      setState(() {
+        _currentFrame = target;
+        if (direction == NovelTurnDirection.next) {
+          _previousFrame = oldCurrent;
+          _nextFrame = null;
+        } else {
+          _nextFrame = oldCurrent;
+          _previousFrame = null;
+        }
+        _pageMetrics = NovelPageMetrics(
+          pageCount: _pageMetrics!.pageCount,
+          currentPageIndex: target.key.pageIndex,
+          viewport: _pageMetrics!.viewport,
+          layoutFingerprint: target.key.layoutFingerprint,
+        );
+        _turnState = _turnController.state;
+        _settlement = null;
+      });
+      _prefetchBoundaryDocuments(_pageMetrics!);
+      unawaited(_refreshAdjacentFrame(direction));
+      if (queued != null) _requestDiscrete(queued);
+    } catch (_) {
+      _turnController.cancel();
+      if (mounted) {
+        setState(() {
+          _turnState = _turnController.state;
+          _settlement = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshAdjacentFrame(NovelTurnDirection direction) async {
+    final current = _currentFrame;
+    final metrics = _pageMetrics;
+    if (current == null || metrics == null) return;
+    final targetIndex =
+        current.key.pageIndex + (direction == NovelTurnDirection.next ? 1 : -1);
+    if (targetIndex < 0 || targetIndex >= metrics.pageCount) return;
+    final cached = _pageCache.get(
+      NovelPageKey(
+        chapterId: current.key.chapterId,
+        pageIndex: targetIndex,
+        layoutFingerprint: current.key.layoutFingerprint,
+      ),
+    );
+    final frame = cached ?? await _controller.capturePage(targetIndex);
+    if (!mounted || frame == null || frame.key.chapterId != _chapter.id) return;
+    _pageCache.put(frame);
+    setState(() {
+      if (direction == NovelTurnDirection.next) {
+        _nextFrame = frame;
+      } else {
+        _previousFrame = frame;
+      }
+    });
   }
 
   Future<void> _previous() async {
@@ -206,6 +549,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id, fraction: 1),
+      retainCurrentFrame: _currentFrame != null,
     );
     _hideReaderControls();
   }
@@ -223,11 +567,19 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     });
     await _loadChapter(
       restore: NovelLocator(chapterId: _chapter.id),
+      retainCurrentFrame: _currentFrame != null,
     );
     _hideReaderControls();
   }
 
   void _saveLocator(NovelLocator locator) {
+    if (_captureActive || _turnController.state.phase != NovelTurnPhase.idle) {
+      return;
+    }
+    _persistLocator(locator);
+  }
+
+  void _persistLocator(NovelLocator locator) {
     if (locator.chapterId.isEmpty) return;
     _library.saveProgress(widget.libraryKey, locator);
     if (mounted && locator.chapterId == _chapter.id) {
@@ -239,6 +591,7 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     if (!mounted) return;
     final generation = ++_settingsGeneration;
     _preferences = preferences;
+    _retainFrameWhileLoading = _currentFrame != null;
     _library.setPreferences(preferences);
     _setWakeLock(preferences.keepScreenOn);
     setState(() {});
@@ -252,8 +605,32 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
       if (!mounted || generation != _settingsGeneration) return;
       await _controller.restoreLocator(locator);
       if (!mounted || generation != _settingsGeneration) return;
+      _refreshPageFramesAfterLayout();
       _scheduleControlsHide();
     }).catchError((_) {});
+  }
+
+  void _refreshPageFramesAfterLayout() {
+    final generation = ++_pageGeneration;
+    final chapterId = _chapter.id;
+    if (_preferences.turnMode == NovelPageTurnMode.scroll) {
+      setState(() {
+        _pageMetrics = null;
+        _previousFrame = null;
+        _currentFrame = null;
+        _nextFrame = null;
+        _retainFrameWhileLoading = false;
+      });
+      return;
+    }
+    unawaited(
+      _primePageFrames(chapterId, generation).whenComplete(() {
+        if (_pageRequestIsCurrent(chapterId, generation) &&
+            _retainFrameWhileLoading) {
+          setState(() => _retainFrameWhileLoading = false);
+        }
+      }),
+    );
   }
 
   void _setWakeLock(bool enabled) {
@@ -271,17 +648,6 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.pageUp) {
-      _previous();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.pageDown ||
-        key == LogicalKeyboardKey.space) {
-      _next();
-      return KeyEventResult.handled;
-    }
     if (key == LogicalKeyboardKey.escape) {
       if (_showControls) {
         _hideReaderControls();
@@ -561,6 +927,15 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
     return Center(child: Text(context.l10n.novel_readerMissingRenderer));
   }
 
+  bool get _showTurnSurface {
+    return _currentFrame != null &&
+        (_captureActive ||
+            _retainFrameWhileLoading ||
+            _turnState.phase == NovelTurnPhase.dragging ||
+            _turnState.phase == NovelTurnPhase.settling ||
+            _turnState.phase == NovelTurnPhase.committing);
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
@@ -573,11 +948,58 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            _documentView(),
-            if (_loading)
+            NovelReaderInput(
+              controller: _turnController,
+              blocked: _controlsPaused ||
+                  _selection != null ||
+                  _loading ||
+                  _error != null,
+              dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
+              singleHandNext: _preferences.singleHandNext,
+              onStateChanged: _onInputStateChanged,
+              onDecision: _onTurnDecision,
+              onDiscrete: _requestDiscrete,
+              onToggleControls: _toggleReaderControls,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _documentView(),
+                  if (_showTurnSurface)
+                    NovelPageTurnSurface(
+                      key: const Key('novel-page-turn-surface'),
+                      mode: _preferences.turnMode,
+                      state: _turnState,
+                      settlement: _settlement,
+                      previousFrame: _previousFrame,
+                      currentFrame: _currentFrame!,
+                      nextFrame: _nextFrame,
+                      pageBackColor: _themeColor(_preferences.theme),
+                      onCommitted: (direction) =>
+                          unawaited(_onSurfaceCommitted(direction)),
+                      onSettled: _onSurfaceSettled,
+                    ),
+                ],
+              ),
+            ),
+            if (_loading && !_retainFrameWhileLoading)
               const ColoredBox(
                 color: Color(0x55000000),
                 child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_retainFrameWhileLoading)
+              const SafeArea(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: SizedBox(
+                      key: Key('novel-reader-edge-loading'),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                  ),
+                ),
               ),
             if (_error != null)
               ColoredBox(
@@ -612,10 +1034,13 @@ class _NovelReaderPageState extends State<NovelReaderPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _settingsGeneration++;
     _controlsTimer?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;
+    _controller.onSelectionChanged = null;
+    _controller.onCaptureStateChanged = null;
     unawaited(_library.flushPending());
     if (Platform.isAndroid) {
       unawaited(ReaderKeys.setActive(false));

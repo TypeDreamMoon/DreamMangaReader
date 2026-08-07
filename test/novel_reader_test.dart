@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
@@ -15,9 +16,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _FakeController implements NovelDocumentController {
   _FakeController({
     this.locator = const NovelLocator(chapterId: 'c1'),
+    this.supportsPageFrames = false,
+    this.pageCount = 3,
+    this.turnsWithinDocument = true,
   });
 
   NovelLocator locator;
+  final bool supportsPageFrames;
+  final int pageCount;
+  final bool turnsWithinDocument;
+  int visiblePageIndex = 0;
+  final List<int> shownPages = [];
   NovelLocator? lastRestored;
   String? loadedChapterId;
   NovelReaderPreferences? appliedPreferences;
@@ -50,18 +59,36 @@ class _FakeController implements NovelDocumentController {
   }
 
   @override
-  Future<NovelPageFrame?> capturePage(int pageIndex) async => null;
+  Future<NovelPageFrame?> capturePage(int pageIndex) async {
+    if (!supportsPageFrames) return null;
+    onCaptureStateChanged?.call(true);
+    try {
+      return _testPageFrame(
+        chapterId: loadedChapterId ?? locator.chapterId,
+        pageIndex: pageIndex,
+      );
+    } finally {
+      onCaptureStateChanged?.call(false);
+    }
+  }
 
   @override
-  Future<NovelPageMetrics> pageMetrics() async => const NovelPageMetrics(
-        pageCount: 1,
-        currentPageIndex: 0,
-        viewport: NovelViewport(width: 1000, height: 1600),
-        layoutFingerprint: 'test',
+  Future<NovelPageMetrics> pageMetrics() async => NovelPageMetrics(
+        pageCount: supportsPageFrames ? pageCount : 1,
+        currentPageIndex: visiblePageIndex,
+        viewport: const NovelViewport(width: 1000, height: 1600),
+        layoutFingerprint: 'test-layout',
       );
 
   @override
-  Future<void> showPage(int pageIndex) async {}
+  Future<void> showPage(int pageIndex) async {
+    visiblePageIndex = pageIndex;
+    shownPages.add(pageIndex);
+    locator = NovelLocator(
+      chapterId: loadedChapterId ?? locator.chapterId,
+      fraction: pageCount <= 1 ? 0 : pageIndex / (pageCount - 1),
+    );
+  }
 
   @override
   Future<void> loadChapter(
@@ -77,10 +104,10 @@ class _FakeController implements NovelDocumentController {
   }
 
   @override
-  Future<bool> nextPage() async => true;
+  Future<bool> nextPage() async => turnsWithinDocument;
 
   @override
-  Future<bool> previousPage() async => true;
+  Future<bool> previousPage() async => turnsWithinDocument;
 
   @override
   Future<void> restoreLocator(NovelLocator value) async {
@@ -92,6 +119,7 @@ class _FakeController implements NovelDocumentController {
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   _FakeController controller, {
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
+  NovelDocumentLoader? loadDocument,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -115,19 +143,133 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
         libraryKey: 'remote:s:n1',
         controller: controller,
         documentViewBuilder: (_, __) => const ColoredBox(color: Colors.black),
-        loadDocument: (chapter) async => NovelDocument(
-          format: NovelDocumentFormat.html,
-          content: '<p>${chapter.title}</p>',
-        ),
+        loadDocument: loadDocument ??
+            (chapter) async => NovelDocument(
+                  format: NovelDocumentFormat.html,
+                  content: '<p>${chapter.title}</p>',
+                ),
       ),
     ),
   );
   return (widget: widget, store: store);
 }
 
+NovelPageFrame _testPageFrame({
+  required String chapterId,
+  required int pageIndex,
+}) {
+  return NovelPageFrame(
+    key: NovelPageKey(
+      chapterId: chapterId,
+      pageIndex: pageIndex,
+      layoutFingerprint: 'test-layout',
+    ),
+    viewport: const NovelViewport(width: 1000, height: 1600),
+    bytes: base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+      'AAAADUlEQVR42mNk+M/wHwAF/gL+X1n0WQAAAABJRU5ErkJggg==',
+    ),
+  );
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('cached paging saves progress only after settlement',
+      (tester) async {
+    final controller = _FakeController(supportsPageFrames: true);
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(harness.store.progressFor('remote:s:n1'), isNull);
+    final gesture = await tester.startGesture(const Offset(700, 300));
+    await gesture.moveTo(const Offset(300, 305));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('novel-page-turn-surface')),
+      findsOneWidget,
+    );
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(harness.store.progressFor('remote:s:n1'), isNull);
+    await tester.pumpAndSettle();
+
+    expect(controller.shownPages, contains(1));
+    expect(harness.store.progressFor('remote:s:n1')?.fraction, .5);
+  });
+
+  testWidgets('chapter boundary primes the adjacent chapter document',
+      (tester) async {
+    final loaded = <String>[];
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+    );
+    final harness = await _readerHarness(
+      controller,
+      loadDocument: (chapter) async {
+        loaded.add(chapter.id);
+        return NovelDocument(
+          format: NovelDocumentFormat.html,
+          content: '<p>${chapter.title}</p>',
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(loaded, containsAllInOrder(['c1', 'c2']));
+  });
+
+  testWidgets('chapter loading keeps the cached edge page visible',
+      (tester) async {
+    final nextChapter = Completer<NovelDocument>();
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+      turnsWithinDocument: false,
+    );
+    final harness = await _readerHarness(
+      controller,
+      loadDocument: (chapter) {
+        if (chapter.id == 'c2') return nextChapter.future;
+        return Future.value(
+          NovelDocument(
+            format: NovelDocumentFormat.html,
+            content: '<p>${chapter.title}</p>',
+          ),
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tapAt(const Offset(760, 300));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('novel-page-turn-surface')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('novel-reader-edge-loading')),
+      findsOneWidget,
+    );
+
+    nextChapter.complete(
+      NovelDocument(
+        format: NovelDocumentFormat.html,
+        content: '<p>第二章</p>',
+      ),
+    );
+    await tester.pumpAndSettle();
   });
 
   testWidgets('mode and typography changes preserve locator', (tester) async {

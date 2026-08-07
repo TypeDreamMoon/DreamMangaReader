@@ -113,6 +113,9 @@ class WebNovelDocumentController implements NovelDocumentController {
     );
     if (loadedChapter?.toString() != _chapterId) return;
     await webView.evaluateJavascript(source: novelReaderBridgeScript);
+    await webView.evaluateJavascript(
+      source: 'window.__dmrExternalInput = true',
+    );
     _loaded = true;
     await applyPreferences(_preferences);
     final restore = _pendingRestore;
@@ -733,6 +736,7 @@ const novelReaderBridgeScript = r'''
       if (href.startsWith('#')) document.getElementById(href.slice(1))?.scrollIntoView();
       return;
     }
+    if (window.__dmrExternalInput) return;
     if (isInteractiveTarget(event.target)) return;
     const ratio = event.clientX / innerWidth;
     const command = ratio < .25 ? 'previous' : ratio > .75 ? 'next' : 'toggle';
@@ -740,6 +744,7 @@ const novelReaderBridgeScript = r'''
   });
   let lastWheelTurn = 0;
   document.addEventListener('wheel', (event) => {
+    if (window.__dmrExternalInput) return;
     if (isInteractiveTarget(event.target)) return;
     if (mode !== 'paged' || Math.abs(event.deltaY) < 12) return;
     event.preventDefault();
@@ -753,11 +758,13 @@ const novelReaderBridgeScript = r'''
   }, {passive:false});
   let touchX = 0, touchY = 0, touchInteractive = false;
   document.addEventListener('touchstart', (event) => {
+    if (window.__dmrExternalInput) return;
     touchInteractive = isInteractiveTarget(event.target);
     if (touchInteractive) return;
     touchX = event.changedTouches[0].clientX; touchY = event.changedTouches[0].clientY;
   }, {passive:true});
   document.addEventListener('touchend', (event) => {
+    if (window.__dmrExternalInput) return;
     const blocked = touchInteractive || isInteractiveTarget(event.target);
     touchInteractive = false;
     if (blocked) return;
