@@ -7,7 +7,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.7.0';
+  static const version = '1.8.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -24,7 +24,15 @@ class AppInfo {
     '瀑布流发现页 + 随机飞入动画(漫画 / 小说共用布局与列数设置)',
     '详情页封面飞入 + 封面主题色(KMeans)+ Bangumi 评分',
     '长目录直达在读章 · 宽屏左信息右目录',
+    '统一下载管理:漫画 / 小说 / 番剧同一入口 · 暂停 / 恢复 / 重试 · 重启后自动续跑',
+    '下载策略:仅 Wi-Fi / 漫游开关 · 并发上限 · 预留磁盘空间 · 低电量暂停',
+    'Android 后台下载:前台服务 + 通知栏进度,退到后台继续下载',
+    '番剧离线下载:整集打包(含 AES-128 密钥)· 无网络时自动用本地分集',
+    '书库首页统一历史:漫画 / 小说 / 番剧按时间合并 · 番剧进度精确到秒',
+    '番剧收藏与续播 · 指定源 / 混合源浏览搜索(受源设置控制)',
     '离线下载 · 阅读进度记忆 · 阅读历史',
+    '漫画失败图片点击重试 · 页面切换不再短暂重叠',
+    'Windows 关闭到托盘:托盘菜单显示主窗口 / 退出',
     '云同步:WebDAV / 账号登录(IAM 浏览器授权)· 可选类别双向合并',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓 · 刷新后脚本立即生效',
     '私有源认证:登录凭据存入系统安全存储 · 多源共用一份登录 · 备份 / 同步不带凭据',
