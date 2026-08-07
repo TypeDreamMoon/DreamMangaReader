@@ -1,9 +1,15 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/novel/reader/novel_font_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
+
+typedef NovelFontFilePicker = Future<File?> Function();
 
 Future<void> showNovelReaderSettings({
   required BuildContext context,
@@ -59,10 +65,14 @@ class NovelReaderSettingsSheet extends StatefulWidget {
     super.key,
     required this.value,
     required this.onChanged,
+    this.fontStore,
+    this.pickFontFile,
   });
 
   final NovelReaderPreferences value;
   final ValueChanged<NovelReaderPreferences> onChanged;
+  final NovelFontStore? fontStore;
+  final NovelFontFilePicker? pickFontFile;
 
   @override
   State<NovelReaderSettingsSheet> createState() =>
@@ -71,6 +81,74 @@ class NovelReaderSettingsSheet extends StatefulWidget {
 
 class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   late NovelReaderPreferences _value = widget.value;
+  late final NovelFontStore _fontStore = widget.fontStore ?? NovelFontStore();
+  List<NovelFontRecord> _importedFonts = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadImportedFonts();
+  }
+
+  Future<void> _reloadImportedFonts() async {
+    try {
+      final fonts = await _fontStore.listImportedFonts();
+      if (!mounted) return;
+      final selected = normalizeNovelFontId(_value.fontFamily);
+      final selectedMissing =
+          selected.startsWith(NovelFontIds.importedPrefix) &&
+              !fonts.any((font) => font.id == selected);
+      if (selectedMissing) {
+        final fallback = _value.copyWith(fontFamily: NovelFontIds.notoSerifSc);
+        setState(() {
+          _importedFonts = fonts;
+          _value = fallback;
+        });
+        widget.onChanged(fallback);
+      } else {
+        setState(() => _importedFonts = fonts);
+      }
+    } catch (_) {
+      // The picker remains usable even when the platform support directory
+      // is temporarily unavailable.
+    }
+  }
+
+  Future<void> _importFont() async {
+    try {
+      final source = await (widget.pickFontFile?.call() ?? _pickFontFile());
+      if (source == null) return;
+      final font = await _fontStore.importFont(source);
+      await _reloadImportedFonts();
+      if (mounted) _update(_value.copyWith(fontFamily: font.id));
+    } on NovelFontImportException catch (error) {
+      _showFontError(error.message);
+    } catch (_) {
+      _showFontError('字体导入失败，请检查文件后重试。');
+    }
+  }
+
+  Future<void> _deleteSelectedFont() async {
+    final selected = normalizeNovelFontId(_value.fontFamily);
+    if (!selected.startsWith(NovelFontIds.importedPrefix)) return;
+    try {
+      final fallback = await _fontStore.deleteFont(
+        selected,
+        selectedId: selected,
+      );
+      if (!mounted) return;
+      _update(_value.copyWith(fontFamily: fallback));
+      await _reloadImportedFonts();
+    } catch (_) {
+      _showFontError('字体删除失败，请稍后重试。');
+    }
+  }
+
+  void _showFontError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   void _update(NovelReaderPreferences value) {
     setState(() => _value = value);
@@ -95,6 +173,10 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
+    final selectedFontId = normalizeNovelFontId(_value.fontFamily);
+    final selectedImportPending =
+        selectedFontId.startsWith(NovelFontIds.importedPrefix) &&
+            !_importedFonts.any((font) => font.id == selectedFontId);
     return SafeArea(
       top: false,
       child: ConstrainedBox(
@@ -126,34 +208,57 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ],
             ),
             const SizedBox(height: 18),
-            DropdownButtonFormField<String>(
-              initialValue: _value.fontFamily,
-              decoration: InputDecoration(
-                labelText: context.l10n.novel_readerFont,
-              ),
-              items: [
-                DropdownMenuItem(
-                  value: '',
-                  child: Text(context.l10n.novel_readerSystemDefault),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: const Key('novel-font-picker'),
+                    initialValue: normalizeNovelFontId(_value.fontFamily),
+                    decoration: InputDecoration(
+                      labelText: context.l10n.novel_readerFont,
+                    ),
+                    items: [
+                      for (final font in novelBuiltinFonts)
+                        DropdownMenuItem(
+                          value: font.id,
+                          child: Text(font.displayName),
+                        ),
+                      for (final font in _importedFonts)
+                        DropdownMenuItem(
+                          value: font.id,
+                          child: Text(font.displayName),
+                        ),
+                      if (selectedImportPending)
+                        DropdownMenuItem(
+                          value: selectedFontId,
+                          child: const Text('正在检查自定义字体...'),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        _update(_value.copyWith(fontFamily: value));
+                      }
+                    },
+                  ),
                 ),
-                DropdownMenuItem(
-                  value: 'serif',
-                  child: Text(context.l10n.novel_readerSerif),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('novel-font-import'),
+                  tooltip: '导入 TTF/OTF 字体',
+                  onPressed: _importFont,
+                  icon: const Icon(Icons.add_rounded),
                 ),
-                DropdownMenuItem(
-                  value: 'sans-serif',
-                  child: Text(context.l10n.novel_readerSansSerif),
-                ),
-                DropdownMenuItem(
-                  value: 'monospace',
-                  child: Text(context.l10n.novel_readerMonospace),
+                IconButton(
+                  key: const Key('novel-font-delete'),
+                  tooltip: '删除当前导入字体',
+                  onPressed: normalizeNovelFontId(_value.fontFamily)
+                          .startsWith(NovelFontIds.importedPrefix)
+                      ? _deleteSelectedFont
+                      : null,
+                  icon: const Icon(Icons.delete_outline_rounded),
                 ),
               ],
-              onChanged: (value) {
-                if (value != null) {
-                  _update(_value.copyWith(fontFamily: value));
-                }
-              },
             ),
             const SizedBox(height: 14),
             _ThemePicker(
@@ -339,6 +444,16 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
       ),
     );
   }
+}
+
+Future<File?> _pickFontFile() async {
+  final selection = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['ttf', 'otf'],
+    allowMultiple: false,
+  );
+  final path = selection?.files.single.path;
+  return path == null || path.isEmpty ? null : File(path);
 }
 
 class _SettingSlider extends StatelessWidget {

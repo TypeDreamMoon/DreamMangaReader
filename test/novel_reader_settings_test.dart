@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
@@ -15,6 +18,8 @@ void main() {
       expect(find.byKey(Key('novel-turn-mode-${mode.name}')), findsOneWidget);
     }
     for (final key in const [
+      'novel-font-picker',
+      'novel-font-import',
       'novel-setting-brightness',
       'novel-setting-line-height',
       'novel-setting-paragraph-spacing',
@@ -66,6 +71,87 @@ void main() {
     expect(changes.last.topMargin, 16);
     expect(changes.last.showBattery, isTrue);
   });
+
+  testWidgets('font import emits only the imported stable ID', (tester) async {
+    final source = File('Reader.ttf');
+    final importedId =
+        '${NovelFontIds.importedPrefix}${List.filled(64, 'a').join()}';
+    final changes = <NovelReaderPreferences>[];
+    final store = _FakeNovelFontStore(
+      NovelFontRecord(
+        id: importedId,
+        displayName: 'Reader',
+        cssFamily: 'DMR Imported Test',
+        file: source,
+      ),
+    );
+    await tester.pumpWidget(
+      _harness(
+        onChanged: changes.add,
+        fontStore: store,
+        pickFontFile: () async => source,
+      ),
+    );
+
+    await _scrollToBuilt(tester, const Key('novel-font-import'));
+    await tester.tap(find.byKey(const Key('novel-font-import')));
+    await tester.pumpAndSettle();
+
+    expect(changes, isNotEmpty);
+    expect(changes.last.fontFamily, importedId);
+    expect(changes.last.toJson().toString(), isNot(contains(source.path)));
+    final dropdown = tester.widget<DropdownButton<String>>(
+      find.descendant(
+        of: find.byKey(const Key('novel-font-picker')),
+        matching: find.byType(DropdownButton<String>),
+      ),
+    );
+    expect(dropdown.value, importedId);
+  });
+
+  testWidgets('missing selected import falls back without dropdown assertion',
+      (tester) async {
+    final missingId =
+        '${NovelFontIds.importedPrefix}${List.filled(64, 'b').join()}';
+    final changes = <NovelReaderPreferences>[];
+    final store = _FakeNovelFontStore(
+      NovelFontRecord(
+        id: missingId,
+        displayName: 'Missing',
+        cssFamily: 'DMR Missing',
+        file: File('missing.ttf'),
+      ),
+    );
+
+    await tester.pumpWidget(
+      _harness(
+        value: NovelReaderPreferences(fontFamily: missingId),
+        onChanged: changes.add,
+        fontStore: store,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(changes.last.fontFamily, NovelFontIds.notoSerifSc);
+  });
+}
+
+class _FakeNovelFontStore extends NovelFontStore {
+  _FakeNovelFontStore(this.record);
+
+  final NovelFontRecord record;
+  bool _imported = false;
+
+  @override
+  Future<NovelFontRecord> importFont(File source) async {
+    _imported = true;
+    return record;
+  }
+
+  @override
+  Future<List<NovelFontRecord>> listImportedFonts() async =>
+      _imported ? [record] : const [];
 }
 
 Future<void> _scrollToBuilt(WidgetTester tester, Key key) async {
@@ -83,6 +169,8 @@ Future<void> _scrollToBuilt(WidgetTester tester, Key key) async {
 Widget _harness({
   NovelReaderPreferences value = const NovelReaderPreferences(),
   required ValueChanged<NovelReaderPreferences> onChanged,
+  NovelFontStore? fontStore,
+  Future<File?> Function()? pickFontFile,
 }) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
@@ -90,7 +178,12 @@ Widget _harness({
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     home: Scaffold(
-      body: NovelReaderSettingsSheet(value: value, onChanged: onChanged),
+      body: NovelReaderSettingsSheet(
+        value: value,
+        onChanged: onChanged,
+        fontStore: fontStore,
+        pickFontFile: pickFontFile,
+      ),
     ),
   );
 }

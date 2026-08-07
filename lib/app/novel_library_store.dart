@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/novel/models.dart';
+import '../core/novel/reader/novel_font_store.dart';
 import '../core/novel/reader/novel_reader_models.dart';
 
 enum NovelReaderMode { paged, scroll }
@@ -16,7 +17,7 @@ class NovelReaderPreferences {
   const NovelReaderPreferences({
     NovelPageTurnMode? turnMode,
     NovelReaderMode? mode,
-    this.fontFamily = '',
+    this.fontFamily = NovelFontIds.notoSerifSc,
     this.fontSize = 18,
     this.lineHeight = 1.7,
     this.paragraphSpacing = 10,
@@ -121,7 +122,7 @@ class NovelReaderPreferences {
   Map<String, Object?> toJson() => {
         'schema': 2,
         'turnMode': turnMode.name,
-        'fontFamily': fontFamily,
+        'fontFamily': normalizeNovelFontId(fontFamily),
         'fontSize': fontSize,
         'lineHeight': lineHeight,
         'paragraphSpacing': paragraphSpacing,
@@ -150,7 +151,7 @@ class NovelReaderPreferences {
             ? NovelPageTurnMode.scroll
             : NovelPageTurnMode.curl,
       ),
-      fontFamily: json['fontFamily'] as String? ?? '',
+      fontFamily: normalizeNovelFontId(json['fontFamily']),
       fontSize: _clampedDouble(json['fontSize'], 18, 12, 32),
       lineHeight: _clampedDouble(json['lineHeight'], 1.7, 1.2, 2.4),
       paragraphSpacing: _clampedDouble(json['paragraphSpacing'], 10, 0, 30),

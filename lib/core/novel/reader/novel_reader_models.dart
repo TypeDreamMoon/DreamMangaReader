@@ -60,12 +60,14 @@ class NovelPageMetrics {
     required this.currentPageIndex,
     required this.viewport,
     required this.layoutFingerprint,
+    this.visibleTextLength = 0,
   });
 
   final int pageCount;
   final int currentPageIndex;
   final NovelViewport viewport;
   final String layoutFingerprint;
+  final int visibleTextLength;
 
   @override
   bool operator ==(Object other) =>
@@ -74,11 +76,17 @@ class NovelPageMetrics {
           pageCount == other.pageCount &&
           currentPageIndex == other.currentPageIndex &&
           viewport == other.viewport &&
-          layoutFingerprint == other.layoutFingerprint;
+          layoutFingerprint == other.layoutFingerprint &&
+          visibleTextLength == other.visibleTextLength;
 
   @override
-  int get hashCode =>
-      Object.hash(pageCount, currentPageIndex, viewport, layoutFingerprint);
+  int get hashCode => Object.hash(
+        pageCount,
+        currentPageIndex,
+        viewport,
+        layoutFingerprint,
+        visibleTextLength,
+      );
 }
 
 class NovelPageFrame {

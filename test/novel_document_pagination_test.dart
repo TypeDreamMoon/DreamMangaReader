@@ -31,6 +31,7 @@ void main() {
       'viewportHeight': 1920,
       'devicePixelRatio': 2.75,
       'layoutFingerprint': 'layout-v2',
+      'visibleTextLength': 0,
     });
 
     expect(
@@ -44,8 +45,10 @@ void main() {
           devicePixelRatio: 2.75,
         ),
         layoutFingerprint: 'layout-v2',
+        visibleTextLength: 0,
       ),
     );
+    expect(metrics!.visibleTextLength, 0);
     expect(parseNovelPageMetrics(null), isNull);
   });
 

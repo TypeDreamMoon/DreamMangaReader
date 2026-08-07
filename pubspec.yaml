@@ -134,9 +134,18 @@ flutter:
   assets:
     - assets/logo.png
     - assets/data/t2s.txt
+    - assets/fonts/
 
   shaders:
     - assets/shaders/novel_page_curl.frag
+
+  fonts:
+    - family: DMRNotoSerifSC
+      fonts:
+        - asset: assets/fonts/NotoSerifSC-Regular.otf
+    - family: DMRLXGWWenKai
+      fonts:
+        - asset: assets/fonts/LXGWWenKai-Regular.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

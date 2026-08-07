@@ -110,6 +110,11 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _controller.onLocatorChanged = _saveLocator;
     _controller.onSelectionChanged = _onSelectionChanged;
     _controller.onCaptureStateChanged = _onCaptureStateChanged;
+    final webController = _controller;
+    if (webController is WebNovelDocumentController) {
+      webController.onFontFallback = _onFontFallback;
+      webController.onRecoverableError = _showRecoverableReaderError;
+    }
     _setWakeLock(_preferences.keepScreenOn);
     if (Platform.isAndroid) {
       ReaderKeys.setHandler((direction) {
@@ -589,6 +594,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   void _queuePreferences(NovelReaderPreferences preferences) {
     if (!mounted) return;
+    final previousPreferences = _preferences;
     final generation = ++_settingsGeneration;
     _preferences = preferences;
     _retainFrameWhileLoading = _currentFrame != null;
@@ -603,11 +609,44 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       if (!mounted || generation != _settingsGeneration) return;
       await Future<void>.delayed(const Duration(milliseconds: 32));
       if (!mounted || generation != _settingsGeneration) return;
+      if (preferences.fontFamily != previousPreferences.fontFamily) {
+        final metrics = await _controller.pageMetrics();
+        if (!mounted || generation != _settingsGeneration) return;
+        if (metrics.visibleTextLength == 0) {
+          await _controller.applyPreferences(previousPreferences);
+          if (!mounted || generation != _settingsGeneration) return;
+          _preferences = previousPreferences;
+          _library.setPreferences(previousPreferences);
+          _setWakeLock(previousPreferences.keepScreenOn);
+          setState(() {});
+          await _controller.restoreLocator(locator);
+          if (!mounted || generation != _settingsGeneration) return;
+          _showRecoverableReaderError('字体加载失败，已恢复上一字体。');
+          _refreshPageFramesAfterLayout();
+          _scheduleControlsHide();
+          return;
+        }
+      }
       await _controller.restoreLocator(locator);
       if (!mounted || generation != _settingsGeneration) return;
       _refreshPageFramesAfterLayout();
       _scheduleControlsHide();
     }).catchError((_) {});
+  }
+
+  void _onFontFallback(String fontId) {
+    if (!mounted || _preferences.fontFamily == fontId) return;
+    final restored = _preferences.copyWith(fontFamily: fontId);
+    _preferences = restored;
+    _library.setPreferences(restored);
+    setState(() {});
+  }
+
+  void _showRecoverableReaderError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _refreshPageFramesAfterLayout() {
@@ -1041,6 +1080,11 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _controller.onLocatorChanged = null;
     _controller.onSelectionChanged = null;
     _controller.onCaptureStateChanged = null;
+    final webController = _controller;
+    if (webController is WebNovelDocumentController) {
+      webController.onFontFallback = null;
+      webController.onRecoverableError = null;
+    }
     unawaited(_library.flushPending());
     if (Platform.isAndroid) {
       unawaited(ReaderKeys.setActive(false));

@@ -1,5 +1,6 @@
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,7 +88,7 @@ void main() {
 
     expect(preferences.turnMode, NovelPageTurnMode.curl);
     expect(preferences.mode, NovelReaderMode.paged);
-    expect(preferences.fontFamily, 'serif');
+    expect(preferences.fontFamily, NovelFontIds.notoSerifSc);
     expect(preferences.fontSize, 20);
     expect(preferences.lineHeight, 1.8);
     expect(preferences.paragraphSpacing, 14);
@@ -117,7 +118,7 @@ void main() {
   test('schema v2 preferences round trip without legacy keys', () {
     const preferences = NovelReaderPreferences(
       turnMode: NovelPageTurnMode.cover,
-      fontFamily: 'Novel Font',
+      fontFamily: NovelFontIds.lxgwWenKai,
       fontSize: 24,
       lineHeight: 2,
       paragraphSpacing: 12,
@@ -145,7 +146,7 @@ void main() {
     expect(json['turnMode'], 'cover');
     expect(json, isNot(contains('mode')));
     expect(restored.turnMode, NovelPageTurnMode.cover);
-    expect(restored.fontFamily, 'Novel Font');
+    expect(restored.fontFamily, NovelFontIds.lxgwWenKai);
     expect(restored.fontSize, 24);
     expect(restored.lineHeight, 2);
     expect(restored.paragraphSpacing, 12);

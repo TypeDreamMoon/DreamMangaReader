@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
@@ -33,6 +34,8 @@ class _FakeController implements NovelDocumentController {
   final List<String> loadedChapterIds = [];
   Completer<void>? captureGate;
   int applyPreferenceCalls = 0;
+  int visibleTextLength = 100;
+  final List<NovelReaderPreferences> preferenceHistory = [];
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -50,6 +53,7 @@ class _FakeController implements NovelDocumentController {
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
     applyPreferenceCalls++;
     appliedPreferences = preferences;
+    preferenceHistory.add(preferences);
   }
 
   @override
@@ -78,6 +82,7 @@ class _FakeController implements NovelDocumentController {
         currentPageIndex: visiblePageIndex,
         viewport: const NovelViewport(width: 1000, height: 1600),
         layoutFingerprint: 'test-layout',
+        visibleTextLength: visibleTextLength,
       );
 
   @override
@@ -295,6 +300,33 @@ void main() {
     expect(controller.appliedPreferences?.mode, NovelReaderMode.scroll);
     expect(controller.lastRestored?.blockId, 'dmr-7');
     expect(controller.lastRestored?.fraction, .3);
+  });
+
+  testWidgets('zero visible text rolls a font change back with an error',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+    controller.visibleTextLength = 0;
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontFamily: NovelFontIds.lxgwWenKai),
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.store.preferences.fontFamily, NovelFontIds.notoSerifSc);
+    expect(
+        controller.preferenceHistory.last.fontFamily, NovelFontIds.notoSerifSc);
+    expect(find.textContaining('字体加载失败'), findsOneWidget);
   });
 
   testWidgets('directory selection loads the selected chapter', (tester) async {

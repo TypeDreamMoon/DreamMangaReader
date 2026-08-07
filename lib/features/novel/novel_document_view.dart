@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../app/novel_library_store.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_document_sanitizer.dart';
+import '../../core/novel/reader/novel_font_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 
 export '../../core/novel/reader/novel_reader_models.dart'
@@ -43,12 +44,20 @@ abstract interface class NovelDocumentController {
 }
 
 class WebNovelDocumentController implements NovelDocumentController {
+  WebNovelDocumentController({NovelFontStore? fontStore})
+      : _fontStore = fontStore ?? NovelFontStore();
+
+  final NovelFontStore _fontStore;
   InAppWebViewController? _webView;
   String _chapterId = '';
   NovelDocument? _pendingDocument;
   NovelReaderPreferences _preferences = const NovelReaderPreferences();
   NovelLocator? _pendingRestore;
   bool _loaded = false;
+  String _appliedFontId = NovelFontIds.notoSerifSc;
+
+  ValueChanged<String>? onRecoverableError;
+  ValueChanged<String>? onFontFallback;
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -240,12 +249,40 @@ class WebNovelDocumentController implements NovelDocumentController {
 
   @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
-    _preferences = preferences;
+    final requestedId = normalizeNovelFontId(preferences.fontFamily);
+    final font = await _fontStore.resolveForUse(requestedId);
+    var applied = preferences.copyWith(fontFamily: font.id);
+    if (font.id != requestedId) {
+      onFontFallback?.call(font.id);
+      onRecoverableError?.call('所选字体文件已不可用，已恢复内置字体。');
+    }
+    _preferences = applied;
     final webView = _webView;
     if (webView == null || !_loaded) return;
+    final previous = _preferences.copyWith(fontFamily: _appliedFontId);
+    await _applyPreferencesToWebView(webView, applied, font);
+    final metrics = await pageMetrics();
+    if (font.id != _appliedFontId && metrics.visibleTextLength == 0) {
+      final previousFont = await _fontStore.resolveForUse(_appliedFontId);
+      applied = previous.copyWith(fontFamily: previousFont.id);
+      await _applyPreferencesToWebView(webView, applied, previousFont);
+      _preferences = applied;
+      onFontFallback?.call(previousFont.id);
+      onRecoverableError?.call('字体加载后正文不可见，已恢复上一字体。');
+      return;
+    }
+    _appliedFontId = font.id;
+  }
+
+  Future<void> _applyPreferencesToWebView(
+    InAppWebViewController webView,
+    NovelReaderPreferences preferences,
+    NovelFontRecord font,
+  ) async {
     final payload = jsonEncode({
       'mode': preferences.mode.name,
-      'fontFamily': preferences.fontFamily,
+      'fontFamily': font.cssFamily,
+      'fontFaceCss': buildNovelFontFaceCss(font),
       'fontSize': preferences.fontSize,
       'lineHeight': preferences.lineHeight,
       'paragraphSpacing': preferences.paragraphSpacing,
@@ -306,6 +343,19 @@ class NovelDocumentView extends StatefulWidget {
   State<NovelDocumentView> createState() => _NovelDocumentViewState();
 }
 
+InAppWebViewSettings buildNovelDocumentWebViewSettings() =>
+    InAppWebViewSettings(
+      javaScriptEnabled: true,
+      useShouldOverrideUrlLoading: true,
+      supportZoom: false,
+      disableContextMenu: true,
+      transparentBackground: true,
+      horizontalScrollBarEnabled: false,
+      verticalScrollBarEnabled: false,
+      allowFileAccess: true,
+      allowFileAccessFromFileURLs: true,
+    );
+
 class _NovelDocumentViewState extends State<NovelDocumentView> {
   static Future<WebViewEnvironment?>? _environmentFuture;
 
@@ -337,15 +387,7 @@ class _NovelDocumentViewState extends State<NovelDocumentView> {
         return InAppWebView(
           webViewEnvironment: snapshot.data,
           initialData: InAppWebViewInitialData(data: _htmlShell('')),
-          initialSettings: InAppWebViewSettings(
-            javaScriptEnabled: true,
-            useShouldOverrideUrlLoading: true,
-            supportZoom: false,
-            disableContextMenu: true,
-            transparentBackground: true,
-            horizontalScrollBarEnabled: false,
-            verticalScrollBarEnabled: false,
-          ),
+          initialSettings: buildNovelDocumentWebViewSettings(),
           onWebViewCreated: widget.controller.attach,
           onLoadStop: (_, __) => widget.controller.onLoadStop(),
           shouldOverrideUrlLoading: (_, __) async =>
@@ -382,6 +424,8 @@ NovelPageMetrics? parseNovelPageMetrics(Object? value) {
         devicePixelRatio: pixelRatio <= 0 ? 1 : pixelRatio,
       ),
       layoutFingerprint: map['layoutFingerprint']?.toString() ?? '',
+      visibleTextLength:
+          ((map['visibleTextLength'] as num?)?.toInt() ?? 0).clamp(0, 1 << 31),
     );
   } catch (_) {
     return null;
@@ -518,7 +562,14 @@ const novelReaderBridgeScript = r'''
     viewportWidth: innerWidth,
     viewportHeight: innerHeight,
     devicePixelRatio: devicePixelRatio || 1,
-    layoutFingerprint: layoutFingerprint()
+    layoutFingerprint: layoutFingerprint(),
+    visibleTextLength: [...document.querySelectorAll('[data-dmr-block]')]
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.right > 0 && rect.left < innerWidth &&
+          rect.bottom > 0 && rect.top < innerHeight;
+      })
+      .reduce((total, el) => total + String(el.textContent || '').trim().length, 0)
   });
   const textNodes = (block) => {
     const nodes = [];
@@ -676,7 +727,7 @@ const novelReaderBridgeScript = r'''
       window.flutter_inappwebview?.callHandler('dmrLocator', captureAnchor());
     }, 120);
   };
-  window.__dmrApply = (p) => {
+  window.__dmrApply = async (p) => {
     mode = p.mode === 'scroll' ? 'scroll' : 'paged';
     document.documentElement.dataset.mode = mode;
     document.body.dataset.dmrLayout = JSON.stringify([
@@ -702,12 +753,18 @@ const novelReaderBridgeScript = r'''
     }[p.theme] || ['#f3ead3', '#3e3427'];
     const family = String(p.fontFamily || '').replace(/["'\\]/g, '');
     document.getElementById('dmr-style').textContent = `
+      ${String(p.fontFaceCss || '')}
       *{box-sizing:border-box} html{background:${colors[0]};color:${colors[1]}}
       body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:${p.topMargin}px var(--dmr-side) ${p.bottomMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere;filter:brightness(${p.brightness})}
       p{margin:0 0 ${p.paragraphSpacing}px;text-indent:${p.firstLineIndent}em;text-align:${p.textAlignment === 'justify' ? 'justify' : 'start'}} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
       html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;
+    if (family && document.fonts?.load) {
+      try { await document.fonts.load(`1em "${family}"`); } catch (_) {}
+    }
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return pageMetrics();
   };
   window.__dmrTurn = (direction) => {
     const m = scrollMetrics();
