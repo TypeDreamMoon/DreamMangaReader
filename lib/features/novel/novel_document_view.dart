@@ -881,11 +881,14 @@ const novelReaderBridgeScript = r'''
   const documentTextMap = () => {
     const entries = [];
     let text = '';
-    for (const block of blocks()) {
-      const value = block.textContent || '';
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.parentElement?.closest?.('[data-dmr-block]')) continue;
+      const value = node.textContent || '';
       const start = text.length;
       text += value;
-      entries.push({block, start, end: text.length});
+      entries.push({node, start, end: text.length});
     }
     return {text, entries};
   };
@@ -893,11 +896,24 @@ const novelReaderBridgeScript = r'''
     const offset = Math.max(0, Math.min(mapping.text.length, Number(rawOffset) || 0));
     for (const entry of mapping.entries) {
       if (offset <= entry.end) {
-        return {block: entry.block, offset: offset - entry.start};
+        return {node: entry.node, offset: offset - entry.start};
       }
     }
     const entry = mapping.entries.at(-1);
-    return entry ? {block: entry.block, offset: entry.end - entry.start} : null;
+    return entry ? {node: entry.node, offset: entry.end - entry.start} : null;
+  };
+  const rangeFromDocumentOffsets = (mapping, startOffset, endOffset) => {
+    try {
+      const start = pointAtDocumentOffset(mapping, startOffset);
+      const end = pointAtDocumentOffset(mapping, endOffset);
+      if (!start || !end) return null;
+      const range = document.createRange();
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset);
+      return range.collapsed ? null : range;
+    } catch (_) {
+      return null;
+    }
   };
   const directRange = (annotation) => {
     const start = annotation.start || {};
@@ -965,16 +981,11 @@ const novelReaderBridgeScript = r'''
       );
       if ((!prefix || before.endsWith(prefix)) &&
           (!suffix || after.startsWith(suffix))) {
-        const start = pointAtDocumentOffset(mapping, startDocumentOffset);
-        const end = pointAtDocumentOffset(mapping, endDocumentOffset);
-        if (start && end) {
-          return rangeFromOffsets(
-            start.block,
-            start.offset,
-            end.block,
-            end.offset
-          );
-        }
+        return rangeFromDocumentOffsets(
+          mapping,
+          startDocumentOffset,
+          endDocumentOffset
+        );
       }
       from = startDocumentOffset + 1;
     }

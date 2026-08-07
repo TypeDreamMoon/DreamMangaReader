@@ -119,6 +119,11 @@ void main() {
     expect(novelReaderBridgeScript, contains('pointAtDocumentOffset'));
     expect(novelReaderBridgeScript, contains('startDocumentOffset'));
     expect(novelReaderBridgeScript, contains('endDocumentOffset'));
+    expect(
+      novelReaderBridgeScript,
+      contains(
+          'document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)'),
+    );
   });
 
   test('sanitized documents assign stable IDs to common text blocks', () {
