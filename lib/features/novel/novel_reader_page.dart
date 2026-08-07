@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -66,6 +67,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   late int _chapterIndex = widget.initialIndex;
   final FocusNode _focusNode = FocusNode(debugLabel: 'novel-reader');
   final NovelPageTurnController _turnController = NovelPageTurnController();
+  final Battery _battery = Battery();
   late final NovelPageCache _pageCache = NovelPageCache(
     byteBudget: Platform.isAndroid ? 48 * 1024 * 1024 : 96 * 1024 * 1024,
   );
@@ -73,6 +75,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   Future<void> _settingsQueue = Future.value();
   int _settingsGeneration = 0;
   Timer? _controlsTimer;
+  Timer? _statusTimer;
   bool _showControls = false;
   bool _controlsPaused = false;
   bool _loading = true;
@@ -90,6 +93,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   NovelTurnState _turnState = const NovelTurnState.idle();
   NovelTurnDecision? _settlement;
   int _pageGeneration = 0;
+  DateTime _statusNow = DateTime.now();
+  int? _batteryLevel;
 
   NovelChapter get _chapter => widget.chapters[_chapterIndex];
 
@@ -118,6 +123,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onRecoverableError = _showRecoverableReaderError;
     }
     _setWakeLock(_preferences.keepScreenOn);
+    _startStatusUpdates();
     if (Platform.isAndroid) {
       ReaderKeys.setHandler((direction) {
         if (!mounted) return;
@@ -130,6 +136,38 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_loadChapter());
     });
+  }
+
+  void _startStatusUpdates() {
+    unawaited(_refreshReaderStatus());
+    _statusTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshReaderStatus()),
+    );
+  }
+
+  Future<void> _refreshReaderStatus() async {
+    final now = DateTime.now();
+    var batteryLevel = _batteryLevel;
+    if (_preferences.showBattery) {
+      try {
+        batteryLevel = await _battery.batteryLevel;
+      } catch (_) {
+        batteryLevel = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _statusNow = now;
+      _batteryLevel = batteryLevel;
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshReaderStatus());
+    }
   }
 
   Future<bool> _loadChapter({
@@ -579,6 +617,45 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _hideReaderControls();
   }
 
+  Future<void> _jumpChapter(int delta) async {
+    if (_loading) return;
+    final targetIndex = _chapterIndex + delta;
+    if (targetIndex < 0 || targetIndex >= widget.chapters.length) return;
+    final previousIndex = _chapterIndex;
+    final previousFraction = _chapterFraction;
+    final captured = await _controller.captureLocator();
+    if (!mounted) return;
+    final previousLocator = captured.chapterId == _chapter.id
+        ? captured
+        : NovelLocator(
+            chapterId: _chapter.id,
+            fraction: previousFraction,
+          );
+    final target = widget.chapters[targetIndex];
+    final targetLocator = NovelLocator(chapterId: target.id);
+    setState(() {
+      _chapterIndex = targetIndex;
+      _chapterFraction = 0;
+      _progressPreview = null;
+    });
+    final loaded = await _loadChapter(
+      restore: targetLocator,
+      retainCurrentFrame: _currentFrame != null,
+    );
+    if (loaded) {
+      _saveLocator(targetLocator);
+      _hideReaderControls();
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _chapterIndex = previousIndex;
+      _chapterFraction = previousFraction;
+      _progressPreview = null;
+    });
+    await _loadChapter(restore: previousLocator);
+  }
+
   void _saveLocator(NovelLocator locator) {
     if (_captureActive || _turnController.state.phase != NovelTurnPhase.idle) {
       return;
@@ -602,6 +679,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _retainFrameWhileLoading = _currentFrame != null;
     _library.setPreferences(preferences);
     _setWakeLock(preferences.keepScreenOn);
+    if (preferences.showBattery != previousPreferences.showBattery ||
+        preferences.showTime != previousPreferences.showTime) {
+      unawaited(_refreshReaderStatus());
+    }
     setState(() {});
     _settingsQueue = _settingsQueue.then((_) async {
       NovelLocator? locator;
@@ -1108,14 +1189,36 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                     onRetry: _loadChapter,
                   ),
                 ),
+              NovelReaderStatusOverlay(
+                visible: !_showControls && !_loading && _error == null,
+                chapterTitle: _chapter.title,
+                currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
+                pageCount: _pageMetrics?.pageCount ?? 1,
+                bookProgress: _bookProgress,
+                now: _statusNow,
+                batteryLevel: _batteryLevel,
+                showChapterName: _preferences.showChapterName,
+                showPageNumber: _preferences.showPageNumber,
+                showBookProgress: _preferences.showBookProgress,
+                showTime: _preferences.showTime,
+                showBattery: _preferences.showBattery,
+                foregroundColor: Color(profile.foregroundArgb),
+              ),
               NovelReaderChrome(
                 visible: _showControls,
                 bookTitle: widget.novel.title,
                 chapterTitle: _chapter.title,
                 progress: _progressPreview ?? _bookProgress,
                 previewLabel: _progressLabel(context),
+                canPreviousChapter: _chapterIndex > 0,
+                canNextChapter: _chapterIndex < widget.chapters.length - 1,
                 onBack: () => Navigator.maybePop(context),
+                onBookmark: () {},
+                onMore: () {},
+                onPreviousChapter: () => unawaited(_jumpChapter(-1)),
+                onNextChapter: () => unawaited(_jumpChapter(1)),
                 onDirectory: () => unawaited(_openDirectory()),
+                onSearch: () {},
                 onTheme: () => unawaited(_openTheme()),
                 onSettings: () => unawaited(_openSettings()),
                 onProgressChanged: _onProgressChanged,
@@ -1136,6 +1239,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     WidgetsBinding.instance.removeObserver(this);
     _settingsGeneration++;
     _controlsTimer?.cancel();
+    _statusTimer?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;
     _controller.onSelectionChanged = null;

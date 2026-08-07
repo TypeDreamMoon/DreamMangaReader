@@ -441,6 +441,29 @@ void main() {
     expect(controller.loadedChapterId, 'c2');
   });
 
+  testWidgets('chapter buttons jump directly between chapters', (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-next-chapter')));
+    await tester.pumpAndSettle();
+    expect(controller.loadedChapterId, 'c2');
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-previous-chapter')));
+    await tester.pumpAndSettle();
+    expect(controller.loadedChapterId, 'c1');
+  });
+
   testWidgets('wide reader directory opens as a side panel', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 720));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -535,6 +558,28 @@ void main() {
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
   });
 
+  testWidgets('reader mounts configured status items outside chrome',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(
+        showBattery: false,
+        toolbarAutoHideSeconds: 0,
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+    expect(find.byKey(const Key('novel-status-chapter')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-page')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-progress')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-time')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-battery')), findsNothing);
+  });
+
   testWidgets('reader theme drives solid chrome and system bar contrast',
       (tester) async {
     final controller = _FakeController();
@@ -589,6 +634,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 999));
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+  });
+
+  testWidgets('open reader sheet pauses chrome auto-hide', (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 1),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-directory')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
   });
 

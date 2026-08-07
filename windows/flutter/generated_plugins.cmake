@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  battery_plus
   charset_converter
   desktop_webview_window
   flutter_inappwebview_windows
