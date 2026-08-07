@@ -77,8 +77,7 @@ class NovelDownloadsView extends StatelessWidget {
         _formatBytes(bytes),
       ),
       if (activeCount > 0) context.l10n.novel_downloadsActive(activeCount),
-      if (failureCount > 0)
-        context.l10n.novel_downloadsFailures(failureCount),
+      if (failureCount > 0) context.l10n.novel_downloadsFailures(failureCount),
     ];
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -259,26 +258,33 @@ class _OfflineNovelPage extends StatelessWidget {
     final chapters =
         records.map((record) => record.chapter).toList(growable: false);
     final offlineDeletedMessage = context.l10n.novel_offlineChapterDeleted;
+    Future<NovelDocument?> loadCached(NovelChapter chapter) async {
+      final cached = await store.localDocument(
+        group.source.id,
+        group.novel.id,
+        chapter.id,
+      );
+      if (cached == null) return null;
+      return NovelDocument(
+        format: NovelDocumentFormat.html,
+        content: cached.html,
+        baseUrl: Uri.directory(cached.directory).toString(),
+      );
+    }
+
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: group.novel,
         chapters: chapters,
         initialIndex: index,
         libraryKey: NovelIdentity.remote(group.source.id, group.novel.id).key,
+        loadCachedDocument: loadCached,
         loadDocument: (chapter) async {
-          final cached = await store.localDocument(
-            group.source.id,
-            group.novel.id,
-            chapter.id,
-          );
+          final cached = await loadCached(chapter);
           if (cached == null) {
             throw StateError(offlineDeletedMessage);
           }
-          return NovelDocument(
-            format: NovelDocumentFormat.html,
-            content: cached.html,
-            baseUrl: Uri.directory(cached.directory).toString(),
-          );
+          return cached;
         },
       ),
     ));

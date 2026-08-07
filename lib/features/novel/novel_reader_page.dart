@@ -17,6 +17,7 @@ import '../../core/novel/reader/novel_reader_data.dart';
 import '../../core/novel/reader/novel_reader_data_store.dart';
 import '../../core/novel/reader/novel_reader_models.dart';
 import '../../core/novel/reader/novel_reader_theme.dart';
+import '../../core/novel/reader/novel_search_index.dart';
 import '../../core/platform/reader_keys.dart';
 import '../../ui/ui.dart';
 import 'novel_book_progress.dart';
@@ -26,6 +27,7 @@ import 'novel_reader_chrome.dart';
 import 'novel_reader_input.dart';
 import 'novel_reader_settings_sheet.dart';
 import 'novel_reader_selection_bar.dart';
+import 'novel_reader_search_sheet.dart';
 import 'novel_reader_tools_sheet.dart';
 
 typedef NovelDocumentLoader = Future<NovelDocument> Function(
@@ -47,6 +49,8 @@ class NovelReaderPage extends StatefulWidget {
     this.controller,
     this.documentViewBuilder,
     this.readerDataStore,
+    this.searchIndex,
+    this.loadCachedDocument,
   }) : assert(initialIndex >= 0 && initialIndex < chapters.length);
 
   final Novel novel;
@@ -57,6 +61,8 @@ class NovelReaderPage extends StatefulWidget {
   final NovelDocumentController? controller;
   final NovelDocumentViewBuilder? documentViewBuilder;
   final NovelReaderDataStore? readerDataStore;
+  final NovelSearchIndex? searchIndex;
+  final NovelSearchDocumentLoader? loadCachedDocument;
 
   @override
   State<NovelReaderPage> createState() => _NovelReaderPageState();
@@ -70,8 +76,11 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       widget.controller ?? WebNovelDocumentController();
   late final NovelReaderDataStore _readerDataStore =
       widget.readerDataStore ?? NovelReaderDataStore();
+  late final NovelSearchIndex _searchIndex =
+      widget.searchIndex ?? NovelSearchIndex();
   late NovelReaderBookData _readerData =
       NovelReaderBookData.empty(widget.libraryKey);
+  final Map<String, NovelDocument> _loadedDocuments = {};
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
   late NovelReaderPreferences _preferences = _library.preferences;
   late int _chapterIndex = widget.initialIndex;
@@ -228,6 +237,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     try {
       final document = await widget.loadDocument(chapter);
       if (!mounted || chapter.id != _chapter.id) return false;
+      _loadedDocuments[chapter.id] = document;
       await _controller.loadChapter(chapter.id, document, _preferences);
       await _applyChapterAnnotations();
       final locator = restore ?? _library.progressFor(widget.libraryKey);
@@ -1032,6 +1042,51 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
   }
 
+  Future<NovelDocument?> _loadCachedSearchDocument(
+    NovelChapter chapter,
+  ) async {
+    final loader = widget.loadCachedDocument;
+    if (loader != null) return loader(chapter);
+    return _loadedDocuments[chapter.id];
+  }
+
+  Future<void> _openSearch({String? initialQuery}) async {
+    _pauseControls();
+    NovelSearchResult? selected;
+    try {
+      selected = await showModalBottomSheet<NovelSearchResult>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: SizedBox(
+            height: (MediaQuery.sizeOf(sheetContext).height * .9)
+                .clamp(400, 760)
+                .toDouble(),
+            child: NovelReaderSearchSheet(
+              index: _searchIndex,
+              bookKey: widget.libraryKey,
+              sourceFingerprint: novelSearchSourceFingerprint(widget.chapters),
+              chapters: widget.chapters,
+              loadCachedDocument: _loadCachedSearchDocument,
+              fetchDocument: widget.loadDocument,
+              initialQuery: initialQuery,
+              onResultSelected: (result) {
+                Navigator.pop(sheetContext, result);
+              },
+            ),
+          ),
+        ),
+      );
+    } finally {
+      _resumeControls();
+    }
+    if (selected == null || !mounted) return;
+    await _clearSelection();
+    await _goToLocator(selected.locator);
+    await _controller.showSearchResult(selected.locator);
+  }
+
   Future<void> _exitReader() async {
     await _flushReaderState();
     if (mounted) await Navigator.maybePop(context);
@@ -1487,7 +1542,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                 onPreviousChapter: () => unawaited(_jumpChapter(-1)),
                 onNextChapter: () => unawaited(_jumpChapter(1)),
                 onDirectory: () => unawaited(_openDirectory()),
-                onSearch: () {},
+                onSearch: () => unawaited(_openSearch()),
                 onTheme: () => unawaited(_openTheme()),
                 onSettings: () => unawaited(_openSettings()),
                 onProgressChanged: _onProgressChanged,
@@ -1519,7 +1574,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                               onHighlight: () => unawaited(_createHighlight()),
                               onNote: () =>
                                   unawaited(_createNoteFromSelection()),
-                              onSearch: () {},
+                              onSearch: () => unawaited(
+                                _openSearch(initialQuery: selection.text),
+                              ),
                               backgroundColor: Color(profile.chromeArgb),
                               foregroundColor:
                                   Color(profile.chromeForegroundArgb),

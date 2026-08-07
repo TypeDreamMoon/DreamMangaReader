@@ -10,6 +10,7 @@ import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_search_index.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_input.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
@@ -46,6 +47,7 @@ class _FakeController implements NovelDocumentController {
   String? failApplyingFontId;
   final List<NovelReaderPreferences> preferenceHistory = [];
   final List<NovelAnnotation> appliedAnnotations = [];
+  final List<NovelLocator> searchHighlights = [];
   int clearSelectionCalls = 0;
 
   @override
@@ -78,6 +80,11 @@ class _FakeController implements NovelDocumentController {
   Future<void> clearSelection() async {
     clearSelectionCalls++;
     onSelectionChanged?.call(null);
+  }
+
+  @override
+  Future<void> showSearchResult(NovelLocator locator) async {
+    searchHighlights.add(locator);
   }
 
   @override
@@ -178,6 +185,8 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
   NovelDocumentLoader? loadDocument,
   NovelReaderDataStore? readerDataStore,
+  NovelSearchIndex? searchIndex,
+  NovelSearchDocumentLoader? loadCachedDocument,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -202,6 +211,8 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
         controller: controller,
         documentViewBuilder: (_, __) => const ColoredBox(color: Colors.black),
         readerDataStore: readerDataStore,
+        searchIndex: searchIndex,
+        loadCachedDocument: loadCachedDocument,
         loadDocument: loadDocument ??
             (chapter) async => NovelDocument(
                   format: NovelDocumentFormat.html,
@@ -360,6 +371,40 @@ void main() {
       tester.widget<NovelReaderInput>(find.byType(NovelReaderInput)).blocked,
       isTrue,
     );
+  });
+
+  testWidgets('reader search opens results and restores their locator',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      searchIndex: _ImmediateSearchIndex(),
+      loadCachedDocument: (_) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: '目标正文',
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-search')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-search-query')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('novel-search-query')),
+      '目标',
+    );
+    await tester.tap(find.byKey(const Key('novel-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('前文目标后文'));
+    await tester.pumpAndSettle();
+
+    expect(controller.lastRestored?.chapterId, 'c2');
+    expect(controller.lastRestored?.quote, '目标');
+    expect(controller.searchHighlights.single.quote, '目标');
   });
 
   testWidgets('cached paging saves progress only after settlement',
@@ -903,4 +948,32 @@ void main() {
     expect(novelReaderBridgeScript, contains("addEventListener('wheel'"));
     expect(novelReaderBridgeScript, contains('{passive:false}'));
   });
+}
+
+class _ImmediateSearchIndex extends NovelSearchIndex {
+  _ImmediateSearchIndex()
+      : super(rootDirectory: () async => Directory.systemTemp);
+
+  @override
+  Stream<NovelSearchEvent> search({
+    required String bookKey,
+    required String sourceFingerprint,
+    required List<NovelChapter> chapters,
+    required String query,
+    required NovelSearchDocumentLoader loadCachedDocument,
+    NovelSearchDocumentFetcher? fetchDocument,
+    bool fetchMissing = false,
+    NovelSearchCancellationToken? cancellation,
+  }) async* {
+    yield NovelSearchResultBatch([
+      const NovelSearchResult(
+        chapterId: 'c2',
+        chapterTitle: '第二章',
+        chapterIndex: 1,
+        snippet: '前文目标后文',
+        locator: NovelLocator(chapterId: 'c2', quote: '目标', fraction: .5),
+      ),
+    ]);
+    yield const NovelSearchCompleted(resultCount: 1);
+  }
 }

@@ -47,6 +47,7 @@ abstract interface class NovelDocumentController {
   Future<void> applyPreferences(NovelReaderPreferences preferences);
   Future<Set<String>> applyAnnotations(Iterable<NovelAnnotation> annotations);
   Future<void> clearSelection();
+  Future<void> showSearchResult(NovelLocator locator);
   Future<bool> nextPage();
   Future<bool> previousPage();
 }
@@ -364,6 +365,16 @@ class WebNovelDocumentController implements NovelDocumentController {
       );
     }
     onSelectionChanged?.call(null);
+  }
+
+  @override
+  Future<void> showSearchResult(NovelLocator locator) async {
+    final webView = _webView;
+    if (webView == null || !_loaded || locator.chapterId != _chapterId) return;
+    await webView.evaluateJavascript(
+      source: 'window.__dmrShowSearchResult && '
+          'window.__dmrShowSearchResult(${jsonEncode(locator.toJson())})',
+    );
   }
 
   Future<void> _applyPreferencesToWebView(
@@ -993,6 +1004,21 @@ const novelReaderBridgeScript = r'''
   };
   const resolveStoredRange = (annotation) =>
     directRange(annotation) || quoteRange(annotation);
+  let searchHighlightTimer = 0;
+  window.__dmrShowSearchResult = (locator) => {
+    if (!globalThis.Highlight || !CSS?.highlights) return false;
+    const quote = String(locator?.quote || '');
+    if (!quote) return false;
+    const range = quoteRange({quote, start: locator, end: locator});
+    if (!range) return false;
+    CSS.highlights.set('dmr-search', new Highlight(range));
+    clearTimeout(searchHighlightTimer);
+    searchHighlightTimer = setTimeout(
+      () => CSS.highlights.delete('dmr-search'),
+      4000
+    );
+    return true;
+  };
   window.__dmrApplyAnnotations = (annotations) => {
     const values = Array.isArray(annotations) ? annotations : [];
     const unresolved = [];
@@ -1077,6 +1103,7 @@ const novelReaderBridgeScript = r'''
       body{--dmr-side:max(${p.horizontalMargin}px, calc((100vw - 760px) / 2));margin:0;padding:${p.topMargin}px var(--dmr-side) ${p.bottomMargin}px;font-family:${family ? `'${family}',` : ''}serif;font-size:${p.fontSize}px;line-height:${p.lineHeight};background:${colors[0]};color:${colors[1]};letter-spacing:0;overflow-wrap:anywhere;filter:brightness(${p.brightness})}
       p{margin:0 0 ${p.paragraphSpacing}px;text-indent:${p.firstLineIndent}em;text-align:${p.textAlignment === 'justify' ? 'justify' : 'start'}} img{max-width:100%;height:auto} a{color:inherit} ruby rt{font-size:.55em}
       ::highlight(dmr-yellow){background:rgba(255,214,64,.52)} ::highlight(dmr-green){background:rgba(91,190,120,.46)} ::highlight(dmr-blue){background:rgba(77,154,235,.42)} ::highlight(dmr-pink){background:rgba(230,100,155,.42)}
+      ::highlight(dmr-search){background:rgba(255,152,0,.7);text-decoration:underline 2px}
       html[data-mode=paged]{overflow:hidden} html[data-mode=paged] body{height:100vh;column-width:calc(100vw - var(--dmr-side) - var(--dmr-side));column-gap:calc(var(--dmr-side) + var(--dmr-side));column-fill:auto;overflow:visible}
       html[data-mode=scroll]{overflow-y:auto;overflow-x:hidden} html[data-mode=scroll] body{min-height:100vh}
     `;

@@ -111,6 +111,7 @@ void main() {
     expect(novelReaderBridgeScript, contains('directRange'));
     expect(novelReaderBridgeScript, contains('quoteRange'));
     expect(novelReaderBridgeScript, contains('window.__dmrClearSelection'));
+    expect(novelReaderBridgeScript, contains('window.__dmrShowSearchResult'));
     expect(novelReaderBridgeScript, contains('end.suffix ='));
   });
 
