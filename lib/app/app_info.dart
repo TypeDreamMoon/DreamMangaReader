@@ -7,7 +7,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.8.0';
+  static const version = '1.9.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -17,6 +17,11 @@ class AppInfo {
     '漫画 + 番剧 + 小说:多源聚合、混合搜索 / 浏览',
     '小说阅读器:滚动 / 分页 · 整书进度跳转 · 宽屏侧边目录 · 工具栏自动隐藏',
     '小说排版:字号行距页边距、阅读主题、屏幕常亮 · 键盘 / 滚轮 / 触摸翻页',
+    '小说仿真翻页:仿真 / 覆盖 / 平移 / 无动画 · 单手翻页 · 自绘分页引擎',
+    '小说字体:内置思源宋体 / 霞鹜文楷 · 导入自定义 TTF / OTF 字体',
+    '小说背景:导入本地图片(裁剪 / 平铺 / 填充)· 纸张纹理强度 · 自动深浅字色',
+    '小说状态层:章节名 / 页码 / 全书进度 / 时间 / 真实电量可分别开关',
+    '小说全文搜索 · 书签与划线笔记 · 书签笔记可云同步(覆盖 / 追加)',
     '小说导入:本地 TXT(UTF-8 / GBK / Big5 自动识别)与可重排 EPUB',
     '番剧在线观看:HLS 播放器(libmpv)· 悬浮控制面板(选集/线路/倍速)',
     '番剧断线自愈:退避重连 → 刷新地址 → 自动降码率 / 换线路 · 本地分片缓存与预取',
