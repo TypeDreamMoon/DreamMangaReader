@@ -237,6 +237,13 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     final meta = _meta;
     final novel = _novel;
     final chapters = _chapters;
+    NovelLibraryScope.read(context).rememberRemote(NovelLibraryEntry.remote(
+      sourceId: meta.id,
+      novelId: novel.id,
+      title: novel.title,
+      authors: novel.authors,
+      cover: novel.cover,
+    ));
     final downloads = NovelDownloadScope.read(context);
     Future<NovelDocument?> loadCached(NovelChapter chapter) async {
       final cached = await downloads.localDocument(

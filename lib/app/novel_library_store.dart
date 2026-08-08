@@ -614,6 +614,19 @@ class NovelLibraryStore extends ChangeNotifier {
     return List.unmodifiable(values);
   }
 
+  void rememberRemote(NovelLibraryEntry entry) {
+    if (entry.origin != NovelOrigin.remote) {
+      throw ArgumentError.value(entry.key, 'entry', 'expected remote novel');
+    }
+    final current = _entries[entry.key];
+    _entries[entry.key] = entry.copyWith(
+      favorite: current?.favorite ?? entry.favorite,
+      addedAt: current?.addedAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+    _persistLibrary();
+    notifyListeners();
+  }
+
   void toggleRemoteFavorite(NovelLibraryEntry entry) {
     if (entry.origin != NovelOrigin.remote) {
       throw ArgumentError.value(entry.key, 'entry', 'expected remote novel');
