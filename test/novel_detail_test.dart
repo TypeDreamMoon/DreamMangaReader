@@ -201,6 +201,19 @@ void main() {
     expect(find.text('B1'), findsNothing);
   });
 
+  testWidgets('opening an unfavorited remote novel keeps it in history',
+      (tester) async {
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('A1'));
+
+    final entry = novelLibrary.entryFor('remote:a:na');
+    expect(entry, isNotNull);
+    expect(entry?.title, '测试小说');
+    expect(entry?.favorite, isFalse);
+  });
+
   testWidgets('novel detail uses manga-style wide split layout',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 720));

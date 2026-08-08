@@ -11,6 +11,7 @@ class FaultRoute {
     this.beforeChunk,
     this.redirectTo,
     this.redirectStatus = HttpStatus.movedTemporarily,
+    this.honorRanges = true,
   });
 
   final List<int> body;
@@ -22,6 +23,7 @@ class FaultRoute {
   /// 非空时该路由返回一个跳转而不是内容,用来验证上游准入策略是否逐跳校验。
   final String? redirectTo;
   final int redirectStatus;
+  final bool honorRanges;
 }
 
 class RecordedRequest {
@@ -73,11 +75,13 @@ class FaultHttpServer {
     List<int> bytes, {
     String contentType = 'application/octet-stream',
     int failuresBeforeSuccess = 0,
+    bool honorRanges = true,
   }) {
     routes[path] = FaultRoute(
       body: bytes,
       contentType: contentType,
       failuresBeforeSuccess: failuresBeforeSuccess,
+      honorRanges: honorRanges,
     );
   }
 
@@ -134,7 +138,7 @@ class FaultHttpServer {
     }
     var bytes = route.body;
     final range = request.headers.value(HttpHeaders.rangeHeader);
-    if (range != null) {
+    if (range != null && route.honorRanges) {
       final match = RegExp(r'^bytes=(\d+)-(\d+)$').firstMatch(range);
       if (match == null) {
         request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;

@@ -1,28 +1,57 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_search_index.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_native_page_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_native_page_turn_surface.dart';
+import 'package:dream_manga_reader/features/novel/novel_reader_input.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeController implements NovelDocumentController {
   _FakeController({
     this.locator = const NovelLocator(chapterId: 'c1'),
+    this.supportsPageFrames = false,
+    this.pageCount = 3,
+    this.turnsWithinDocument = true,
   });
 
   NovelLocator locator;
+  final bool supportsPageFrames;
+  final int pageCount;
+  final bool turnsWithinDocument;
+  int visiblePageIndex = 0;
+  final List<int> shownPages = [];
   NovelLocator? lastRestored;
   String? loadedChapterId;
   NovelReaderPreferences? appliedPreferences;
   final List<String> loadedChapterIds = [];
   Completer<void>? captureGate;
   int applyPreferenceCalls = 0;
+  int visibleTextLength = 100;
+  bool fontLoadFailed = false;
+  String? failApplyingFontId;
+  final List<NovelReaderPreferences> preferenceHistory = [];
+  final List<NovelAnnotation> appliedAnnotations = [];
+  final List<NovelLocator> searchHighlights = [];
+  int clearSelectionCalls = 0;
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -31,15 +60,84 @@ class _FakeController implements NovelDocumentController {
   ValueChanged<NovelLocator>? onLocatorChanged;
 
   @override
+  ValueChanged<NovelSelection?>? onSelectionChanged;
+
+  @override
+  ValueChanged<bool>? onCaptureStateChanged;
+
+  @override
+  ValueChanged<Set<String>>? onUnresolvedAnnotationsChanged;
+
+  @override
+  Future<Set<String>> applyAnnotations(
+    Iterable<NovelAnnotation> annotations,
+  ) async {
+    appliedAnnotations
+      ..clear()
+      ..addAll(annotations);
+    onUnresolvedAnnotationsChanged?.call(const {});
+    return const {};
+  }
+
+  @override
+  Future<void> clearSelection() async {
+    clearSelectionCalls++;
+    onSelectionChanged?.call(null);
+  }
+
+  @override
+  Future<void> showSearchResult(NovelLocator locator) async {
+    searchHighlights.add(locator);
+  }
+
+  @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
     applyPreferenceCalls++;
     appliedPreferences = preferences;
+    preferenceHistory.add(preferences);
+    if (preferences.fontFamily == failApplyingFontId) {
+      throw StateError('font apply failed');
+    }
   }
 
   @override
   Future<NovelLocator> captureLocator() async {
     await captureGate?.future;
     return locator;
+  }
+
+  @override
+  Future<NovelPageFrame?> capturePage(int pageIndex) async {
+    if (!supportsPageFrames) return null;
+    onCaptureStateChanged?.call(true);
+    try {
+      return _testPageFrame(
+        chapterId: loadedChapterId ?? locator.chapterId,
+        pageIndex: pageIndex,
+      );
+    } finally {
+      onCaptureStateChanged?.call(false);
+    }
+  }
+
+  @override
+  Future<NovelPageMetrics> pageMetrics() async => NovelPageMetrics(
+        pageCount: supportsPageFrames ? pageCount : 1,
+        currentPageIndex: visiblePageIndex,
+        viewport: const NovelViewport(width: 1000, height: 1600),
+        layoutFingerprint: 'test-layout',
+        visibleTextLength: visibleTextLength,
+        fontLoadFailed: fontLoadFailed,
+      );
+
+  @override
+  Future<void> showPage(int pageIndex) async {
+    visiblePageIndex = pageIndex;
+    shownPages.add(pageIndex);
+    locator = NovelLocator(
+      chapterId: loadedChapterId ?? locator.chapterId,
+      fraction: pageCount <= 1 ? 0 : pageIndex / (pageCount - 1),
+    );
   }
 
   @override
@@ -56,10 +154,10 @@ class _FakeController implements NovelDocumentController {
   }
 
   @override
-  Future<bool> nextPage() async => true;
+  Future<bool> nextPage() async => turnsWithinDocument;
 
   @override
-  Future<bool> previousPage() async => true;
+  Future<bool> previousPage() async => turnsWithinDocument;
 
   @override
   Future<void> restoreLocator(NovelLocator value) async {
@@ -68,9 +166,28 @@ class _FakeController implements NovelDocumentController {
   }
 }
 
+class _MemoryNovelReaderDataStore extends NovelReaderDataStore {
+  final Map<String, NovelReaderBookData> values = {};
+
+  @override
+  Future<NovelReaderBookData> loadBook(String bookKey) async =>
+      values.putIfAbsent(bookKey, () => NovelReaderBookData.empty(bookKey));
+
+  @override
+  void saveBook(NovelReaderBookData data) => values[data.bookKey] = data;
+
+  @override
+  Future<void> flushPending() async {}
+}
+
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
-  _FakeController controller, {
+  NovelDocumentController? controller, {
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
+  NovelDocumentLoader? loadDocument,
+  NovelReaderDataStore? readerDataStore,
+  NovelSearchIndex? searchIndex,
+  NovelSearchDocumentLoader? loadCachedDocument,
+  bool useDefaultDocumentView = false,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -93,20 +210,299 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
         initialIndex: 0,
         libraryKey: 'remote:s:n1',
         controller: controller,
-        documentViewBuilder: (_, __) => const ColoredBox(color: Colors.black),
-        loadDocument: (chapter) async => NovelDocument(
-          format: NovelDocumentFormat.html,
-          content: '<p>${chapter.title}</p>',
-        ),
+        documentViewBuilder: useDefaultDocumentView
+            ? null
+            : (_, __) => const ColoredBox(color: Colors.black),
+        readerDataStore: readerDataStore,
+        searchIndex: searchIndex,
+        loadCachedDocument: loadCachedDocument,
+        loadDocument: loadDocument ??
+            (chapter) async => NovelDocument(
+                  format: NovelDocumentFormat.html,
+                  content: '<p>${chapter.title}</p>',
+                ),
       ),
     ),
   );
   return (widget: widget, store: store);
 }
 
+NovelPageFrame _testPageFrame({
+  required String chapterId,
+  required int pageIndex,
+}) {
+  return NovelPageFrame(
+    key: NovelPageKey(
+      chapterId: chapterId,
+      pageIndex: pageIndex,
+      layoutFingerprint: 'test-layout',
+    ),
+    viewport: const NovelViewport(width: 1000, height: 1600),
+    bytes: base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+      'AAAADUlEQVR42mNk+M/wHwAF/gL+X1n0WQAAAABJRU5ErkJggg==',
+    ),
+  );
+}
+
+class _MissingNovelBackgroundStore extends NovelBackgroundStore {
+  @override
+  Future<NovelBackgroundRecord?> resolve(String id) async => null;
+}
+
+class _ImmediateNovelFontStore extends NovelFontStore {
+  @override
+  Future<NovelFontRecord> resolveForUse(String id) async => NovelFontRecord(
+        id: NovelFontIds.notoSerifSc,
+        displayName: 'Noto Serif SC',
+        cssFamily: 'DMR Noto Serif SC',
+        file: File('font.otf'),
+      );
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('selection highlight and toolbar bookmark persist reader data',
+      (tester) async {
+    final dataStore = _MemoryNovelReaderDataStore();
+    final controller = _FakeController(
+      locator: const NovelLocator(
+        chapterId: 'c1',
+        blockId: 'dmr-1',
+        charOffset: 0,
+        quote: '测试正文',
+      ),
+    );
+    final harness = await _readerHarness(
+      controller,
+      readerDataStore: dataStore,
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    for (var i = 0; i < 25; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    controller.onSelectionChanged!(
+      const NovelSelection(
+        text: '测试正文',
+        start: NovelLocator(
+          chapterId: 'c1',
+          blockId: 'dmr-1',
+          charOffset: 0,
+          quote: '测试正文',
+        ),
+        end: NovelLocator(
+          chapterId: 'c1',
+          blockId: 'dmr-1',
+          charOffset: 4,
+          quote: '',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-selection-highlight')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-bookmark')));
+    await tester.pump(const Duration(milliseconds: 100));
+    final data = await dataStore.loadBook('remote:s:n1');
+    expect(
+      data.annotations.values.where((value) => !value.isDeleted),
+      hasLength(1),
+    );
+    expect(
+      data.bookmarks.values.where((value) => !value.isDeleted),
+      hasLength(1),
+    );
+    expect(controller.appliedAnnotations, hasLength(1));
+    expect(controller.clearSelectionCalls, 1);
+  });
+
+  testWidgets('editing a stored annotation blocks reader input',
+      (tester) async {
+    final dataStore = _MemoryNovelReaderDataStore();
+    final annotation = NovelAnnotation.create(
+      bookKey: 'remote:s:n1',
+      range: NovelAnnotationRange.fromSelection(
+        const NovelSelection(
+          text: '测试正文',
+          start: NovelLocator(
+            chapterId: 'c1',
+            blockId: 'dmr-1',
+            charOffset: 0,
+          ),
+          end: NovelLocator(
+            chapterId: 'c1',
+            blockId: 'dmr-1',
+            charOffset: 4,
+          ),
+        ),
+      ),
+      colorId: 'yellow',
+      note: '原笔记',
+      createdAt: 1000,
+    );
+    dataStore.values['remote:s:n1'] = NovelReaderBookData(
+      bookKey: 'remote:s:n1',
+      annotations: {annotation.id: annotation},
+    );
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      readerDataStore: dataStore,
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-tools-tab-notes')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('编辑笔记'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-note-editor')), findsOneWidget);
+    expect(
+      tester.widget<NovelReaderInput>(find.byType(NovelReaderInput)).blocked,
+      isTrue,
+    );
+  });
+
+  testWidgets('reader search opens results and restores their locator',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      searchIndex: _ImmediateSearchIndex(),
+      loadCachedDocument: (_) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: '目标正文',
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-search')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-search-query')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('novel-search-query')),
+      '目标',
+    );
+    await tester.tap(find.byKey(const Key('novel-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('前文目标后文'));
+    await tester.pumpAndSettle();
+
+    expect(controller.lastRestored?.chapterId, 'c2');
+    expect(controller.lastRestored?.quote, '目标');
+    expect(controller.searchHighlights.single.quote, '目标');
+  });
+
+  testWidgets('cached paging saves progress only after settlement',
+      (tester) async {
+    final controller = _FakeController(supportsPageFrames: true);
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(harness.store.progressFor('remote:s:n1'), isNull);
+    final gesture = await tester.startGesture(const Offset(700, 300));
+    await gesture.moveTo(const Offset(300, 305));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('novel-page-turn-surface')),
+      findsOneWidget,
+    );
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(harness.store.progressFor('remote:s:n1'), isNull);
+    await tester.pumpAndSettle();
+
+    expect(controller.shownPages, contains(1));
+    expect(harness.store.progressFor('remote:s:n1')?.fraction, .5);
+  });
+
+  testWidgets('chapter boundary primes the adjacent chapter document',
+      (tester) async {
+    final loaded = <String>[];
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+    );
+    final harness = await _readerHarness(
+      controller,
+      loadDocument: (chapter) async {
+        loaded.add(chapter.id);
+        return NovelDocument(
+          format: NovelDocumentFormat.html,
+          content: '<p>${chapter.title}</p>',
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(loaded, containsAllInOrder(['c1', 'c2']));
+  });
+
+  testWidgets('chapter loading keeps the cached edge page visible',
+      (tester) async {
+    final nextChapter = Completer<NovelDocument>();
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+      turnsWithinDocument: false,
+    );
+    final harness = await _readerHarness(
+      controller,
+      loadDocument: (chapter) {
+        if (chapter.id == 'c2') return nextChapter.future;
+        return Future.value(
+          NovelDocument(
+            format: NovelDocumentFormat.html,
+            content: '<p>${chapter.title}</p>',
+          ),
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tapAt(const Offset(760, 300));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('novel-page-turn-surface')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('novel-reader-edge-loading')),
+      findsOneWidget,
+    );
+
+    nextChapter.complete(
+      NovelDocument(
+        format: NovelDocumentFormat.html,
+        content: '<p>第二章</p>',
+      ),
+    );
+    await tester.pumpAndSettle();
   });
 
   testWidgets('mode and typography changes preserve locator', (tester) async {
@@ -134,6 +530,102 @@ void main() {
     expect(controller.lastRestored?.fraction, .3);
   });
 
+  testWidgets(
+      'reported font load failure rolls a font change back with an error',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+    controller.fontLoadFailed = true;
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontFamily: NovelFontIds.lxgwWenKai),
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.store.preferences.fontFamily, NovelFontIds.notoSerifSc);
+    expect(
+        controller.preferenceHistory.last.fontFamily, NovelFontIds.notoSerifSc);
+    expect(find.textContaining('字体加载失败'), findsOneWidget);
+  });
+
+  testWidgets('font application exception restores the previous preference',
+      (tester) async {
+    final controller = _FakeController()
+      ..failApplyingFontId = NovelFontIds.lxgwWenKai;
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      const NovelReaderPreferences(fontFamily: NovelFontIds.lxgwWenKai),
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.store.preferences.fontFamily, NovelFontIds.notoSerifSc);
+    expect(
+      controller.preferenceHistory.last.fontFamily,
+      NovelFontIds.notoSerifSc,
+    );
+    expect(controller.lastRestored?.chapterId, 'c1');
+    expect(find.textContaining('字体加载失败'), findsOneWidget);
+  });
+
+  testWidgets('missing background fallback clears the persisted local ID',
+      (tester) async {
+    final backgroundId =
+        '${NovelBackgroundIds.importedPrefix}${List.filled(64, 'd').join()}';
+    final controller = WebNovelDocumentController(
+      fontStore: _ImmediateNovelFontStore(),
+      backgroundStore: _MissingNovelBackgroundStore(),
+    );
+    final harness = await _readerHarness(
+      controller,
+      preferences: NovelReaderPreferences(backgroundAssetId: backgroundId),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('novel-reader-settings')));
+    await tester.pumpAndSettle();
+    final settings = tester.widget<NovelReaderSettingsSheet>(
+      find.byType(NovelReaderSettingsSheet),
+    );
+    settings.onChanged(
+      harness.store.preferences.copyWith(fontSize: 19),
+    );
+    await tester.pumpAndSettle();
+    await harness.store.flushPending();
+
+    final restored = NovelLibraryStore();
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.preferences.backgroundAssetId, isNull);
+    for (var attempt = 0; attempt < 21; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  });
+
   testWidgets('directory selection loads the selected chapter', (tester) async {
     final controller = _FakeController();
     final harness = await _readerHarness(controller);
@@ -150,6 +642,29 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.loadedChapterId, 'c2');
+  });
+
+  testWidgets('chapter buttons jump directly between chapters', (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-next-chapter')));
+    await tester.pumpAndSettle();
+    expect(controller.loadedChapterId, 'c2');
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-previous-chapter')));
+    await tester.pumpAndSettle();
+    expect(controller.loadedChapterId, 'c1');
   });
 
   testWidgets('wide reader directory opens as a side panel', (tester) async {
@@ -246,6 +761,66 @@ void main() {
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
   });
 
+  testWidgets('reader mounts configured status items outside chrome',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(
+        showBattery: false,
+        toolbarAutoHideSeconds: 0,
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+    expect(find.byKey(const Key('novel-status-chapter')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-page')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-progress')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-time')), findsOneWidget);
+    expect(find.byKey(const Key('novel-status-battery')), findsNothing);
+  });
+
+  testWidgets('reader theme drives solid chrome and system bar contrast',
+      (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(
+        theme: NovelReaderTheme.white,
+        toolbarAutoHideSeconds: 0,
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pump();
+
+    final profile = novelReaderThemeProfile(NovelReaderTheme.white);
+    final bottomBar = tester.widget<DecoratedBox>(
+      find.byKey(const Key('novel-reader-bottom-bar')),
+    );
+    final decoration = bottomBar.decoration as BoxDecoration;
+    expect(decoration.color, Color(profile.chromeArgb));
+    expect(decoration.gradient, isNull);
+
+    final overlays = tester.widgetList<AnnotatedRegion<SystemUiOverlayStyle>>(
+      find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+    );
+    expect(
+      overlays.any(
+        (region) =>
+            region.value.statusBarColor == Color(profile.systemBarArgb) &&
+            region.value.statusBarIconBrightness == Brightness.dark,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('reader auto-hides chrome after configured delay',
       (tester) async {
     final controller = _FakeController();
@@ -262,6 +837,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 999));
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+  });
+
+  testWidgets('open reader sheet pauses chrome auto-hide', (tester) async {
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 1),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-directory')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
   });
 
@@ -310,6 +912,42 @@ void main() {
     expect(controller.lastRestored?.fraction, .5);
   });
 
+  testWidgets('default reader uses native pages and advances without WebView',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(32, '原生阅读正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NovelNativePageView), findsOneWidget);
+    expect(find.byType(InAppWebView), findsNothing);
+    final before =
+        tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value;
+    await tester.tapAt(const Offset(390, 380));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byType(NovelNativePageTurnSurface), findsOneWidget);
+    expect(find.byKey(const Key('novel-native-page-back')), findsOneWidget);
+    await tester.pumpAndSettle();
+    final after =
+        tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value;
+    expect(int.parse(after), greaterThan(int.parse(before)));
+  });
+
   test('reader HTML shell sanitizes HTML and escapes plain text', () {
     final html = buildNovelReaderHtml(NovelDocument(
       format: NovelDocumentFormat.html,
@@ -349,4 +987,32 @@ void main() {
     expect(novelReaderBridgeScript, contains("addEventListener('wheel'"));
     expect(novelReaderBridgeScript, contains('{passive:false}'));
   });
+}
+
+class _ImmediateSearchIndex extends NovelSearchIndex {
+  _ImmediateSearchIndex()
+      : super(rootDirectory: () async => Directory.systemTemp);
+
+  @override
+  Stream<NovelSearchEvent> search({
+    required String bookKey,
+    required String sourceFingerprint,
+    required List<NovelChapter> chapters,
+    required String query,
+    required NovelSearchDocumentLoader loadCachedDocument,
+    NovelSearchDocumentFetcher? fetchDocument,
+    bool fetchMissing = false,
+    NovelSearchCancellationToken? cancellation,
+  }) async* {
+    yield NovelSearchResultBatch([
+      const NovelSearchResult(
+        chapterId: 'c2',
+        chapterTitle: '第二章',
+        chapterIndex: 1,
+        snippet: '前文目标后文',
+        locator: NovelLocator(chapterId: 'c2', quote: '目标', fraction: .5),
+      ),
+    ]);
+    yield const NovelSearchCompleted(resultCount: 1);
+  }
 }

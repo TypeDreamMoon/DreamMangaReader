@@ -237,25 +237,39 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     final meta = _meta;
     final novel = _novel;
     final chapters = _chapters;
+    NovelLibraryScope.read(context).rememberRemote(NovelLibraryEntry.remote(
+      sourceId: meta.id,
+      novelId: novel.id,
+      title: novel.title,
+      authors: novel.authors,
+      cover: novel.cover,
+    ));
     final downloads = NovelDownloadScope.read(context);
+    Future<NovelDocument?> loadCached(NovelChapter chapter) async {
+      final cached = await downloads.localDocument(
+        meta.id,
+        novel.id,
+        chapter.id,
+      );
+      if (cached == null) return null;
+      return NovelDocument(
+        format: NovelDocumentFormat.html,
+        content: cached.html,
+        baseUrl: Uri.directory(cached.directory).toString(),
+      );
+    }
+
     Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: novel,
         chapters: chapters,
         initialIndex: index,
         libraryKey: NovelIdentity.remote(meta.id, novel.id).key,
+        loadCachedDocument: loadCached,
         loadDocument: (chapter) async {
-          final cached = await downloads.localDocument(
-            meta.id,
-            novel.id,
-            chapter.id,
-          );
+          final cached = await loadCached(chapter);
           if (cached != null) {
-            return NovelDocument(
-              format: NovelDocumentFormat.html,
-              content: cached.html,
-              baseUrl: Uri.directory(cached.directory).toString(),
-            );
+            return cached;
           }
           return source.getNovelDocument(novel.id, chapter.id);
         },

@@ -438,7 +438,8 @@ Future<void> openNovelLibraryEntry(
       final saved = NovelLibraryScope.read(context).progressFor(entry.key);
       final initialIndex = saved == null
           ? 0
-          : book.chapters.indexWhere((chapter) => chapter.id == saved.chapterId);
+          : book.chapters
+              .indexWhere((chapter) => chapter.id == saved.chapterId);
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => NovelReaderPage(
           novel: book.novel,
@@ -446,6 +447,7 @@ Future<void> openNovelLibraryEntry(
           initialIndex: initialIndex < 0 ? 0 : initialIndex,
           libraryKey: entry.key,
           loadDocument: book.loadDocument,
+          loadCachedDocument: (chapter) async => book.loadDocument(chapter),
         ),
       ));
     } catch (error) {
@@ -488,7 +490,8 @@ Future<void> deleteLocalNovelDirectory(
   String targetPath, {
   NovelSupportDirectory? applicationSupportDirectory,
 }) async {
-  final support = await (applicationSupportDirectory ?? getApplicationSupportDirectory)();
+  final support =
+      await (applicationSupportDirectory ?? getApplicationSupportDirectory)();
   final root = Directory(_join(_join(support.path, 'novels'), 'local'));
   final target = Directory(targetPath);
   final rootPath = await root.resolveSymbolicLinks();
@@ -508,7 +511,8 @@ Future<File> _safeExistingFile(Directory root, String relativePath) async {
     throw FormatException('EPUB 资源路径无效：$relativePath');
   }
   final rootPath = await root.resolveSymbolicLinks();
-  final candidate = File(_join(root.path, normalized.replaceAll('/', Platform.pathSeparator)));
+  final candidate = File(
+      _join(root.path, normalized.replaceAll('/', Platform.pathSeparator)));
   final candidatePath = await candidate.resolveSymbolicLinks();
   final prefix = rootPath.endsWith(Platform.pathSeparator)
       ? rootPath

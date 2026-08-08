@@ -1,8 +1,17 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/novel/reader/novel_background_store.dart';
+import '../../core/novel/reader/novel_font_store.dart';
+import '../../core/novel/reader/novel_reader_models.dart';
+
+typedef NovelFontFilePicker = Future<File?> Function();
+typedef NovelBackgroundFilePicker = Future<File?> Function();
 
 Future<void> showNovelReaderSettings({
   required BuildContext context,
@@ -58,10 +67,18 @@ class NovelReaderSettingsSheet extends StatefulWidget {
     super.key,
     required this.value,
     required this.onChanged,
+    this.fontStore,
+    this.pickFontFile,
+    this.backgroundStore,
+    this.pickBackgroundFile,
   });
 
   final NovelReaderPreferences value;
   final ValueChanged<NovelReaderPreferences> onChanged;
+  final NovelFontStore? fontStore;
+  final NovelFontFilePicker? pickFontFile;
+  final NovelBackgroundStore? backgroundStore;
+  final NovelBackgroundFilePicker? pickBackgroundFile;
 
   @override
   State<NovelReaderSettingsSheet> createState() =>
@@ -70,15 +87,129 @@ class NovelReaderSettingsSheet extends StatefulWidget {
 
 class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   late NovelReaderPreferences _value = widget.value;
+  late final NovelFontStore _fontStore = widget.fontStore ?? NovelFontStore();
+  late final NovelBackgroundStore _backgroundStore =
+      widget.backgroundStore ?? NovelBackgroundStore();
+  List<NovelFontRecord> _importedFonts = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadImportedFonts();
+  }
+
+  Future<void> _reloadImportedFonts() async {
+    try {
+      final fonts = await _fontStore.listImportedFonts();
+      if (!mounted) return;
+      final selected = normalizeNovelFontId(_value.fontFamily);
+      final selectedMissing =
+          selected.startsWith(NovelFontIds.importedPrefix) &&
+              !fonts.any((font) => font.id == selected);
+      if (selectedMissing) {
+        final fallback = _value.copyWith(fontFamily: NovelFontIds.notoSerifSc);
+        setState(() {
+          _importedFonts = fonts;
+          _value = fallback;
+        });
+        widget.onChanged(fallback);
+      } else {
+        setState(() => _importedFonts = fonts);
+      }
+    } catch (_) {
+      // The picker remains usable even when the platform support directory
+      // is temporarily unavailable.
+    }
+  }
+
+  Future<void> _importFont() async {
+    final l10n = context.l10n;
+    try {
+      final source = await (widget.pickFontFile?.call() ?? _pickFontFile());
+      if (source == null) return;
+      final font = await _fontStore.importFont(source);
+      await _reloadImportedFonts();
+      if (mounted) _update(_value.copyWith(fontFamily: font.id));
+    } on NovelFontImportException {
+      _showFontError(l10n.novel_readerFontImportFailed);
+    } catch (_) {
+      _showFontError(l10n.novel_readerFontImportFailed);
+    }
+  }
+
+  Future<void> _deleteSelectedFont() async {
+    final selected = normalizeNovelFontId(_value.fontFamily);
+    if (!selected.startsWith(NovelFontIds.importedPrefix)) return;
+    final l10n = context.l10n;
+    try {
+      final fallback = await _fontStore.deleteFont(
+        selected,
+        selectedId: selected,
+      );
+      if (!mounted) return;
+      _update(_value.copyWith(fontFamily: fallback));
+      await _reloadImportedFonts();
+    } catch (_) {
+      _showFontError(l10n.novel_readerFontDeleteFailed);
+    }
+  }
+
+  Future<void> _importBackground() async {
+    final l10n = context.l10n;
+    try {
+      final source =
+          await (widget.pickBackgroundFile?.call() ?? _pickBackgroundFile());
+      if (source == null) return;
+      final background = await _backgroundStore.importImage(source);
+      if (mounted) {
+        _update(_value.copyWith(backgroundAssetId: background.id));
+        await _backgroundStore.deleteUnreferenced({background.id});
+      }
+    } on NovelBackgroundException {
+      _showFontError(l10n.novel_readerBackgroundImportFailed);
+    } catch (_) {
+      _showFontError(l10n.novel_readerBackgroundImportFailed);
+    }
+  }
+
+  Future<void> _clearBackground() async {
+    _update(_value.copyWith(clearBackgroundAsset: true));
+    await _backgroundStore.deleteUnreferenced(const {});
+  }
+
+  void _showFontError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   void _update(NovelReaderPreferences value) {
     setState(() => _value = value);
     widget.onChanged(value);
   }
 
+  Widget _statusSwitch({
+    required Key key,
+    required String label,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      key: key,
+      contentPadding: EdgeInsets.zero,
+      title: Text(label),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
+    final selectedFontId = normalizeNovelFontId(_value.fontFamily);
+    final selectedImportPending =
+        selectedFontId.startsWith(NovelFontIds.importedPrefix) &&
+            !_importedFonts.any((font) => font.id == selectedFontId);
     return SafeArea(
       top: false,
       child: ConstrainedBox(
@@ -95,65 +226,187 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            SegmentedButton<NovelReaderMode>(
-              segments: [
-                ButtonSegment(
-                  value: NovelReaderMode.paged,
-                  icon: const Icon(Icons.menu_book_rounded),
-                  label: Text(context.l10n.novel_readerPaged),
-                ),
-                ButtonSegment(
-                  value: NovelReaderMode.scroll,
-                  icon: const Icon(Icons.view_stream_rounded),
-                  label: Text(context.l10n.novel_readerScroll),
-                ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final mode in NovelPageTurnMode.values)
+                  ChoiceChip(
+                    key: Key('novel-turn-mode-${mode.name}'),
+                    selected: _value.turnMode == mode,
+                    label: Text(_turnModeLabel(context, mode)),
+                    avatar: Icon(_turnModeIcon(mode), size: 18),
+                    onSelected: (_) => _update(_value.copyWith(turnMode: mode)),
+                  ),
               ],
-              selected: {_value.mode},
-              onSelectionChanged: (selection) {
-                _update(_value.copyWith(mode: selection.first));
-              },
             ),
             const SizedBox(height: 18),
-            DropdownButtonFormField<String>(
-              initialValue: _value.fontFamily,
-              decoration: InputDecoration(
-                labelText: context.l10n.novel_readerFont,
-              ),
-              items: [
-                DropdownMenuItem(
-                  value: '',
-                  child: Text(context.l10n.novel_readerSystemDefault),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: const Key('novel-font-picker'),
+                    isExpanded: true,
+                    initialValue: normalizeNovelFontId(_value.fontFamily),
+                    decoration: InputDecoration(
+                      labelText: context.l10n.novel_readerFont,
+                    ),
+                    items: [
+                      for (final font in novelBuiltinFonts)
+                        DropdownMenuItem(
+                          value: font.id,
+                          child: Text(font.displayName),
+                        ),
+                      for (final font in _importedFonts)
+                        DropdownMenuItem(
+                          value: font.id,
+                          child: Text(font.displayName),
+                        ),
+                      if (selectedImportPending)
+                        DropdownMenuItem(
+                          value: selectedFontId,
+                          child: Text(context.l10n.novel_readerFontChecking),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        _update(_value.copyWith(fontFamily: value));
+                      }
+                    },
+                  ),
                 ),
-                DropdownMenuItem(
-                  value: 'serif',
-                  child: Text(context.l10n.novel_readerSerif),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('novel-font-import'),
+                  tooltip: context.l10n.novel_readerFontImport,
+                  onPressed: _importFont,
+                  icon: const Icon(Icons.add_rounded),
                 ),
-                DropdownMenuItem(
-                  value: 'sans-serif',
-                  child: Text(context.l10n.novel_readerSansSerif),
-                ),
-                DropdownMenuItem(
-                  value: 'monospace',
-                  child: Text(context.l10n.novel_readerMonospace),
+                IconButton(
+                  key: const Key('novel-font-delete'),
+                  tooltip: context.l10n.novel_readerFontDelete,
+                  onPressed: normalizeNovelFontId(_value.fontFamily)
+                          .startsWith(NovelFontIds.importedPrefix)
+                      ? _deleteSelectedFont
+                      : null,
+                  icon: const Icon(Icons.delete_outline_rounded),
                 ),
               ],
-              onChanged: (value) {
-                if (value != null) {
-                  _update(_value.copyWith(fontFamily: value));
-                }
-              },
             ),
             const SizedBox(height: 14),
             _ThemePicker(
               label: context.l10n.novel_readerTheme,
               value: _value.theme,
               labels: {
-                NovelReaderTheme.sepia: context.l10n.novel_readerThemeSepia,
                 NovelReaderTheme.white: context.l10n.novel_readerThemeWhite,
+                NovelReaderTheme.eyeCare: context.l10n.novel_readerThemeSepia,
                 NovelReaderTheme.dark: context.l10n.novel_readerThemeDark,
                 NovelReaderTheme.black: context.l10n.novel_readerThemeBlack,
+                NovelReaderTheme.paper: context.l10n.novel_readerThemePaper,
               },
               onChanged: (value) => _update(_value.copyWith(theme: value)),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('novel-background-import'),
+                  onPressed: _importBackground,
+                  icon: const Icon(Icons.image_outlined),
+                  label: Text(context.l10n.novel_readerBackgroundImport),
+                ),
+                IconButton(
+                  key: const Key('novel-background-clear'),
+                  tooltip: context.l10n.novel_readerBackgroundClear,
+                  onPressed: _value.backgroundAssetId == null
+                      ? null
+                      : () async => _clearBackground(),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
+                if (_value.backgroundAssetId != null)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 200),
+                    child: Text(
+                      context.l10n.novel_readerBackgroundActive,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final fit in NovelBackgroundFit.values)
+                  ChoiceChip(
+                    key: Key('novel-background-fit-${fit.name}'),
+                    selected: _value.backgroundFit == fit,
+                    label: Text(switch (fit) {
+                      NovelBackgroundFit.crop =>
+                        context.l10n.novel_readerBackgroundCrop,
+                      NovelBackgroundFit.tile =>
+                        context.l10n.novel_readerBackgroundTile,
+                      NovelBackgroundFit.fill =>
+                        context.l10n.novel_readerBackgroundFill,
+                    }),
+                    onSelected: (_) =>
+                        _update(_value.copyWith(backgroundFit: fit)),
+                  ),
+              ],
+            ),
+            _SettingSlider(
+              key: const Key('novel-background-strength'),
+              label: context.l10n.novel_readerTextureStrength,
+              value: _value.textureStrength,
+              min: 0,
+              max: 1,
+              divisions: 20,
+              valueLabel: '${(_value.textureStrength * 100).round()}%',
+              semanticFormatter: (value) =>
+                  context.l10n.novel_readerProgressPercent(
+                (value * 100).round(),
+              ),
+              onChanged: (value) =>
+                  _update(_value.copyWith(textureStrength: value)),
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<int?>(
+                key: const Key('novel-foreground-mode'),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: [
+                  ButtonSegment(
+                    value: null,
+                    label: Text(context.l10n.novel_readerForegroundAuto),
+                  ),
+                  ButtonSegment(
+                    value: 0xff202124,
+                    label: Text(context.l10n.novel_readerForegroundDark),
+                  ),
+                  ButtonSegment(
+                    value: 0xffeeeeee,
+                    label: Text(context.l10n.novel_readerForegroundLight),
+                  ),
+                ],
+                selected: {_value.foregroundArgb},
+                onSelectionChanged: (selection) {
+                  final selected = selection.first;
+                  _update(
+                    selected == null
+                        ? _value.copyWith(clearForeground: true)
+                        : _value.copyWith(foregroundArgb: selected),
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 14),
             _FontSizeStepper(
@@ -164,6 +417,21 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               ),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-brightness'),
+              label: context.l10n.novel_readerBrightness,
+              value: _value.brightness,
+              min: .6,
+              max: 1.4,
+              divisions: 16,
+              valueLabel: '${(_value.brightness * 100).round()}%',
+              semanticFormatter: (value) =>
+                  context.l10n.novel_readerProgressPercent(
+                (value * 100).round(),
+              ),
+              onChanged: (value) => _update(_value.copyWith(brightness: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-line-height'),
               label: context.l10n.novel_readerLineHeight,
               value: _value.lineHeight,
               min: 1.2,
@@ -172,6 +440,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) => _update(_value.copyWith(lineHeight: value)),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-paragraph-spacing'),
               label: context.l10n.novel_readerParagraphSpacing,
               value: _value.paragraphSpacing,
               min: 0,
@@ -181,6 +450,7 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                   _update(_value.copyWith(paragraphSpacing: value)),
             ),
             _SettingSlider(
+              key: const Key('novel-setting-horizontal-margin'),
               label: context.l10n.novel_readerHorizontalMargin,
               value: _value.horizontalMargin,
               min: 8,
@@ -188,6 +458,55 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               divisions: 24,
               onChanged: (value) =>
                   _update(_value.copyWith(horizontalMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-top-margin'),
+              label: context.l10n.novel_readerTopMargin,
+              value: _value.topMargin,
+              min: 0,
+              max: 96,
+              divisions: 24,
+              onChanged: (value) => _update(_value.copyWith(topMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-bottom-margin'),
+              label: context.l10n.novel_readerBottomMargin,
+              value: _value.bottomMargin,
+              min: 0,
+              max: 96,
+              divisions: 24,
+              onChanged: (value) =>
+                  _update(_value.copyWith(bottomMargin: value)),
+            ),
+            _SettingSlider(
+              key: const Key('novel-setting-first-line-indent'),
+              label: context.l10n.novel_readerFirstLineIndent,
+              value: _value.firstLineIndent,
+              min: 0,
+              max: 4,
+              divisions: 8,
+              onChanged: (value) =>
+                  _update(_value.copyWith(firstLineIndent: value)),
+            ),
+            Padding(
+              key: const Key('novel-setting-alignment'),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: SegmentedButton<NovelTextAlignment>(
+                segments: [
+                  ButtonSegment(
+                    value: NovelTextAlignment.start,
+                    label: Text(context.l10n.novel_readerAlignLeft),
+                  ),
+                  ButtonSegment(
+                    value: NovelTextAlignment.justify,
+                    label: Text(context.l10n.novel_readerAlignJustify),
+                  ),
+                ],
+                selected: {_value.textAlignment},
+                onSelectionChanged: (selection) => _update(
+                  _value.copyWith(textAlignment: selection.first),
+                ),
+              ),
             ),
             _SettingSlider(
               label: context.l10n.novel_readerAutoHide,
@@ -200,9 +519,20 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
                   : context.l10n.novel_readerSeconds(
                       _value.toolbarAutoHideSeconds,
                     ),
+              semanticFormatter: (value) => value.round() == 0
+                  ? context.l10n.novel_readerAutoHideOff
+                  : context.l10n.novel_readerSeconds(value.round()),
               onChanged: (value) => _update(
                 _value.copyWith(toolbarAutoHideSeconds: value.round()),
               ),
+            ),
+            SwitchListTile(
+              key: const Key('novel-setting-single-hand'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(context.l10n.novel_readerSingleHand),
+              value: _value.singleHandNext,
+              onChanged: (value) =>
+                  _update(_value.copyWith(singleHandNext: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -211,6 +541,47 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
               onChanged: (value) =>
                   _update(_value.copyWith(keepScreenOn: value)),
             ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-chapter'),
+              label: context.l10n.novel_readerStatusChapter,
+              value: _value.showChapterName,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showChapterName: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-page'),
+              label: context.l10n.novel_readerStatusPage,
+              value: _value.showPageNumber,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showPageNumber: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-progress'),
+              label: context.l10n.novel_readerStatusProgress,
+              value: _value.showBookProgress,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showBookProgress: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-time'),
+              label: context.l10n.novel_readerStatusTime,
+              value: _value.showTime,
+              onChanged: (value) => _update(_value.copyWith(showTime: value)),
+            ),
+            _statusSwitch(
+              key: const Key('novel-setting-status-battery'),
+              label: context.l10n.novel_readerStatusBattery,
+              value: _value.showBattery,
+              onChanged: (value) =>
+                  _update(_value.copyWith(showBattery: value)),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('novel-setting-reset'),
+              onPressed: () => _update(const NovelReaderPreferences()),
+              icon: const Icon(Icons.restart_alt_rounded),
+              label: Text(context.l10n.novel_readerReset),
+            ),
           ],
         ),
       ),
@@ -218,8 +589,28 @@ class _NovelReaderSettingsSheetState extends State<NovelReaderSettingsSheet> {
   }
 }
 
+Future<File?> _pickFontFile() async {
+  final selection = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['ttf', 'otf'],
+    allowMultiple: false,
+  );
+  final path = selection?.files.single.path;
+  return path == null || path.isEmpty ? null : File(path);
+}
+
+Future<File?> _pickBackgroundFile() async {
+  final selection = await FilePicker.pickFiles(
+    type: FileType.image,
+    allowMultiple: false,
+  );
+  final path = selection?.files.single.path;
+  return path == null || path.isEmpty ? null : File(path);
+}
+
 class _SettingSlider extends StatelessWidget {
   const _SettingSlider({
+    super.key,
     required this.label,
     required this.value,
     required this.min,
@@ -227,6 +618,7 @@ class _SettingSlider extends StatelessWidget {
     required this.divisions,
     required this.onChanged,
     this.valueLabel,
+    this.semanticFormatter,
   });
 
   final String label;
@@ -236,6 +628,7 @@ class _SettingSlider extends StatelessWidget {
   final int divisions;
   final ValueChanged<double> onChanged;
   final String? valueLabel;
+  final String Function(double value)? semanticFormatter;
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +643,10 @@ class _SettingSlider extends StatelessWidget {
             divisions: divisions,
             label: valueLabel ??
                 value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1),
+            semanticFormatterCallback: semanticFormatter ??
+                (value) => value.toStringAsFixed(
+                      value == value.roundToDouble() ? 0 : 1,
+                    ),
             onChanged: onChanged,
           ),
         ),
@@ -266,6 +663,23 @@ class _SettingSlider extends StatelessWidget {
     );
   }
 }
+
+String _turnModeLabel(BuildContext context, NovelPageTurnMode mode) =>
+    switch (mode) {
+      NovelPageTurnMode.curl => context.l10n.novel_readerTurnCurl,
+      NovelPageTurnMode.cover => context.l10n.novel_readerTurnCover,
+      NovelPageTurnMode.translate => context.l10n.novel_readerTurnTranslate,
+      NovelPageTurnMode.none => context.l10n.novel_readerTurnNone,
+      NovelPageTurnMode.scroll => context.l10n.novel_readerScroll,
+    };
+
+IconData _turnModeIcon(NovelPageTurnMode mode) => switch (mode) {
+      NovelPageTurnMode.curl => Icons.auto_stories_rounded,
+      NovelPageTurnMode.cover => Icons.flip_rounded,
+      NovelPageTurnMode.translate => Icons.swap_horiz_rounded,
+      NovelPageTurnMode.none => Icons.hide_source_rounded,
+      NovelPageTurnMode.scroll => Icons.view_stream_rounded,
+    };
 
 class _FontSizeStepper extends StatelessWidget {
   const _FontSizeStepper({
@@ -323,10 +737,11 @@ class _ThemePicker extends StatelessWidget {
   final ValueChanged<NovelReaderTheme> onChanged;
 
   static const _colors = {
-    NovelReaderTheme.sepia: Color(0xfff2e8cf),
     NovelReaderTheme.white: Color(0xffffffff),
+    NovelReaderTheme.eyeCare: Color(0xffdfe8cf),
     NovelReaderTheme.dark: Color(0xff292b2f),
     NovelReaderTheme.black: Color(0xff050505),
+    NovelReaderTheme.paper: Color(0xffeee5d1),
   };
 
   @override
@@ -345,33 +760,39 @@ class _ThemePicker extends StatelessWidget {
             runSpacing: 8,
             children: [
               for (final theme in NovelReaderTheme.values)
-                Tooltip(
-                  message: labels[theme] ?? theme.name,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: () => onChanged(theme),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: _colors[theme],
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: value == theme ? p.accent : p.line,
-                          width: value == theme ? 3 : 1,
+                Semantics(
+                  key: Key('novel-theme-${theme.name}'),
+                  label: labels[theme] ?? theme.name,
+                  button: true,
+                  selected: value == theme,
+                  child: Tooltip(
+                    message: labels[theme] ?? theme.name,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => onChanged(theme),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: _colors[theme],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: value == theme ? p.accent : p.line,
+                            width: value == theme ? 3 : 1,
+                          ),
                         ),
+                        child: value == theme
+                            ? Icon(
+                                Icons.check_rounded,
+                                size: 18,
+                                color: theme == NovelReaderTheme.dark ||
+                                        theme == NovelReaderTheme.black
+                                    ? Colors.white
+                                    : Colors.black87,
+                              )
+                            : null,
                       ),
-                      child: value == theme
-                          ? Icon(
-                              Icons.check_rounded,
-                              size: 18,
-                              color: theme == NovelReaderTheme.dark ||
-                                      theme == NovelReaderTheme.black
-                                  ? Colors.white
-                                  : Colors.black87,
-                            )
-                          : null,
                     ),
                   ),
                 ),

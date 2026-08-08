@@ -6,6 +6,7 @@
 
 #include "generated_plugin_registrant.h"
 
+#include <battery_plus/battery_plus_windows_plugin.h>
 #include <charset_converter/charset_converter_plugin.h>
 #include <desktop_webview_window/desktop_webview_window_plugin.h>
 #include <flutter_inappwebview_windows/flutter_inappwebview_windows_plugin_c_api.h>
@@ -19,6 +20,8 @@
 #include <window_to_front/window_to_front_plugin.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
+  BatteryPlusWindowsPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("BatteryPlusWindowsPlugin"));
   CharsetConverterPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("CharsetConverterPlugin"));
   DesktopWebviewWindowPluginRegisterWithRegistrar(

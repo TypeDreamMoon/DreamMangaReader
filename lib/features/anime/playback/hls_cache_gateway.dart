@@ -591,7 +591,29 @@ class HlsCacheGateway implements HlsSessionGateway {
       await upstream.cancel();
       throw HttpException('上游 HTTP ${upstream.statusCode}');
     }
-    if (range != null && upstream.statusCode != HttpStatus.partialContent) {
+    var upstreamStream = upstream.stream;
+    var upstreamContentLength = upstream.contentLength;
+    final requestedUpstreamRange = upstreamStart != null;
+    if (requestedUpstreamRange && upstream.statusCode == HttpStatus.ok) {
+      final fullLength = upstream.contentLength;
+      if (fullLength != null && upstreamStart >= fullLength) {
+        await upstream.cancel();
+        await _respondError(
+          request,
+          HttpStatus.requestedRangeNotSatisfiable,
+          'upstream-range-not-satisfiable',
+        );
+        return;
+      }
+      upstreamContentLength = upstreamLength ??
+          (fullLength == null ? null : fullLength - upstreamStart);
+      upstreamStream = _sliceByteStream(
+        upstream.stream,
+        skip: upstreamStart,
+        take: upstreamContentLength,
+      );
+    } else if (range != null &&
+        upstream.statusCode != HttpStatus.partialContent) {
       await upstream.cancel();
       await _respondError(
         request,
@@ -615,9 +637,12 @@ class HlsCacheGateway implements HlsSessionGateway {
         _contentTypeOrBinary(upstream.contentType);
     request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     if (range != null) {
-      final total =
-          localLength ?? _totalFromContentRange(upstream.contentRange);
-      final returnedLength = upstream.contentLength ?? upstreamLength;
+      final total = localLength ??
+          _totalFromContentRange(upstream.contentRange) ??
+          (upstream.statusCode == HttpStatus.ok
+              ? upstream.contentLength
+              : null);
+      final returnedLength = upstreamContentLength ?? upstreamLength;
       final end = returnedLength == null
           ? (range.end ?? range.start)
           : range.start + returnedLength - 1;
@@ -626,8 +651,8 @@ class HlsCacheGateway implements HlsSessionGateway {
         'bytes ${range.start}-$end/${total ?? '*'}',
       );
     }
-    if (upstream.contentLength != null) {
-      request.response.contentLength = upstream.contentLength!;
+    if (upstreamContentLength != null) {
+      request.response.contentLength = upstreamContentLength;
     } else {
       request.response.bufferOutput = false;
       request.response.headers.chunkedTransferEncoding = true;
@@ -635,7 +660,7 @@ class HlsCacheGateway implements HlsSessionGateway {
 
     HlsCacheLease? committed;
     try {
-      await for (final chunk in upstream.stream) {
+      await for (final chunk in upstreamStream) {
         writer?.sink.add(chunk);
         request.response.add(chunk);
         await request.response.flush();
@@ -643,7 +668,7 @@ class HlsCacheGateway implements HlsSessionGateway {
       if (writer != null) {
         committed = await writer.commit(
           contentType: upstream.contentType,
-          expectedLength: upstream.contentLength,
+          expectedLength: upstreamContentLength,
         );
       }
       await request.response.close();
@@ -657,6 +682,29 @@ class HlsCacheGateway implements HlsSessionGateway {
       }
     } finally {
       await committed?.release();
+    }
+  }
+
+  Stream<List<int>> _sliceByteStream(
+    Stream<List<int>> source, {
+    required int skip,
+    int? take,
+  }) async* {
+    var remainingSkip = skip;
+    var remainingTake = take;
+    await for (final chunk in source) {
+      if (remainingTake == 0) break;
+      if (remainingSkip >= chunk.length) {
+        remainingSkip -= chunk.length;
+        continue;
+      }
+      final start = remainingSkip;
+      remainingSkip = 0;
+      final available = chunk.length - start;
+      final count =
+          remainingTake == null ? available : min(available, remainingTake);
+      if (count > 0) yield chunk.sublist(start, start + count);
+      if (remainingTake != null) remainingTake -= count;
     }
   }
 

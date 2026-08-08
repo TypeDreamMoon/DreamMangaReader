@@ -6,93 +6,258 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/novel/models.dart';
+import '../core/novel/reader/novel_font_store.dart';
+import '../core/novel/reader/novel_background_store.dart';
+import '../core/novel/reader/novel_reader_models.dart';
+import '../core/novel/reader/novel_reader_theme.dart';
+
+export '../core/novel/reader/novel_reader_theme.dart'
+    show NovelBackgroundFit, NovelReaderTheme;
 
 enum NovelReaderMode { paged, scroll }
 
-enum NovelReaderTheme { dark, black, white, sepia }
-
 class NovelReaderPreferences {
   const NovelReaderPreferences({
-    this.mode = NovelReaderMode.paged,
-    this.fontFamily = '',
+    NovelPageTurnMode? turnMode,
+    NovelReaderMode? mode,
+    this.fontFamily = NovelFontIds.notoSerifSc,
     this.fontSize = 18,
     this.lineHeight = 1.7,
     this.paragraphSpacing = 10,
     this.horizontalMargin = 22,
-    this.theme = NovelReaderTheme.sepia,
+    this.topMargin = 16,
+    this.bottomMargin = 20,
+    this.firstLineIndent = 2,
+    this.textAlignment = NovelTextAlignment.justify,
+    this.theme = NovelReaderTheme.eyeCare,
+    this.backgroundAssetId,
+    this.backgroundFit = NovelBackgroundFit.crop,
+    this.textureStrength = .55,
+    this.foregroundArgb,
     this.keepScreenOn = true,
     this.toolbarAutoHideSeconds = 4,
-  });
+    this.showChapterName = true,
+    this.showPageNumber = true,
+    this.showBookProgress = true,
+    this.showTime = true,
+    this.showBattery = true,
+    this.singleHandNext = false,
+    this.brightness = 1,
+  }) : turnMode = turnMode ??
+            (mode == NovelReaderMode.scroll
+                ? NovelPageTurnMode.scroll
+                : NovelPageTurnMode.curl);
 
-  final NovelReaderMode mode;
+  final NovelPageTurnMode turnMode;
   final String fontFamily;
   final double fontSize;
   final double lineHeight;
   final double paragraphSpacing;
   final double horizontalMargin;
+  final double topMargin;
+  final double bottomMargin;
+  final double firstLineIndent;
+  final NovelTextAlignment textAlignment;
   final NovelReaderTheme theme;
+  final String? backgroundAssetId;
+  final NovelBackgroundFit backgroundFit;
+  final double textureStrength;
+  final int? foregroundArgb;
   final bool keepScreenOn;
   final int toolbarAutoHideSeconds;
+  final bool showChapterName;
+  final bool showPageNumber;
+  final bool showBookProgress;
+  final bool showTime;
+  final bool showBattery;
+  final bool singleHandNext;
+  final double brightness;
+
+  NovelReaderMode get mode => turnMode == NovelPageTurnMode.scroll
+      ? NovelReaderMode.scroll
+      : NovelReaderMode.paged;
 
   NovelReaderPreferences copyWith({
+    NovelPageTurnMode? turnMode,
     NovelReaderMode? mode,
     String? fontFamily,
     double? fontSize,
     double? lineHeight,
     double? paragraphSpacing,
     double? horizontalMargin,
+    double? topMargin,
+    double? bottomMargin,
+    double? firstLineIndent,
+    NovelTextAlignment? textAlignment,
     NovelReaderTheme? theme,
+    String? backgroundAssetId,
+    bool clearBackgroundAsset = false,
+    NovelBackgroundFit? backgroundFit,
+    double? textureStrength,
+    int? foregroundArgb,
+    bool clearForeground = false,
     bool? keepScreenOn,
     int? toolbarAutoHideSeconds,
+    bool? showChapterName,
+    bool? showPageNumber,
+    bool? showBookProgress,
+    bool? showTime,
+    bool? showBattery,
+    bool? singleHandNext,
+    double? brightness,
   }) {
     return NovelReaderPreferences(
-      mode: mode ?? this.mode,
+      turnMode: turnMode ??
+          (mode == null
+              ? this.turnMode
+              : mode == NovelReaderMode.scroll
+                  ? NovelPageTurnMode.scroll
+                  : NovelPageTurnMode.curl),
       fontFamily: fontFamily ?? this.fontFamily,
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
       paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
       horizontalMargin: horizontalMargin ?? this.horizontalMargin,
+      topMargin: topMargin ?? this.topMargin,
+      bottomMargin: bottomMargin ?? this.bottomMargin,
+      firstLineIndent: firstLineIndent ?? this.firstLineIndent,
+      textAlignment: textAlignment ?? this.textAlignment,
       theme: theme ?? this.theme,
+      backgroundAssetId: clearBackgroundAsset
+          ? null
+          : backgroundAssetId ?? this.backgroundAssetId,
+      backgroundFit: backgroundFit ?? this.backgroundFit,
+      textureStrength: textureStrength ?? this.textureStrength,
+      foregroundArgb:
+          clearForeground ? null : foregroundArgb ?? this.foregroundArgb,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       toolbarAutoHideSeconds:
           toolbarAutoHideSeconds ?? this.toolbarAutoHideSeconds,
+      showChapterName: showChapterName ?? this.showChapterName,
+      showPageNumber: showPageNumber ?? this.showPageNumber,
+      showBookProgress: showBookProgress ?? this.showBookProgress,
+      showTime: showTime ?? this.showTime,
+      showBattery: showBattery ?? this.showBattery,
+      singleHandNext: singleHandNext ?? this.singleHandNext,
+      brightness: brightness ?? this.brightness,
     );
   }
 
-  Map<String, Object?> toJson() => {
-        'mode': mode.name,
-        'fontFamily': fontFamily,
+  Map<String, Object?> toJson({bool includeLocalAssets = true}) => {
+        'schema': 2,
+        'turnMode': turnMode.name,
+        'fontFamily': normalizeNovelFontId(fontFamily),
         'fontSize': fontSize,
         'lineHeight': lineHeight,
         'paragraphSpacing': paragraphSpacing,
         'horizontalMargin': horizontalMargin,
+        'topMargin': topMargin,
+        'bottomMargin': bottomMargin,
+        'firstLineIndent': firstLineIndent,
+        'textAlignment': textAlignment.name,
         'theme': theme.name,
+        if (_portableBackgroundId(backgroundAssetId, includeLocalAssets)
+            case final backgroundId?)
+          'backgroundAssetId': backgroundId,
+        'backgroundFit': backgroundFit.name,
+        'textureStrength': textureStrength,
+        if (foregroundArgb case final foreground?) 'foregroundArgb': foreground,
         'keepScreenOn': keepScreenOn,
         'toolbarAutoHideSeconds': toolbarAutoHideSeconds,
+        'showChapterName': showChapterName,
+        'showPageNumber': showPageNumber,
+        'showBookProgress': showBookProgress,
+        'showTime': showTime,
+        'showBattery': showBattery,
+        'singleHandNext': singleHandNext,
+        'brightness': brightness,
       };
 
   factory NovelReaderPreferences.fromJson(Map<String, dynamic> json) {
     return NovelReaderPreferences(
-      mode: NovelReaderMode.values.firstWhere(
-        (value) => value.name == json['mode'],
-        orElse: () => NovelReaderMode.paged,
+      turnMode: NovelPageTurnMode.values.firstWhere(
+        (value) => value.name == json['turnMode'],
+        orElse: () => json['mode'] == NovelReaderMode.scroll.name
+            ? NovelPageTurnMode.scroll
+            : NovelPageTurnMode.curl,
       ),
-      fontFamily: json['fontFamily'] as String? ?? '',
-      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
-      lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.7,
-      paragraphSpacing: (json['paragraphSpacing'] as num?)?.toDouble() ?? 10,
-      horizontalMargin: (json['horizontalMargin'] as num?)?.toDouble() ?? 22,
-      theme: NovelReaderTheme.values.firstWhere(
-        (value) => value.name == json['theme'],
-        orElse: () => NovelReaderTheme.sepia,
+      fontFamily: normalizeNovelFontId(json['fontFamily']),
+      fontSize: _clampedDouble(json['fontSize'], 18, 12, 32),
+      lineHeight: _clampedDouble(json['lineHeight'], 1.7, 1.2, 2.4),
+      paragraphSpacing: _clampedDouble(json['paragraphSpacing'], 10, 0, 30),
+      horizontalMargin: _clampedDouble(json['horizontalMargin'], 22, 8, 56),
+      topMargin: _clampedDouble(json['topMargin'], 16, 0, 96),
+      bottomMargin: _clampedDouble(json['bottomMargin'], 20, 0, 96),
+      firstLineIndent: _clampedDouble(json['firstLineIndent'], 2, 0, 4),
+      textAlignment: NovelTextAlignment.values.firstWhere(
+        (value) => value.name == json['textAlignment'],
+        orElse: () => NovelTextAlignment.justify,
       ),
+      theme: _parseReaderTheme(json['theme']),
+      backgroundAssetId: _parseBackgroundId(json['backgroundAssetId']),
+      backgroundFit: NovelBackgroundFit.values.firstWhere(
+        (value) => value.name == json['backgroundFit'],
+        orElse: () => NovelBackgroundFit.crop,
+      ),
+      textureStrength: _clampedDouble(json['textureStrength'], .55, 0, 1),
+      foregroundArgb: _parseArgb(json['foregroundArgb']),
       keepScreenOn: json['keepScreenOn'] as bool? ?? true,
       toolbarAutoHideSeconds:
-          ((json['toolbarAutoHideSeconds'] as num?)?.toInt() ?? 4)
-              .clamp(0, 10)
-              .toInt(),
+          _clampedInt(json['toolbarAutoHideSeconds'], 4, 0, 10),
+      showChapterName: json['showChapterName'] as bool? ?? true,
+      showPageNumber: json['showPageNumber'] as bool? ?? true,
+      showBookProgress: json['showBookProgress'] as bool? ?? true,
+      showTime: json['showTime'] as bool? ?? true,
+      showBattery: json['showBattery'] as bool? ?? true,
+      singleHandNext: json['singleHandNext'] as bool? ?? false,
+      brightness: _clampedDouble(json['brightness'], 1, .6, 1.4),
     );
   }
+}
+
+NovelReaderTheme _parseReaderTheme(Object? value) {
+  if (value == 'sepia') return NovelReaderTheme.eyeCare;
+  return NovelReaderTheme.values.firstWhere(
+    (theme) => theme.name == value,
+    orElse: () => NovelReaderTheme.eyeCare,
+  );
+}
+
+String? _parseBackgroundId(Object? value) {
+  if (value is! String) return null;
+  final id = value.trim().toLowerCase();
+  if (RegExp(r'^imported:[a-f0-9]{64}$').hasMatch(id) ||
+      RegExp(r'^builtin:paper--?\d+-\d+$').hasMatch(id)) {
+    return id;
+  }
+  return null;
+}
+
+String? _portableBackgroundId(String? id, bool includeLocalAssets) {
+  final normalized = _parseBackgroundId(id);
+  if (includeLocalAssets ||
+      normalized?.startsWith(NovelBackgroundIds.paperPrefix) == true) {
+    return normalized;
+  }
+  return null;
+}
+
+int? _parseArgb(Object? value) {
+  if (value is! num) return null;
+  final parsed = value.toInt();
+  return parsed >= 0 && parsed <= 0xffffffff ? parsed : null;
+}
+
+double _clampedDouble(Object? value, double fallback, double min, double max) {
+  final parsed = value is num ? value.toDouble() : fallback;
+  if (!parsed.isFinite) return fallback;
+  return parsed.clamp(min, max).toDouble();
+}
+
+int _clampedInt(Object? value, int fallback, int min, int max) {
+  final parsed = value is num ? value.toDouble() : fallback.toDouble();
+  if (!parsed.isFinite) return fallback;
+  return parsed.clamp(min, max).toInt();
 }
 
 class NovelLibraryEntry {
@@ -277,19 +442,13 @@ class NovelReadingProgress {
   final int updatedAt;
 
   Map<String, Object?> toJson() => {
-        'chapterId': locator.chapterId,
-        if (locator.blockId != null) 'blockId': locator.blockId,
-        'fraction': locator.fraction,
+        ...locator.toJson(),
         'updatedAt': updatedAt,
       };
 
   factory NovelReadingProgress.fromJson(Map<String, dynamic> json) {
     return NovelReadingProgress(
-      locator: NovelLocator(
-        chapterId: json['chapterId'] as String,
-        blockId: json['blockId'] as String?,
-        fraction: (json['fraction'] as num?)?.toDouble() ?? 0,
-      ),
+      locator: NovelLocator.fromJson(json),
       updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
     );
   }
@@ -455,6 +614,19 @@ class NovelLibraryStore extends ChangeNotifier {
     return List.unmodifiable(values);
   }
 
+  void rememberRemote(NovelLibraryEntry entry) {
+    if (entry.origin != NovelOrigin.remote) {
+      throw ArgumentError.value(entry.key, 'entry', 'expected remote novel');
+    }
+    final current = _entries[entry.key];
+    _entries[entry.key] = entry.copyWith(
+      favorite: current?.favorite ?? entry.favorite,
+      addedAt: current?.addedAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+    _persistLibrary();
+    notifyListeners();
+  }
+
   void toggleRemoteFavorite(NovelLibraryEntry entry) {
     if (entry.origin != NovelOrigin.remote) {
       throw ArgumentError.value(entry.key, 'entry', 'expected remote novel');
@@ -506,7 +678,9 @@ class NovelLibraryStore extends ChangeNotifier {
         'history': {
           for (final item in _history.entries) item.key: item.value.toJson(),
         },
-        'settings': preferences.toJson(),
+        'settings': preferences.toJson(
+          includeLocalAssets: includeLocalPaths,
+        ),
       };
 
   Future<void> importData(

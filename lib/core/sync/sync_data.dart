@@ -5,6 +5,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
+import '../novel/reader/novel_reader_data.dart';
+import '../novel/reader/novel_reader_data_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import '../source/title_match.dart' show sameCoreKey;
@@ -15,6 +17,7 @@ import '../source/title_match.dart' show sameCoreKey;
 enum SyncCategory {
   favorites, // 收藏
   history, // 阅读进度 / 历史(含作品级共享进度)
+  readerNotes, // 小说书签 / 划线高亮 / 用户笔记及墓碑
   searchHistory, // 搜索历史
   readerSettings, // 阅读设置(翻页/缩放/滤镜/亮度/每本书的模式…)
   uiSettings, // 界面与外观(布局/字体/圆角/背景图/动画…)
@@ -55,19 +58,49 @@ class SyncData {
   // ---- 设置键 → 细分类别 ----
   // 阅读器行为(含每本书的模式覆盖 mangaModes)。
   static const _readerKeys = {
-    'readerMode', 'preload', 'doublePage', 'doubleTapZoom', 'showPageNumber',
-    'brightness', 'webtoonWidth', 'readerBackground', 'readerGestures',
-    'volumeKeyPaging', 'invertTapZones', 'readerBg', 'readerOrientation',
-    'keepScreenOn', 'autoDetectMode', 'webtoonGap', 'chapterToast',
-    'cfGrayscale', 'cfInvert', 'cfSepia', 'cfContrast', 'zoomMode',
-    'autoScrollSpeed', 'mangaModes', 'chaptersDesc',
+    'readerMode',
+    'preload',
+    'doublePage',
+    'doubleTapZoom',
+    'showPageNumber',
+    'brightness',
+    'webtoonWidth',
+    'readerBackground',
+    'readerGestures',
+    'volumeKeyPaging',
+    'invertTapZones',
+    'readerBg',
+    'readerOrientation',
+    'keepScreenOn',
+    'autoDetectMode',
+    'webtoonGap',
+    'chapterToast',
+    'cfGrayscale',
+    'cfInvert',
+    'cfSepia',
+    'cfContrast',
+    'zoomMode',
+    'autoScrollSpeed',
+    'mangaModes',
+    'chaptersDesc',
   };
 
   // 界面与外观(布局/字体/圆角/背景图/动画;showSourcePicker 与书架布局同组)。
   static const _uiKeys = {
-    'gridColumns', 'coverRadius', 'controlRadius', 'uiScale', 'uiFont',
-    'bgImage', 'bgBlur', 'bgTintColor', 'bgTintAlpha', 'enableAnimations',
-    'scrollAnimations', 'detailTintStrength', 'feedLayout', 'showSourcePicker',
+    'gridColumns',
+    'coverRadius',
+    'controlRadius',
+    'uiScale',
+    'uiFont',
+    'bgImage',
+    'bgBlur',
+    'bgTintColor',
+    'bgTintAlpha',
+    'enableAnimations',
+    'scrollAnimations',
+    'detailTintStrength',
+    'feedLayout',
+    'showSourcePicker',
   };
 
   /// 设置类键 → 细分类别;非设置键(收藏/历史/源开关/v 等)返回 null。
@@ -99,8 +132,9 @@ class SyncData {
       if (len <= 0 || len > 3 * 1024 * 1024) return;
       outLib['bgImageData'] = base64Encode(f.readAsBytesSync());
       final dot = p.lastIndexOf('.');
-      outLib['bgImageExt'] =
-          (dot >= 0 && p.length - dot <= 6) ? p.substring(dot + 1).toLowerCase() : 'png';
+      outLib['bgImageExt'] = (dot >= 0 && p.length - dot <= 6)
+          ? p.substring(dot + 1).toLowerCase()
+          : 'png';
     } catch (_) {}
   }
 
@@ -110,10 +144,11 @@ class SyncData {
     try {
       final data = blib['bgImageData'] as String?;
       if (data != null && data.isNotEmpty) {
-        final ext =
-            (blib['bgImageExt'] as String?)?.replaceAll(RegExp(r'[^a-z0-9]'), '');
+        final ext = (blib['bgImageExt'] as String?)
+            ?.replaceAll(RegExp(r'[^a-z0-9]'), '');
         final dir = await getApplicationSupportDirectory();
-        final file = File('${dir.path}/synced_bg.${ext == null || ext.isEmpty ? 'png' : ext}');
+        final file = File(
+            '${dir.path}/synced_bg.${ext == null || ext.isEmpty ? 'png' : ext}');
         await file.writeAsBytes(base64Decode(data));
         lib.bgImage = file.path;
       } else {
@@ -158,6 +193,7 @@ class SyncData {
     NovelLibraryStore novels,
     SourceRepository repo, {
     required Set<SyncCategory> categories,
+    Map<String, dynamic>? readerNotes,
   }) {
     final full = lib.exportData();
     final fullNovels = novels.exportData();
@@ -217,6 +253,9 @@ class SyncData {
     if (categories.contains(SyncCategory.readerSettings)) {
       outNovels['settings'] = fullNovels['settings'];
     }
+    if (categories.contains(SyncCategory.readerNotes) && readerNotes != null) {
+      outNovels['readerNotes'] = sanitizePortableNovelReaderData(readerNotes);
+    }
 
     final blob = <String, dynamic>{
       'v': 1,
@@ -258,8 +297,8 @@ class SyncData {
         outLib[k] =
             _mergeSearchHistory(_strList(lLib[k]), lTs, _strList(rLib[k]), rTs);
       } else {
-        outLib[k] = _lww(
-            lLib.containsKey(k), lLib[k], lTs, rLib.containsKey(k), rLib[k], rTs);
+        outLib[k] = _lww(lLib.containsKey(k), lLib[k], lTs, rLib.containsKey(k),
+            rLib[k], rTs);
       }
     }
 
@@ -293,11 +332,16 @@ class SyncData {
     final baseNovels = _map(base['novels']);
     final overNovels = _map(over['novels']);
     if (baseNovels.isNotEmpty || overNovels.isNotEmpty) {
-      out['novels'] = <String, dynamic>{
+      final novels = <String, dynamic>{
         'schema': 1,
         ...baseNovels,
         ...overNovels,
       };
+      if (novels.containsKey('readerNotes')) {
+        novels['readerNotes'] =
+            sanitizePortableNovelReaderData(novels['readerNotes']);
+      }
+      out['novels'] = novels;
     }
     final sr = over.containsKey('sourceRepo')
         ? over['sourceRepo']
@@ -358,8 +402,12 @@ class SyncData {
   static Map<String, dynamic> _mergeWorkEntry(Map x, Map y) {
     final recent = _int(x['u']) >= _int(y['u']) ? x : y;
     final reads = <double>{
-      ...(x['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
-      ...(y['r'] as List? ?? const []).whereType<num>().map((e) => e.toDouble()),
+      ...(x['r'] as List? ?? const [])
+          .whereType<num>()
+          .map((e) => e.toDouble()),
+      ...(y['r'] as List? ?? const [])
+          .whereType<num>()
+          .map((e) => e.toDouble()),
     };
     return {
       'n': recent['n'],
@@ -483,6 +531,10 @@ class SyncData {
             _map(local[key]),
             _map(remote[key]),
           ),
+        'readerNotes' => mergePortableNovelReaderData(
+            local[key],
+            remote[key],
+          ),
         _ => _lww(
             local.containsKey(key),
             local[key],
@@ -505,6 +557,7 @@ class SyncData {
     NovelLibraryStore novels,
     SourceRepository repo, {
     required Map<SyncCategory, bool> modes,
+    NovelReaderDataStore? readerDataStore,
   }) async {
     final blib = _map(blob['library']);
     final bnovels = _map(blob['novels']);
@@ -556,8 +609,8 @@ class SyncData {
     final shMode = modes[SyncCategory.searchHistory];
     if (shMode != null && blib.containsKey('searchHistory')) {
       toImport['searchHistory'] = shMode == true
-          ? _mergeSearchHistory(
-              _strList(full['searchHistory']), 1, _strList(blib['searchHistory']), 0)
+          ? _mergeSearchHistory(_strList(full['searchHistory']), 1,
+              _strList(blib['searchHistory']), 0)
           : blib['searchHistory'];
     }
     // 设置细类:只有覆盖(false)才应用;追加/不选保持本地。
@@ -701,6 +754,15 @@ class SyncData {
       );
     }
 
+    final readerNotesMode = modes[SyncCategory.readerNotes];
+    if (readerNotesMode != null && bnovels.containsKey('readerNotes')) {
+      await (readerDataStore ?? NovelReaderDataStore.instance)
+          .importPortableData(
+        bnovels['readerNotes'],
+        append: readerNotesMode,
+      );
+    }
+
     // 背景图:「界面与外观」覆盖模式下落地图片内容并指向本机路径(追加不动设置)。
     if (modes[SyncCategory.uiSettings] == false) {
       await _applyBgImage(blib, lib);
@@ -714,7 +776,9 @@ class SyncData {
         final dir = (sr['localDir'] as String?)?.trim() ?? '';
         if (url.isNotEmpty && url != (repo.repoUrl ?? '')) {
           await repo.setRepoUrl(url);
-        } else if (url.isEmpty && dir.isNotEmpty && dir != (repo.localDir ?? '')) {
+        } else if (url.isEmpty &&
+            dir.isNotEmpty &&
+            dir != (repo.localDir ?? '')) {
           await repo.setLocalDir(dir);
         }
       } catch (_) {}
@@ -726,6 +790,7 @@ class SyncData {
   static bool supportsAppend(SyncCategory c) =>
       c == SyncCategory.favorites ||
       c == SyncCategory.history ||
+      c == SyncCategory.readerNotes ||
       c == SyncCategory.searchHistory ||
       c == SyncCategory.mangaSources ||
       c == SyncCategory.animeSources ||

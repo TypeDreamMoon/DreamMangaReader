@@ -7,6 +7,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
+import '../../core/source/page_image_data.dart';
 import '../common/animations.dart';
 
 /// 已记过加载失败的封面 url:失败组件会随重建反复触发,同一张只记一次。
@@ -112,19 +113,26 @@ class MangaCover extends StatelessWidget {
                   ),
                 ),
               ),
-              // 网络封面(磁盘缓存,带 Referer):加载后覆盖占位;失败/加载中透出占位。
+              // 内嵌封面直接从内存解码；网络封面继续走磁盘缓存并携带 Referer。
               if (cover != null && cover.isNotEmpty)
-                CachedNetworkImage(
-                  cacheManager: appImageCache,
-                  imageUrl: cover,
-                  httpHeaders: headers,
-                  fit: BoxFit.cover,
-                  fadeInDuration: const Duration(milliseconds: 180),
-                  placeholder: (_, __) => const SizedBox.shrink(),
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                  errorListener: (e) =>
-                      _logCoverFail(manga.title, cover, headers, e),
-                ),
+                if (isPageImageDataUri(cover))
+                  Image.memory(
+                    decodePageImageDataUri(cover).bytes,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  )
+                else
+                  CachedNetworkImage(
+                    cacheManager: appImageCache,
+                    imageUrl: cover,
+                    httpHeaders: headers,
+                    fit: BoxFit.cover,
+                    fadeInDuration: const Duration(milliseconds: 180),
+                    placeholder: (_, __) => const SizedBox.shrink(),
+                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                    errorListener: (e) =>
+                        _logCoverFail(manga.title, cover, headers, e),
+                  ),
               if (showTitle)
                 Positioned(
                   left: 0,

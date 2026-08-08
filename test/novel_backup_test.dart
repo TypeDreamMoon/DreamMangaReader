@@ -5,8 +5,47 @@ import 'package:dream_manga_reader/app/backup.dart';
 import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+NovelReaderDataStore _readerStore(Directory directory) => NovelReaderDataStore(
+      applicationSupportDirectory: () async => directory,
+      writeDelay: const Duration(days: 1),
+    );
+
+Map<String, dynamic> _readerNotes(
+  String bookKey, {
+  required String itemId,
+  required int updatedAt,
+  String note = 'portable backup note',
+}) =>
+    {
+      'schema': 1,
+      'books': {
+        bookKey: {
+          'schema': 1,
+          'bookKey': bookKey,
+          'bookmarks': <String, dynamic>{},
+          'annotations': {
+            itemId: {
+              'id': itemId,
+              'bookKey': bookKey,
+              'range': {
+                'start': {'chapterId': 'chapter-1', 'charOffset': 1},
+                'end': {'chapterId': 'chapter-1', 'charOffset': 5},
+                'quote': 'quote',
+              },
+              'colorId': 'yellow',
+              'createdAt': 1,
+              'updatedAt': updatedAt,
+              'note': note,
+            },
+          },
+        },
+      },
+    };
 
 void main() {
   late Directory sandbox;
@@ -126,5 +165,114 @@ void main() {
     expect(encoded, isNot(contains('source.repository.token')));
     expect(encoded, isNot(contains('auth.picacg.token')));
     expect((sanitized['nested'] as Map)['safe'], 'keep-me');
+  });
+
+  test('portable backup includes sanitized reader annotations recursively',
+      () async {
+    const bookKey = 'local:backup-book';
+    const forbidden = 'DEVICE_ONLY_BACKUP_SENTINEL_d199';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final notes = _readerNotes(
+      bookKey,
+      itemId: 'annotation-1',
+      updatedAt: 10,
+    );
+    final book = ((notes['books'] as Map)[bookKey] as Map);
+    book['chapterText'] = forbidden;
+    book['nested'] = {
+      'bookText': forbidden,
+      'searchIndex': forbidden,
+      'privatePath': forbidden,
+      'sourceToken': forbidden,
+      'fontBytes': forbidden,
+      'backgroundBytes': forbidden,
+      'bgImage': forbidden,
+      'pageScreenshot': forbidden,
+    };
+
+    final backup = buildBackupData(manga, novels, readerNotes: notes);
+    final encoded = jsonEncode(backup);
+
+    expect(((backup['novels'] as Map)['readerNotes']), isA<Map>());
+    expect(encoded, contains('portable backup note'));
+    expect(encoded, isNot(contains(forbidden)));
+    for (final key in const [
+      'chapterText',
+      'bookText',
+      'searchIndex',
+      'privatePath',
+      'sourceToken',
+      'fontBytes',
+      'backgroundBytes',
+      'bgImage',
+      'pageScreenshot',
+    ]) {
+      expect(encoded, isNot(contains(key)));
+    }
+    manga.dispose();
+    novels.dispose();
+  });
+
+  test('backup restore appends then replaces reader notes and flushes',
+      () async {
+    const bookKey = 'local:restore-notes';
+    const removedBook = 'local:removed-notes';
+    final manga = LibraryStore();
+    final novels = NovelLibraryStore();
+    await novels.load();
+    final store = _readerStore(sandbox);
+    for (final entry in [
+      (bookKey, 'local-note'),
+      (removedBook, 'removed-note'),
+    ]) {
+      final notes = _readerNotes(entry.$1,
+          itemId: entry.$2, updatedAt: 10, note: entry.$2);
+      store.saveBook(NovelReaderBookData.fromJson(
+        ((notes['books'] as Map)[entry.$1] as Map).cast<String, dynamic>(),
+      ));
+    }
+    await store.flushPending();
+    final appendNotes = _readerNotes(
+      bookKey,
+      itemId: 'remote-note',
+      updatedAt: 20,
+      note: 'remote note',
+    );
+
+    await restoreBackupData(
+      manga,
+      novels,
+      {
+        'v': 1,
+        'novels': {'schema': 1, 'readerNotes': appendNotes},
+      },
+      readerDataStore: store,
+      appendReaderNotes: true,
+    );
+    var persisted = _readerStore(sandbox);
+    expect((await persisted.loadBook(bookKey)).annotations.keys,
+        containsAll(['local-note', 'remote-note']));
+    persisted.dispose();
+
+    await restoreBackupData(
+      manga,
+      novels,
+      {
+        'v': 1,
+        'novels': {'schema': 1, 'readerNotes': appendNotes},
+      },
+      readerDataStore: store,
+      appendReaderNotes: false,
+    );
+    persisted = _readerStore(sandbox);
+    expect((await persisted.loadBook(bookKey)).annotations.keys,
+        equals({'remote-note'}));
+    expect((await persisted.loadBook(removedBook)).annotations, isEmpty);
+    persisted.dispose();
+    store.dispose();
+    manga.dispose();
+    novels.dispose();
   });
 }

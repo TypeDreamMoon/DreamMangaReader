@@ -96,6 +96,10 @@ class NovelLocator {
   const NovelLocator({
     required this.chapterId,
     this.blockId,
+    this.charOffset,
+    this.quote,
+    this.prefix,
+    this.suffix,
     double fraction = 0,
   }) : fraction = fraction != fraction
             ? 0.0
@@ -107,7 +111,56 @@ class NovelLocator {
 
   final String chapterId;
   final String? blockId;
+  final int? charOffset;
+  final String? quote;
+  final String? prefix;
+  final String? suffix;
   final double fraction;
+
+  Map<String, Object?> toJson() => {
+        'chapterId': chapterId,
+        if (blockId != null) 'blockId': blockId,
+        if (charOffset != null) 'charOffset': charOffset,
+        if (quote != null) 'quote': quote,
+        if (prefix != null) 'prefix': prefix,
+        if (suffix != null) 'suffix': suffix,
+        'fraction': fraction,
+      };
+
+  factory NovelLocator.fromJson(Map<String, dynamic> json) {
+    return NovelLocator(
+      chapterId: json['chapterId'] as String,
+      blockId: json['blockId'] as String?,
+      charOffset: (json['charOffset'] as num?)?.toInt(),
+      quote: json['quote'] as String?,
+      prefix: json['prefix'] as String?,
+      suffix: json['suffix'] as String?,
+      fraction: (json['fraction'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NovelLocator &&
+          chapterId == other.chapterId &&
+          blockId == other.blockId &&
+          charOffset == other.charOffset &&
+          quote == other.quote &&
+          prefix == other.prefix &&
+          suffix == other.suffix &&
+          fraction == other.fraction;
+
+  @override
+  int get hashCode => Object.hash(
+        chapterId,
+        blockId,
+        charOffset,
+        quote,
+        prefix,
+        suffix,
+        fraction,
+      );
 }
 
 class ImportedNovelPreview {

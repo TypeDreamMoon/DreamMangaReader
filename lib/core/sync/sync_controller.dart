@@ -8,6 +8,7 @@ import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../log/app_log.dart';
 import '../net/iam_auth.dart';
+import '../novel/reader/novel_reader_data_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import 'hertz_backend.dart';
@@ -32,7 +33,8 @@ class SyncController extends ChangeNotifier {
   static const _kPass = 'sync.webdav.pass';
   // 通用
   static const _kAuto = 'sync.auto';
-  static const _kAutoUpFav = 'sync.autoUploadOnFavorite'; // 旧布尔开关(已并入 _kAutoUpOn)
+  static const _kAutoUpFav =
+      'sync.autoUploadOnFavorite'; // 旧布尔开关(已并入 _kAutoUpOn)
   static const _kAutoUpOn = 'sync.autoUploadOn';
   static const _kAutoUpBase = 'sync.autoUploadBase'; // 各类别基线签名(跨启动)
   static const _kLastAt = 'sync.lastAt';
@@ -43,6 +45,7 @@ class SyncController extends ChangeNotifier {
   static const _kHClientId = 'sync.hertz.clientId';
   static const _kHPreset = 'sync.hertz.preset';
   static const _kCategories = 'sync.categories';
+  static const _kReaderNotesMigrated = 'sync.readerNotesMigrationV1';
 
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
@@ -89,9 +92,33 @@ class SyncController extends ChangeNotifier {
       : url.trim().isNotEmpty;
 
   SharedPreferences? _prefs;
+  final NovelReaderDataStore _readerDataStore = NovelReaderDataStore.instance;
 
   Future<SharedPreferences> get _p async =>
       _prefs ??= await SharedPreferences.getInstance();
+
+  static Set<SyncCategory> categoriesFromPreferences(
+    List<String>? raw, {
+    required bool migrateReaderNotes,
+  }) {
+    if (raw == null) return SyncCategory.values.toSet();
+    final out = <SyncCategory>{
+      for (final category in SyncCategory.values)
+        if (raw.contains(category.name)) category,
+    };
+    if (raw.contains('settings')) {
+      out.addAll(const {
+        SyncCategory.readerSettings,
+        SyncCategory.uiSettings,
+        SyncCategory.appSettings,
+        SyncCategory.searchHistory,
+      });
+    }
+    if (migrateReaderNotes && raw.contains(SyncCategory.history.name)) {
+      out.add(SyncCategory.readerNotes);
+    }
+    return out;
+  }
 
   Future<void> load() async {
     final p = await _p;
@@ -110,43 +137,36 @@ class SyncController extends ChangeNotifier {
       hertzClientId = hzPresetClientId;
     }
     auto = p.getBool(_kAuto) ?? false;
-    // 解析类别名集合;旧版整份「settings」类别展开成 阅读/界面/其它设置+搜索历史。
-    Set<SyncCategory>? parseCats(List<String>? raw) {
-      if (raw == null) return null;
-      final out = <SyncCategory>{
-        for (final c in SyncCategory.values)
-          if (raw.contains(c.name)) c
-      };
-      if (raw.contains('settings')) {
-        out.addAll(const {
-          SyncCategory.readerSettings,
-          SyncCategory.uiSettings,
-          SyncCategory.appSettings,
-          SyncCategory.searchHistory,
-        });
-      }
-      return out;
-    }
-
+    // 旧配置只在首次升级时迁移 readerNotes；之后用户可独立关闭它。
+    final migrateReaderNotes = p.getBool(_kReaderNotesMigrated) != true;
     final upCats = p.getStringList(_kAutoUpOn);
-    autoUploadOn = parseCats(upCats) ?? <SyncCategory>{};
+    autoUploadOn = upCats == null
+        ? <SyncCategory>{}
+        : categoriesFromPreferences(
+            upCats,
+            migrateReaderNotes: migrateReaderNotes,
+          );
     // 迁移旧的「收藏后自动上传」布尔开关 → 类别集合。
     if (p.getBool(_kAutoUpFav) == true) {
       autoUploadOn.add(SyncCategory.favorites);
       await p.remove(_kAutoUpFav);
-      await p.setStringList(
-          _kAutoUpOn, [for (final c in autoUploadOn) c.name]);
-    } else if (upCats != null && upCats.contains('settings')) {
+      await p.setStringList(_kAutoUpOn, [for (final c in autoUploadOn) c.name]);
+    } else if (upCats != null &&
+        (upCats.contains('settings') || migrateReaderNotes)) {
       await p.setStringList(
           _kAutoUpOn, [for (final c in autoUploadOn) c.name]); // 落盘迁移结果
     }
     lastSyncedAt = p.getInt(_kLastAt) ?? 0;
     final cats = p.getStringList(_kCategories);
-    syncCategories = parseCats(cats) ?? SyncCategory.values.toSet();
-    if (cats != null && cats.contains('settings')) {
+    syncCategories = categoriesFromPreferences(
+      cats,
+      migrateReaderNotes: migrateReaderNotes,
+    );
+    if (cats != null && (cats.contains('settings') || migrateReaderNotes)) {
       await p.setStringList(
           _kCategories, syncCategories.map((e) => e.name).toList());
     }
+    if (migrateReaderNotes) await p.setBool(_kReaderNotesMigrated, true);
     await IamAuth.instance.load(issuer: hertzIssuer, clientId: hertzClientId);
     notifyListeners();
   }
@@ -212,6 +232,7 @@ class SyncController extends ChangeNotifier {
   /// 去抖/节流补查兜底把最终值传上去。其余类别变化即传。
   static const _upMinGapMs = {
     SyncCategory.history: 120000,
+    SyncCategory.readerNotes: 60000,
     SyncCategory.readerSettings: 60000,
     SyncCategory.uiSettings: 60000,
     SyncCategory.appSettings: 60000,
@@ -227,10 +248,12 @@ class SyncController extends ChangeNotifier {
     _upLib = lib;
     _upNovels = novels;
     _upRepo = repo;
+    await _readerDataStore.exportPortableData();
     final saved = (await _p).getStringList(_kAutoUpBase) ?? const [];
     final savedMap = <String, String>{
       for (final s in saved)
-        if (s.contains('=')) s.substring(0, s.indexOf('=')): s.substring(s.indexOf('=') + 1)
+        if (s.contains('='))
+          s.substring(0, s.indexOf('=')): s.substring(s.indexOf('=') + 1)
     };
     final cur = _localSigs(SyncCategory.values.toSet());
     _upBase.clear();
@@ -251,6 +274,7 @@ class SyncController extends ChangeNotifier {
     }
     lib.addListener(_onLocalChanged);
     novels.addListener(_onLocalChanged);
+    _readerDataStore.addListener(_onLocalChanged);
     repo.onChanged = _onLocalChanged;
     if (savedMap.isEmpty) {
       _persistBase(); // 首次:把当前基线落盘
@@ -413,6 +437,7 @@ class SyncController extends ChangeNotifier {
                     if (novelHistory.containsKey(entry['key'])) entry,
                 ])}',
           ),
+        SyncCategory.readerNotes => enc(_readerDataStore.portableSnapshot),
         SyncCategory.searchHistory => enc(full['searchHistory']),
         SyncCategory.readerSettings ||
         SyncCategory.uiSettings ||
@@ -442,8 +467,8 @@ class SyncController extends ChangeNotifier {
     } else {
       syncCategories.remove(c);
     }
-    await (await _p)
-        .setStringList(_kCategories, syncCategories.map((e) => e.name).toList());
+    await (await _p).setStringList(
+        _kCategories, syncCategories.map((e) => e.name).toList());
     notifyListeners();
   }
 
@@ -527,16 +552,35 @@ class SyncController extends ChangeNotifier {
       final backend = _backend();
       AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 类别 ${_catLabel(sel)}',
           detail: '类别:${sel.map((c) => c.name).join(', ')}');
-      final local = SyncData.build(lib, novels, repo, categories: sel);
+      final readerNotes = sel.contains(SyncCategory.readerNotes)
+          ? await _readerDataStore.exportPortableData()
+          : null;
+      final local = SyncData.build(
+        lib,
+        novels,
+        repo,
+        categories: sel,
+        readerNotes: readerNotes,
+      );
       AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
-      AppLog.i.debug(LogCat.sync,
-          remote == null ? '拉取远端 · 无数据(首次同步)' : '拉取远端 · ${_dataSummary(remote)}');
+      AppLog.i.debug(
+          LogCat.sync,
+          remote == null
+              ? '拉取远端 · 无数据(首次同步)'
+              : '拉取远端 · ${_dataSummary(remote)}');
       var merged = remote == null ? local : SyncData.merge(local, remote);
       if (remote != null) {
         AppLog.i.debug(LogCat.sync, '合并本地+远端 · ${_dataSummary(merged)}');
       }
-      await SyncData.apply(merged, lib, novels, repo, modes: applyModes);
+      await SyncData.apply(
+        merged,
+        lib,
+        novels,
+        repo,
+        modes: applyModes,
+        readerDataStore: _readerDataStore,
+      );
       AppLog.i.debug(LogCat.sync, '已应用合并结果到本地');
       // 基线签名取「写回完成时刻」:推送期间的新变化对不上签名,之后照样能自动上传。
       var preSigs = _localSigs(sel);
@@ -556,7 +600,14 @@ class SyncController extends ChangeNotifier {
           AppLog.i.warn(LogCat.sync, '推送遇并发冲突,重合并后重试(第 $attempt 次)');
           if (c.remote != null) {
             merged = SyncData.merge(merged, c.remote!);
-            await SyncData.apply(merged, lib, novels, repo, modes: applyModes);
+            await SyncData.apply(
+              merged,
+              lib,
+              novels,
+              repo,
+              modes: applyModes,
+              readerDataStore: _readerDataStore,
+            );
             preSigs = _localSigs(sel);
           }
         }
@@ -607,13 +658,25 @@ class SyncController extends ChangeNotifier {
       final backend = _backend();
       AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(cats)}',
           detail: '类别:${cats.map((c) => c.name).join(', ')}');
-      final local = SyncData.build(lib, novels, repo, categories: cats);
+      final readerNotes = cats.contains(SyncCategory.readerNotes)
+          ? await _readerDataStore.exportPortableData()
+          : null;
+      final local = SyncData.build(
+        lib,
+        novels,
+        repo,
+        categories: cats,
+        readerNotes: readerNotes,
+      );
       // 基线签名与快照同刻采集:推送期间的新变化对不上签名,之后照样能自动上传。
       final preSigs = _localSigs(cats);
       AppLog.i.debug(LogCat.sync, '本地快照 · ${_dataSummary(local)}');
       final remote = await backend.pull();
-      AppLog.i.debug(LogCat.sync,
-          remote == null ? '拉取远端 · 无数据' : '拉取远端(保留未选类别)· ${_dataSummary(remote)}');
+      AppLog.i.debug(
+          LogCat.sync,
+          remote == null
+              ? '拉取远端 · 无数据'
+              : '拉取远端(保留未选类别)· ${_dataSummary(remote)}');
       var toPush = remote == null ? local : SyncData.overlay(remote, local);
       var attempt = 0;
       while (true) {
@@ -625,7 +688,8 @@ class SyncController extends ChangeNotifier {
         } on SyncConflict catch (c) {
           if (++attempt > 3) throw Exception('上传冲突,多次重试仍失败,请稍后再试');
           AppLog.i.warn(LogCat.sync, '上传遇并发冲突,重叠加后重试(第 $attempt 次)');
-          toPush = c.remote == null ? local : SyncData.overlay(c.remote!, local);
+          toPush =
+              c.remote == null ? local : SyncData.overlay(c.remote!, local);
         }
       }
       await _stampSynced();
@@ -673,7 +737,14 @@ class SyncController extends ChangeNotifier {
         return status;
       }
       AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
-      await SyncData.apply(remote, lib, novels, repo, modes: modes);
+      await SyncData.apply(
+        remote,
+        lib,
+        novels,
+        repo,
+        modes: modes,
+        readerDataStore: _readerDataStore,
+      );
       AppLog.i.debug(LogCat.sync, '已写入本地(${modes.length} 项)');
       final preSigs = _localSigs(modes.keys.toSet()); // 写回完成时刻的签名
       await _stampSynced();
@@ -695,8 +766,7 @@ class SyncController extends ChangeNotifier {
     await (await _p).setInt(_kLastAt, lastSyncedAt);
   }
 
-  static String _catLabel(Set<SyncCategory> c) =>
-      '${c.length} 项';
+  static String _catLabel(Set<SyncCategory> c) => '${c.length} 项';
 
   // 日志用:后端名 + 快照内容摘要(收藏/历史条数、是否含源仓库配置)。
   String get _backendLabel => isHertz ? '账号(Hertz)' : 'WebDAV';
@@ -719,6 +789,9 @@ class SyncController extends ChangeNotifier {
       }
       if (novels['history'] != null) {
         parts.add('小说历史 ${cnt(novels['history'])}');
+      }
+      if (novels['readerNotes'] is Map) {
+        parts.add('小说书签笔记 ${cnt((novels['readerNotes'] as Map)['books'])}');
       }
     }
     if (d['sourceRepo'] != null) parts.add('源仓库配置');

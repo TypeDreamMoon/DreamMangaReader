@@ -16,6 +16,7 @@ String kCatLabel(BuildContext context, SyncCategory c) {
   return switch (c) {
     SyncCategory.favorites => l.sync_catFavorites,
     SyncCategory.history => l.sync_catHistory,
+    SyncCategory.readerNotes => l.sync_catReaderNotes,
     SyncCategory.searchHistory => l.sync_catSearchHistory,
     SyncCategory.readerSettings => l.reader_settings,
     SyncCategory.uiSettings => l.sync_catUiSettings,
@@ -103,18 +104,22 @@ class _SyncPageState extends State<SyncPage> {
       if (_preset == 'hertz') {
         await _sync.auth.loginBrowser();
       } else {
-        await _sync.auth.loginPassword(_loginUserCtrl.text, _loginPassCtrl.text);
+        await _sync.auth
+            .loginPassword(_loginUserCtrl.text, _loginPassCtrl.text);
         _loginPassCtrl.clear();
       }
       if (!mounted) return;
       setState(() => _loginBusy = false);
       showAppNotify(
-          context, context.l10n.sync_loginSuccess(_sync.auth.username ?? context.l10n.sync_account),
+          context,
+          context.l10n.sync_loginSuccess(
+              _sync.auth.username ?? context.l10n.sync_account),
           kind: AppNotifyKind.success);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loginBusy = false);
-      showAppNotify(context, context.l10n.sync_loginFailed('$e'), kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_loginFailed('$e'),
+          kind: AppNotifyKind.error);
     }
   }
 
@@ -122,7 +127,8 @@ class _SyncPageState extends State<SyncPage> {
     await _sync.auth.logout();
     if (!mounted) return;
     setState(() {});
-    showAppNotify(context, context.l10n.sync_loggedOut, kind: AppNotifyKind.success);
+    showAppNotify(context, context.l10n.sync_loggedOut,
+        kind: AppNotifyKind.success);
   }
 
   Future<void> _test() async {
@@ -168,7 +174,8 @@ class _SyncPageState extends State<SyncPage> {
         _busy = false;
         _result = '$e';
       });
-      showAppNotify(context, context.l10n.sync_uploadFailed('$e'), kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_uploadFailed('$e'),
+          kind: AppNotifyKind.error);
     }
   }
 
@@ -205,7 +212,8 @@ class _SyncPageState extends State<SyncPage> {
         _busy = false;
         _result = '$e';
       });
-      showAppNotify(context, context.l10n.sync_downloadFailed('$e'), kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_downloadFailed('$e'),
+          kind: AppNotifyKind.error);
     }
   }
 
@@ -235,7 +243,8 @@ class _SyncPageState extends State<SyncPage> {
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
               context.l10n.sync_intro,
-              style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.55),
+              style:
+                  TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.55),
             ),
           ),
           // 后端切换
@@ -316,7 +325,9 @@ class _SyncPageState extends State<SyncPage> {
           ],
           const SizedBox(height: 20),
           Text(
-            isHertz ? context.l10n.sync_hertzHint : context.l10n.sync_webdavHint,
+            isHertz
+                ? context.l10n.sync_hertzHint
+                : context.l10n.sync_webdavHint,
             style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.5),
           ),
         ],
@@ -337,7 +348,8 @@ class _SyncPageState extends State<SyncPage> {
                 context.l10n.sync_userHint),
             const SizedBox(height: 10),
             _field(p, _passCtrl, context.l10n.sync_password,
-                context.l10n.sync_passwordHint, obscure: true),
+                context.l10n.sync_passwordHint,
+                obscure: true),
           ],
         ),
       );
@@ -387,7 +399,8 @@ class _SyncPageState extends State<SyncPage> {
             _field(p, _hIssuerCtrl, context.l10n.sync_iamUrl,
                 context.l10n.sync_iamUrlHint),
             const SizedBox(height: 10),
-            _field(p, _hClientCtrl, 'client_id', context.l10n.sync_clientIdHint),
+            _field(
+                p, _hClientCtrl, 'client_id', context.l10n.sync_clientIdHint),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Divider(height: 1, color: p.line),
@@ -416,7 +429,8 @@ class _SyncPageState extends State<SyncPage> {
             )
           else if (isHertzPreset) ...[
             Text(context.l10n.sync_browserLoginHint,
-                style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
+                style:
+                    TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
             const SizedBox(height: 12),
             _loginButton(p, context.l10n.sync_browserLogin,
                 Icons.open_in_browser_rounded),
@@ -425,7 +439,8 @@ class _SyncPageState extends State<SyncPage> {
                 context.l10n.sync_usernameHint),
             const SizedBox(height: 10),
             _field(p, _loginPassCtrl, context.l10n.sync_password,
-                context.l10n.sync_loginPasswordHint, obscure: true),
+                context.l10n.sync_loginPasswordHint,
+                obscure: true),
             const SizedBox(height: 12),
             _loginButton(p, context.l10n.sync_login, Icons.login_rounded),
           ],
@@ -461,7 +476,8 @@ class _SyncPageState extends State<SyncPage> {
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
             Text(context.l10n.sync_scopeSubtitle,
-                style: TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.4)),
+                style:
+                    TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.4)),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -547,7 +563,8 @@ class _SyncPageState extends State<SyncPage> {
         ),
       );
 
-  Widget _field(AppPalette p, TextEditingController c, String label, String hint,
+  Widget _field(
+      AppPalette p, TextEditingController c, String label, String hint,
       {bool obscure = false, bool enabled = true}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -627,7 +644,8 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                 children: [
                   Text(context.l10n.sync_all,
                       style: TextStyle(color: p.textMuted, fontSize: 12)),
-                  _quick(p, context.l10n.sync_skip, () => _setAll(_DlMode.skip)),
+                  _quick(
+                      p, context.l10n.sync_skip, () => _setAll(_DlMode.skip)),
                   _quick(p, context.l10n.sync_overwrite,
                       () => _setAll(_DlMode.overwrite)),
                   _quick(p, context.l10n.sync_append,

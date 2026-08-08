@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -192,7 +193,7 @@ void main() {
     );
     store.setPreferences(const NovelReaderPreferences(
       mode: NovelReaderMode.scroll,
-      fontFamily: 'Test Font',
+      fontFamily: NovelFontIds.lxgwWenKai,
       fontSize: 20,
       lineHeight: 1.8,
       paragraphSpacing: 14,
@@ -218,7 +219,7 @@ void main() {
     expect(restored.progressFor('remote:s:n')?.blockId, 'p2');
     expect(restored.progressFor('remote:s:n')?.fraction, .4);
     expect(restored.preferences.mode, NovelReaderMode.scroll);
-    expect(restored.preferences.fontFamily, 'Test Font');
+    expect(restored.preferences.fontFamily, NovelFontIds.lxgwWenKai);
     expect(restored.preferences.fontSize, 20);
     expect(restored.preferences.lineHeight, 1.8);
     expect(restored.preferences.paragraphSpacing, 14);
@@ -385,8 +386,9 @@ void main() {
       'local:flush',
       const NovelLocator(chapterId: 'chapter', fraction: .3),
     );
-    store
-        .setPreferences(const NovelReaderPreferences(fontFamily: 'Flush Font'));
+    store.setPreferences(
+      const NovelReaderPreferences(fontFamily: NovelFontIds.lxgwWenKai),
+    );
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('novel.library.v1', '[]');
@@ -398,7 +400,7 @@ void main() {
     await restored.load();
     expect(restored.entryFor('local:flush')?.title, '等待落盘');
     expect(restored.progressFor('local:flush')?.fraction, .3);
-    expect(restored.preferences.fontFamily, 'Flush Font');
+    expect(restored.preferences.fontFamily, NovelFontIds.lxgwWenKai);
     store.dispose();
     restored.dispose();
   });

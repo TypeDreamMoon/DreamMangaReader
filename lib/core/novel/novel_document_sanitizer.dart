@@ -93,7 +93,8 @@ class NovelDocumentSanitizer {
 
     var block = 0;
     for (final element in fragment.querySelectorAll(
-      'h1, h2, h3, h4, h5, h6, p',
+      'h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, '
+      'figcaption, td, th, dd, dt',
     )) {
       element.attributes['data-dmr-block'] = 'dmr-${block++}';
     }
