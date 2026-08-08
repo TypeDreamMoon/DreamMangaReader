@@ -1,11 +1,9 @@
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
-import '../../core/source/page_image_data.dart';
+import '../common/source_image.dart';
 
 class NovelCover extends StatelessWidget {
   const NovelCover({
@@ -43,31 +41,19 @@ class NovelCover extends StatelessWidget {
           colors: colors,
         ),
       );
-    } else if (isPageImageDataUri(cover)) {
-      image = Image.memory(
-        decodePageImageDataUri(cover).bytes,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _GeneratedNovelCover(
-          title: _generatedLabel,
-          colors: colors,
-        ),
+    } else if (cover.startsWith('data:image/') ||
+        (remote != null &&
+            (remote.scheme == 'http' || remote.scheme == 'https') &&
+            remote.host.isNotEmpty)) {
+      final fallback = _GeneratedNovelCover(
+        title: _generatedLabel,
+        colors: colors,
       );
-    } else if (remote != null &&
-        (remote.scheme == 'http' || remote.scheme == 'https') &&
-        remote.host.isNotEmpty) {
-      image = CachedNetworkImage(
-        cacheManager: appImageCache,
-        imageUrl: remote.toString(),
-        httpHeaders: headers,
+      image = SourceImage(
+        source: cover,
+        headers: headers,
         fit: BoxFit.cover,
-        placeholder: (_, __) => _GeneratedNovelCover(
-          title: _generatedLabel,
-          colors: colors,
-        ),
-        errorWidget: (_, __, ___) => _GeneratedNovelCover(
-          title: _generatedLabel,
-          colors: colors,
-        ),
+        fallback: fallback,
       );
     } else {
       image = _GeneratedNovelCover(title: _generatedLabel, colors: colors);
