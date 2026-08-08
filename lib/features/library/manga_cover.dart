@@ -1,13 +1,12 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
-import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
 import '../common/animations.dart';
+import '../common/source_image.dart';
 
 /// 已记过加载失败的封面 url:失败组件会随重建反复触发,同一张只记一次。
 final Set<String> _loggedCoverFails = <String>{};
@@ -84,130 +83,127 @@ class MangaCover extends StatelessWidget {
     final glyph = manga.title.isEmpty ? '?' : manga.title.characters.first;
 
     Widget clip = ClipRRect(
-          borderRadius: BorderRadius.circular(r),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 占位:渐变 + 网点 + 首字
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: grad,
-                  ),
-                ),
+      borderRadius: BorderRadius.circular(r),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 占位:渐变 + 网点 + 首字
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: grad,
               ),
-              CustomPaint(painter: _HalftonePainter(grad.last)),
-              Positioned(
-                left: 8,
-                top: 6,
-                child: Text(
-                  glyph,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    shadows: const [Shadow(color: Colors.black45, blurRadius: 4)],
-                  ),
-                ),
-              ),
-              // 网络封面(磁盘缓存,带 Referer):加载后覆盖占位;失败/加载中透出占位。
-              if (cover != null && cover.isNotEmpty)
-                CachedNetworkImage(
-                  cacheManager: appImageCache,
-                  imageUrl: cover,
-                  httpHeaders: headers,
-                  fit: BoxFit.cover,
-                  fadeInDuration: const Duration(milliseconds: 180),
-                  placeholder: (_, __) => const SizedBox.shrink(),
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                  errorListener: (e) =>
-                      _logCoverFail(manga.title, cover, headers, e),
-                ),
-              if (showTitle)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(8, 18, 8, 8),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Colors.black54, Colors.transparent],
-                      ),
-                    ),
-                    child: Text(
-                      manga.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        height: 1.15,
-                      ),
-                    ),
-                  ),
-                ),
-              // 多源同名去重角标(右上):该书在几个源里都有。用强调色标出。
-              if (sourceCount > 1)
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: p.accent.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(context.l10n.cover_nSources(sourceCount),
-                        style: TextStyle(
-                            color: p.onAccent,
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w800,
-                            height: 1.0)),
-                  ),
-                )
-              else if (badge > 0)
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Container(
-                    constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: p.accent,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Text('$badge',
-                        style: TextStyle(
-                            color: p.onAccent,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900)),
-                  ),
-                )
-              else if (updated)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: p.accent,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: p.accent, blurRadius: 8)],
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
-        );
+          CustomPaint(painter: _HalftonePainter(grad.last)),
+          Positioned(
+            left: 8,
+            top: 6,
+            child: Text(
+              glyph,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                shadows: const [Shadow(color: Colors.black45, blurRadius: 4)],
+              ),
+            ),
+          ),
+          // 私有源 Base64 封面走内存解码;网络封面保留磁盘缓存和请求头。
+          if (cover != null && cover.isNotEmpty)
+            SourceImage(
+              source: cover,
+              headers: headers,
+              fit: BoxFit.cover,
+              fadeInDuration: const Duration(milliseconds: 180),
+              fallback: const SizedBox.shrink(),
+              onError: (error) =>
+                  _logCoverFail(manga.title, cover, headers, error),
+            ),
+          if (showTitle)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(8, 18, 8, 8),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Colors.black54, Colors.transparent],
+                  ),
+                ),
+                child: Text(
+                  manga.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+            ),
+          // 多源同名去重角标(右上):该书在几个源里都有。用强调色标出。
+          if (sourceCount > 1)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: p.accent.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(context.l10n.cover_nSources(sourceCount),
+                    style: TextStyle(
+                        color: p.onAccent,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        height: 1.0)),
+              ),
+            )
+          else if (badge > 0)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: p.accent,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Text('$badge',
+                    style: TextStyle(
+                        color: p.onAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900)),
+              ),
+            )
+          else if (updated)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: p.accent,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: p.accent, blurRadius: 8)],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
 
     if (heroTag != null) clip = Hero(tag: heroTag!, child: clip);
     return Pressable(
@@ -307,8 +303,8 @@ Widget coverListTile(
             ),
             Padding(
               padding: const EdgeInsets.only(left: 6),
-              child:
-                  Icon(Icons.chevron_right_rounded, size: 18, color: p.textMuted),
+              child: Icon(Icons.chevron_right_rounded,
+                  size: 18, color: p.textMuted),
             ),
           ],
         ),
@@ -321,14 +317,22 @@ Widget coverListTile(
 ({String text, Color color})? _listStatus(
         BuildContext context, AppPalette p, MangaStatus s) =>
     switch (s) {
-      MangaStatus.ongoing =>
-        (text: context.l10n.disc_statusOngoing, color: p.statusOk),
-      MangaStatus.completed =>
-        (text: context.l10n.cover_statusCompleted, color: p.accent),
-      MangaStatus.hiatus =>
-        (text: context.l10n.cover_statusHiatus, color: p.statusWarn),
-      MangaStatus.cancelled =>
-        (text: context.l10n.cover_statusCancelled, color: p.statusFail),
+      MangaStatus.ongoing => (
+          text: context.l10n.disc_statusOngoing,
+          color: p.statusOk
+        ),
+      MangaStatus.completed => (
+          text: context.l10n.cover_statusCompleted,
+          color: p.accent
+        ),
+      MangaStatus.hiatus => (
+          text: context.l10n.cover_statusHiatus,
+          color: p.statusWarn
+        ),
+      MangaStatus.cancelled => (
+          text: context.l10n.cover_statusCancelled,
+          color: p.statusFail
+        ),
       MangaStatus.unknown => null,
     };
 
@@ -349,7 +353,9 @@ Widget _statusPill(AppPalette p, ({String text, Color color}) st) => Container(
           const SizedBox(width: 4),
           Text(st.text,
               style: TextStyle(
-                  color: st.color, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                  color: st.color,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700)),
         ],
       ),
     );

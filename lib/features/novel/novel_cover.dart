@@ -1,10 +1,9 @@
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
+import '../common/source_image.dart';
 
 class NovelCover extends StatelessWidget {
   const NovelCover({
@@ -30,7 +29,8 @@ class NovelCover extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = _coverColors(novel.title);
     final localPath = localCoverPath;
-    final remote = Uri.tryParse(novel.cover ?? '');
+    final cover = novel.cover ?? '';
+    final remote = Uri.tryParse(cover);
     Widget image;
     if (localPath != null && File(localPath).existsSync()) {
       image = Image.file(
@@ -41,22 +41,19 @@ class NovelCover extends StatelessWidget {
           colors: colors,
         ),
       );
-    } else if (remote != null &&
-        (remote.scheme == 'http' || remote.scheme == 'https') &&
-        remote.host.isNotEmpty) {
-      image = CachedNetworkImage(
-        cacheManager: appImageCache,
-        imageUrl: remote.toString(),
-        httpHeaders: headers,
+    } else if (cover.startsWith('data:image/') ||
+        (remote != null &&
+            (remote.scheme == 'http' || remote.scheme == 'https') &&
+            remote.host.isNotEmpty)) {
+      final fallback = _GeneratedNovelCover(
+        title: _generatedLabel,
+        colors: colors,
+      );
+      image = SourceImage(
+        source: cover,
+        headers: headers,
         fit: BoxFit.cover,
-        placeholder: (_, __) => _GeneratedNovelCover(
-          title: _generatedLabel,
-          colors: colors,
-        ),
-        errorWidget: (_, __, ___) => _GeneratedNovelCover(
-          title: _generatedLabel,
-          colors: colors,
-        ),
+        fallback: fallback,
       );
     } else {
       image = _GeneratedNovelCover(title: _generatedLabel, colors: colors);
