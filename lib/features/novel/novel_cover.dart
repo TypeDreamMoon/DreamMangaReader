@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
+import '../../core/source/page_image_data.dart';
 
 class NovelCover extends StatelessWidget {
   const NovelCover({
@@ -30,11 +31,21 @@ class NovelCover extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = _coverColors(novel.title);
     final localPath = localCoverPath;
-    final remote = Uri.tryParse(novel.cover ?? '');
+    final cover = novel.cover ?? '';
+    final remote = Uri.tryParse(cover);
     Widget image;
     if (localPath != null && File(localPath).existsSync()) {
       image = Image.file(
         File(localPath),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _GeneratedNovelCover(
+          title: _generatedLabel,
+          colors: colors,
+        ),
+      );
+    } else if (isPageImageDataUri(cover)) {
+      image = Image.memory(
+        decodePageImageDataUri(cover).bytes,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _GeneratedNovelCover(
           title: _generatedLabel,
