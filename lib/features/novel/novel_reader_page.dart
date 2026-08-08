@@ -22,6 +22,8 @@ import '../../core/platform/reader_keys.dart';
 import '../../ui/ui.dart';
 import 'novel_book_progress.dart';
 import 'novel_document_view.dart';
+import 'novel_native_document_controller.dart';
+import 'novel_native_page_turn_surface.dart';
 import 'novel_page_turn_surface.dart';
 import 'novel_reader_chrome.dart';
 import 'novel_reader_input.dart';
@@ -73,7 +75,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   static int _wakeCount = 0;
 
   late final NovelDocumentController _controller =
-      widget.controller ?? WebNovelDocumentController();
+      widget.controller ?? NovelNativeDocumentController();
   late final NovelReaderDataStore _readerDataStore =
       widget.readerDataStore ?? NovelReaderDataStore.instance;
   late final NovelSearchIndex _searchIndex =
@@ -465,6 +467,22 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   void _onTurnDecision(NovelTurnDecision decision) {
     if (!mounted) return;
+    final native = _controller;
+    if (native is NovelNativeDocumentController) {
+      if (!native.canTurn(decision.direction)) {
+        _turnController.cancel();
+        setState(() {
+          _turnState = _turnController.state;
+          _settlement = null;
+        });
+        return;
+      }
+      setState(() {
+        _turnState = _turnController.state;
+        _settlement = decision;
+      });
+      return;
+    }
     setState(() {
       _turnState = _turnController.state;
       _settlement = decision;
@@ -476,6 +494,20 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   void _requestDiscrete(NovelTurnDirection direction) {
     if (_loading || _error != null || _selection != null || _controlsPaused) {
+      return;
+    }
+    final native = _controller;
+    if (native is NovelNativeDocumentController &&
+        _preferences.turnMode == NovelPageTurnMode.curl) {
+      if (!native.canTurn(direction)) {
+        unawaited(_legacyTurn(direction));
+        return;
+      }
+      if (_turnController.state.phase != NovelTurnPhase.idle) {
+        _turnController.queueDiscrete(direction);
+        return;
+      }
+      _startDiscrete(direction);
       return;
     }
     if (_preferences.turnMode == NovelPageTurnMode.scroll ||
@@ -496,6 +528,12 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   void _startDiscrete(NovelTurnDirection direction) {
+    final native = _controller;
+    final pagination =
+        native is NovelNativeDocumentController ? native.pagination : null;
+    if (pagination != null) {
+      _turnController.setViewport(pagination.viewport);
+    }
     final decision = _turnController.startDiscrete(direction);
     setState(() {
       _turnState = _turnController.state;
@@ -625,6 +663,42 @@ class _NovelReaderPageState extends State<NovelReaderPage>
         });
       }
     }
+  }
+
+  Future<void> _onNativeSurfaceCommitted(
+    NovelTurnDirection direction,
+  ) async {
+    final native = _controller;
+    if (native is! NovelNativeDocumentController) return;
+    _turnController.completeSettlement();
+    final committed = _turnController.consumeCommittedDirection();
+    if (committed != direction) return;
+    if (mounted) setState(() => _turnState = _turnController.state);
+    final moved = direction == NovelTurnDirection.next
+        ? await native.nextPage()
+        : await native.previousPage();
+    if (!moved || !mounted) {
+      _turnController.cancel();
+      if (mounted) {
+        setState(() {
+          _turnState = _turnController.state;
+          _settlement = null;
+        });
+      }
+      return;
+    }
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    _turnController.completeCommit();
+    final locator = await native.captureLocator();
+    if (!mounted) return;
+    _persistLocator(locator);
+    final queued = _turnController.takeQueuedDirection();
+    setState(() {
+      _turnState = _turnController.state;
+      _settlement = null;
+    });
+    if (queued != null) _requestDiscrete(queued);
   }
 
   Future<void> _refreshAdjacentFrame(NovelTurnDirection direction) async {
@@ -1407,6 +1481,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final builder = widget.documentViewBuilder;
     if (builder != null) return builder(context, _controller);
     final controller = _controller;
+    if (controller is NovelNativeDocumentController) {
+      return NovelNativeDocumentView(controller: controller);
+    }
     if (controller is WebNovelDocumentController) {
       return NovelDocumentView(controller: controller);
     }
@@ -1414,10 +1491,21 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   bool get _showTurnSurface {
-    return _currentFrame != null &&
+    return _controller is! NovelNativeDocumentController &&
+        _currentFrame != null &&
         (_captureActive ||
             _retainFrameWhileLoading ||
             _turnState.phase == NovelTurnPhase.dragging ||
+            _turnState.phase == NovelTurnPhase.settling ||
+            _turnState.phase == NovelTurnPhase.committing);
+  }
+
+  bool get _showNativeTurnSurface {
+    final native = _controller;
+    return native is NovelNativeDocumentController &&
+        native.pagination != null &&
+        _preferences.turnMode == NovelPageTurnMode.curl &&
+        (_turnState.phase == NovelTurnPhase.dragging ||
             _turnState.phase == NovelTurnPhase.settling ||
             _turnState.phase == NovelTurnPhase.committing);
   }
@@ -1428,6 +1516,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       _preferences.theme,
       foregroundOverrideArgb: _preferences.foregroundArgb,
     );
+    final documentController = _controller;
+    final nativeController = documentController is NovelNativeDocumentController
+        ? documentController
+        : null;
     final systemBarUsesLightForeground =
         colorContrastRatio(profile.systemBarArgb, 0xffeeeeee) >=
             colorContrastRatio(profile.systemBarArgb, 0xff202124);
@@ -1479,6 +1571,31 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                         pageBackColor: _themeColor(_preferences.theme),
                         onCommitted: (direction) =>
                             unawaited(_onSurfaceCommitted(direction)),
+                        onSettled: _onSurfaceSettled,
+                      ),
+                    if (_showNativeTurnSurface)
+                      NovelNativePageTurnSurface(
+                        pagination: nativeController!.pagination!,
+                        currentSpreadIndex: nativeController.spreadIndex,
+                        state: _turnState,
+                        settlement: _settlement,
+                        canvasColor: Color(
+                          blendNovelReaderArgb(
+                            profile.backgroundArgb,
+                            profile.foregroundArgb,
+                            .045,
+                          ),
+                        ),
+                        pageColor: Color(profile.backgroundArgb),
+                        textColor: Color(profile.foregroundArgb),
+                        previousPageImage: nativeController
+                            .pageImageFor(nativeController.spreadIndex - 1),
+                        currentPageImage: nativeController
+                            .pageImageFor(nativeController.spreadIndex),
+                        nextPageImage: nativeController
+                            .pageImageFor(nativeController.spreadIndex + 1),
+                        onCommitted: (direction) =>
+                            unawaited(_onNativeSurfaceCommitted(direction)),
                         onSettled: _onSurfaceSettled,
                       ),
                   ],
@@ -1614,6 +1731,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onFontFallback = null;
       webController.onBackgroundFallback = null;
       webController.onRecoverableError = null;
+    }
+    if (widget.controller == null &&
+        webController is NovelNativeDocumentController) {
+      webController.dispose();
     }
     final readerFlush = _readerDataStore.flushPending();
     unawaited(_library.flushPending());

@@ -12,6 +12,8 @@ class NovelPageTurnPhysics {
     this.maxCommitDuration = const Duration(milliseconds: 280),
     this.rollbackDuration = const Duration(milliseconds: 180),
     this.tapDuration = const Duration(milliseconds: 260),
+    this.maximumFoldAngle = 60,
+    this.angleCommitProgress = .08,
   });
 
   final double touchSlop;
@@ -22,6 +24,8 @@ class NovelPageTurnPhysics {
   final Duration maxCommitDuration;
   final Duration rollbackDuration;
   final Duration tapDuration;
+  final double maximumFoldAngle;
+  final double angleCommitProgress;
 
   bool shouldLockHorizontal({required double dx, required double dy}) {
     return dx.abs() >= touchSlop && dx.abs() > dy.abs() * axisDominanceRatio;
@@ -42,6 +46,28 @@ class NovelPageTurnPhysics {
       NovelTurnDirection.previous => velocityX,
     };
     return alignedVelocity >= flingVelocity;
+  }
+
+  bool reachesFoldAngleLimit({
+    required double progress,
+    required double dx,
+    required double dy,
+    required double viewportWidth,
+    required double viewportHeight,
+  }) {
+    if (progress < angleCommitProgress ||
+        viewportWidth <= 0 ||
+        viewportHeight <= 0) {
+      return false;
+    }
+    final horizontal = dx.abs().clamp(0.0, viewportWidth);
+    final vertical = dy.clamp(-viewportHeight, viewportHeight);
+    final horizontalFactor =
+        1 - .9 * (horizontal / viewportWidth).clamp(0.0, 1.0);
+    final verticalFactor =
+        1 - .995 * (vertical.abs() / viewportHeight).clamp(0.0, 1.0);
+    final foldAngle = vertical.abs() * horizontalFactor * verticalFactor;
+    return foldAngle >= maximumFoldAngle;
   }
 
   Duration commitDuration({

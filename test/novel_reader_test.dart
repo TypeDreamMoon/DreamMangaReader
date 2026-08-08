@@ -12,6 +12,8 @@ import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_search_index.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_native_page_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_native_page_turn_surface.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_input.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_page.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_settings_sheet.dart';
@@ -20,6 +22,7 @@ import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeController implements NovelDocumentController {
@@ -178,12 +181,13 @@ class _MemoryNovelReaderDataStore extends NovelReaderDataStore {
 }
 
 Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
-  NovelDocumentController controller, {
+  NovelDocumentController? controller, {
   NovelReaderPreferences preferences = const NovelReaderPreferences(),
   NovelDocumentLoader? loadDocument,
   NovelReaderDataStore? readerDataStore,
   NovelSearchIndex? searchIndex,
   NovelSearchDocumentLoader? loadCachedDocument,
+  bool useDefaultDocumentView = false,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -206,7 +210,9 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
         initialIndex: 0,
         libraryKey: 'remote:s:n1',
         controller: controller,
-        documentViewBuilder: (_, __) => const ColoredBox(color: Colors.black),
+        documentViewBuilder: useDefaultDocumentView
+            ? null
+            : (_, __) => const ColoredBox(color: Colors.black),
         readerDataStore: readerDataStore,
         searchIndex: searchIndex,
         loadCachedDocument: loadCachedDocument,
@@ -904,6 +910,42 @@ void main() {
     expect(controller.loadedChapterId, 'c2');
     expect(controller.lastRestored?.chapterId, 'c2');
     expect(controller.lastRestored?.fraction, .5);
+  });
+
+  testWidgets('default reader uses native pages and advances without WebView',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(32, '原生阅读正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NovelNativePageView), findsOneWidget);
+    expect(find.byType(InAppWebView), findsNothing);
+    final before =
+        tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value;
+    await tester.tapAt(const Offset(390, 380));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byType(NovelNativePageTurnSurface), findsOneWidget);
+    expect(find.byKey(const Key('novel-native-page-back')), findsOneWidget);
+    await tester.pumpAndSettle();
+    final after =
+        tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value;
+    expect(int.parse(after), greaterThan(int.parse(before)));
   });
 
   test('reader HTML shell sanitizes HTML and escapes plain text', () {

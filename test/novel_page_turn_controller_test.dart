@@ -20,6 +20,9 @@ void main() {
       expect(controller.state.phase, NovelTurnPhase.dragging);
       expect(controller.state.direction, NovelTurnDirection.next);
       expect(controller.state.progress, closeTo(.3, .001));
+      expect(controller.state.touchOrigin, const Offset(900, 500));
+      expect(controller.state.touchPosition, const Offset(600, 505));
+      expect(controller.state.viewport, viewport);
     });
 
     test('locks a horizontal previous-page drag in the other direction', () {
@@ -51,6 +54,26 @@ void main() {
 
       expect(controller.state.direction, NovelTurnDirection.next);
       expect(controller.state.progress, 0);
+    });
+
+    test('commits immediately when a locked drag reaches the fold angle limit',
+        () {
+      final controller = NovelPageTurnController();
+
+      controller.begin(const Offset(900, 1200), viewport);
+      controller.update(
+        const Offset(760, 1190),
+        elapsed: const Duration(milliseconds: 90),
+      );
+      final decision = controller.update(
+        const Offset(640, 700),
+        elapsed: const Duration(milliseconds: 180),
+      );
+
+      expect(decision, isNotNull);
+      expect(decision!.commit, isTrue);
+      expect(decision.direction, NovelTurnDirection.next);
+      expect(controller.state.phase, NovelTurnPhase.settling);
     });
 
     test('rejects a vertical gesture instead of turning a page', () {
@@ -239,6 +262,27 @@ void main() {
 
       expect(controller.takeQueuedDirection(), NovelTurnDirection.previous);
       expect(controller.takeQueuedDirection(), isNull);
+    });
+
+    test('discrete turn starts from the supplied tap position', () {
+      final controller = NovelPageTurnController();
+      controller.setDiscreteOrigin(const Offset(940, 1320), viewport);
+
+      controller.startDiscrete(NovelTurnDirection.next);
+
+      expect(controller.state.touchOrigin, const Offset(940, 1320));
+      expect(controller.state.touchPosition, const Offset(940, 1320));
+      expect(controller.state.viewport, viewport);
+    });
+
+    test('keyboard discrete turn uses a lower page corner by default', () {
+      final controller = NovelPageTurnController();
+
+      controller.startDiscrete(NovelTurnDirection.previous);
+
+      expect(controller.state.touchOrigin.dx, 0);
+      expect(controller.state.touchOrigin.dy, greaterThan(0));
+      expect(controller.state.viewport.width, greaterThan(0));
     });
   });
 

@@ -78,11 +78,15 @@ class _NovelReaderInputState extends State<NovelReaderInput> {
     }
     _lastPosition = local;
     _lastMoveAt = event.timeStamp;
-    widget.controller.update(
+    final decision = widget.controller.update(
       local,
       elapsed: event.timeStamp - _startedAt,
     );
     widget.onStateChanged();
+    if (decision != null) {
+      _activePointer = null;
+      widget.onDecision(decision);
+    }
   }
 
   void _onPointerUp(PointerUpEvent event) {
@@ -136,6 +140,10 @@ class _NovelReaderInputState extends State<NovelReaderInput> {
     if (ratio >= .25 && ratio <= .75) {
       widget.onToggleControls();
       return;
+    }
+    final size = context.size;
+    if (size != null) {
+      widget.controller.setDiscreteOrigin(details.localPosition, size);
     }
     if (widget.singleHandNext) {
       widget.onDiscrete(NovelTurnDirection.next);

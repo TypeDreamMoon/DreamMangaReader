@@ -92,6 +92,8 @@ dependencies:
   hls: 1.0.0
   # B站登录二维码渲染(扫码登录)。
   qr_flutter: ^4.1.0
+  # 小说仿真翻页:复用 MIT 的触点圆柱/贝塞尔卷页几何；精确锁定内部曲线 API。
+  page_curl_effect: 1.0.2
 
 dev_dependencies:
   flutter_test:
