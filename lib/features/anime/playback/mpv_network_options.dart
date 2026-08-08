@@ -8,7 +8,7 @@ class MpvNetworkOptions {
   const MpvNetworkOptions._({
     required this.userAgent,
     required this.httpProxy,
-  }) : networkTimeoutSeconds = 15;
+  }) : networkTimeoutSeconds = 60;
 
   static const List<String> protocolWhitelist = [
     'file',

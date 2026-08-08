@@ -8,7 +8,7 @@ void main() {
   test('keeps media_kit demuxer retries without a proxy', () {
     final options = MpvNetworkOptions.forTrack(track);
 
-    expect(options.networkTimeoutSeconds, 15);
+    expect(options.networkTimeoutSeconds, 60);
     expect(options.httpProxy, isNull);
     expect(options.demuxerLavf, contains('seg_max_retry=5'));
     expect(options.demuxerLavf, contains('strict=experimental'));
