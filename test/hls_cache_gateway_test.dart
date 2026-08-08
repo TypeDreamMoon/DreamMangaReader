@@ -139,7 +139,11 @@ void main() {
 media.mp4
 #EXT-X-ENDLIST
 ''');
-    upstream.addBytes('/media.mp4', [0, 1, 2, 3, 4, 5, 6, 7]);
+    upstream.addBytes(
+      '/media.mp4',
+      [0, 1, 2, 3, 4, 5, 6, 7],
+      honorRanges: false,
+    );
     upstream.addBytes('/episode.key', List<int>.generate(16, (index) => index));
     final session = await gateway.open(
       VideoTrack(
@@ -164,6 +168,52 @@ media.mp4
           .where((request) => request.path == '/media.mp4')
           .map((r) => r.range),
       containsAll(['bytes=0-3', 'bytes=4-7']),
+    );
+  });
+
+  test('serves local ranges when an authenticated upstream ignores Range',
+      () async {
+    upstream.addText('/private.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+private.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes(
+      '/private.ts',
+      [0, 1, 2, 3, 4],
+      contentType: 'video/mp2t',
+      honorRanges: false,
+    );
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('private.m3u8').toString(),
+        hls: true,
+        headers: const {'Authorization': 'Bearer fixture-token'},
+      ),
+      authScope: 'xiaojie_github',
+    );
+    final playlist = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+
+    final response = await _get(
+      playlist.segments.single.uri,
+      headers: const {HttpHeaders.rangeHeader: 'bytes=1-3'},
+    );
+
+    expect(response.status, HttpStatus.partialContent);
+    expect(response.bytes, [1, 2, 3]);
+    expect(response.contentRange, 'bytes 1-3/5');
+    expect(
+      upstream.requests.singleWhere((request) => request.path == '/private.ts'),
+      isA<RecordedRequest>()
+          .having((request) => request.range, 'range', 'bytes=1-3')
+          .having(
+            (request) => request.authorization,
+            'authorization',
+            'Bearer fixture-token',
+          ),
     );
   });
 
