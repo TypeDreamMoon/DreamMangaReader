@@ -96,7 +96,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   if (message == kTrayCallbackMessage) {
-    switch (lparam) {
+    // NOTIFYICON_VERSION_4 把事件放在 lparam 低位;旧协议直接用整个 lparam,
+    // 那些事件 id 都在低 16 位内,所以取低位对两种协议都成立。
+    switch (LOWORD(lparam)) {
+      case NIN_SELECT:
+      case NIN_KEYSELECT:
+      case WM_LBUTTONUP:
       case WM_LBUTTONDBLCLK:
         ShowFromTray();
         return 0;
@@ -145,13 +150,21 @@ void FlutterWindow::AddTrayIcon() {
   tray_icon_.cbSize = sizeof(NOTIFYICONDATAW);
   tray_icon_.hWnd = GetHandle();
   tray_icon_.uID = kTrayIconId;
-  tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   tray_icon_.uCallbackMessage = kTrayCallbackMessage;
   tray_icon_.hIcon = static_cast<HICON>(LoadImageW(
       GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, 0,
       0, LR_DEFAULTSIZE | LR_SHARED));
   wcscpy_s(tray_icon_.szTip, L"Dream Manga Reader");
   tray_icon_added_ = Shell_NotifyIconW(NIM_ADD, &tray_icon_) == TRUE;
+  if (!tray_icon_added_) {
+    return;
+  }
+  // 不声明版本的话外壳沿用 Win95 的回调协议:左键单击**不产生任何事件**,只有双击
+  // 才会回调。用户点一下没反应、只能再点,体感就是「托盘点击要等半天才打开」。
+  // NOTIFYICON_VERSION_4 会送 NIN_SELECT(单击)与 WM_CONTEXTMENU(右键)。
+  tray_icon_.uVersion = NOTIFYICON_VERSION_4;
+  Shell_NotifyIconW(NIM_SETVERSION, &tray_icon_);
 }
 
 void FlutterWindow::RemoveTrayIcon() {
@@ -167,12 +180,59 @@ void FlutterWindow::ShowFromTray() {
   if (window == nullptr) {
     return;
   }
-  ShowWindow(window, SW_SHOW);
-  if (IsIconic(window)) {
-    ShowWindow(window, SW_RESTORE);
-  }
+  // 藏进托盘前如果是最小化状态,SW_SHOW 只会把它「显示成最小化」,得走 SW_RESTORE。
+  ShowWindow(window, IsIconic(window) ? SW_RESTORE : SW_SHOW);
+
+  // 前台锁:调用线程不是当前前台线程时 SetForegroundWindow 会被系统拒掉 ——
+  // 窗口显示出来却没被激活,WM_ACTIVATE 不来,子视图也就拿不回焦点。
+  // 先把自己挂到前台线程的输入队列上再抢,是 Win32 上唯一稳的做法。
+  const HWND foreground = GetForegroundWindow();
+  const DWORD foreground_thread =
+      GetWindowThreadProcessId(foreground, nullptr);
+  const DWORD this_thread = GetCurrentThreadId();
+  const bool attached =
+      foreground_thread != 0 && foreground_thread != this_thread &&
+      AttachThreadInput(foreground_thread, this_thread, TRUE) != FALSE;
   SetForegroundWindow(window);
-  SetFocus(window);
+  SetActiveWindow(window);
+  if (attached) {
+    AttachThreadInput(foreground_thread, this_thread, FALSE);
+  }
+
+  // 焦点必须回到 Flutter 视图本身,而不是外层框架窗口:给了框架,键盘输入和指针
+  // 状态都留在 Flutter 之外。
+  HWND content = FlutterViewWindow();
+  SetFocus(content != nullptr ? content : window);
+  RestoreCursor(content != nullptr ? content : window);
+}
+
+HWND FlutterWindow::FlutterViewWindow() const {
+  if (!flutter_controller_ || flutter_controller_->view() == nullptr) {
+    return nullptr;
+  }
+  return flutter_controller_->view()->GetNativeWindow();
+}
+
+void FlutterWindow::RestoreCursor(HWND target) {
+  // 指针的显示计数是按输入队列记的,只要有一层在窗口隐藏期间把它减到负数,再显示
+  // 出来就变成「只有本程序窗口里看不见鼠标」。先拉回非负,并且不要多留计数。
+  int count = ShowCursor(TRUE);
+  while (count < 0) {
+    count = ShowCursor(TRUE);
+  }
+  if (count > 0) {
+    ShowCursor(FALSE);
+  }
+
+  // 窗口重新显示时系统不会主动重发 WM_SETCURSOR;指针恰好停在客户区里的话,
+  // Flutter 视图就一直不会重新贴上自己的光标。补一发,让它自己刷新。
+  POINT cursor{};
+  RECT bounds{};
+  if (target != nullptr && GetCursorPos(&cursor) &&
+      GetWindowRect(GetHandle(), &bounds) && PtInRect(&bounds, cursor)) {
+    SendMessageW(target, WM_SETCURSOR, reinterpret_cast<WPARAM>(target),
+                 MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+  }
 }
 
 void FlutterWindow::ShowTrayMenu() {

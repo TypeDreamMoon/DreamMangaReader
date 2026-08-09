@@ -32,6 +32,8 @@ class FlutterWindow : public Win32Window {
   void ShowFromTray();
   void ShowTrayMenu();
   void ExitFromTray();
+  HWND FlutterViewWindow() const;
+  void RestoreCursor(HWND target);
 
   // The project to run.
   flutter::DartProject project_;
