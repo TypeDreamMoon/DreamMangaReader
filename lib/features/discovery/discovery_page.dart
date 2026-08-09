@@ -26,6 +26,8 @@ import '../library/manga_cover.dart';
 import '../library/masonry_feed.dart';
 import '../novel/novel_browser.dart';
 import 'manga_identity_tracker.dart';
+import 'recommend_controller.dart';
+import 'recommend_strip.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 /// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
@@ -49,8 +51,14 @@ const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '混合 · 全部源', scr
 
 /// 发现:按当前源的筛选维度(地区/剧情/受众/进度/排序)浏览,分页无限加载。
 /// 源未声明筛选时,退化为纯分页浏览。**混合模式**:并发查全部启用源、合并结果。
+///
+/// 漫画档顶部还有一条据书架口味算的「为你推荐」(见 [RecommendStrip])——
+/// 找新内容都归发现页,书架只留「我的收藏与历史」。
 class DiscoveryPage extends StatefulWidget {
-  const DiscoveryPage({super.key});
+  const DiscoveryPage({super.key, this.recommendController});
+
+  /// 测试注入用;不传则本页自建自管(dispose 时释放)。
+  final RecommendController? recommendController;
 
   @override
   State<DiscoveryPage> createState() => _DiscoveryPageState();
@@ -94,6 +102,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   // 番剧档:顶栏搜索复用漫画那套 UI,执行时经由此 key 转交给 AnimeBrowser。
   final GlobalKey<AnimeBrowserState> _animeKey = GlobalKey<AnimeBrowserState>();
   final GlobalKey<NovelBrowserState> _novelKey = GlobalKey<NovelBrowserState>();
+  late final RecommendController _recs =
+      widget.recommendController ?? RecommendController();
   bool _showSearch = false;
   String _query = ''; // 非空 = 搜索模式(可能是 _origQuery 的译名)
   bool _translating = false; // 正在翻译搜索词
@@ -1059,13 +1069,26 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       );
 
   Widget _grid(AppPalette p, LibraryStore store, int columns) {
+    // 「为你推荐」只在浏览态(非搜索)出现,跟着结果一起滚走。
+    final header = _query.isEmpty ? RecommendStrip(controller: _recs) : null;
     if (_results.isEmpty) {
-      if (_loading) return const Center(child: CircularProgressIndicator());
-      if (_error != null) return _errorView(p);
-      return Center(
-        child: Text(context.l10n.disc_noData,
-            style: TextStyle(color: p.textMuted, fontSize: 13)),
-      );
+      final Widget body;
+      final noSources = _mixed ? _mixedSources.isEmpty : _meta == null;
+      if (_loading) {
+        body = const Center(child: CircularProgressIndicator());
+      } else if (_error != null) {
+        body = _errorView(p);
+      } else if (noSources) {
+        // 全新安装:引擎不内置源,先去设置里配源仓库,否则「没拿到数据」会让人一头雾水。
+        body = _noSourceHint(p);
+      } else {
+        body = Center(
+          child: Text(context.l10n.disc_noData,
+              style: TextStyle(color: p.textMuted, fontSize: 13)),
+        );
+      }
+      if (header == null) return body;
+      return Column(children: [header, Expanded(child: body)]);
     }
     final layout = store.feedLayout;
     // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
@@ -1079,6 +1102,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       controller: _scroll,
       columns: columns,
       itemCount: _results.length,
+      header: header,
       footer: _footer(p),
       cardBuilder: (context, i) {
         final m = _results[i].manga;
@@ -1149,6 +1173,30 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ),
       );
 
+  // 未配置漫画源(引擎不内置源,需在设置里添加源仓库)的空态。
+  Widget _noSourceHint(AppPalette p) => Center(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 48),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.travel_explore_rounded, size: 44, color: p.textMuted),
+              const SizedBox(height: 14),
+              Text(context.l10n.shelf_noSourceTitle,
+                  style: TextStyle(
+                      color: p.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15)),
+              const SizedBox(height: 8),
+              Text(context.l10n.shelf_noSourceDesc,
+                  textAlign: TextAlign.center,
+                  style:
+                      TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),
+            ],
+          ),
+        ),
+      );
+
   Widget _errorView(AppPalette p) => Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1173,6 +1221,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     _searchCtrl.dispose();
     _sc?.removeListener(_onSourceChanged);
     _disposeSources();
+    if (widget.recommendController == null) _recs.dispose();
     super.dispose();
   }
 }
