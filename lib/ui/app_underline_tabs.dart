@@ -56,25 +56,32 @@ class AppUnderlineTabs<T> extends StatelessWidget implements PreferredSizeWidget
   @override
   Widget build(BuildContext context) {
     // 档多 / 字号放大也不溢出;桌面横向滚动条关掉(矮条上的滚动条会压住下划线)。
-    return ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: padding,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < tabs.length; i++) ...[
-              if (i > 0) const SizedBox(width: 22),
-              _Tab<T>(
-                tab: tabs[i],
-                selected: tabs[i].value == selected,
-                fontSize: fontSize,
-                height: preferredSize.height,
-                onTap: () => onSelected(tabs[i].value),
-              ),
+    //
+    // width: infinity 不能省 —— 横向 SingleChildScrollView 在**松约束**下会缩到内容宽
+    // (viewport 取 constraints.constrain(child.size)),而 AppBar 把 bottom 放进一个
+    // crossAxisAlignment.center 的 Column,于是整条 tab 会被居中。撑满才靠左。
+    return SizedBox(
+      width: double.infinity,
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: padding,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < tabs.length; i++) ...[
+                if (i > 0) const SizedBox(width: 22),
+                _Tab<T>(
+                  tab: tabs[i],
+                  selected: tabs[i].value == selected,
+                  fontSize: fontSize,
+                  height: preferredSize.height,
+                  onTap: () => onSelected(tabs[i].value),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
