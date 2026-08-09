@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/content_kind.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
@@ -7,7 +8,49 @@ import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import 'animations.dart';
 
-/// 触发源选择弹层的胶囊按钮(书架/发现共用)。
+/// 发现页三档共用的源选择条:内边距、左对齐、图标与文案口径全在这里定死。
+///
+/// 之前漫画/番剧/小说各自拼这一行,于是漂成了三副长相 —— 内边距不同、只有小说左对齐、
+/// 文案一个「{源} · 分类浏览」一个硬编码「{源} · 番剧」一个只有源名、图标也各说各的。
+/// 现在只暴露「哪一档 + 是否混合 + 源名」,长相由本组件统一。
+class SourcePickerBar extends StatelessWidget {
+  const SourcePickerBar({
+    super.key,
+    required this.kind,
+    required this.mixed,
+    required this.sourceName,
+    required this.onTap,
+  });
+
+  final ContentKind kind;
+
+  /// 混合模式(全部启用源一起查)。
+  final bool mixed;
+
+  /// 单源模式下的源名;null = 还没选源。
+  final String? sourceName;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: SourcePickerPill(
+            // 混合用「全部源」的方格图标,单源用该内容类型的图标 —— 图标已经说明是哪一档,
+            // 文案就不必再缀「· 番剧」「· 分类浏览」了。
+            icon: mixed ? Icons.dashboard_rounded : kind.icon,
+            label: mixed
+                ? context.l10n.disc_mixedAllSources
+                : (sourceName ?? context.l10n.disc_selectSource),
+            onTap: onTap,
+          ),
+        ),
+      );
+}
+
+/// 触发源选择弹层的胶囊按钮。三档的标准长相见 [SourcePickerBar]。
 class SourcePickerPill extends StatelessWidget {
   const SourcePickerPill({
     super.key,

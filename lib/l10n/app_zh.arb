@@ -252,12 +252,6 @@
   "disc_comingSoonDesc": "这个板块正在规划中,后续版本接入",
   "disc_mixedAllSources": "混合 · 全部源",
   "disc_selectSource": "选择源",
-  "disc_sourceCategoryBrowse": "{name} · 分类浏览",
-  "@disc_sourceCategoryBrowse": {
-    "placeholders": {
-      "name": {}
-    }
-  },
   "disc_searchHint": "搜索漫画名 · {name}",
   "@disc_searchHint": {
     "placeholders": {
@@ -998,8 +992,6 @@
   "download_reserveSpace": "预留存储空间",
   "download_reserveSpaceSub": "剩余空间低于此值前暂停下载",
   "novel_browserNoSources": "还没有可用的小说源",
-  "novel_browserAllSources": "混合 · 全部小说源",
-  "novel_browserSource": "小说源",
   "novel_browserAllSourcesFailed": "所有小说源均加载失败",
   "novel_browserTranslatedQuery": "「{original}」没搜到，已用译名「{query}」",
   "@novel_browserTranslatedQuery": {"placeholders":{"original":{},"query":{}}},

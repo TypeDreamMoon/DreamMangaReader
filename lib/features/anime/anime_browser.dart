@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/content_kind.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
@@ -433,15 +434,11 @@ class AnimeBrowserState extends State<AnimeBrowser> {
       children: [
         // 源选择(搜索已统一到发现页顶栏,这里只留源选择器)。
         if (library.showSourcePicker)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-            child: SourcePickerPill(
-              label: _mixed
-                  ? context.l10n.disc_mixedAllSources
-                  : '${_meta?.name ?? ''} · 番剧',
-              icon: _mixed ? Icons.dashboard_rounded : Icons.movie_rounded,
-              onTap: _pickSource,
-            ),
+          SourcePickerBar(
+            kind: ContentKind.anime,
+            mixed: _mixed,
+            sourceName: _meta?.name,
+            onTap: _pickSource,
           ),
         if (_isBili) _biliBar(p),
         // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。

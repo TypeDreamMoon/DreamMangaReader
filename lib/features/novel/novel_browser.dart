@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/content_kind.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
@@ -396,18 +397,11 @@ class NovelBrowserState extends State<NovelBrowser> {
     return Column(
       children: [
         if (library.showSourcePicker)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SourcePickerPill(
-                label: _mixed
-                    ? context.l10n.novel_browserAllSources
-                    : (_meta?.name ?? context.l10n.novel_browserSource),
-                icon: Icons.auto_stories_rounded,
-                onTap: _pickSource,
-              ),
-            ),
+          SourcePickerBar(
+            kind: ContentKind.novel,
+            mixed: _mixed,
+            sourceName: _meta?.name,
+            onTap: _pickSource,
           ),
         if (!_mixed && _filters.isNotEmpty && _query.isEmpty) _filterBar(),
         if (_query.isNotEmpty &&

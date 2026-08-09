@@ -487,7 +487,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         children: [
           if (_kind == ContentKind.manga) ...[
             // 源选择器默认隐藏(直接用混合源);设置里打开才显示。
-            if (store.showSourcePicker) _sourcePicker(p, store),
+            if (store.showSourcePicker) _sourcePicker(),
             // 搜索框 / 筛选条:用 AnimatedSize 展开收起,避免整页内容硬跳。
             _animExpand(_showSearch
                 ? _searchField(p)
@@ -616,16 +616,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
   }
 
-  Widget _sourcePicker(AppPalette p, LibraryStore store) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-        child: SourcePickerPill(
-          icon: _mixed ? Icons.dashboard_rounded : Icons.source_rounded,
-          label: _mixed
-              ? context.l10n.disc_mixedAllSources
-              : context.l10n.disc_sourceCategoryBrowse(
-                  _meta?.name ?? context.l10n.disc_selectSource),
-          onTap: _pickSource,
-        ),
+  Widget _sourcePicker() => SourcePickerBar(
+        kind: ContentKind.manga,
+        mixed: _mixed,
+        sourceName: _meta?.name,
+        onTap: _pickSource,
       );
 
   Widget _searchField(AppPalette p) => Padding(

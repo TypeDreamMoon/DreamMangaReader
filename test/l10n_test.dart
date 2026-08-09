@@ -22,8 +22,8 @@ const _requiredNovelKeys = {
   'content_manga',
   'content_novel',
   'novel_browserNoSources',
-  'novel_browserAllSources',
-  'novel_browserSource',
+  // 源选择条的「混合 · 全部源」/「选择源」已统一到 disc_* 那套(三档共用一副文案),
+  // 小说不再有自己的 novel_browserAllSources / novel_browserSource。
   'novel_browserAllSourcesFailed',
   'novel_browserTranslatedQuery',
   'novel_browserPartialFailure',
