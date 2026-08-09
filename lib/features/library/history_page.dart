@@ -12,6 +12,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_history_resume.dart';
+import '../common/cover_hero.dart';
 import '../detail/detail_page.dart';
 import '../novel/novel_cover.dart';
 import '../novel/novel_library_view.dart';
@@ -127,6 +128,8 @@ class HistoryPage extends StatelessWidget {
       sourceNameOf(history.sourceId),
       history.lastChapterName,
     );
+    final heroTag = coverHeroTag(CoverHeroScope.history,
+        sourceId: history.sourceId, itemId: history.mangaId);
     return _card(
       cardKey: const Key('history-row-manga'),
       palette: palette,
@@ -136,11 +139,13 @@ class HistoryPage extends StatelessWidget {
         manga: manga,
         headers: meta == null ? const {} : imageHeadersOf(meta),
         radius: 8,
+        heroTag: heroTag,
       ),
       onTap: meta == null
           ? null
           : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => DetailPage(manga: manga, meta: meta),
+                builder: (_) =>
+                    DetailPage(manga: manga, meta: meta, heroTag: heroTag),
               )),
       removeKey: const Key('history-remove-manga'),
       onRemove: () => store.removeHistory(history.sourceId, history.mangaId),
@@ -160,6 +165,8 @@ class HistoryPage extends StatelessWidget {
       cover: entry.cover,
       authors: entry.authors,
     );
+    final heroTag = coverHeroTag(CoverHeroScope.history,
+        sourceId: entry.sourceId ?? 'local', itemId: novel.id);
     return _card(
       cardKey: const Key('history-row-novel'),
       palette: palette,
@@ -167,9 +174,10 @@ class HistoryPage extends StatelessWidget {
       progress: entry.available
           ? context.l10n.novel_readTo(progress.locator.chapterId)
           : context.l10n.novel_fileMissing,
-      cover: NovelCover(novel: novel, radius: 8),
+      cover: NovelCover(novel: novel, radius: 8, heroTag: heroTag),
       onTap: entry.available
-          ? () => unawaited(openNovelLibraryEntry(context, entry))
+          ? () => unawaited(
+              openNovelLibraryEntry(context, entry, heroTag: heroTag))
           : null,
       removeKey: const Key('history-remove-novel'),
       onRemove: () => store.removeHistory(entry.key),

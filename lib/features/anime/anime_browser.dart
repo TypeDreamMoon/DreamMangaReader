@@ -14,6 +14,7 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
+import '../common/cover_hero.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
@@ -412,10 +413,11 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     _reset();
   }
 
-  void _open(_AnimeResult result) {
+  void _open(_AnimeResult result, {Object? heroTag}) {
     Navigator.of(context).push(appRoute(AnimeDetailPage(
       meta: result.meta,
       anime: result.anime,
+      heroTag: heroTag,
       sourceBuilder: widget.sourceBuilder,
     )));
   }
@@ -573,6 +575,9 @@ class AnimeBrowserState extends State<AnimeBrowser> {
       itemBuilder: (context, i) {
         final result = _results[i];
         final m = result.anime;
+        // 带下标:混合源翻页可能重复召回同一部番,不带就会撞 Hero tag。
+        final tag = coverHeroTag(CoverHeroScope.discovery,
+            sourceId: result.meta.id, itemId: m.id, index: i);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -581,7 +586,8 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                 manga: m,
                 headers: imageHeadersOf(result.meta),
                 sourceCount: result.sourceIds.length,
-                onTap: () => _open(result),
+                heroTag: tag,
+                onTap: () => _open(result, heroTag: tag),
               ),
             ),
             const SizedBox(height: 6),

@@ -18,6 +18,7 @@ import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_browser.dart';
 import '../common/animations.dart';
+import '../common/cover_hero.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
@@ -1119,7 +1120,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         final m = _results[i].manga;
         final meta = _results[i].meta;
         // 带下标:搜索/发现结果可能重复同一本,避免 Hero tag 撞车。
-        final tag = 'disc:${meta.id}:${m.id}:$i';
+        final tag = coverHeroTag(CoverHeroScope.discovery,
+            sourceId: meta.id, itemId: m.id, index: i);
         final cover = MangaCover(
           manga: m,
           headers: imageHeadersOf(meta),
@@ -1151,7 +1153,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       tileBuilder: (context, i) {
         final m = _results[i].manga;
         final meta = _results[i].meta;
-        final tag = 'disc:${meta.id}:${m.id}:$i';
+        final tag = coverHeroTag(CoverHeroScope.discovery,
+            sourceId: meta.id, itemId: m.id, index: i);
         return FlyInUp(
           seed: m.id,
           child: coverListTile(p, context,

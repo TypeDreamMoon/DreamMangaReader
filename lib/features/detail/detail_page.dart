@@ -14,7 +14,6 @@ import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
-import '../../core/source/author_match.dart';
 import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
 import '../../core/source/title_match.dart';
@@ -29,6 +28,7 @@ import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import '../common/cross_source_sessions.dart';
 import '../common/detail_cta.dart';
+import '../common/detail_author_line.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import '../common/transitions.dart';
@@ -781,50 +781,14 @@ class _DetailPageState extends State<DetailPage>
       title: m.title,
       statusText: _statusText(m.status),
       genres: m.genres,
-      authorLine:
-          m.authors.isNotEmpty ? _authorLine(p, m.authors, acc) : null,
-    );
-  }
-
-  /// 作者行:每个作者名单独可点,点开「同作者作品」。源的搜索接口只吃关键词,
-  /// 所以整串「A / B」要先拆开,拿单个作者名去搜才有命中率。
-  Widget _authorLine(AppPalette p, List<String> authors, Color accent) {
-    final names = AuthorMatch.expand(authors);
-    if (names.isEmpty) {
-      return Text(
-        context.l10n.detail_authorPrefix(authors.join('、')),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: p.textMuted, fontSize: 12),
-      );
-    }
-    return Wrap(
-      spacing: 6,
-      runSpacing: 2,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Text(context.l10n.detail_authorPrefix('').trim(),
-            style: TextStyle(color: p.textMuted, fontSize: 12)),
-        for (final name in names)
-          InkWell(
-            key: Key('detail-author-$name'),
-            onTap: () => _openAuthorWorks(name),
-            borderRadius: BorderRadius.circular(4),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-              child: Text(
-                name,
-                style: TextStyle(
-                  color: Color.lerp(accent, p.textPrimary, .25),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  decoration: TextDecoration.underline,
-                  decorationColor: accent.withValues(alpha: .5),
-                ),
-              ),
+      authorLine: m.authors.isEmpty
+          ? null
+          : DetailAuthorLine(
+              authors: m.authors,
+              accent: acc,
+              keyPrefix: 'detail-author',
+              onOpenAuthor: _openAuthorWorks,
             ),
-          ),
-      ],
     );
   }
 
@@ -834,8 +798,8 @@ class _DetailPageState extends State<DetailPage>
       meta: widget.meta,
       kind: 'manga',
       excludeMangaId: widget.manga.id,
-      onOpen: (context, meta, manga) => Navigator.of(context).push(
-        appRoute(DetailPage(manga: manga, meta: meta)),
+      onOpen: (context, meta, manga, heroTag) => Navigator.of(context).push(
+        appRoute(DetailPage(manga: manga, meta: meta, heroTag: heroTag)),
       ),
     )));
   }

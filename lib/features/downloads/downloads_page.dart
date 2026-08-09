@@ -9,6 +9,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
+import '../common/cover_hero.dart';
 import '../common/transitions.dart';
 import '../anime/anime_downloads_view.dart';
 import '../detail/detail_page.dart';
@@ -363,7 +364,10 @@ class _MangaDownloadsPage extends StatelessWidget {
     final meta = _metaById(first.sourceId);
     final manga = Manga(
         id: first.mangaId, title: first.mangaTitle, cover: first.mangaCover);
-    final tag = meta == null ? null : 'dl:${meta.id}:${manga.id}';
+    final tag = meta == null
+        ? null
+        : coverHeroTag(CoverHeroScope.downloads,
+            sourceId: meta.id, itemId: manga.id);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(

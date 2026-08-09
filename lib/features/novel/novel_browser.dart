@@ -14,6 +14,7 @@ import '../../core/source/search_rank.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
+import '../common/cover_hero.dart';
 import '../common/source_picker.dart';
 import '../common/transitions.dart';
 import '../library/masonry_feed.dart';
@@ -389,8 +390,12 @@ class NovelBrowserState extends State<NovelBrowser> {
 
   /// 卡片/行的 Hero tag。带下标:同一本书可能在结果里出现多次(混合源翻页),
   /// 不带下标会撞 tag,Hero 直接抛「同屏多个相同 tag」。
-  String _heroTag(_NovelResult result, int index, String prefix) =>
-      '$prefix:${result.meta.id}:${result.novel.id}:$index';
+  String _heroTag(_NovelResult result, int index) => coverHeroTag(
+        CoverHeroScope.discovery,
+        sourceId: result.meta.id,
+        itemId: result.novel.id,
+        index: index,
+      );
 
   void _open(_NovelResult result, {Object? heroTag}) {
     Navigator.of(context).push(appRoute(NovelDetailPage(
@@ -507,7 +512,7 @@ class NovelBrowserState extends State<NovelBrowser> {
           : null,
       cardBuilder: (context, index) {
         final result = _results[index];
-        final tag = _heroTag(result, index, 'nfeed');
+        final tag = _heroTag(result, index);
         return NovelFeedCard(
           novel: result.novel,
           meta: result.meta,
@@ -521,7 +526,7 @@ class NovelBrowserState extends State<NovelBrowser> {
       },
       tileBuilder: (context, index) {
         final result = _results[index];
-        final tag = _heroTag(result, index, 'nfeedl');
+        final tag = _heroTag(result, index);
         return NovelFeedTile(
           novel: result.novel,
           meta: result.meta,

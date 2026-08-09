@@ -107,6 +107,13 @@ class ShelfCover extends StatelessWidget {
   }
 }
 
+/// 条目所属源 id。本地导入的小说没有源,给个稳定占位。
+String shelfItemSourceId(ShelfItem item) => switch (item.kind) {
+      ShelfKind.manga => item.mangaEntry!.sourceId,
+      ShelfKind.anime => item.animeEntry!.sourceId,
+      ShelfKind.novel => item.novelEntry!.sourceId ?? 'local',
+    };
+
 /// 小说的 [Novel.id] 口径与详情页保持一致(novelId → 指纹 → key)。
 String shelfItemId(ShelfItem item) => switch (item.kind) {
       ShelfKind.manga => item.mangaEntry!.mangaId,

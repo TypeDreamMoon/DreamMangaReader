@@ -13,7 +13,6 @@ import '../../core/bangumi/bangumi_api.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
-import '../../core/source/author_match.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -26,6 +25,7 @@ import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import '../common/cross_source_sessions.dart';
 import '../common/detail_cta.dart';
+import '../common/detail_author_line.dart';
 import '../detail/cross_source_sheet.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
@@ -375,9 +375,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       title: _title,
       statusText: _statusText(anime.status),
       genres: anime.genres,
-      authorLine: anime.authors.isNotEmpty
-          ? _authorLine(p, anime.authors, acc)
-          : null,
+      authorLine: anime.authors.isEmpty
+          ? null
+          : DetailAuthorLine(
+              authors: anime.authors,
+              accent: acc,
+              keyPrefix: 'anime-author',
+              onOpenAuthor: _openAuthorWorks,
+            ),
     );
   }
 
@@ -385,52 +390,17 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       ? _detail!.title
       : widget.anime.title;
 
-  Widget _authorLine(AppPalette p, List<String> authors, Color accent) {
-    final names = AuthorMatch.expand(authors);
-    if (names.isEmpty) {
-      return Text(
-        context.l10n.detail_authorPrefix(authors.join('、')),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: p.textMuted, fontSize: 12),
-      );
-    }
-    return Wrap(
-      spacing: 6,
-      runSpacing: 2,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Text(context.l10n.detail_authorPrefix('').trim(),
-            style: TextStyle(color: p.textMuted, fontSize: 12)),
-        for (final name in names)
-          InkWell(
-            key: Key('anime-author-$name'),
-            onTap: () => Navigator.of(context).push(appRoute(AuthorWorksPage(
-              author: name,
-              meta: widget.meta,
-              kind: 'anime',
-              excludeMangaId: widget.anime.id,
-              onOpen: (context, meta, anime) => Navigator.of(context).push(
-                appRoute(AnimeDetailPage(meta: meta, anime: anime)),
-              ),
-            ))),
-            borderRadius: BorderRadius.circular(4),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-              child: Text(
-                name,
-                style: TextStyle(
-                  color: Color.lerp(accent, p.textPrimary, .25),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  decoration: TextDecoration.underline,
-                  decorationColor: accent.withValues(alpha: .5),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+  void _openAuthorWorks(String author) {
+    Navigator.of(context).push(appRoute(AuthorWorksPage(
+      author: author,
+      meta: widget.meta,
+      kind: 'anime',
+      excludeMangaId: widget.anime.id,
+      onOpen: (context, meta, anime, heroTag) => Navigator.of(context).push(
+        appRoute(
+            AnimeDetailPage(meta: meta, anime: anime, heroTag: heroTag)),
+      ),
+    )));
   }
 
   String _statusText(MangaStatus status) => switch (status) {

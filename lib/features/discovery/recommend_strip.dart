@@ -6,6 +6,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../common/transitions.dart';
+import '../common/cover_hero.dart';
 import '../detail/detail_page.dart';
 import '../library/manga_cover.dart';
 import 'recommend_controller.dart';
@@ -137,7 +138,8 @@ class _RecommendStripState extends State<RecommendStrip> {
 
   Widget _card(AppPalette p, RecItem rec) {
     final m = rec.manga;
-    final tag = 'rec:${rec.meta.id}:${m.id}';
+    final tag = coverHeroTag(CoverHeroScope.recommend,
+        sourceId: rec.meta.id, itemId: m.id);
     return SizedBox(
       width: 92,
       child: Column(

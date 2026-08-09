@@ -6,6 +6,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
+import '../common/cover_hero.dart';
 import '../common/animations.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
@@ -177,7 +178,8 @@ class _BrowsePageState extends State<BrowsePage> {
   }
 
   Widget _card(AppPalette p, Manga m, int i) {
-    final tag = 'browse:${widget.meta.id}:${m.id}:$i';
+    final tag = coverHeroTag(CoverHeroScope.browseSection,
+            sourceId: widget.meta.id, itemId: m.id, index: i);
     return FlyInUp(
       seed: m.id,
       child: Column(

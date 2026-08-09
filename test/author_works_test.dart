@@ -90,7 +90,7 @@ void main() {
           kind: 'manga',
           excludeMangaId: 'self',
           sourceBuilder: (_) => source,
-          onOpen: (_, __, manga) => opened.add(manga.id),
+          onOpen: (_, __, manga, ___) => opened.add(manga.id),
         ),
       ),
     ));
@@ -127,7 +127,7 @@ void main() {
           meta: _meta,
           kind: 'manga',
           sourceBuilder: (_) => _FakeSource(const [], []),
-          onOpen: (_, __, ___) {},
+          onOpen: (_, __, ___, ____) {},
         ),
       ),
     ));

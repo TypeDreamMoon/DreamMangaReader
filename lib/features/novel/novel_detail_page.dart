@@ -21,6 +21,7 @@ import '../common/animations.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import '../common/cross_source_sessions.dart';
+import '../common/detail_author_line.dart';
 import '../common/detail_cta.dart';
 import '../detail/cross_source_sheet.dart';
 import '../common/detail_hero.dart';
@@ -419,13 +420,14 @@ class _NovelDetailPageState extends State<NovelDetailPage>
       statusText: _statusLabel(context, _novel.status),
       genres:
           _novel.genres.where((value) => value.trim().isNotEmpty).toList(),
+      // 小说没有「同作者作品」(那个页面跑在 MangaSource 上)→ 不给 onOpenAuthor,
+      // 组件自动退回纯文本。
       authorLine: authors.isEmpty
           ? null
-          : Text(
-              context.l10n.detail_authorPrefix(authors.join('、')),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: p.textMuted, fontSize: 12),
+          : DetailAuthorLine(
+              authors: authors,
+              accent: coverAccent,
+              keyPrefix: 'novel-author',
             ),
     );
   }

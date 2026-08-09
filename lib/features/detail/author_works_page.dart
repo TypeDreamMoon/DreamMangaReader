@@ -12,6 +12,7 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
+import '../common/cover_hero.dart';
 import '../library/manga_cover.dart';
 
 /// 一条搜索结果:记住它来自哪个源(打开详情要用那个源的引擎)。
@@ -36,8 +37,10 @@ class AuthorWorksPage extends StatefulWidget {
 
   /// 只在同类型的源里搜:`manga` / `anime`。
   final String kind;
-  final void Function(BuildContext context, SourceMeta meta, Manga manga)
-      onOpen;
+  /// 打开某部作品。[heroTag] 是封面的 Hero 标记 —— 详情页要用同一个值,
+  /// 封面才会从这张卡飞过去(见 [coverHeroTag])。
+  final void Function(BuildContext context, SourceMeta meta, Manga manga,
+      Object? heroTag) onOpen;
   final String? excludeMangaId;
   final MangaSource Function(SourceMeta meta) sourceBuilder;
 
@@ -210,15 +213,20 @@ class _AuthorWorksPageState extends State<AuthorWorksPage> {
 
   Widget _card(AuthorWork work) {
     final p = context.palette;
+    final tag = coverHeroTag(
+      CoverHeroScope.authorWorks,
+      sourceId: work.meta.id,
+      itemId: work.manga.id,
+    );
     // 整张卡可点(封面 + 书名),不是只有封面那块。
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => widget.onOpen(context, work.meta, work.manga),
-      child: _cardBody(work, p),
+      onTap: () => widget.onOpen(context, work.meta, work.manga, tag),
+      child: _cardBody(work, p, tag),
     );
   }
 
-  Widget _cardBody(AuthorWork work, AppPalette p) {
+  Widget _cardBody(AuthorWork work, AppPalette p, Object heroTag) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -226,6 +234,7 @@ class _AuthorWorksPageState extends State<AuthorWorksPage> {
           child: MangaCover(
             manga: work.manga,
             headers: imageHeadersOf(work.meta),
+            heroTag: heroTag,
           ),
         ),
         const SizedBox(height: 6),

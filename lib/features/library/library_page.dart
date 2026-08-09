@@ -11,6 +11,7 @@ import '../../core/source/source_search.dart';
 import '../../ui/ui.dart';
 import '../anime/anime_detail_page.dart';
 import '../anime/anime_history_resume.dart';
+import '../common/cover_hero.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
 import '../novel/novel_import_sheet.dart';
@@ -529,6 +530,8 @@ class _LibraryPageState extends State<LibraryPage> {
     String? sourceId;
     List<String> authors = const [];
     VoidCallback? onTap;
+    // 番剧续播直接进播放器(那边没有封面),所以只有漫画/小说给 Hero。
+    Object? heroTag;
     switch (item.kind) {
       case UnifiedHistoryKind.manga:
         final h = item.manga!;
@@ -536,11 +539,14 @@ class _LibraryPageState extends State<LibraryPage> {
         id = h.mangaId;
         sourceId = h.sourceId;
         progress = h.lastChapterName;
+        heroTag = coverHeroTag(CoverHeroScope.shelfHistory,
+            sourceId: h.sourceId, itemId: h.mangaId);
         onTap = () => _openManga(
               title: h.title,
               sourceId: h.sourceId,
               mangaId: h.mangaId,
               cover: h.cover,
+              heroTag: heroTag,
             );
       case UnifiedHistoryKind.novel:
         final entry = item.novelEntry!;
@@ -549,7 +555,10 @@ class _LibraryPageState extends State<LibraryPage> {
         authors = entry.authors;
         progress = item.novelProgress!.locator.chapterId;
         if (entry.available) {
-          onTap = () => openNovelLibraryEntry(context, entry);
+          heroTag = coverHeroTag(CoverHeroScope.shelfHistory,
+              sourceId: entry.sourceId ?? 'local', itemId: id);
+          final tag = heroTag;
+          onTap = () => openNovelLibraryEntry(context, entry, heroTag: tag);
         }
       case UnifiedHistoryKind.anime:
         final h = item.anime!;
@@ -583,6 +592,7 @@ class _LibraryPageState extends State<LibraryPage> {
                 authors: authors,
                 sourceId: sourceId,
                 radius: 8,
+                heroTag: heroTag,
                 onTap: onTap,
               ),
             ),
@@ -674,7 +684,8 @@ class _LibraryPageState extends State<LibraryPage> {
   // 收藏卡(瀑布流/网格):封面 + 类型角标 + 标题 + 副标题。
   // 网格用 Flexible 防固定高单元格溢出;瀑布流取自然高。
   Widget _shelfCard(AppPalette p, ShelfItem item, FeedLayout layout) {
-    final tag = 'shelf:${item.key}';
+    final tag = coverHeroTag(CoverHeroScope.shelf,
+        sourceId: shelfItemSourceId(item), itemId: shelfItemId(item));
     final cover = shelfCoverWithBadge(
       showKind: _kind == null,
       kind: item.kind,
@@ -713,7 +724,8 @@ class _LibraryPageState extends State<LibraryPage> {
 
   // 收藏行(列表布局):横排封面 + 标题 / 副标题 / 类型。
   Widget _shelfTile(AppPalette p, ShelfItem item) {
-    final tag = 'shelfl:${item.key}';
+    final tag = coverHeroTag(CoverHeroScope.shelf,
+        sourceId: shelfItemSourceId(item), itemId: shelfItemId(item));
     return _withMenu(
       item: item,
       child: Padding(
