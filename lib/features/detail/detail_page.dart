@@ -27,6 +27,7 @@ import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/cross_source_sessions.dart';
 import '../common/detail_cta.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
@@ -559,6 +560,14 @@ class _DetailPageState extends State<DetailPage>
   /// 换源:在其它已启用源里搜同名漫画,选中后用该源重开详情页(替换当前页,
   /// 返回即回到来处)。当前源不在候选内。
   Future<void> _openCrossSource() async {
+    final store = LibraryScope.read(context);
+    final candidates = [
+      for (final s in registeredSources)
+        if (s.kind == 'manga' &&
+            s.id != widget.meta.id &&
+            store.isSourceEnabled(s.id))
+          s,
+    ];
     final picked = await showAppSheet<CrossSourcePick>(
       context,
       title: context.l10n.detail_switchSource,
@@ -567,12 +576,15 @@ class _DetailPageState extends State<DetailPage>
       heightFactor: 0.7,
       body: (ctx, setSheet) => CrossSourceSheet(
         title: _manga.title,
-        currentSourceId: widget.meta.id,
+        sources: candidates,
+        settings: store,
+        sessionFactory: MangaCrossSourceSession.new,
       ),
     );
     if (picked == null || !mounted) return;
     Navigator.of(context).pushReplacement(
-      appRoute(DetailPage(manga: picked.manga, meta: picked.meta)),
+      appRoute(DetailPage(
+          manga: picked.item.payload as Manga, meta: picked.meta)),
     );
   }
 

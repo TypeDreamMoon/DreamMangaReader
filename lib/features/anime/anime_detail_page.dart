@@ -24,7 +24,9 @@ import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/cross_source_sessions.dart';
 import '../common/detail_cta.dart';
+import '../detail/cross_source_sheet.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import '../library/manga_cover.dart';
@@ -254,6 +256,40 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     }
   }
 
+  /// 换源:在其它启用的**番剧**源里搜同名,选中后整页换到那个源。
+  /// 漫画/小说早就有,番剧一直缺 —— 三家现在共用同一个弹层。
+  Future<void> _changeSource() async {
+    final store = LibraryScope.read(context);
+    final candidates = [
+      for (final s in registeredSources)
+        if (s.kind == 'anime' &&
+            s.id != widget.meta.id &&
+            store.isSourceEnabled(s.id))
+          s,
+    ];
+    final picked = await showAppSheet<CrossSourcePick>(
+      context,
+      title: context.l10n.detail_switchSource,
+      showCloseButton: true,
+      resizeForKeyboard: true,
+      heightFactor: 0.7,
+      body: (ctx, setSheet) => CrossSourceSheet(
+        title: _display.title,
+        sources: candidates,
+        settings: store,
+        sessionFactory: (meta) =>
+            MangaCrossSourceSession(meta, builder: widget.sourceBuilder),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    Navigator.of(context).pushReplacement(appRoute(AnimeDetailPage(
+      meta: picked.meta,
+      anime: picked.item.payload as Manga,
+      sourceBuilder: widget.sourceBuilder,
+      bangumiLookup: widget.bangumiLookup,
+    )));
+  }
+
   @override
   Widget build(BuildContext context) {
     AnimeDownloadScope.of(context);
@@ -267,6 +303,12 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
         elevation: 0,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            key: const Key('anime-change-source'),
+            tooltip: context.l10n.detail_switchSource,
+            onPressed: _changeSource,
+            icon: const Icon(Icons.swap_horiz_rounded),
+          ),
           IconButton(
             key: const Key('anime-download-all'),
             onPressed: !_loading && _episodes.isNotEmpty ? _downloadAll : null,

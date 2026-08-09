@@ -19,20 +19,55 @@ import '../../ui/ui.dart';
 ///
 /// 归一化(对任一语种变体)同名的置顶、标「同名」。选中返回该源的 [pick](meta+manga)。
 /// 各源/各变体并发搜第 1 页;单源失败只跳过它。构建的源在 dispose 全部释放。
-typedef CrossSourcePick = ({SourceMeta meta, Manga manga});
+/// 跨源搜到的一条候选。把 [Manga] / Novel 抹平成弹层要显示的最小信息,
+/// 原始模型放 [payload] 里,调用方挑中后照常拿回去用。
+class CrossSourceItem {
+  const CrossSourceItem({
+    required this.id,
+    required this.title,
+    this.cover,
+    this.authors = const [],
+    required this.payload,
+  });
+
+  final String id;
+  final String title;
+  final String? cover;
+  final List<String> authors;
+  final Object payload;
+}
+
+/// 某个源上的一次换源会话:引擎建一次、跨多个查询变体复用,用完 [dispose]。
+abstract class CrossSourceSession {
+  Future<List<CrossSourceItem>> search(String query);
+  void dispose();
+}
+
+typedef CrossSourceSessionFactory = CrossSourceSession Function(SourceMeta meta);
+typedef CrossSourcePick = ({SourceMeta meta, CrossSourceItem item});
 
 class CrossSourceSheet extends StatefulWidget {
   const CrossSourceSheet({
     super.key,
     required this.title,
-    required this.currentSourceId,
+    required this.sources,
+    required this.sessionFactory,
+    required this.settings,
   });
 
-  /// 初始查询词(通常 = 当前漫画标题)。
+  /// 初始查询词(通常 = 当前作品标题)。
   final String title;
 
-  /// 当前所在源 id —— 换源要换到**别的**源,故从候选里排除它。
-  final String currentSourceId;
+  /// 候选源:调用方**已经筛好**的(同类型、已启用、排除当前源)。
+  final List<SourceMeta> sources;
+
+  /// 译名补搜要读的设置。由调用方用页面的 context 取好传进来 —— 弹层挂在 Navigator
+  /// 上,页面局部的 LibraryScope 它够不着(真机上 scope 在根部所以碰巧能读到,
+  /// 测试里就直接炸)。
+  final LibraryStore settings;
+
+  /// 怎么在一个源里搜 —— 漫画/番剧走 [MangaSource],小说走 NovelSource。
+  final CrossSourceSessionFactory sessionFactory;
 
   @override
   State<CrossSourceSheet> createState() => _CrossSourceSheetState();
@@ -43,7 +78,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
       TextEditingController(text: widget.title);
 
   // 候选源(其它已启用的漫画源),各自持一个引擎,dispose 时释放。
-  final List<({SourceMeta meta, MangaSource source})> _sources = [];
+  final List<({SourceMeta meta, CrossSourceSession session})> _sources = [];
   final List<CrossSourcePick> _results = [];
 
   int _pending = 0; // 在途搜索任务数(源 × 变体);0 且未在翻译 = 本轮结束
@@ -59,13 +94,8 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
   @override
   void initState() {
     super.initState();
-    final store = LibraryScope.read(context);
-    for (final s in registeredSources) {
-      if (s.kind == 'manga' &&
-          s.id != widget.currentSourceId &&
-          store.isSourceEnabled(s.id)) {
-        _sources.add((meta: s, source: buildSource(s)));
-      }
+    for (final s in widget.sources) {
+      _sources.add((meta: s, session: widget.sessionFactory(s)));
     }
     _run();
   }
@@ -74,7 +104,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
   void dispose() {
     _c.dispose();
     for (final s in _sources) {
-      s.source.dispose();
+      s.session.dispose();
     }
     super.dispose();
   }
@@ -99,7 +129,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
     if (!active) return;
     _searchVariant(gen, q); // 原文立即搜
     // 翻译补搜(找跨语言的同名版本)受设置「搜索翻译回退」开关控制,默认开。
-    if (LibraryScope.read(context).translateSearch) {
+    if (widget.settings.translateSearch) {
       _translateAndSearch(gen, q); // 并发翻成简/繁/英/日,到一个补搜一轮
     }
   }
@@ -116,13 +146,13 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
       _pending += _sources.length;
     });
     for (final s in _sources) {
-      _searchOne(gen, s.meta, s.source, query);
+      _searchOne(gen, s.meta, s.session, query);
     }
   }
 
   /// 把书名按源语言的目标顺序翻译,每翻好一个就拿去补搜一轮。翻译不可用时静默(只留原文结果)。
   Future<void> _translateAndSearch(int gen, String q) async {
-    final store = LibraryScope.read(context);
+    final store = widget.settings;
     // 按用户设的服务商优先级链式翻译(失败自动降级下一个)。
     final tr =
         Translator.chain(store.translateProviderOrder, llm: store.translateLlm);
@@ -143,10 +173,10 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
   }
 
   Future<void> _searchOne(
-      int gen, SourceMeta meta, MangaSource source, String q) async {
-    List<Manga> items = const [];
+      int gen, SourceMeta meta, CrossSourceSession session, String q) async {
+    List<CrossSourceItem> items = const [];
     try {
-      items = (await source.getSearch(q, 1)).items;
+      items = await session.search(q);
     } catch (_) {
       // 某源失败(限流/无匹配)→ 跳过它,不打断其它源/变体
     }
@@ -154,12 +184,12 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
     setState(() {
       for (final m in items) {
         if (!_seenKeys.add('${meta.id}:${m.id}')) continue; // 跨变体/源去重
-        _results.add((meta: meta, manga: m));
+        _results.add((meta: meta, item: m));
       }
       // 同名(归一标题命中任一语种变体)置顶,便于一眼挑到正确的书;稳定排序保持到达序。
       _results.sort((a, b) =>
-          (_isSameName(a.manga.title) ? 0 : 1) -
-          (_isSameName(b.manga.title) ? 0 : 1));
+          (_isSameName(a.item.title) ? 0 : 1) -
+          (_isSameName(b.item.title) ? 0 : 1));
       _pending--;
     });
   }
@@ -265,7 +295,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
       );
 
   Widget _row(AppPalette p, CrossSourcePick r) {
-    final m = r.manga;
+    final m = r.item;
     final exact = _isSameName(m.title);
     final cover = m.cover;
     return InkWell(

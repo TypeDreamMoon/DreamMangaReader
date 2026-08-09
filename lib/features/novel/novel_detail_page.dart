@@ -5,10 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../app/library_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/novel_library_store.dart';
+import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
@@ -20,12 +20,13 @@ import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/cross_source_sessions.dart';
 import '../common/detail_cta.dart';
+import '../detail/cross_source_sheet.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import 'novel_cover.dart';
 import 'novel_reader_page.dart';
-import 'novel_source_sheet.dart';
 
 /// 小说详情页。页面骨架与视觉语言**沿用漫画详情页**([DetailPage]):透明毛玻璃
 /// 标题栏 + accent 渐隐底 + 760 断点(窄屏单列 / 宽屏左信息右目录)+ 同一套
@@ -143,20 +144,26 @@ class _NovelDetailPageState extends State<NovelDetailPage>
 
   Future<void> _changeSource() async {
     final library = LibraryScope.read(context);
-    final catalog = (widget.sourceCatalog ?? registeredSources)
-        .where((source) =>
-            source.isNovel &&
-            (library.isSourceEnabled(source.id) || source.id == _meta.id))
-        .toList(growable: false);
-    final match = await showNovelSourceSheet(
+    final candidates = [
+      for (final s in widget.sourceCatalog ?? registeredSources)
+        if (s.isNovel && s.id != _meta.id && library.isSourceEnabled(s.id)) s,
+    ];
+    final picked = await showAppSheet<CrossSourcePick>(
       context,
-      title: _novel.title,
-      currentSourceId: _meta.id,
-      sources: catalog,
-      sourceBuilder: widget.sourceBuilder,
+      title: context.l10n.detail_switchSource,
+      showCloseButton: true,
+      resizeForKeyboard: true,
+      heightFactor: 0.7,
+      body: (ctx, setSheet) => CrossSourceSheet(
+        title: _novel.title,
+        sources: candidates,
+        settings: library,
+        sessionFactory: (meta) =>
+            NovelCrossSourceSession(meta, builder: widget.sourceBuilder),
+      ),
     );
-    if (match == null || !mounted) return;
-    await _load(match.meta, match.novel);
+    if (picked == null || !mounted) return;
+    await _load(picked.meta, picked.item.payload as Novel);
   }
 
   void _toggleFavorite() {

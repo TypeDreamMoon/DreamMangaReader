@@ -1,5 +1,9 @@
 import '../source/models.dart';
+import '../source/source_registry.dart';
 import 'models.dart';
+
+/// 由源元信息造一个小说源引擎。详情页/浏览页/换源弹层都靠它注入实现(测试可替换)。
+typedef NovelSourceFactory = NovelSource Function(SourceMeta meta);
 
 abstract interface class NovelSource {
   String get id;

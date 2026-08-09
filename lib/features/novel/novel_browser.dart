@@ -20,7 +20,6 @@ import '../common/transitions.dart';
 import '../library/masonry_feed.dart';
 import 'novel_detail_page.dart';
 import 'novel_feed_item.dart';
-import 'novel_source_sheet.dart';
 
 class NovelBrowser extends StatefulWidget {
   const NovelBrowser({
