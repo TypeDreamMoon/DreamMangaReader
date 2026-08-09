@@ -29,6 +29,13 @@ data class UpdateDownloadState(
             retryAttempt?.let { json.put("retryAttempt", it) }
         }
 
+    /** 还在推进中的阶段(对应 Flutter 侧 UpdateTransferState.busy)。 */
+    val busy: Boolean
+        get() = status == "downloading" ||
+            status == "retrying" ||
+            status == "verifying" ||
+            status == "assembling"
+
     companion object {
         val IDLE = UpdateDownloadState(status = "idle")
 

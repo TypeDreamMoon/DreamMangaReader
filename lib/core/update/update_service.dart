@@ -200,7 +200,8 @@ class _UpdateDialog extends StatefulWidget {
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
 
-class _UpdateDialogState extends State<_UpdateDialog> {
+class _UpdateDialogState extends State<_UpdateDialog>
+    with WidgetsBindingObserver {
   bool _preparing = true;
   bool _installing = false;
   bool _complete = false;
@@ -219,6 +220,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _subscription = widget.dependencies.coordinator.states.listen(
       _onTransferState,
       onError: (Object error) => _onTransferState(UpdateTransferState(
@@ -231,9 +233,35 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_subscription?.cancel());
     unawaited(widget.dependencies.coordinator.dispose());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_resyncTransfer());
+  }
+
+  /// 回到前台时主动跟传输层对一次状态。后台下载期间应用会被切走甚至被系统回收,
+  /// 事件通道上的中间态就此丢失,对话框会一直停在最后收到的那一帧 —— 典型就是
+  /// 「正在校验安装包」再也不动。原生侧同时会把这种没人推进的忙碌态降级成可重试错误。
+  Future<void> _resyncTransfer() async {
+    if (_asset == null || _installing || !mounted) return;
+    try {
+      final current = await widget.dependencies.coordinator.current();
+      if (!mounted) return;
+      if (current.stage != UpdateTransferStage.idle &&
+          current.taskKey != null &&
+          current.taskKey != _taskKey) {
+        return;
+      }
+      setState(() => _transfer = current);
+      _maybeInstall(current);
+    } catch (_) {
+      // 对状态失败不动 UI:下一次事件或下一次回前台还会再试。
+    }
   }
 
   Future<void> _prepareAsset() async {

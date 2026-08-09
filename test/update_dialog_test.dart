@@ -390,6 +390,51 @@ void main() {
     expect(coordinator.startCount, 0);
   });
 
+  testWidgets('returning to the foreground re-syncs a stale verifying state',
+      (tester) async {
+    const taskKey = '$_sha256:1.3.1';
+    final coordinator = _FakeCoordinator(
+      initial: const UpdateTransferState(
+        stage: UpdateTransferStage.verifying,
+        taskKey: taskKey,
+        versionName: '1.3.1',
+        progress: 1,
+        downloadedBytes: 3,
+        totalBytes: 3,
+      ),
+    );
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies.coordinator(
+        coordinator: coordinator,
+        refresh: (_) async => null,
+        openManual: (_) async {},
+      ),
+    );
+
+    expect(find.text('正在校验安装包…'), findsOneWidget);
+    expect(find.byKey(const Key('update-install')), findsNothing);
+
+    // 后台下载期间事件丢了:原生早就 ready,对话框却停在「正在校验安装包」。
+    // 回到前台必须自己对一次状态,否则永远等不到安装按钮。
+    coordinator.initial = const UpdateTransferState(
+      stage: UpdateTransferStage.ready,
+      taskKey: taskKey,
+      versionName: '1.3.1',
+      progress: 1,
+      downloadedBytes: 3,
+      totalBytes: 3,
+      packagePath: '/data/updates/app.apk',
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('update-install')), findsOneWidget);
+    expect(coordinator.installCount, 0);
+  });
+
   testWidgets('expired URL refreshes the asset before retry', (tester) async {
     final coordinator = _FakeCoordinator(
       initial: const UpdateTransferState(

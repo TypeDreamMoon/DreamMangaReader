@@ -71,6 +71,7 @@ class UpdateDownloadService : Service() {
     }
 
     private fun runDownload(plan: UpdateDownloadPlan, startId: Int) {
+        active = true
         try {
             prepareTask(plan)
             acquireWakeLock()
@@ -96,7 +97,14 @@ class UpdateDownloadService : Service() {
             publishState(ready)
             showReadyNotification(ready)
         } catch (_: DownloadCancelledException) {
-            // Explicit cancellation already cleared state and files.
+            // 用户主动取消:cancelActiveTask() 已经写过 idle 并清了文件,这里不再发布。
+            // 但同一个异常也会由 executor.shutdownNow() 的线程中断抛出(进程被回收、
+            // 用户划掉任务卡片),那种情况下**没人**发布过终态 —— 状态会永远停在最后
+            // 一次 publish 上(通常正是「正在校验安装包」),下次打开应用读回来就是一个
+            // 永远转圈、既不完成也不报错的更新对话框。所以这里必须补一个可重试的错误态。
+            if (!cancelled.get()) {
+                publishError(plan, "interrupted", "更新下载已中断，请重试")
+            }
         } catch (error: ExpiredUrlException) {
             if (!cancelled.get()) {
                 publishError(plan, "expired_url", "下载地址已过期，请重试")
@@ -108,6 +116,7 @@ class UpdateDownloadService : Service() {
         } finally {
             releaseWakeLock()
             running.set(false)
+            active = false
             stopForegroundCompat()
             stopSelf(startId)
         }
@@ -508,6 +517,12 @@ class UpdateDownloadService : Service() {
     }
 
     companion object {
+        /// 本进程里下载线程是否还活着。进程被回收后静态量自然复位成 false ——
+        /// 桥接层据此判断「持久化下来的 downloading/verifying 是不是一个没人再推进的僵尸态」。
+        @Volatile
+        @JvmStatic
+        var active: Boolean = false
+
         const val ACTION_START = "com.dreammoon.dream_manga_reader.UPDATE_START"
         const val ACTION_CANCEL = "com.dreammoon.dream_manga_reader.UPDATE_CANCEL"
         const val ACTION_STATE_CHANGED = "com.dreammoon.dream_manga_reader.UPDATE_STATE"

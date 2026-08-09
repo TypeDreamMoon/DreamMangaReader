@@ -101,6 +101,22 @@ void main() {
     expect(source, isNot(contains('Log.e(')));
   });
 
+  test('an interrupted worker never leaves a stuck busy state', () {
+    // 服务被回收 / 用户划掉任务卡片时 worker 线程是被中断掉的,最后一次 publish
+    // (通常是「正在校验安装包」)会永远留在持久化状态里。服务和桥接层都必须把它
+    // 收敛成可重试的错误,否则更新对话框永远转圈,走不到安装。
+    final service = _source('UpdateDownloadService.kt');
+    expect(service, contains('"interrupted"'));
+    expect(service, contains('active = true'));
+    expect(service, contains('active = false'));
+
+    final bridge = _source('UpdateDownloadBridge.kt');
+    expect(bridge, contains('UpdateDownloadService.active'));
+    expect(bridge, contains('errorCode = "interrupted"'));
+    expect(bridge, contains('currentState()'));
+    expect(bridge, isNot(contains('UpdateStateStore.readState(activity).toJson()')));
+  });
+
   test('native persisted state never contains remote URLs', () {
     final source = _source('UpdateDownloadState.kt');
     expect(source, contains('toJson'));

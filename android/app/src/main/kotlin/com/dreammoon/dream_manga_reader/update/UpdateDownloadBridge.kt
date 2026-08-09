@@ -38,6 +38,26 @@ class UpdateDownloadBridge(private val activity: Activity) :
         }
     }
 
+    /**
+     * 读回持久化状态,并把「僵尸忙碌态」翻译成可重试的错误。
+     *
+     * 下载服务被系统回收 / 用户划掉任务卡片时,worker 线程是被 shutdownNow() 中断掉的,
+     * 最后一次 publish 停在哪就是哪(通常是「正在校验安装包」)。那条记录会一直留在
+     * SharedPreferences 里,下次打开应用读回来仍是 busy —— 更新对话框于是永远显示
+     * 「正在校验安装包」+ 进度条,只有取消/后台两个按钮,再也走不到安装。
+     * 进程重启后 [UpdateDownloadService.active] 必为 false,据此把它降级成错误态,
+     * 用户能看到原因并直接重试。
+     */
+    private fun currentState(): UpdateDownloadState {
+        val state = UpdateStateStore.readState(activity)
+        if (!state.busy || UpdateDownloadService.active) return state
+        return state.copy(
+            status = "error",
+            message = "更新下载已中断，请重试",
+            errorCode = "interrupted",
+        )
+    }
+
     fun configure(flutterEngine: FlutterEngine) {
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         MethodChannel(messenger, METHOD_CHANNEL).setMethodCallHandler(this)
@@ -61,8 +81,7 @@ class UpdateDownloadBridge(private val activity: Activity) :
                 )
                 result.success(null)
             }
-            "getUpdateDownloadState" ->
-                result.success(UpdateStateStore.readState(activity).toJson().toMap())
+            "getUpdateDownloadState" -> result.success(currentState().toJson().toMap())
             "installReadyUpdate" -> runCatching {
                 installReady(UpdateStateStore.readState(activity))
             }.fold(
@@ -201,7 +220,7 @@ class UpdateDownloadBridge(private val activity: Activity) :
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
         eventSink = events
-        events.success(UpdateStateStore.readState(activity).toJson().toMap())
+        events.success(currentState().toJson().toMap())
     }
 
     override fun onCancel(arguments: Any?) {
