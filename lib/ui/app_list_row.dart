@@ -27,7 +27,7 @@ class AppListRow extends StatelessWidget {
     this.trailing,
     this.onTap,
     this.showChevron,
-    this.contentPadding = EdgeInsets.zero,
+    this.contentPadding = const EdgeInsets.fromLTRB(14, 5, 14, 5),
   })  : _card = false,
         cardPadding = EdgeInsets.zero;
 

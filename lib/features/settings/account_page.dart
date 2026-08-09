@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../../app/auth_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bili/bili_auth.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/sync/sync_controller.dart';
 import '../../ui/ui.dart';
-import '../anime/bili_login_page.dart';
-import '../common/transitions.dart';
+import 'source_account.dart';
 import 'sync_page.dart';
 
-/// 统一账号页:把「哔哩哔哩」扫码登录与「梦漫账号(云同步 / Hertz IAM)」登录集中到一处,
-/// 不再分散在番剧页 / 云同步页。云同步的**同步配置**(后端/类别/自动)仍在云同步页,这里只管登录。
+/// 统一账号页:App 自己的账号 + 所有源的账号,都在这一页。
+///
+/// 以前是散的 —— B 站扫码在番剧页、梦漫账号在云同步页、源账号只能从「源管理」里
+/// 一行一行点进去。现在这里是**唯一一处能看全登录态的地方**;别处保留的入口
+/// (源管理行内、番剧页顶部)都只是快捷方式,走的是同一套实现,见 [sourceAccounts]。
+///
+/// 云同步的**同步配置**(后端 / 类别 / 自定义服务器)仍在云同步页,这里只管登录。
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
 
@@ -21,23 +27,11 @@ class _AccountPageState extends State<AccountPage> {
   final SyncController _sync = SyncController.instance;
   bool _iamBusy = false;
 
-  Future<void> _biliLogin() async {
-    await Navigator.of(context).push<bool>(appRoute(const BiliLoginPage()));
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _biliLogout() async {
-    await BiliAuth.instance.logout();
-    if (mounted) setState(() {});
-  }
-
   Future<void> _iamLogin() async {
-    // 自定义自建 IAM(hertzPreset=custom + 已填 issuer)多用密码登录、无浏览器回调,
-    // 本页没有账密输入框 → 转交云同步页(它有预设感知的密码/浏览器登录 UI)。
+    // 自建 IAM(custom + 已填 issuer)多用密码登录,而账号服务地址还没配的时候
+    // 连登哪儿都不知道 —— 这两种情况转交云同步页,它带着预设感知的配置表单。
     if (_sync.hertzPreset == 'custom' && _sync.hertzIssuer.trim().isNotEmpty) {
-      await Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const SyncPage()));
-      if (mounted) setState(() {});
+      await _openSync();
       return;
     }
     setState(() => _iamBusy = true);
@@ -52,68 +46,70 @@ class _AccountPageState extends State<AccountPage> {
       }
       await _sync.auth.loginBrowser();
       if (!mounted) return;
-      showAppNotify(context, '登录成功', kind: AppNotifyKind.success);
+      showAppNotify(context, context.l10n.acct_loginOk,
+          kind: AppNotifyKind.success);
       // 昵称是登录后异步拉取的(IamAuth 非 ChangeNotifier),稍后再刷让卡片显示账号名。
       Future.delayed(const Duration(milliseconds: 1800), () {
         if (mounted) setState(() {});
       });
     } catch (e) {
       if (!mounted) return;
-      showAppNotify(context, '登录失败:$e', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.sync_loginFailed('$e'),
+          kind: AppNotifyKind.error);
     } finally {
       if (mounted) setState(() => _iamBusy = false);
     }
   }
 
-  Future<void> _iamLogout() async {
-    await _sync.auth.logout();
+  Future<void> _openSync() async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SyncPage()));
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final l10n = context.l10n;
+    final auth = AuthScope.of(context);
+    final accounts = sourceAccounts();
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
-        title: const Text('账号',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: Text(l10n.sync_account,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
       ),
       body: AppScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
-          ListenableBuilder(
-            listenable: BiliAuth.instance,
-            builder: (_, __) => _biliCard(p),
-          ),
-          const SizedBox(height: 14),
-          _iamCard(p),
+          _iamCard(p, l10n),
+          const SizedBox(height: 24),
+          _sectionHeader(p, l10n.acct_sourceSection, l10n.acct_sourceSectionHint),
+          const SizedBox(height: 10),
+          if (accounts.isEmpty)
+            _empty(p, l10n.acct_noSourceLogins)
+          else
+            // B 站的登录态在 BiliAuth 里,脚本源的在 AuthStore 里 —— 两边都得听,
+            // 否则扫码登录完这一页不会自己变。
+            ListenableBuilder(
+              listenable: Listenable.merge([BiliAuth.instance, auth]),
+              builder: (context, _) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final account in accounts) ...[
+                    _sourceCard(p, l10n, account, auth),
+                    if (account != accounts.last) const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
 
-  // —— 哔哩哔哩 ——
-  Widget _biliCard(AppPalette p) {
-    final auth = BiliAuth.instance;
-    final on = auth.isLoggedIn;
-    return _card(
-      p,
-      icon: Icons.live_tv_rounded,
-      brand: const Color(0xFFFF6699),
-      title: '哔哩哔哩',
-      subtitle: on
-          ? (auth.uname?.isNotEmpty == true ? auth.uname! : '已登录')
-          : '登录后可看追番、解锁大会员清晰度',
-      loggedIn: on,
-      onLogin: _biliLogin,
-      onLogout: _biliLogout,
-      loginLabel: '扫码登录',
-    );
-  }
-
   // —— 梦漫账号(云同步 / IAM)——
-  Widget _iamCard(AppPalette p) {
+  Widget _iamCard(AppPalette p, AppLocalizations l10n) {
     final auth = _sync.auth;
     final on = auth.isLoggedIn;
     return Column(
@@ -123,31 +119,95 @@ class _AccountPageState extends State<AccountPage> {
           p,
           icon: Icons.cloud_rounded,
           brand: p.accent,
-          title: '梦漫账号',
+          title: l10n.acct_appAccount,
           subtitle: on
-              ? (auth.username?.isNotEmpty == true ? auth.username! : '已登录')
-              : '用于云同步(书架 / 进度 / 历史 多端同步)',
+              ? (auth.username?.isNotEmpty == true
+                  ? auth.username!
+                  : l10n.acct_loggedIn)
+              : l10n.acct_appAccountHint,
           loggedIn: on,
           busy: _iamBusy,
           onLogin: _iamLogin,
-          onLogout: _iamLogout,
-          loginLabel: '登录',
+          onLogout: () async {
+            await _sync.auth.logout();
+            if (mounted) setState(() {});
+          },
+          loginLabel: l10n.sync_login,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const SyncPage())),
+            onPressed: _openSync,
             icon: const Icon(Icons.tune_rounded, size: 16),
-            label: const Text('云同步设置(后端 / 类别 / 自定义服务器)'),
+            label: Text(l10n.acct_syncSettings),
             style: TextButton.styleFrom(
-                foregroundColor: p.textMuted, textStyle: const TextStyle(fontSize: 12.5)),
+                foregroundColor: p.textMuted,
+                textStyle: const TextStyle(fontSize: 12.5)),
           ),
         ),
       ],
     );
   }
+
+  // —— 源账号:B 站扫码与脚本源账密共用一张卡,差别只在点下去弹什么 ——
+  Widget _sourceCard(
+    AppPalette p,
+    AppLocalizations l10n,
+    SourceAccount account,
+    AuthStore auth,
+  ) {
+    final on = isSourceAccountLoggedIn(account, auth);
+    final who = sourceAccountUser(account, auth);
+    final qr = account.kind == SourceLoginKind.qr;
+    return _card(
+      p,
+      icon: qr ? Icons.live_tv_rounded : Icons.source_rounded,
+      brand: qr ? const Color(0xFFFF6699) : p.accent,
+      title: account.name,
+      subtitle: on
+          ? (who ?? l10n.acct_loggedIn)
+          : account.isShared
+              ? l10n.acct_sharedSources(account.sources.length)
+              : (qr ? l10n.anime_biliLoginHint : l10n.acct_needsAccount),
+      loggedIn: on,
+      onLogin: () async {
+        await openSourceLogin(context, account);
+        if (mounted) setState(() {});
+      },
+      onLogout: () async {
+        await logoutSourceAccount(account, auth);
+        if (mounted) setState(() {});
+      },
+      loginLabel: qr ? l10n.anime_biliScanLogin : l10n.sync_login,
+    );
+  }
+
+  Widget _sectionHeader(AppPalette p, String title, String hint) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: TextStyle(
+                  color: p.textPrimary,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 3),
+          Text(hint,
+              style:
+                  TextStyle(color: p.textMuted, fontSize: 11.5, height: 1.4)),
+        ],
+      );
+
+  Widget _empty(AppPalette p, String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(context.radius),
+          border: Border.all(color: p.line),
+        ),
+        alignment: Alignment.center,
+        child: Text(text,
+            style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+      );
 
   Widget _card(
     AppPalette p, {
@@ -186,11 +246,15 @@ class _AccountPageState extends State<AccountPage> {
               children: [
                 Row(
                   children: [
-                    Text(title,
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800)),
+                    Flexible(
+                      child: Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: p.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800)),
+                    ),
                     if (loggedIn) ...[
                       const SizedBox(width: 6),
                       Icon(Icons.verified_rounded, size: 15, color: brand),
@@ -212,7 +276,8 @@ class _AccountPageState extends State<AccountPage> {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2))
           else if (loggedIn)
-            TextButton(onPressed: onLogout, child: const Text('退出'))
+            TextButton(
+                onPressed: onLogout, child: Text(context.l10n.anime_signOut))
           else
             FilledButton(
               onPressed: onLogin,

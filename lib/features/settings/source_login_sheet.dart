@@ -6,25 +6,44 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 
-/// 通用源账号登录页。某些源的内容(详情/章节/图片)需要登录后才能读;登录后 App 用
-/// 你的账号 Token 直连该源 API。登录**协议**在源脚本里,本页只做通用 UI。**密码不落盘**。
-class SourceLoginPage extends StatefulWidget {
-  const SourceLoginPage({super.key, required this.meta});
-
-  final SourceMeta meta;
-
-  @override
-  State<SourceLoginPage> createState() => _SourceLoginPageState();
+/// 源账号登录(账密式)。登录**协议**在源脚本的 `prepareLogin/handleLogin` 里,
+/// 这里只做通用 UI。**密码不落盘** —— 只存登录换回来的 token,失效了就重登。
+///
+/// 账号页和源管理页共用这一个:两个入口,一套实现。别再各写一份。
+Future<void> showSourceLoginSheet(BuildContext context, SourceMeta meta) {
+  final auth = AuthScope.read(context);
+  return showAppSheet<void>(
+    context,
+    title: context.l10n.srclogin_accountTitle(meta.name),
+    titleIcon: Icons.account_circle_rounded,
+    showDragHandle: true,
+    // 表单里有输入框,键盘弹起来要把弹层顶上去,否则按钮被压在键盘底下。
+    resizeForKeyboard: true,
+    glass: true,
+    topRadius: 22,
+    bodyPadding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
+    body: (_, __) => _SourceLoginForm(meta: meta, auth: auth),
+  );
 }
 
-class _SourceLoginPageState extends State<SourceLoginPage> {
+class _SourceLoginForm extends StatefulWidget {
+  const _SourceLoginForm({required this.meta, required this.auth});
+
+  final SourceMeta meta;
+  final AuthStore auth;
+
+  @override
+  State<_SourceLoginForm> createState() => _SourceLoginFormState();
+}
+
+class _SourceLoginFormState extends State<_SourceLoginForm> {
   final _userCtrl = TextEditingController();
   final _pwCtrl = TextEditingController();
   bool _busy = false;
   bool _obscure = true;
   String? _error;
 
-  String get _sourceName => widget.meta.name;
+  String get _name => widget.meta.name;
 
   @override
   void dispose() {
@@ -33,18 +52,17 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
     super.dispose();
   }
 
-  Future<void> _login(AuthStore auth) async {
+  Future<void> _login() async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await auth.login(widget.meta, _userCtrl.text, _pwCtrl.text);
-      if (mounted) {
-        _pwCtrl.clear();
-        showAppNotify(context, context.l10n.srclogin_loggedInNow(_sourceName),
-            kind: AppNotifyKind.success);
-      }
+      await widget.auth.login(widget.meta, _userCtrl.text, _pwCtrl.text);
+      if (!mounted) return;
+      _pwCtrl.clear();
+      showAppNotify(context, context.l10n.srclogin_loggedInNow(_name),
+          kind: AppNotifyKind.success);
     } catch (e) {
       if (mounted) {
         setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -56,35 +74,22 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.palette;
-    final auth = AuthScope.of(context);
-    final id = widget.meta.id;
-
-    return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
-        title: Text(context.l10n.srclogin_accountTitle(_sourceName),
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
-      ),
-      body: AppScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
-        children: [
-          AppCard(
-            padding: const EdgeInsets.all(14),
-            child: Text(
-              context.l10n.srclogin_intro(_sourceName),
-              style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.5),
-            ),
-          ),
-          const SizedBox(height: 20),
-          if (auth.isLoggedIn(id)) _loggedIn(p, auth) else _loginForm(p, auth),
-        ],
-      ),
+    // 登录成功后要就地翻成「已登录」,所以盯着 store 而不是只靠自己的 setState。
+    return ListenableBuilder(
+      listenable: widget.auth,
+      builder: (context, _) {
+        final p = context.palette;
+        return widget.auth.isLoggedIn(widget.meta.id)
+            ? _loggedIn(p)
+            : _form(p);
+      },
     );
   }
 
-  Widget _loggedIn(AppPalette p, AuthStore auth) {
+  Widget _loggedIn(AppPalette p) {
+    final auth = widget.auth;
     final id = widget.meta.id;
+    final who = auth.nicknameOf(id) ?? auth.usernameOf(id) ?? '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -94,7 +99,7 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                context.l10n.sync_loggedInAs(auth.nicknameOf(id) ?? auth.usernameOf(id) ?? ''),
+                context.l10n.sync_loggedInAs(who),
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 15,
@@ -104,9 +109,9 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
           ],
         ),
         const SizedBox(height: 6),
-        Text(context.l10n.srclogin_accountApiNow(_sourceName),
-            style: TextStyle(color: p.textMuted, fontSize: 12)),
-        const SizedBox(height: 20),
+        Text(context.l10n.srclogin_accountApiNow(_name),
+            style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
+        const SizedBox(height: 18),
         OutlinedButton.icon(
           onPressed: _busy
               ? null
@@ -124,38 +129,47 @@ class _SourceLoginPageState extends State<SourceLoginPage> {
     );
   }
 
-  Widget _loginForm(AppPalette p, AuthStore auth) {
+  Widget _form(AppPalette p) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
+        Text(
+          context.l10n.srclogin_intro(_name),
+          style: TextStyle(color: p.textMuted, fontSize: 12, height: 1.55),
+        ),
+        const SizedBox(height: 18),
         AppTextField(
           controller: _userCtrl,
           enabled: !_busy,
           label: context.l10n.srclogin_accountLabel,
           autofillHints: const [AutofillHints.username],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         AppTextField(
           controller: _pwCtrl,
           enabled: !_busy,
           obscure: _obscure,
           label: context.l10n.sync_password,
           autofillHints: const [AutofillHints.password],
-          onSubmitted: (_) => _busy ? null : _login(auth),
+          onSubmitted: (_) => _busy ? null : _login(),
           suffixIcon: IconButton(
-            icon: Icon(_obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+            icon: Icon(
+                _obscure
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
                 size: 20),
             onPressed: () => setState(() => _obscure = !_obscure),
           ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!,
-              style: TextStyle(color: p.statusFail, fontSize: 12.5)),
+          Text(_error!, style: TextStyle(color: p.statusFail, fontSize: 12.5)),
         ],
-        const SizedBox(height: 20),
+        const SizedBox(height: 18),
         FilledButton(
-          onPressed: _busy ? null : () => _login(auth),
+          onPressed: _busy ? null : _login,
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
           child: _busy
               ? const SizedBox(
                   width: 18,

@@ -342,7 +342,7 @@ class SettingsPage extends StatelessWidget {
                 _tile(
                     Icons.account_circle_rounded,
                     l10n.sync_account,
-                    '哔哩哔哩 · 梦漫账号(云同步)',
+                    l10n.set_accountSub,
                     () => Navigator.of(context)
                         .push(appRoute(const AccountPage()))),
                 _tile(

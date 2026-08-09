@@ -690,6 +690,21 @@
     }
   },
   "srclogin_accountLabel": "账号(用户名 / 邮箱)",
+  "acct_appAccount": "梦漫账号",
+  "acct_appAccountHint": "用于云同步:书架 / 进度 / 历史 多端同步",
+  "acct_syncSettings": "云同步设置(后端 / 类别 / 自定义服务器)",
+  "acct_sourceSection": "源账号",
+  "acct_sourceSectionHint": "这些源要登录后才能取内容",
+  "acct_noSourceLogins": "当前没有需要登录的源",
+  "acct_sharedSources": "{count} 个源共用这份登录",
+  "@acct_sharedSources": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "acct_needsAccount": "需要账号才能取内容",
+  "acct_loggedIn": "已登录",
+  "acct_loginOk": "登录成功",
   "fontpick_searchHint": "搜索字体名",
   "fontpick_systemDefault": "系统默认",
   "trans_title": "翻译",
@@ -884,6 +899,7 @@
   "set_translateSearchSub": "搜不到时自动把关键词翻成 简 / 繁 / 英 / 日 再搜(默认开)",
   "set_secData": "数据",
   "set_srcMgmtSub": "启用/禁用漫画、番剧和小说源",
+  "set_accountSub": "梦漫账号 · 哔哩哔哩 · 各源账号",
   "set_backup": "备份与恢复",
   "set_backupSub": "导出/导入书架与进度",
   "set_sync": "云同步 (WebDAV)",

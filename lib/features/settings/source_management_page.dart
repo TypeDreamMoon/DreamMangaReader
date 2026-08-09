@@ -8,12 +8,13 @@ import '../../core/net/github_oauth.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/bili/bili_auth.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_health.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_repository.dart';
 import '../../ui/ui.dart';
-import 'source_login_page.dart';
+import 'source_account.dart';
 
 /// 源管理:启用/禁用漫画源(至少保留一个)+ 每个源的**可用性状态点**。
 /// 打开即联网自检各源(getDiscovery);点圆点看检测日志。禁用的源不在书架源切换器里出现。
@@ -526,23 +527,11 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
             icon: Icon(Icons.delete_outline_rounded,
                 color: p.textMuted, size: 20),
           ),
-          // 需要账号的源:行内直接放登录入口(已登录=实心账号图标+主题色)。
-          if (s.needsLogin)
-            IconButton(
-              tooltip: auth.isLoggedIn(s.id)
-                  ? context.l10n.sync_loggedInAs(auth.nicknameOf(s.id) ?? auth.usernameOf(s.id) ?? '')
-                  : context.l10n.srcmgmt_loginSource(s.name),
-              visualDensity: VisualDensity.compact,
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => SourceLoginPage(meta: s))),
-              icon: Icon(
-                auth.isLoggedIn(s.id)
-                    ? Icons.account_circle_rounded
-                    : Icons.login_rounded,
-                color: auth.isLoggedIn(s.id) ? p.accent : p.textMuted,
-                size: 20,
-              ),
-            ),
+          // 需要账号的源:行内留个快捷入口(已登录=实心账号图标+主题色)。
+          // 真正的登录界面由 source_account 决定 —— 账密源弹表单、B 站弹扫码。
+          // 这里不能自己判断:以前一律弹账密表单,B 站那行填完必然报「使用扫码登录」。
+          // 登录态同理:B 站的在 BiliAuth 里,问 AuthStore 会永远显示未登录。
+          if (s.needsLogin) _sourceLoginButton(p, s, auth),
           Switch(
             value: enabled,
             onChanged: (v) {
@@ -560,6 +549,32 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  /// 行内登录快捷键。这一行代表的是**这份凭据**(共用 authKey 的源共享登录态),
+  /// 所以状态和界面都问 source_account,不在这儿另判一套。
+  Widget _sourceLoginButton(AppPalette p, SourceMeta s, AuthStore auth) {
+    final account = sourceAccountFor(s);
+    final on = isSourceAccountLoggedIn(account, auth);
+    return ListenableBuilder(
+      listenable: Listenable.merge([BiliAuth.instance, auth]),
+      builder: (context, _) => IconButton(
+        tooltip: on
+            ? context.l10n
+                .sync_loggedInAs(sourceAccountUser(account, auth) ?? '')
+            : context.l10n.srcmgmt_loginSource(s.name),
+        visualDensity: VisualDensity.compact,
+        onPressed: () async {
+          await openSourceLogin(context, account);
+          if (mounted) setState(() {});
+        },
+        icon: Icon(
+          on ? Icons.account_circle_rounded : Icons.login_rounded,
+          color: on ? p.accent : p.textMuted,
+          size: 20,
+        ),
       ),
     );
   }
