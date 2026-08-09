@@ -5,7 +5,6 @@ import '../../app/theme/app_colors.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
-import '../common/animations.dart';
 import '../library/masonry_feed.dart';
 import 'novel_cover.dart';
 

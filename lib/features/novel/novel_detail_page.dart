@@ -602,9 +602,10 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _pill(p, _statusLabel(context, _novel.status),
-                              accent: true, accentColor: acc),
-                          for (final genre in genres.take(6)) _pill(p, genre),
+                          AppPill.accent(
+                              _statusLabel(context, _novel.status), acc),
+                          for (final genre in genres.take(6))
+                            AppPill.outlined(genre, p),
                         ],
                       ),
                     ],
@@ -618,16 +619,6 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
   }
 
-  Widget _pill(AppPalette p, String text,
-      {bool accent = false, Color? accentColor}) {
-    final a = accentColor ?? p.accent;
-    return AppPill(
-      text: text,
-      fill: accent ? a.withValues(alpha: 0.16) : p.surface,
-      border: accent ? a.withValues(alpha: 0.45) : p.line,
-      textColor: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
-    );
-  }
 
   Widget _cta(AppPalette p, bool favorite) {
     final progress = NovelLibraryScope.read(context).progressFor(_libraryKey);
@@ -675,30 +666,28 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             ),
           ),
           const SizedBox(width: 10),
-          _iconBtn(
-            p,
-            favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+          AppIconButton(
+            icon:
+                favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
             tooltip: favorite
-                ? context.l10n.novel_removeFavorite
-                : context.l10n.novel_addFavorite,
+                ? context.l10n.detail_removeFavorite
+                : context.l10n.detail_addFavorite,
             active: favorite,
             accent: acc,
             onTap: _toggleFavorite,
           ),
           const SizedBox(width: 10),
-          _iconBtn(
-            p,
-            Icons.download_rounded,
+          AppIconButton(
+            icon: Icons.download_rounded,
             tooltip: context.l10n.detail_downloadAll,
             accent: acc,
             onTap: canRead ? _downloadAll : null,
           ),
           if (_novel.url != null) ...[
             const SizedBox(width: 10),
-            _iconBtn(
-              p,
-              Icons.open_in_browser_rounded,
-              tooltip: context.l10n.novel_openInBrowser,
+            AppIconButton(
+              icon: Icons.open_in_browser_rounded,
+              tooltip: context.l10n.detail_openInBrowser,
               accent: acc,
               onTap: _openBrowser,
             ),
@@ -708,43 +697,6 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
   }
 
-  Widget _iconBtn(
-    AppPalette p,
-    IconData icon, {
-    required String tooltip,
-    bool active = false,
-    Color? accent,
-    VoidCallback? onTap,
-  }) {
-    final a = accent ?? p.accent;
-    return Tooltip(
-      message: tooltip,
-      child: Pressable(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: active ? a.withValues(alpha: 0.16) : p.elevated,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: active ? a : p.line),
-          ),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
-            transitionBuilder: (child, anim) =>
-                ScaleTransition(scale: anim, child: child),
-            child: Icon(icon,
-                key: ValueKey('$icon$active'),
-                color:
-                    onTap == null ? p.textMuted : (active ? a : p.textPrimary),
-                size: 20),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _synopsis(AppPalette p) {
     final description = (_novel.description ?? '').trim();

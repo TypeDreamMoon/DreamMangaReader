@@ -5,7 +5,6 @@ import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
-import '../common/animations.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
 import '../library/manga_cover.dart';

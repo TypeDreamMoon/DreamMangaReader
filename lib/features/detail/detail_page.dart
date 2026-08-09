@@ -948,9 +948,9 @@ class _DetailPageState extends State<DetailPage> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _pill(p, _statusText(m.status),
-                              accent: true, accentColor: acc),
-                          for (final t in m.genres.take(6)) _pill(p, t),
+                          AppPill.accent(_statusText(m.status), acc),
+                          for (final t in m.genres.take(6))
+                            AppPill.outlined(t, p),
                         ],
                       ),
                     ],
@@ -1033,16 +1033,6 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  Widget _pill(AppPalette p, String text,
-      {bool accent = false, Color? accentColor}) {
-    final a = accentColor ?? p.accent;
-    return AppPill(
-      text: text,
-      fill: accent ? a.withValues(alpha: 0.16) : p.surface,
-      border: accent ? a.withValues(alpha: 0.45) : p.line,
-      textColor: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
-    );
-  }
 
   /// 继续阅读目标:取「本源本地进度」与「跨源作品共享进度」里更靠后的一个 → (章节, 页)。
   /// 作品进度(他源读到的)更靠后时,映射到本源话数相同(或最接近且 ≤)的那章,从头读起
@@ -1150,11 +1140,13 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ),
           const SizedBox(width: 10),
-          _iconBtn(
-            p,
-            fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          AppIconButton(
+            icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
             active: fav,
             accent: acc,
+            tooltip: fav
+                ? context.l10n.detail_removeFavorite
+                : context.l10n.detail_addFavorite,
             onTap: () => store.toggleFavorite(FavoriteEntry(
               sourceId: widget.meta.id,
               mangaId: widget.manga.id,
@@ -1164,18 +1156,21 @@ class _DetailPageState extends State<DetailPage> {
             )),
           ),
           const SizedBox(width: 10),
-          _iconBtn(
-            p,
-            Icons.download_rounded,
+          AppIconButton(
+            icon: Icons.download_rounded,
             accent: acc,
+            tooltip: context.l10n.detail_downloadAll,
             onTap: (chapters != null && chapters.isNotEmpty)
                 ? () => _downloadAll(dl, chapters)
                 : null,
           ),
           if (_manga.url != null && _manga.url!.isNotEmpty) ...[
             const SizedBox(width: 10),
-            _iconBtn(p, Icons.open_in_browser_rounded,
-                accent: acc, onTap: _openInBrowser),
+            AppIconButton(
+                icon: Icons.open_in_browser_rounded,
+                accent: acc,
+                tooltip: context.l10n.detail_openInBrowser,
+                onTap: _openInBrowser),
           ],
         ],
       ),
@@ -1264,34 +1259,6 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  Widget _iconBtn(AppPalette p, IconData icon,
-      {bool active = false, VoidCallback? onTap, Color? accent}) {
-    final a = accent ?? p.accent;
-    return Pressable(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-        width: 46,
-        height: 46,
-        decoration: BoxDecoration(
-          color: active ? a.withValues(alpha: 0.16) : p.elevated,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: active ? a : p.line),
-        ),
-        // 图标切换(如收藏♥↔♡)带缩放弹一下。
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 240),
-          transitionBuilder: (child, anim) =>
-              ScaleTransition(scale: anim, child: child),
-          child: Icon(icon,
-              key: ValueKey('$icon$active'),
-              color: active ? a : p.textPrimary,
-              size: 20),
-        ),
-      ),
-    );
-  }
 
   /// 简介卡:完整详情拿到后显示,长文可展开/收起。
   Widget _synopsis(AppPalette p) {

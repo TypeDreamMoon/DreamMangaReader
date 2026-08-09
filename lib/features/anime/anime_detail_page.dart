@@ -22,7 +22,6 @@ import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
-import '../common/animations.dart';
 import '../common/bangumi_card.dart';
 import '../common/transitions.dart';
 import '../detail/author_works_page.dart';
@@ -516,10 +515,9 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _pill(p, _statusText(anime.status),
-                              accent: true, accentColor: acc),
+                          AppPill.accent(_statusText(anime.status), acc),
                           for (final genre in anime.genres.take(6))
-                            _pill(p, genre),
+                            AppPill.outlined(genre, p),
                         ],
                       ),
                     ],
@@ -593,16 +591,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         MangaStatus.unknown => context.l10n.detail_statusUnknown,
       };
 
-  Widget _pill(AppPalette p, String text,
-      {bool accent = false, Color? accentColor}) {
-    final a = accentColor ?? p.accent;
-    return AppPill(
-      text: text,
-      fill: accent ? a.withValues(alpha: 0.16) : p.surface,
-      border: accent ? a.withValues(alpha: 0.45) : p.line,
-      textColor: accent ? Color.lerp(a, Colors.white, 0.25) : p.textMuted,
-    );
-  }
 
   /// 主操作行:播放 / 继续观看 + 收藏 + 下载全部 + 浏览器打开。
   Widget _cta(AppPalette p) {
@@ -663,16 +651,19 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
             _favoriteButton(p, library, acc),
           ],
           const SizedBox(width: 10),
-          _iconBtn(
-            p,
-            Icons.download_rounded,
+          AppIconButton(
+            icon: Icons.download_rounded,
             accent: acc,
+            tooltip: context.l10n.detail_downloadAll,
             onTap: canPlay ? _downloadAll : null,
           ),
           if (url != null && url.isNotEmpty) ...[
             const SizedBox(width: 10),
-            _iconBtn(p, Icons.open_in_browser_rounded,
-                accent: acc, onTap: () => _openInBrowser(url)),
+            AppIconButton(
+                icon: Icons.open_in_browser_rounded,
+                accent: acc,
+                tooltip: context.l10n.detail_openInBrowser,
+                onTap: () => _openInBrowser(url)),
           ],
         ],
       ),
@@ -681,14 +672,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
 
   Widget _favoriteButton(AppPalette p, AnimeLibraryStore library, Color acc) {
     final favorite = library.isFavorite(widget.meta.id, widget.anime.id);
-    return _iconBtn(
-      p,
-      favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+    return AppIconButton(
+      icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
       active: favorite,
       accent: acc,
       buttonKey: const Key('anime-favorite'),
-      tooltip:
-          favorite ? context.l10n.animeUnfavorite : context.l10n.animeFavorite,
+      tooltip: favorite
+          ? context.l10n.detail_removeFavorite
+          : context.l10n.detail_addFavorite,
       onTap: () => library.toggleFavorite(AnimeFavoriteEntry(
         sourceId: widget.meta.id,
         animeId: widget.anime.id,
@@ -699,43 +690,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
     );
   }
 
-  Widget _iconBtn(
-    AppPalette p,
-    IconData icon, {
-    bool active = false,
-    VoidCallback? onTap,
-    Color? accent,
-    Key? buttonKey,
-    String? tooltip,
-  }) {
-    final a = accent ?? p.accent;
-    Widget button = Pressable(
-      key: buttonKey,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-        width: 46,
-        height: 46,
-        decoration: BoxDecoration(
-          color: active ? a.withValues(alpha: 0.16) : p.elevated,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: active ? a : p.line),
-        ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 240),
-          transitionBuilder: (child, animation) =>
-              ScaleTransition(scale: animation, child: child),
-          child: Icon(icon,
-              key: ValueKey('$icon$active'),
-              color: active ? a : p.textPrimary,
-              size: 20),
-        ),
-      ),
-    );
-    if (tooltip != null) button = Tooltip(message: tooltip, child: button);
-    return button;
-  }
 
   Future<void> _openInBrowser(String raw) async {
     final uri = Uri.tryParse(raw);

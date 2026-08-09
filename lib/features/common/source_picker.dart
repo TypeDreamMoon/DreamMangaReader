@@ -6,7 +6,6 @@ import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
-import 'animations.dart';
 
 /// 发现页三档共用的源选择条:内边距、左对齐、图标与文案口径全在这里定死。
 ///

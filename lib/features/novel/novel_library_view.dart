@@ -11,7 +11,6 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
-import '../common/animations.dart';
 import 'novel_cover.dart';
 import 'novel_detail_page.dart';
 import 'novel_import_sheet.dart';

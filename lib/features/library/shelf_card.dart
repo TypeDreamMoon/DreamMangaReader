@@ -6,7 +6,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/novel/models.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
-import '../common/animations.dart';
+import '../../ui/ui.dart';
 import '../novel/novel_cover.dart';
 import 'manga_cover.dart';
 import 'shelf_item.dart';

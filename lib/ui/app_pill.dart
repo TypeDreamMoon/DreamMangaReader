@@ -39,6 +39,21 @@ class AppPill extends StatelessWidget {
         padding: padding,
       );
 
+  /// 中性描边标签(题材 tag 那种):surface 底 + line 边 + muted 字。
+  /// 与 [AppPill.accent](状态/高亮)配对 —— 详情页信息行三档共用这一对。
+  factory AppPill.outlined(String text, AppPalette p,
+          {double fontSize = 10,
+          EdgeInsets padding =
+              const EdgeInsets.symmetric(horizontal: 9, vertical: 3)}) =>
+      AppPill(
+        text: text,
+        fill: p.surface,
+        border: p.line,
+        textColor: p.textMuted,
+        fontSize: fontSize,
+        padding: padding,
+      );
+
   final String text;
   final IconData? leadingIcon;
   final Color? fill;

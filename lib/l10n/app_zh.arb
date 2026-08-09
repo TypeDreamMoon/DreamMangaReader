@@ -105,6 +105,9 @@
   },
   "detail_startFromBeginning": "从头开始",
   "detail_downloadAll": "下载全部",
+  "detail_addFavorite": "收藏",
+  "detail_removeFavorite": "取消收藏",
+  "detail_openInBrowser": "在浏览器打开",
   "detail_downloadNConfirm": "将下载 {n} 话到本地,可离线阅读。",
   "@detail_downloadNConfirm": {
     "placeholders": {

@@ -5,7 +5,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/log/app_log.dart';
 import '../../core/source/models.dart';
-import '../common/animations.dart';
+import '../../ui/ui.dart';
 import '../common/source_image.dart';
 
 /// 已记过加载失败的封面 url:失败组件会随重建反复触发,同一张只记一次。
