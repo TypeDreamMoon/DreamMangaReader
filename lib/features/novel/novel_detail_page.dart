@@ -20,6 +20,7 @@ import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/detail_cta.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import 'novel_cover.dart';
@@ -431,74 +432,39 @@ class _NovelDetailPageState extends State<NovelDetailPage>
     final canRead = !_loading && _chapters.isNotEmpty;
     final resumed = canRead && activeIndex >= 0;
     final acc = coverAccent;
-    final accOn = coverPalette?.onPrimary ?? p.onAccent;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: FilledButton(
-              onPressed: canRead ? () => _openChapter(startIndex) : null,
-              style: FilledButton.styleFrom(
-                  backgroundColor: acc,
-                  foregroundColor: accOn,
-                  minimumSize: const Size.fromHeight(46)),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                      resumed
-                          ? Icons.play_circle_fill_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 20),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      resumed
-                          ? context.l10n.detail_continueChapter(
-                              _chapters[startIndex].title)
-                          : context.l10n.detail_startFromBeginning,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
+    return DetailCta(
+      accent: acc,
+      onAccent: coverPalette?.onPrimary ?? p.onAccent,
+      resumed: resumed,
+      resumeLabel: resumed ? _chapters[startIndex].title : '',
+      onPrimary: canRead ? () => _openChapter(startIndex) : null,
+      actions: [
+        AppIconButton(
+          icon:
+              favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+          tooltip: favorite
+              ? context.l10n.detail_removeFavorite
+              : context.l10n.detail_addFavorite,
+          active: favorite,
+          accent: acc,
+          onTap: _toggleFavorite,
+        ),
+        AppIconButton(
+          icon: Icons.download_rounded,
+          tooltip: context.l10n.detail_downloadAll,
+          accent: acc,
+          onTap: canRead ? _downloadAll : null,
+        ),
+        if (_novel.url != null)
           AppIconButton(
-            icon:
-                favorite ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-            tooltip: favorite
-                ? context.l10n.detail_removeFavorite
-                : context.l10n.detail_addFavorite,
-            active: favorite,
+            icon: Icons.open_in_browser_rounded,
+            tooltip: context.l10n.detail_openInBrowser,
             accent: acc,
-            onTap: _toggleFavorite,
+            onTap: _openBrowser,
           ),
-          const SizedBox(width: 10),
-          AppIconButton(
-            icon: Icons.download_rounded,
-            tooltip: context.l10n.detail_downloadAll,
-            accent: acc,
-            onTap: canRead ? _downloadAll : null,
-          ),
-          if (_novel.url != null) ...[
-            const SizedBox(width: 10),
-            AppIconButton(
-              icon: Icons.open_in_browser_rounded,
-              tooltip: context.l10n.detail_openInBrowser,
-              accent: acc,
-              onTap: _openBrowser,
-            ),
-          ],
-        ],
-      ),
+      ],
     );
   }
-
 
   Widget _synopsis(AppPalette p) => DetailSynopsis(
         text: (_novel.description ?? '').trim(),

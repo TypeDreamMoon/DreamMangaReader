@@ -24,6 +24,7 @@ import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/detail_cta.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import '../library/manga_cover.dart';
@@ -409,71 +410,35 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final canPlay = !_loading && _episodes.isNotEmpty;
     final resume = canPlay && resumeIndex >= 0;
     final acc = coverAccent;
-    final accOn = coverPalette?.onPrimary ?? p.onAccent;
     final url = _display.url;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: FilledButton(
-              key: const Key('anime-play'),
-              onPressed: canPlay
-                  ? () => _play(resume ? resumeIndex : 0,
-                      position: resume
-                          ? Duration(seconds: history!.positionSeconds)
-                          : Duration.zero)
-                  : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: acc,
-                foregroundColor: accOn,
-                minimumSize: const Size.fromHeight(46),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                      resume
-                          ? Icons.play_circle_fill_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 20),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      resume
-                          ? context.l10n
-                              .detail_continueChapter(history!.episodeName)
-                          : context.l10n.detail_startFromBeginning,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (library != null) ...[
-            const SizedBox(width: 10),
-            _favoriteButton(p, library, acc),
-          ],
-          const SizedBox(width: 10),
+    return DetailCta(
+      primaryKey: const Key('anime-play'),
+      accent: acc,
+      onAccent: coverPalette?.onPrimary ?? p.onAccent,
+      resumed: resume,
+      resumeLabel: history?.episodeName ?? '',
+      onPrimary: canPlay
+          ? () => _play(resume ? resumeIndex : 0,
+              position: resume
+                  ? Duration(seconds: history!.positionSeconds)
+                  : Duration.zero)
+          : null,
+      actions: [
+        if (library != null) _favoriteButton(p, library, acc),
+        AppIconButton(
+          icon: Icons.download_rounded,
+          accent: acc,
+          tooltip: context.l10n.detail_downloadAll,
+          onTap: canPlay ? _downloadAll : null,
+        ),
+        if (url != null && url.isNotEmpty)
           AppIconButton(
-            icon: Icons.download_rounded,
+            icon: Icons.open_in_browser_rounded,
             accent: acc,
-            tooltip: context.l10n.detail_downloadAll,
-            onTap: canPlay ? _downloadAll : null,
+            tooltip: context.l10n.detail_openInBrowser,
+            onTap: () => _openInBrowser(url),
           ),
-          if (url != null && url.isNotEmpty) ...[
-            const SizedBox(width: 10),
-            AppIconButton(
-                icon: Icons.open_in_browser_rounded,
-                accent: acc,
-                tooltip: context.l10n.detail_openInBrowser,
-                onTap: () => _openInBrowser(url)),
-          ],
-        ],
-      ),
+      ],
     );
   }
 
@@ -671,35 +636,3 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
 
 Future<BangumiInfo?> _defaultBangumiLookup(String title) =>
     BangumiApi.lookup(title, type: 2);
-
-class AnimeFavoriteAction extends StatelessWidget {
-  const AnimeFavoriteAction({
-    super.key,
-    required this.meta,
-    required this.anime,
-  });
-
-  final SourceMeta meta;
-  final Manga anime;
-
-  @override
-  Widget build(BuildContext context) {
-    final library = AnimeLibraryScope.of(context);
-    final favorite = library.isFavorite(meta.id, anime.id);
-    return IconButton(
-      key: const Key('anime-favorite'),
-      onPressed: () => library.toggleFavorite(AnimeFavoriteEntry(
-        sourceId: meta.id,
-        animeId: anime.id,
-        title: anime.title,
-        cover: anime.cover,
-        addedAt: DateTime.now().millisecondsSinceEpoch,
-      )),
-      tooltip:
-          favorite ? context.l10n.animeUnfavorite : context.l10n.animeFavorite,
-      icon: Icon(
-        favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-      ),
-    );
-  }
-}

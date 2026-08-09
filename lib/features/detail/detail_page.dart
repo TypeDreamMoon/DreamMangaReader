@@ -27,6 +27,7 @@ import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/detail_cta.dart';
 import '../common/detail_hero.dart';
 import '../common/detail_synopsis.dart';
 import '../common/transitions.dart';
@@ -906,83 +907,47 @@ class _DetailPageState extends State<DetailPage>
     final resume = _resume(store); // 读过 → 主按钮变「继续阅读」
     final canRead = chapters != null && chapters.isNotEmpty;
     final acc = coverAccent;
-    final accOn = coverPalette?.onPrimary ?? p.onAccent;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: FilledButton(
-              onPressed: !canRead
-                  ? null
-                  : (resume != null
-                      ? () =>
-                          _openChapter(resume.chapter, initialPage: resume.page)
-                      : () => _openChapter(chapters.first)), // 升序:第一条=第1话
-              style: FilledButton.styleFrom(
-                  backgroundColor: acc,
-                  foregroundColor: accOn,
-                  minimumSize: const Size.fromHeight(46)),
-              child: Row(
-                mainAxisSize: MainAxisSize.max,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                      resume != null
-                          ? Icons.play_circle_fill_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 20),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      resume != null
-                          ? context.l10n
-                              .detail_continueChapter(resume.chapter.name)
-                          : context.l10n.detail_startFromBeginning,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
+    final url = _manga.url;
+    return DetailCta(
+      accent: acc,
+      onAccent: coverPalette?.onPrimary ?? p.onAccent,
+      resumed: resume != null,
+      resumeLabel: resume?.chapter.name ?? '',
+      onPrimary: !canRead
+          ? null
+          : (resume != null
+              ? () => _openChapter(resume.chapter, initialPage: resume.page)
+              : () => _openChapter(chapters.first)), // 升序:第一条=第1话
+      actions: [
+        AppIconButton(
+          icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          active: fav,
+          accent: acc,
+          tooltip: fav
+              ? context.l10n.detail_removeFavorite
+              : context.l10n.detail_addFavorite,
+          onTap: () => store.toggleFavorite(FavoriteEntry(
+            sourceId: widget.meta.id,
+            mangaId: widget.manga.id,
+            title: widget.manga.title,
+            cover: widget.manga.cover,
+            addedAt: DateTime.now().millisecondsSinceEpoch,
+          )),
+        ),
+        AppIconButton(
+          icon: Icons.download_rounded,
+          accent: acc,
+          tooltip: context.l10n.detail_downloadAll,
+          onTap: canRead ? () => _downloadAll(dl, chapters) : null,
+        ),
+        if (url != null && url.isNotEmpty)
           AppIconButton(
-            icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-            active: fav,
+            icon: Icons.open_in_browser_rounded,
             accent: acc,
-            tooltip: fav
-                ? context.l10n.detail_removeFavorite
-                : context.l10n.detail_addFavorite,
-            onTap: () => store.toggleFavorite(FavoriteEntry(
-              sourceId: widget.meta.id,
-              mangaId: widget.manga.id,
-              title: widget.manga.title,
-              cover: widget.manga.cover,
-              addedAt: DateTime.now().millisecondsSinceEpoch,
-            )),
+            tooltip: context.l10n.detail_openInBrowser,
+            onTap: _openInBrowser,
           ),
-          const SizedBox(width: 10),
-          AppIconButton(
-            icon: Icons.download_rounded,
-            accent: acc,
-            tooltip: context.l10n.detail_downloadAll,
-            onTap: (chapters != null && chapters.isNotEmpty)
-                ? () => _downloadAll(dl, chapters)
-                : null,
-          ),
-          if (_manga.url != null && _manga.url!.isNotEmpty) ...[
-            const SizedBox(width: 10),
-            AppIconButton(
-                icon: Icons.open_in_browser_rounded,
-                accent: acc,
-                tooltip: context.l10n.detail_openInBrowser,
-                onTap: _openInBrowser),
-          ],
-        ],
-      ),
+      ],
     );
   }
 
