@@ -83,6 +83,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   late NovelReaderBookData _readerData =
       NovelReaderBookData.empty(widget.libraryKey);
   final Map<String, NovelDocument> _loadedDocuments = {};
+  /// 已经发过预取请求的章节 id,避免滚动时对同一章反复发请求。
+  final Set<String> _warmedChapterIds = {};
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
   late NovelReaderPreferences _preferences = _library.preferences;
   late int _chapterIndex = widget.initialIndex;
@@ -218,6 +220,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     bool retainCurrentFrame = false,
   }) async {
     final pageGeneration = ++_pageGeneration;
+    // 换章 = 邻章换了一批,预取闸门跟着重置。
+    _warmedChapterIds
+      ..clear()
+      ..add(_chapter.id);
     _turnController.cancel();
     final retainFrame = retainCurrentFrame && _currentFrame != null;
     if (mounted) {
@@ -273,7 +279,12 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   Future<void> _primePageFrames(String chapterId, int generation) async {
-    if (_preferences.turnMode == NovelPageTurnMode.scroll) return;
+    if (_preferences.turnMode == NovelPageTurnMode.scroll) {
+      // 滚动模式没有页帧要预渲染,但相邻章节的**正文**照样要预取 —— 老实现在这里
+      // 直接 return,于是滚动模式下预加载从来没有生效过(issue #15)。
+      _prefetchAdjacentChapters();
+      return;
+    }
     final metrics = await _waitForPageMetrics(chapterId, generation);
     if (metrics == null) return;
     final current = await _controller.capturePage(metrics.currentPageIndex);
@@ -329,23 +340,27 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   void _prefetchBoundaryDocuments(NovelPageMetrics metrics) {
-    if (metrics.currentPageIndex <= 1 && _chapterIndex > 0) {
+    _prefetchAdjacentChapters(
+      previous: metrics.currentPageIndex <= 1,
+      next: metrics.currentPageIndex >= metrics.pageCount - 2,
+    );
+  }
+
+  void _prefetchAdjacentChapters({bool previous = true, bool next = true}) {
+    void warm(int index) {
+      if (index < 0 || index >= widget.chapters.length) return;
+      // 滚动模式一秒能报好几十次位置,没有这道闸就是对着同一章反复发请求。
+      if (!_warmedChapterIds.add(widget.chapters[index].id)) return;
       unawaited(
         widget
-            .loadDocument(widget.chapters[_chapterIndex - 1])
+            .loadDocument(widget.chapters[index])
             .then<void>((_) {})
             .catchError((_) {}),
       );
     }
-    if (metrics.currentPageIndex >= metrics.pageCount - 2 &&
-        _chapterIndex < widget.chapters.length - 1) {
-      unawaited(
-        widget
-            .loadDocument(widget.chapters[_chapterIndex + 1])
-            .then<void>((_) {})
-            .catchError((_) {}),
-      );
-    }
+
+    if (previous) warm(_chapterIndex - 1);
+    if (next) warm(_chapterIndex + 1);
   }
 
   void _onSelectionChanged(NovelSelection? selection) {
@@ -498,6 +513,16 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
     final native = _controller;
     if (native is NovelNativeDocumentController &&
+        _preferences.turnMode == NovelPageTurnMode.scroll) {
+      // 滚动模式:边缘点击 / 方向键滚一屏,滚到头才翻章 —— 老实现直接走 _legacyTurn,
+      // 于是点一下就跳整章,而且完全没有真正的滚动。
+      final height = context.size?.height ?? 0;
+      if (!native.scrollByViewport(direction, height)) {
+        unawaited(_legacyTurn(direction));
+      }
+      return;
+    }
+    if (native is NovelNativeDocumentController &&
         _preferences.turnMode == NovelPageTurnMode.curl) {
       if (!native.canTurn(direction)) {
         unawaited(_legacyTurn(direction));
@@ -510,10 +535,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       _startDiscrete(direction);
       return;
     }
-    if (_preferences.turnMode == NovelPageTurnMode.scroll ||
-        _currentFrame == null ||
-        _pageMetrics == null) {
-      unawaited(_legacyTurn(direction));
+    if (_currentFrame == null || _pageMetrics == null) {
+      // 页帧还没渲染好:直接换页,别把状态机推进一个没人收尾的阶段。
+      unawaited(
+        native is NovelNativeDocumentController
+            ? _instantNativeTurn(direction)
+            : _legacyTurn(direction),
+      );
       return;
     }
     if (_turnController.state.phase != NovelTurnPhase.idle) {
@@ -590,6 +618,19 @@ class _NovelReaderPageState extends State<NovelReaderPage>
 
   Future<void> _legacyTurn(NovelTurnDirection direction) {
     return direction == NovelTurnDirection.next ? _next() : _previous();
+  }
+
+  /// 无动画换页:原生分页器直接改页,章内翻不动了才翻章。
+  Future<void> _instantNativeTurn(NovelTurnDirection direction) async {
+    final native = _controller;
+    if (native is! NovelNativeDocumentController) {
+      await _legacyTurn(direction);
+      return;
+    }
+    final moved = direction == NovelTurnDirection.next
+        ? await native.nextPage()
+        : await native.previousPage();
+    if (!moved) await _legacyTurn(direction);
   }
 
   void _onSurfaceSettled() {
@@ -812,8 +853,14 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   void _persistLocator(NovelLocator locator) {
     if (locator.chapterId.isEmpty) return;
     _library.saveProgress(widget.libraryKey, locator);
-    if (mounted && locator.chapterId == _chapter.id) {
-      setState(() => _chapterFraction = locator.fraction);
+    if (!mounted || locator.chapterId != _chapter.id) return;
+    setState(() => _chapterFraction = locator.fraction);
+    if (_preferences.turnMode == NovelPageTurnMode.scroll) {
+      // 滚动模式没有「页码」可用,改按章内比例决定什么时候把邻章正文拉回来。
+      _prefetchAdjacentChapters(
+        previous: locator.fraction <= .12,
+        next: locator.fraction >= .8,
+      );
     }
   }
 
@@ -1181,6 +1228,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
         _nextFrame = null;
         _retainFrameWhileLoading = false;
       });
+      _prefetchAdjacentChapters();
       return;
     }
     unawaited(
@@ -1482,7 +1530,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     if (builder != null) return builder(context, _controller);
     final controller = _controller;
     if (controller is NovelNativeDocumentController) {
-      return NovelNativeDocumentView(controller: controller);
+      return NovelNativeDocumentView(
+        controller: controller,
+        onReachedEnd: (direction) => unawaited(_legacyTurn(direction)),
+      );
     }
     if (controller is WebNovelDocumentController) {
       return NovelDocumentView(controller: controller);
@@ -1491,13 +1542,23 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   bool get _showTurnSurface {
-    return _controller is! NovelNativeDocumentController &&
-        _currentFrame != null &&
-        (_captureActive ||
-            _retainFrameWhileLoading ||
-            _turnState.phase == NovelTurnPhase.dragging ||
-            _turnState.phase == NovelTurnPhase.settling ||
-            _turnState.phase == NovelTurnPhase.committing);
+    if (_currentFrame == null) return false;
+    final turning = _turnState.phase == NovelTurnPhase.dragging ||
+        _turnState.phase == NovelTurnPhase.settling ||
+        _turnState.phase == NovelTurnPhase.committing;
+    if (_controller is NovelNativeDocumentController) {
+      // 仿真翻页由 NovelNativePageTurnSurface 接管,滚动模式没有翻页动画;其余
+      // (覆盖 / 平移 / 无动画)走这层帧合成翻页面。
+      //
+      // 这里原本直接排除了原生分页器 —— 于是选覆盖/平移/无动画时,一次点击把翻页
+      // 状态机推进 settling,却没有任何 surface 负责收尾回调,phase 永远回不到 idle:
+      // 之后每次点击都只是入队,阅读器彻底点不动,而 _saveLocator 也被 phase 挡住,
+      // 进度条随之停更(issue #17 的「界面卡顿 + 进度条不同步」)。
+      return _preferences.turnMode != NovelPageTurnMode.curl &&
+          _preferences.turnMode != NovelPageTurnMode.scroll &&
+          turning;
+    }
+    return _captureActive || _retainFrameWhileLoading || turning;
   }
 
   bool get _showNativeTurnSurface {

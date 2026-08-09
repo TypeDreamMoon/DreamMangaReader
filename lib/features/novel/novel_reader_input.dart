@@ -115,7 +115,11 @@ class _NovelReaderInputState extends State<NovelReaderInput> {
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
-    if (widget.blocked || event is! PointerScrollEvent) return;
+    // 滚动模式(dragEnabled=false)由 ScrollView 自己吃滚轮:再翻一次页就是双重滚动,
+    // 而且老实现在滚动模式下把滚轮直接映射成「翻章」,滚一格跳一章。
+    if (widget.blocked || !widget.dragEnabled || event is! PointerScrollEvent) {
+      return;
+    }
     if (event.scrollDelta.distance < 12) return;
     final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
     final previous = _lastWheelAt;

@@ -948,6 +948,96 @@ void main() {
     expect(int.parse(after), greaterThan(int.parse(before)));
   });
 
+  testWidgets('cover mode advances a native page instead of freezing',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      preferences: const NovelReaderPreferences(
+        turnMode: NovelPageTurnMode.cover,
+      ),
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(32, '覆盖翻页正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    int page() => int.parse(
+          tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value,
+        );
+
+    final before = page();
+    await tester.tapAt(const Offset(390, 380));
+    await tester.pumpAndSettle();
+    final afterFirst = page();
+    // 之前覆盖/平移/无动画三种模式在原生分页器下没有任何翻页层负责收尾,状态机卡在
+    // settling:第一次点击就再也回不到 idle,后续点击全部只是入队 —— 阅读器点不动,
+    // 进度条也随之停更。这里连点两次,专门盯住「第二次还能不能翻」。
+    expect(afterFirst, greaterThan(before));
+
+    await tester.tapAt(const Offset(390, 380));
+    await tester.pumpAndSettle();
+    expect(page(), greaterThan(afterFirst));
+    expect(
+      harness.store.progressFor('remote:s:n1')?.fraction ?? 0,
+      greaterThan(0),
+    );
+  });
+
+  testWidgets('scroll mode renders a scrollable chapter and tracks progress',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      preferences: const NovelReaderPreferences(
+        turnMode: NovelPageTurnMode.scroll,
+      ),
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(32, '滚动阅读正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    // 选了「上下滚动」就得真的有一个可滚的正文,而不是继续渲染分页视图。
+    final scrollView = find.byKey(const Key('novel-native-scroll-view'));
+    expect(scrollView, findsOneWidget);
+    expect(find.byType(NovelNativePageView), findsNothing);
+
+    await tester.drag(scrollView, const Offset(0, -600));
+    await tester.pumpAndSettle();
+
+    final position = tester.state<ScrollableState>(
+      find.descendant(of: scrollView, matching: find.byType(Scrollable)),
+    ).position;
+    expect(position.pixels, greaterThan(0));
+    expect(
+      harness.store.progressFor('remote:s:n1')?.fraction ?? 0,
+      greaterThan(0),
+    );
+  });
+
   test('reader HTML shell sanitizes HTML and escapes plain text', () {
     final html = buildNovelReaderHtml(NovelDocument(
       format: NovelDocumentFormat.html,
