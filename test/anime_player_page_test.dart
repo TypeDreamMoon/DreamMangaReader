@@ -365,7 +365,113 @@ void main() {
     expect(adapter.pauseCalls, greaterThanOrEqualTo(1));
     expect(adapter.seeks.last, greaterThan(const Duration(minutes: 2)));
   });
+
+  testWidgets('long press fast-forwards and releasing restores the rate',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 10));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    final surface = find.byType(AnimePlaybackSurface);
+    final gesture = await tester.startGesture(tester.getCenter(surface));
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(find.byKey(const Key('player-boost-badge')), findsOneWidget);
+    expect(adapter.rates.last, 3.0);
+
+    await gesture.up();
+    await tester.pump();
+    expect(find.byKey(const Key('player-boost-badge')), findsNothing);
+    expect(adapter.rates.last, 1.0);
+  });
+
+  testWidgets('horizontal drag scrubs instead of double tap seeking',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 10));
+    adapter.positionController.add(const Duration(minutes: 2));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    final surface = find.byType(AnimePlaybackSurface);
+    final gesture = await tester.startGesture(tester.getCenter(surface));
+    await tester.pump(const Duration(milliseconds: 40));
+    for (var step = 0; step < 4; step++) {
+      await gesture.moveBy(const Offset(60, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.byKey(const Key('player-seek-badge')), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+    expect(adapter.seeks.last, greaterThan(const Duration(minutes: 2)));
+
+    // 双击不再是快进/快退:两下点击只是开关控件层,不产生任何 seek。
+    final before = adapter.seeks.length;
+    await tester.tapAt(tester.getCenter(surface));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(tester.getCenter(surface));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(adapter.seeks, hasLength(before));
+  });
+
+  testWidgets('finishing an episode rolls on to the next one', (tester) async {
+    final adapter = _PageFakeAdapter();
+    final loaded = <String>[];
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [
+        Chapter(id: 'ep-1', name: '第一集'),
+        Chapter(id: 'ep-2', name: '第二集'),
+      ],
+      onLoadTracks: loaded.add,
+    ));
+    await tester.pump();
+    expect(loaded, ['ep-1']);
+
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+
+    expect(loaded, ['ep-1', 'ep-2']);
+    expect(find.textContaining('第二集'), findsWidgets);
+  });
 }
+
+Widget _playerHost(
+  _PageFakeAdapter adapter, {
+  List<Chapter> episodes = const [Chapter(id: 'ep-1', name: '第一集')],
+  void Function(String episodeId)? onLoadTracks,
+}) =>
+    MaterialApp(
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: episodes,
+        index: 0,
+        dependencies: AnimePlayerDependencies(
+          player: adapter,
+          tracks: _PageFakeTracks(),
+          loadTracks: (episodeId) async {
+            onLoadTracks?.call(episodeId);
+            return const [_track];
+          },
+          videoBuilder: (_) => const ColoredBox(color: Colors.black),
+        ),
+      ),
+    );
 
 class _PageFakeAdapter implements PlayerAdapter {
   final playingController = StreamController<bool>.broadcast(sync: true);
@@ -401,8 +507,9 @@ class _PageFakeAdapter implements PlayerAdapter {
   Future<void> play() async => playCalls++;
   @override
   Future<void> seek(Duration position) async => seeks.add(position);
+  final rates = <double>[];
   @override
-  Future<void> setRate(double rate) async {}
+  Future<void> setRate(double rate) async => rates.add(rate);
   @override
   Future<void> dispose() async {
     await playingController.close();

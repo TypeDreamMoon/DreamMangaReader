@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' hide VideoTrack; // 用本项目的 VideoTrack
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -31,13 +32,11 @@ class AnimePlaybackSurface extends StatelessWidget {
     required this.state,
     required this.video,
     required this.onRetry,
-    this.controls,
   });
 
   final PlaybackState state;
   final Widget video;
   final VoidCallback onRetry;
-  final Widget? controls;
 
   @override
   Widget build(BuildContext context) {
@@ -117,13 +116,6 @@ class AnimePlaybackSurface extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        if (controls != null)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: controls!,
           ),
       ],
     );
@@ -239,9 +231,24 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   double _rate = 1.0; // 倍速(跨集保持)
   BoxFit _fit = BoxFit.contain; // 画面填充
 
+  // —— 手势与控件层(B站/YouTube 那套:全屏占满、点一下出控件、长按倍速快进)——
+  // 明确**不做**双击快进/快退:issue #16 说了那个不好用。
+  static const Duration _controlsIdle = Duration(seconds: 4);
+  static const double _boostRate = 3.0;
+
+  bool _controlsVisible = true;
+  Timer? _controlsTimer;
+  bool _boosting = false;
+  Duration? _dragTarget; // 横向拖动定位时的预览位置
+  Duration _dragOrigin = Duration.zero;
+  bool _dragWasPlaying = false;
+  bool _autoAdvanced = false;
+  StreamSubscription<bool>? _completedSubscription;
+
   @override
   void initState() {
     super.initState();
+    _enterImmersiveLandscape();
     final injected = widget.dependencies;
     if (injected != null) {
       _configurePlayback(
@@ -263,13 +270,32 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _library = AnimeLibraryScope.maybeRead(context);
   }
 
+  /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
+  void _enterImmersiveLandscape() {
+    if (!Platform.isAndroid) return;
+    unawaited(SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]));
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
+  }
+
+  void _exitImmersiveLandscape() {
+    if (!Platform.isAndroid) return;
+    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _loadGeneration++;
+    _controlsTimer?.cancel();
+    _exitImmersiveLandscape();
     unawaited(_stateSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
     unawaited(_bufferingSubscription?.cancel());
+    unawaited(_completedSubscription?.cancel());
     final session = _session;
     if (session != null) {
       unawaited(session.dispose());
@@ -392,15 +418,106 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _playingSubscription = adapter.playing.listen((playing) {
       if (!mounted) return;
       setState(() => _playing = playing);
+      // 播起来才自动隐藏控件;暂停时留着,免得用户找不到按钮。
+      if (playing) {
+        _scheduleHideControls();
+      } else {
+        _controlsTimer?.cancel();
+        if (!_controlsVisible) setState(() => _controlsVisible = true);
+      }
     });
     _bufferingSubscription = adapter.buffering.listen((buffering) {
       if (!mounted) return;
       setState(() => _buffering = buffering);
     });
+    // 一集播完自动接下一集(番剧的默认期待,也顺带把历史推进到下一集)。
+    // 用 _autoAdvanced 兜一层:后端在换源/重开时可能再报一次 completed,
+    // 没有这道闸就会一口气跳过两集。
+    _completedSubscription = adapter.completed.listen((completed) {
+      if (!completed || !mounted || _disposed || _autoAdvanced) return;
+      if (_i >= widget.episodes.length - 1) return;
+      _autoAdvanced = true;
+      _go(1);
+    });
+  }
+
+  // ————————————————— 控件显隐 / 手势 —————————————————
+
+  void _scheduleHideControls() {
+    _controlsTimer?.cancel();
+    if (!_playing) return;
+    _controlsTimer = Timer(_controlsIdle, () {
+      if (mounted && _playing && _dragTarget == null && !_boosting) {
+        setState(() => _controlsVisible = false);
+      }
+    });
+  }
+
+  void _showControls() {
+    if (!_controlsVisible) setState(() => _controlsVisible = true);
+    _scheduleHideControls();
+  }
+
+  void _toggleControls() {
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) _scheduleHideControls();
+  }
+
+  /// 长按快进:按住 3 倍速播,松手回到用户选的倍速。比双击快进好用得多 ——
+  /// 不打断画面、松手就回,长度也不是固定的 10 秒。
+  void _startBoost() {
+    if (_boosting || !_playing) return;
+    setState(() => _boosting = true);
+    unawaited(HapticFeedback.lightImpact());
+    unawaited(_adapter?.setRate(_boostRate));
+  }
+
+  void _stopBoost() {
+    if (!_boosting) return;
+    setState(() => _boosting = false);
+    unawaited(_adapter?.setRate(_rate));
+    _scheduleHideControls();
+  }
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    if (_playback.duration <= Duration.zero) return;
+    _dragOrigin = _playback.position;
+    _dragWasPlaying = _playing;
+    setState(() {
+      _dragTarget = _dragOrigin;
+      _controlsVisible = true;
+    });
+    _controlsTimer?.cancel();
+    if (_dragWasPlaying) unawaited(_adapter?.pause());
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details, double width) {
+    final duration = _playback.duration;
+    if (_dragTarget == null || duration <= Duration.zero || width <= 0) return;
+    // 全屏宽 = 整段时长的 40%,长片也能一次拖到位,短片又不会一碰就飞。
+    final deltaMs =
+        details.delta.dx / width * duration.inMilliseconds.toDouble() * .4;
+    final next = _dragTarget! + Duration(milliseconds: deltaMs.round());
+    setState(() {
+      _dragTarget = next < Duration.zero
+          ? Duration.zero
+          : next > duration
+              ? duration
+              : next;
+    });
+  }
+
+  void _onHorizontalDragEnd() {
+    final target = _dragTarget;
+    if (target == null) return;
+    setState(() => _dragTarget = null);
+    unawaited(_session?.seekTo(target, resumeAfterSeek: _dragWasPlaying));
+    _scheduleHideControls();
   }
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
+    _autoAdvanced = false;
     if (mounted) {
       setState(() => _playback = PlaybackState(
             phase: PlaybackPhase.resolving,
@@ -512,112 +629,221 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    final hasPrev = _i > 0;
-    final hasNext = _i < widget.episodes.length - 1;
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.black,
       endDrawer: _controlPanel(p),
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: Text('${widget.animeTitle} · ${_ep.name}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        actions: [
-          if (_current != null && _current!.quality.isNotEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Text(_current!.quality,
-                    style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
+      // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
+      // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
+      body: LayoutBuilder(
+        builder: (context, constraints) => Stack(
+          fit: StackFit.expand,
+          children: [
+            AnimePlaybackSurface(
+              state: _playback,
+              video: _videoBuilder?.call(_fit) ??
+                  const ColoredBox(color: Colors.black),
+              onRetry: _load,
+            ),
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _toggleControls,
+                onLongPressStart: (_) => _startBoost(),
+                onLongPressEnd: (_) => _stopBoost(),
+                onLongPressCancel: _stopBoost,
+                onHorizontalDragStart: _onHorizontalDragStart,
+                onHorizontalDragUpdate: (details) =>
+                    _onHorizontalDragUpdate(details, constraints.maxWidth),
+                onHorizontalDragEnd: (_) => _onHorizontalDragEnd(),
+                onHorizontalDragCancel: _onHorizontalDragEnd,
               ),
             ),
-          IconButton(
-            tooltip: '选集 / 线路 / 设置',
-            icon: const Icon(Icons.playlist_play_rounded),
-            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-          ),
-        ],
+            if (_boosting) _boostBadge(),
+            if (_dragTarget != null) _seekBadge(),
+            _chrome(top: true, child: _topBar()),
+            _chrome(top: false, child: _bottomBar()),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Container(
-              color: Colors.black,
-              child: AnimePlaybackSurface(
-                state: _playback,
-                video: _videoBuilder?.call(_fit) ??
-                    const ColoredBox(
-                      color: Colors.black,
-                    ),
-                onRetry: _load,
-                controls: AnimePlayerControls(
-                  position: _playback.position,
-                  duration: _playback.duration,
-                  playing: _playing,
-                  buffering: _buffering,
-                  onPlayPause: () {
-                    if (_playing) {
-                      _session?.setUserPaused(true);
-                    } else {
-                      _session?.setUserPaused(false);
-                      unawaited(_adapter?.play());
-                    }
-                  },
-                  onScrubStart: (wasPlaying) {
-                    if (wasPlaying) unawaited(_adapter?.pause());
-                  },
-                  onSeek: (target, resumeAfterSeek) => unawaited(
-                    _session?.seekTo(
-                      target,
-                      resumeAfterSeek: resumeAfterSeek,
-                    ),
-                  ),
-                  onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
-                  onFullscreen: () =>
-                      unawaited(_videoKey.currentState?.toggleFullscreen()),
-                ),
-              ),
-            ),
+    );
+  }
+
+  /// 浮层 chrome:淡入淡出,隐藏时不吃点击(否则手势层收不到 tap)。
+  Widget _chrome({required bool top, required Widget child}) => Positioned(
+        left: 0,
+        right: 0,
+        top: top ? 0 : null,
+        bottom: top ? null : 0,
+        child: IgnorePointer(
+          ignoring: !_controlsVisible,
+          child: AnimatedOpacity(
+            opacity: _controlsVisible ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: child,
           ),
-          // 集导航条
-          Container(
-            color: Colors.black,
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+        ),
+      );
+
+  Widget _topBar() => DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xCC000000), Color(0x00000000)],
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 8, 12),
             child: Row(
               children: [
-                TextButton.icon(
-                  onPressed: hasPrev ? () => _go(-1) : null,
-                  icon: const Icon(Icons.skip_previous_rounded),
-                  label: const Text('上一集'),
-                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                IconButton(
+                  tooltip: '返回',
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: Colors.white,
+                  onPressed: () => Navigator.of(context).maybePop(),
                 ),
-                const Spacer(),
-                if (_playback.phase != PlaybackPhase.playing &&
-                    _playback.phase != PlaybackPhase.failed)
-                  const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white54)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: hasNext ? () => _go(1) : null,
-                  icon: const Icon(Icons.skip_next_rounded),
-                  label: const Text('下一集'),
-                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                Expanded(
+                  child: Text(
+                    '${widget.animeTitle} · ${_ep.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (_current != null && _current!.quality.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(_current!.quality,
+                        style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                IconButton(
+                  tooltip: '选集 / 线路 / 设置',
+                  icon: const Icon(Icons.playlist_play_rounded),
+                  color: Colors.white,
+                  onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
                 ),
               ],
             ),
           ),
-        ],
+        ),
+      );
+
+  Widget _bottomBar() {
+    final hasPrev = _i > 0;
+    final hasNext = _i < widget.episodes.length - 1;
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Color(0xCC000000), Color(0x00000000)],
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimePlayerControls(
+              position: _dragTarget ?? _playback.position,
+              duration: _playback.duration,
+              playing: _playing,
+              buffering: _buffering,
+              onPlayPause: () {
+                _showControls();
+                if (_playing) {
+                  _session?.setUserPaused(true);
+                } else {
+                  _session?.setUserPaused(false);
+                  unawaited(_adapter?.play());
+                }
+              },
+              onScrubStart: (wasPlaying) {
+                _controlsTimer?.cancel();
+                if (wasPlaying) unawaited(_adapter?.pause());
+              },
+              onSeek: (target, resumeAfterSeek) {
+                _scheduleHideControls();
+                unawaited(
+                  _session?.seekTo(target, resumeAfterSeek: resumeAfterSeek),
+                );
+              },
+              onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
+              onFullscreen: () =>
+                  unawaited(_videoKey.currentState?.toggleFullscreen()),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: hasPrev ? () => _go(-1) : null,
+                    icon: const Icon(Icons.skip_previous_rounded, size: 18),
+                    label: const Text('上一集'),
+                    style:
+                        TextButton.styleFrom(foregroundColor: Colors.white70),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: hasNext ? () => _go(1) : null,
+                    icon: const Icon(Icons.skip_next_rounded, size: 18),
+                    label: const Text('下一集'),
+                    style:
+                        TextButton.styleFrom(foregroundColor: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Widget _boostBadge() => Align(
+        alignment: const Alignment(0, -0.55),
+        child: _PlayerBadge(
+          key: const Key('player-boost-badge'),
+          icon: Icons.fast_forward_rounded,
+          label: '${_boostRate.toStringAsFixed(0)}x 快进中',
+        ),
+      );
+
+  Widget _seekBadge() {
+    final target = _dragTarget ?? Duration.zero;
+    final delta = target - _dragOrigin;
+    final sign = delta.isNegative ? '-' : '+';
+    return Align(
+      alignment: const Alignment(0, -0.55),
+      child: _PlayerBadge(
+        key: const Key('player-seek-badge'),
+        icon: delta.isNegative
+            ? Icons.fast_rewind_rounded
+            : Icons.fast_forward_rounded,
+        label: '${_formatClock(target)} / ${_formatClock(_playback.duration)}'
+            '   $sign${_formatClock(delta.abs())}',
+      ),
+    );
+  }
+
+  static String _formatClock(Duration value) {
+    final total = value.inSeconds.clamp(0, 359999);
+    final hours = total ~/ 3600;
+    final minutes = (total % 3600) ~/ 60;
+    final seconds = total % 60;
+    final text = '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+    return hours > 0 ? '$hours:$text' : text;
   }
 
   // ————————————————— 悬浮控制面板(右侧抽屉)—————————————————
@@ -814,6 +1040,35 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       ),
     );
   }
+}
+
+/// 画面中央的提示胶囊(长按快进 / 拖动定位)。
+class _PlayerBadge extends StatelessWidget {
+  const _PlayerBadge({super.key, required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .72),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
 }
 
 class _PanelLabel extends StatelessWidget {

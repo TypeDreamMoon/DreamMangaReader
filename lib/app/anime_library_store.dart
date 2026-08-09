@@ -363,6 +363,11 @@ class AnimeLibraryScope extends InheritedNotifier<AnimeLibraryStore> {
     return scope!.notifier!;
   }
 
+  /// 订阅版可选查找:没挂 scope 时返回 null,挂了则登记依赖 ——
+  /// 收藏/进度变化要能驱动调用方重建(详情页的收藏按钮、继续观看)。
+  static AnimeLibraryStore? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AnimeLibraryScope>()?.notifier;
+
   static AnimeLibraryStore read(BuildContext context) {
     final scope = context.getInheritedWidgetOfExactType<AnimeLibraryScope>();
     assert(scope != null, 'AnimeLibraryScope not found in context');
