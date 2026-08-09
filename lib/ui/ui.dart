@@ -24,6 +24,7 @@ export 'app_selectable_row.dart';
 export 'app_slider_row.dart';
 export 'app_text_field.dart';
 export 'app_status_dot.dart';
+export 'app_underline_tabs.dart';
 export 'empty_state.dart';
 export 'glass.dart';
 export 'glass_title_bar.dart';

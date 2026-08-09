@@ -15,6 +15,7 @@ class GlassTitleBar extends StatelessWidget implements PreferredSizeWidget {
     required this.title,
     this.actions,
     this.leading,
+    this.bottom,
     this.dropIn = true,
     this.blur = 22,
   });
@@ -23,12 +24,17 @@ class GlassTitleBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget>? actions;
   final Widget? leading;
 
+  /// 贴在标题下沿、与毛玻璃连成一体的附加条(如 [AppUnderlineTabs] 类型 tab)。
+  /// 它算进 [preferredSize],页面的顶部内边距记得用 `preferredSize.height`。
+  final PreferredSizeWidget? bottom;
+
   /// 入场时是否自上而下落入(需外壳提供 [TabEntrance];无则静止)。
   final bool dropIn;
   final double blur;
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  Size get preferredSize => Size.fromHeight(
+      kToolbarHeight + (bottom?.preferredSize.height ?? 0));
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +52,7 @@ class GlassTitleBar extends StatelessWidget implements PreferredSizeWidget {
       leading: leading,
       title: title,
       actions: actions,
+      bottom: bottom,
       flexibleSpace: GlassSurface(
         blur: blur,
         tint: tint,
