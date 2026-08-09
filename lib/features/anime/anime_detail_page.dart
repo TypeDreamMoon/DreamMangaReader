@@ -10,9 +10,7 @@ import '../../app/anime_library_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
-import '../../app/ui_signals.dart';
 import '../../core/bangumi/bangumi_api.dart';
-import '../../core/color/cover_palette.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
@@ -26,6 +24,7 @@ import '../common/bangumi_card.dart';
 import '../common/transitions.dart';
 import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
+import '../common/detail_cover_tint.dart';
 import '../library/manga_cover.dart';
 import 'anime_player_page.dart';
 
@@ -56,7 +55,8 @@ class AnimeDetailPage extends StatefulWidget {
   State<AnimeDetailPage> createState() => _AnimeDetailPageState();
 }
 
-class _AnimeDetailPageState extends State<AnimeDetailPage> {
+class _AnimeDetailPageState extends State<AnimeDetailPage>
+    with DetailCoverTint<AnimeDetailPage> {
   late final MangaSource _source = widget.sourceBuilder(widget.meta);
   Manga? _detail;
   List<Chapter> _episodes = const [];
@@ -68,66 +68,19 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
   bool _bgmLoading = true;
   bool _descExpanded = false;
 
-  // 封面主色:与漫画/小说详情页同款,给头部和主按钮染色,并混进全局背景。
-  CoverPalette? _cover;
-  String? _paletteFor;
-  late Object _tintToken;
-  Color? _coverTint;
-  bool _tintPushed = true;
-  ModalRoute<Object?>? _route;
-
   Manga get _display => _detail ?? widget.anime;
-  Color get _accent => _cover?.primary ?? context.palette.accent;
   Map<String, String> get _imgHeaders => imageHeadersOf(widget.meta);
 
   @override
   void initState() {
     super.initState();
-    _tintToken = DetailTint.push();
     _load();
   }
 
   @override
   void dispose() {
-    if (_tintPushed) DetailTint.pop(_tintToken);
-    _route?.animation?.removeStatusListener(_onRouteAnim);
     _source.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final route = ModalRoute.of(context);
-    if (route != _route) {
-      _route?.animation?.removeStatusListener(_onRouteAnim);
-      _route = route;
-      _route?.animation?.addStatusListener(_onRouteAnim);
-    }
-  }
-
-  // 返回一开始就把封面色出栈,背景在离场动画里就渐变回设置色。
-  void _onRouteAnim(AnimationStatus status) {
-    final leaving = status == AnimationStatus.reverse ||
-        status == AnimationStatus.dismissed;
-    if (leaving && _tintPushed) {
-      _tintPushed = false;
-      DetailTint.pop(_tintToken);
-    } else if (!leaving && !_tintPushed && mounted) {
-      _tintPushed = true;
-      _tintToken = DetailTint.push(_coverTint);
-    }
-  }
-
-  Future<void> _extractPalette() async {
-    final url = _display.cover;
-    if (url == null || url.isEmpty || url == _paletteFor) return;
-    _paletteFor = url;
-    final palette = await extractCoverPalette(url, _imgHeaders);
-    if (!mounted || palette == null) return;
-    setState(() => _cover = palette);
-    _coverTint = palette.primary;
-    if (_tintPushed) DetailTint.update(_tintToken, palette.primary);
   }
 
   Future<void> _load() async {
@@ -145,7 +98,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         _episodes = eps.items;
         _loading = false;
       });
-      unawaited(_extractPalette());
+      unawaited(updateCoverTint(_display.cover, _imgHeaders));
       _loadBangumi(); // 详情就绪后匹配 Bangumi 番剧条目
     } catch (e) {
       if (!mounted) return;
@@ -304,7 +257,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
     AnimeDownloadScope.of(context);
     DownloadCoordinatorScope.maybeOf(context);
     final p = context.palette;
-    final acc = _accent;
+    final acc = coverAccent;
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -416,9 +369,9 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
     final anime = _display;
     final grad = coverGradient(widget.anime.id);
     final cover = anime.cover;
-    final acc = _accent;
-    final gradTop = _cover?.primary ?? grad.first;
-    final gradBot = _cover?.secondary ?? grad.last;
+    final acc = coverAccent;
+    final gradTop = coverPalette?.primary ?? grad.first;
+    final gradBot = coverPalette?.secondary ?? grad.last;
     return SizedBox(
       height: 268,
       child: Stack(
@@ -601,8 +554,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
         : _episodes.indexWhere((episode) => episode.id == history.episodeId);
     final canPlay = !_loading && _episodes.isNotEmpty;
     final resume = canPlay && resumeIndex >= 0;
-    final acc = _accent;
-    final accOn = _cover?.onPrimary ?? p.onAccent;
+    final acc = coverAccent;
+    final accOn = coverPalette?.onPrimary ?? p.onAccent;
     final url = _display.url;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
@@ -719,7 +672,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage> {
       fromBangumi = description.isNotEmpty;
     }
     if (description.isEmpty) return const SizedBox.shrink();
-    final acc = _accent;
+    final acc = coverAccent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Container(

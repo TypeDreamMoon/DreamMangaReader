@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -8,9 +9,7 @@ import '../../app/download_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
-import '../../app/ui_signals.dart';
 import '../../core/bangumi/bangumi_api.dart';
-import '../../core/color/cover_palette.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
@@ -26,6 +25,7 @@ import '../../core/source/source_search.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
+import '../common/detail_cover_tint.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
 import '../reader/reader_page.dart';
@@ -48,7 +48,8 @@ class DetailPage extends StatefulWidget {
   State<DetailPage> createState() => _DetailPageState();
 }
 
-class _DetailPageState extends State<DetailPage> {
+class _DetailPageState extends State<DetailPage>
+    with DetailCoverTint<DetailPage> {
   late final MangaSource _source = buildSource(widget.meta);
   Map<String, String> get _imgHeaders => imageHeadersOf(widget.meta);
   List<Chapter>? _chapters;
@@ -58,17 +59,11 @@ class _DetailPageState extends State<DetailPage> {
   String? _error;
   Manga? _detail; // 完整详情(简介/分级/作者),异步补,失败则退回列表级信息
   bool _descExpanded = false;
-  CoverPalette? _cover; // 封面主色(KMeans),null=未算好/失败 → 退回主题色
-  String? _paletteFor; // 已算过取色的封面 url(避免重复算)
   BangumiInfo? _bgm; // Bangumi 评分(置信匹配到才有,否则 null)
   bool _bgmLoading = true; // Bangumi 匹配中(区分「加载中」和「没匹配到」)
   bool _bgmSummaryExpanded = false; // Bangumi 简介是否展开
   List<BangumiCandidate> _recommend = const []; // Bangumi 相关推荐
   bool _recOpening = false; // 正在为某条推荐找可读的源
-  late Object _tintToken; // 全局背景封面色的栈 token(本页在栈,离开出栈)
-  Color? _coverTint; // 算好的封面色(取消返回时用它重新压栈)
-  bool _tintPushed = true; // 封面色当前是否在栈里
-  ModalRoute<Object?>? _route; // 监听本页路由动画,返回一开始就出栈(不等 dispose)
 
   /// 渲染用的合并信息:优先完整详情,字段缺失时退回列表传入的 [widget.manga]。
   Manga get _manga {
@@ -93,10 +88,9 @@ class _DetailPageState extends State<DetailPage> {
   @override
   void initState() {
     super.initState();
-    _tintToken = DetailTint.push(); // 进入详情:入栈(取色算好后 update)
     _load();
     _loadDetail();
-    _extractPalette();
+    unawaited(updateCoverTint(widget.manga.cover, _imgHeaders));
     _loadBangumi();
     _loadOtherSources();
   }
@@ -347,31 +341,6 @@ class _DetailPageState extends State<DetailPage> {
         initialPage: picked.meta.id == widget.meta.id ? initialPage : 0);
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final r = ModalRoute.of(context);
-    if (r != _route) {
-      _route?.animation?.removeStatusListener(_onRouteAnim);
-      _route = r;
-      _route?.animation?.addStatusListener(_onRouteAnim);
-    }
-  }
-
-  // 本页路由的入场动画:reverse/dismissed = 正在返回 → 立刻把封面色出栈,
-  // 背景在「离开动画」里就渐变回设置色,而不是等到已经在书架上才闪一下。
-  void _onRouteAnim(AnimationStatus s) {
-    final leaving =
-        s == AnimationStatus.reverse || s == AnimationStatus.dismissed;
-    if (leaving && _tintPushed) {
-      _tintPushed = false;
-      DetailTint.pop(_tintToken);
-    } else if (!leaving && !_tintPushed && mounted) {
-      _tintPushed = true; // 取消返回手势 → 重新压回封面色
-      _tintToken = DetailTint.push(_coverTint);
-    }
-  }
-
   /// 去 Bangumi 查评分/元数据。优先用手动绑定的条目;否则标题置信匹配。
   /// 匹配不上不再静默——展示「未找到」+ 手动搜索入口。
   Future<void> _loadBangumi() async {
@@ -444,7 +413,7 @@ class _DetailPageState extends State<DetailPage> {
   /// 相关推荐:横向封面条(Bangumi 相关条目 + 题材同类)。点击去源里找并打开。
   Widget _recommendSection(AppPalette p) {
     if (_recommend.isEmpty) return const SizedBox.shrink();
-    final acc = _cover?.primary ?? p.accent;
+    final acc = coverAccent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -649,21 +618,6 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  /// 从封面算主色(KMeans),用来给详情页头部/按钮染色。失败静默,保持主题色。
-  Future<void> _extractPalette() async {
-    final url = _manga.cover;
-    if (url == null || url.isEmpty || url == _paletteFor) return;
-    _paletteFor = url;
-    final pal = await extractCoverPalette(url, _imgHeaders);
-    if (mounted && pal != null) {
-      setState(() => _cover = pal);
-      _coverTint = pal.primary;
-      if (_tintPushed) {
-        DetailTint.update(_tintToken, pal.primary); // 让全局背景在本页混入封面主题色
-      }
-    }
-  }
-
   Future<void> _load() async {
     final sw = Stopwatch()..start();
     try {
@@ -692,7 +646,8 @@ class _DetailPageState extends State<DetailPage> {
     try {
       final d = await _source.getMangaDetail(widget.manga.id);
       if (mounted) setState(() => _detail = d);
-      _extractPalette(); // 详情封面可能比列表更清晰,重算(url 不变则跳过)
+      // 详情封面可能比列表更清晰,重算(url 不变则跳过)。
+      unawaited(updateCoverTint(_manga.cover, _imgHeaders));
     } catch (_) {
       // 详情拿不到不致命——头部退回列表级信息。
     }
@@ -729,7 +684,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    final acc = _cover?.primary ?? p.accent; // 封面主题色
+    final acc = coverAccent; // 封面主题色
     final store = LibraryScope.of(context); // 依赖:收藏/进度变了自动重建
     final dl = DownloadScope.of(context); // 依赖:下载状态变了刷新按钮
     DownloadCoordinatorScope.maybeOf(context); // 统一队列状态变化时刷新章节按钮
@@ -848,9 +803,9 @@ class _DetailPageState extends State<DetailPage> {
     final m = _manga;
     final grad = coverGradient(widget.manga.id);
     final cover = m.cover;
-    final acc = _cover?.primary ?? p.accent;
-    final gradTop = _cover?.primary ?? grad.first;
-    final gradBot = _cover?.secondary ?? grad.last;
+    final acc = coverAccent;
+    final gradTop = coverPalette?.primary ?? grad.first;
+    final gradBot = coverPalette?.secondary ?? grad.last;
     return SizedBox(
       height: 268,
       child: Stack(
@@ -1096,8 +1051,8 @@ class _DetailPageState extends State<DetailPage> {
     final fav = store.isFavorite(widget.meta.id, widget.manga.id);
     final resume = _resume(store); // 读过 → 主按钮变「继续阅读」
     final canRead = chapters != null && chapters.isNotEmpty;
-    final acc = _cover?.primary ?? p.accent;
-    final accOn = _cover?.onPrimary ?? p.onAccent;
+    final acc = coverAccent;
+    final accOn = coverPalette?.onPrimary ?? p.onAccent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
       child: Row(
@@ -1270,7 +1225,7 @@ class _DetailPageState extends State<DetailPage> {
       fromBangumi = desc.isNotEmpty;
     }
     if (desc.isEmpty) return const SizedBox.shrink();
-    final acc = _cover?.primary ?? p.accent;
+    final acc = coverAccent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Container(
@@ -1731,7 +1686,7 @@ class _DetailPageState extends State<DetailPage> {
 
   List<Widget> _chapterSlivers(
       AppPalette p, LibraryStore store, DownloadStore dl) {
-    final acc = _cover?.primary ?? p.accent;
+    final acc = coverAccent;
     // 合并跨源章节(当前源 + 库里同名书的他源;无他源时 = 当前源本身)。
     final merged =
         _chapters == null ? const <_MergedChapter>[] : _mergedChapters();
@@ -1874,8 +1829,6 @@ class _DetailPageState extends State<DetailPage> {
 
   @override
   void dispose() {
-    _route?.animation?.removeStatusListener(_onRouteAnim);
-    if (_tintPushed) DetailTint.pop(_tintToken); // 兜底:还在栈里就出栈
     _source.dispose();
     for (final o in _otherSources) {
       o.source.dispose();
