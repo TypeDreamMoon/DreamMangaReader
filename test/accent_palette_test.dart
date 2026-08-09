@@ -43,6 +43,46 @@ void main() {
     }
   });
 
+  // 番剧播放器的浮层面板底色恒为 #161616(不随主题走),选中高亮却跟着主题色。
+  // 用户挑一个藏青/墨绿之类本身就很暗的强调色,直接拿来用会糊在面板上。
+  test('浮在近黑面板上的强调色一律抬到看得清', () {
+    const panel = Color(0xFF161616);
+    const samples = [
+      ...kAccentPresets,
+      Color(0xFF000000),
+      Color(0xFF101010), // 比面板还暗
+      Color(0xFF0033AA), // 藏青
+      Color(0xFF1B3A21), // 墨绿
+      Color(0xFFFFFFFF),
+      Color(0xFF808080),
+    ];
+    for (final accent in samples) {
+      final lifted = ensureContrast(accent, panel);
+      final a = lifted.computeLuminance();
+      final b = panel.computeLuminance();
+      final ratio = (max(a, b) + 0.05) / (min(a, b) + 0.05);
+      expect(ratio, greaterThanOrEqualTo(4.0),
+          reason: '强调色 $accent 在面板上看不清(对比度 $ratio)');
+    }
+  });
+
+  test('本来就够亮的强调色不做无谓改动', () {
+    const panel = Color(0xFF161616);
+    for (final accent in kAccentPresets) {
+      // 预设都是中高明度,面板上本来就够读,应当原样返回。
+      expect(ensureContrast(accent, panel), accent, reason: '$accent 被动了');
+    }
+  });
+
+  test('抬亮度不改色相', () {
+    const navy = Color(0xFF0033AA);
+    final lifted = ensureContrast(navy, const Color(0xFF161616));
+    expect(HSLColor.fromColor(lifted).hue,
+        closeTo(HSLColor.fromColor(navy).hue, 0.5));
+    expect(HSLColor.fromColor(lifted).lightness,
+        greaterThan(HSLColor.fromColor(navy).lightness));
+  });
+
   test('其余 token 原样保留', () {
     final p = AppPalette.dark.withAccent(const Color(0xFFE05B5B));
     expect(p.background, AppPalette.dark.background);

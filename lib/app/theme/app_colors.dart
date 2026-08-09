@@ -134,6 +134,34 @@ class AppPalette {
   }
 }
 
+/// 把 [color] 顺着自己的色相挪明度,直到它在 [background] 上至少有
+/// [minContrast] 的对比度;挪不到就退回纯白/纯黑里更能看清的那个。
+///
+/// 给的是**永远深色**的界面用的 —— 比如番剧播放器那块浮层面板,底色恒为近黑,
+/// 不随主题走。用户挑的强调色可能本身就很暗(藏青、墨绿),直接拿来当选中色
+/// 会糊在面板上看不出选没选中。
+Color ensureContrast(
+  Color color,
+  Color background, {
+  double minContrast = 4.0,
+}) {
+  if (_contrast(color, background) >= minContrast) return color;
+  final hsl = HSLColor.fromColor(color);
+  // 底暗就往亮里找,底亮就往暗里找。步长 0.04,最多走满整个明度区间。
+  final up = background.computeLuminance() < 0.5;
+  for (var step = 1; step <= 25; step++) {
+    final lightness = (hsl.lightness + (up ? 1 : -1) * step * 0.04).clamp(0.0, 1.0);
+    final candidate = hsl.withLightness(lightness).toColor();
+    if (_contrast(candidate, background) >= minContrast) return candidate;
+    if (lightness <= 0 || lightness >= 1) break;
+  }
+  const white = Color(0xFFFFFFFF);
+  const black = Color(0xFF000000);
+  return _contrast(white, background) >= _contrast(black, background)
+      ? white
+      : black;
+}
+
 /// WCAG 相对亮度对比度(1~21)。派生 onAccent 时用来在深/浅两个候选里挑。
 double _contrast(Color a, Color b) {
   final la = a.computeLuminance();
