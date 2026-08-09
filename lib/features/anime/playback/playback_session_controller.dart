@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../../core/net/url_redaction.dart';
 import '../../../core/source/models.dart';
+import 'playback_messages.dart';
 import 'playback_state.dart';
 import 'player_adapter.dart';
 
@@ -30,6 +31,7 @@ class PlaybackSessionController {
   PlaybackSessionController({
     required PlayerAdapter player,
     required PlaybackTrackProvider tracks,
+    required this.messages,
     PlaybackDelay? delay,
     this.onProgress,
     this.onPaused,
@@ -60,6 +62,10 @@ class PlaybackSessionController {
   final PlayerAdapter _player;
   final PlaybackTrackProvider _tracks;
   final PlaybackDelay _delay;
+
+  /// 可写:语言切换后播放页会重新灌一份,不用重建整个会话。
+  PlaybackMessages messages;
+
   final void Function(Duration position, Duration duration)? onProgress;
   final void Function()? onPaused;
   final Duration stallThreshold;
@@ -257,7 +263,7 @@ class PlaybackSessionController {
         () {
       if (_isCurrent(generation) &&
           (!_userPaused || _pendingSeekTarget != null)) {
-        unawaited(_recover(StateError('播放缓冲超时'), generation));
+        unawaited(_recover(StateError(messages.bufferTimeout), generation));
       }
     });
   }
@@ -293,7 +299,13 @@ class PlaybackSessionController {
     if (position == Duration.zero && _confirmedPosition > Duration.zero) return;
 
     _confirmedPosition = position;
+    // 播放中的位置也要发出去,否则进度条只有在换阶段(缓冲开/停、播放暂停)时
+    // 才动一下 —— 中间那段是**停着的**。
+    // 整秒才发一次:mpv 大约每 100ms 报一次位置,条也就一秒挪一格,
+    // 全发上去等于白搭十倍的重建。
+    final advanced = _reportedPositionSecond != position.inSeconds;
     _reportProgress(position);
+    if (advanced) _emit(_state.copyWith(position: position));
   }
 
   void _reportProgress(Duration position) {
@@ -348,7 +360,7 @@ class PlaybackSessionController {
           duration: _duration,
           attempt: round + 1,
           selectedTrack: _selected,
-          message: '正在恢复播放（${round + 1}/3）',
+          message: messages.recovering(round + 1, _backoff.length),
         ));
         await _delay(_backoff[round]);
         if (!_isCurrent(generation)) return;
@@ -410,7 +422,7 @@ class PlaybackSessionController {
           pendingSeekTarget: _pendingSeekTarget,
           seeking: _pendingSeekTarget != null,
           // 播放地址常带签名参数,原始异常会带出完整 URL,不能直接进 UI。
-          message: '播放恢复失败：${redactUrlCredentials('$lastError')}',
+          message: messages.recoverFailed(redactUrlCredentials('$lastError')),
         ));
       }
     } finally {

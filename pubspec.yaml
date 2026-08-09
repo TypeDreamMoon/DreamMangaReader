@@ -90,6 +90,11 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   # HLS 清单采用结构化解析/重组，供本地鉴权缓存网关改写 URI。
   hls: 1.0.0
+  # 播放页左半屏上下滑调亮度。media_kit_video 本来就依赖它(自带控件的亮度手势
+  # 用的同一套),这里提为直接依赖只为自己调用 —— 不额外引入原生实现。
+  # 用的是 application 级亮度:只影响本 app 且退出即还原,不去改系统设置。
+  # 原生实现只有 Android(screen_brightness_android),桌面上调用会抛,已 catch。
+  screen_brightness_platform_interface: ^2.1.2
   # B站登录二维码渲染(扫码登录)。
   qr_flutter: ^4.1.0
   # 小说仿真翻页:复用 MIT 的触点圆柱/贝塞尔卷页几何；精确锁定内部曲线 API。

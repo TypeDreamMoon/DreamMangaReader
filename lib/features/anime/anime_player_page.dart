@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' hide VideoTrack; // 用本项目的 VideoTrack
 import 'package:media_kit_video/media_kit_video.dart';
+// media_kit_video 本来就依赖它(MaterialVideoControls 的亮度手势用的同一套),
+// 这里提为直接依赖只是为了自己调用。安卓有原生实现,别的平台调了会抛,已 catch。
+import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
@@ -18,9 +22,11 @@ import 'anime_player_controls.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
 import 'playback/mpv_network_options.dart';
+import 'playback/playback_messages.dart';
 import 'playback/playback_session_controller.dart';
 import 'playback/playback_state.dart';
 import 'playback/player_adapter.dart';
+import 'playback/subtitle_option.dart';
 import 'playback/track_resolver.dart';
 
 /// 播放诊断开关。开着时播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错)。
@@ -225,12 +231,29 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   bool _playing = false;
   bool _buffering = false;
 
-  // 悬浮控制面板(右侧抽屉):选集 / 线路 / 设置。
+  // 悬浮控制面板(右侧抽屉):选集 / 线路 / 字幕 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
-  int _panelTab = 0; // 0=选集 1=线路 2=设置
+  int _panelTab = 0; // 0=选集 1=线路 2=字幕 3=设置
   double _rate = 1.0; // 倍速(跨集保持)
   BoxFit _fit = BoxFit.contain; // 画面填充
+
+  // —— 字幕:源给的外挂 + 流里自带的内嵌,在 UI 上合成一个列表 ——
+  List<SubtitleOption> _embedded = const [];
+  SubtitleOption _subtitle = SubtitleOption.off;
+  StreamSubscription<List<SubtitleOption>>? _subtitleSubscription;
+
+  // —— 音量 / 亮度 ——
+  // 音量走 mpv 的应用内音量(0–100),不动系统音量:跨平台一致,也不至于用户
+  // 调完番剧音量,回头发现整机音量被改了。
+  static const double _volumeStep = 5;
+  double _volume = 100;
+  double _volumeBeforeMute = 100;
+
+  /// 应用级屏幕亮度(0–1),仅 Android 有实现;null = 取不到,亮度手势就不启用。
+  double? _brightness;
+
+  final FocusNode _focus = FocusNode(debugLabel: 'anime-player');
 
   // —— 手势与控件层(B站/YouTube 那套:全屏占满、点一下出控件、长按倍速快进)——
   // 明确**不做**双击快进/快退:issue #16 说了那个不好用。
@@ -246,10 +269,36 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   bool _autoAdvanced = false;
   StreamSubscription<bool>? _completedSubscription;
 
+  // 竖向拖动 / 键盘调节时画面中央那个提示胶囊。
+  _Adjustment? _adjusting;
+  Timer? _adjustTimer;
+  bool _adjustingBrightness = false;
+
   @override
   void initState() {
     super.initState();
     _enterImmersiveLandscape();
+  }
+
+  /// 开播放在这儿而不是 initState:整条链路要用 l10n(失败文案、恢复提示),
+  /// 而 initState 里读不到 InheritedWidget。didChangeDependencies 在首帧构建时
+  /// 就会跑,开播并不会因此变晚。
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _library = AnimeLibraryScope.maybeRead(context);
+    final l10n = context.l10n;
+    _messages = PlaybackMessages(
+      noRoute: l10n.player_noRoute,
+      bufferTimeout: l10n.player_bufferTimeout,
+      recovering: l10n.player_recovering,
+      recoverFailed: l10n.player_recoverFailed,
+    );
+    // 语言切换会把这里再跑一遍,顺手把已开的会话换成新文案。
+    _session?.messages = _messages!;
+    if (_bootstrapped) return;
+    _bootstrapped = true;
+    unawaited(_initBrightness());
     final injected = widget.dependencies;
     if (injected != null) {
       _configurePlayback(
@@ -265,17 +314,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     }
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _library = AnimeLibraryScope.maybeRead(context);
-    // _load() 由 initState 触发,那时还读不到 InheritedWidget(l10n 也是)。
-    // 这里缓存下来给异步流程用 —— didChangeDependencies 紧接 initState 跑,
-    // 早于 _load 里第一个 await 恢复,所以取到时一定已经有值。
-    _noRouteMessage = context.l10n.player_noRoute;
-  }
-
-  String? _noRouteMessage;
+  PlaybackMessages? _messages;
+  bool _bootstrapped = false;
 
   /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
   void _enterImmersiveLandscape() {
@@ -298,11 +338,20 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _disposed = true;
     _loadGeneration++;
     _controlsTimer?.cancel();
+    _adjustTimer?.cancel();
+    _focus.dispose();
     _exitImmersiveLandscape();
+    // 亮度是「应用级」的,退出播放页要还回去,否则整个 app 都留在这个亮度上。
+    if (_brightness != null) {
+      unawaited(ScreenBrightnessPlatform.instance
+          .resetApplicationScreenBrightness()
+          .catchError((_) {}));
+    }
     unawaited(_stateSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
     unawaited(_bufferingSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
+    unawaited(_subtitleSubscription?.cancel());
     final session = _session;
     if (session != null) {
       unawaited(session.dispose());
@@ -411,6 +460,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               delegate: tracks,
               localTrack: () => localTrackForEpisode(_ep.id),
             ),
+      messages: _messages!,
       onProgress: _recordProgress,
       onPaused: () => unawaited(_library?.flushPending()),
     );
@@ -436,6 +486,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _bufferingSubscription = adapter.buffering.listen((buffering) {
       if (!mounted) return;
       setState(() => _buffering = buffering);
+    });
+    // 内嵌字幕是 mpv 解析出文件头之后才报上来的,所以只能听着来,不能开播时问一次。
+    _subtitleSubscription = adapter.subtitles.listen((options) {
+      if (!mounted) return;
+      setState(() => _embedded = options);
     });
     // 一集播完自动接下一集(番剧的默认期待,也顺带把历史推进到下一集)。
     // 用 _autoAdvanced 兜一层:后端在换源/重开时可能再报一次 completed,
@@ -522,19 +577,198 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _scheduleHideControls();
   }
 
+  // ————————————————— 音量 / 亮度 —————————————————
+
+  /// 读一次当前的应用级亮度。读不到(桌面没有原生实现)就把亮度手势关掉,
+  /// 免得左半屏拖半天没反应。
+  Future<void> _initBrightness() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final value = await ScreenBrightnessPlatform.instance.application;
+      if (mounted) setState(() => _brightness = value.clamp(0.0, 1.0));
+    } on Object {
+      // 没有实现 / 被系统拒绝:保持 null,亮度手势不启用。
+    }
+  }
+
+  void _setVolume(double value, {bool showBadge = true}) {
+    final next = value.clamp(0.0, 100.0);
+    setState(() => _volume = next);
+    unawaited(_adapter?.setVolume(next));
+    if (showBadge) {
+      _showAdjustment(_Adjustment(
+        icon: next <= 0
+            ? Icons.volume_off_rounded
+            : next < 50
+                ? Icons.volume_down_rounded
+                : Icons.volume_up_rounded,
+        label: next <= 0
+            ? context.l10n.player_muted
+            : context.l10n.player_volume,
+        value: next / 100,
+      ));
+    }
+  }
+
+  void _toggleMute() {
+    if (_volume > 0) {
+      _volumeBeforeMute = _volume;
+      _setVolume(0);
+    } else {
+      _setVolume(_volumeBeforeMute <= 0 ? 100 : _volumeBeforeMute);
+    }
+  }
+
+  void _setBrightness(double value) {
+    final next = value.clamp(0.0, 1.0);
+    setState(() => _brightness = next);
+    unawaited(
+      ScreenBrightnessPlatform.instance
+          .setApplicationScreenBrightness(next)
+          .catchError((_) {}),
+    );
+    _showAdjustment(_Adjustment(
+      icon: next < 0.34
+          ? Icons.brightness_low_rounded
+          : next < 0.67
+              ? Icons.brightness_medium_rounded
+              : Icons.brightness_high_rounded,
+      label: context.l10n.player_brightness,
+      value: next,
+    ));
+  }
+
+  void _showAdjustment(_Adjustment adjustment) {
+    setState(() => _adjusting = adjustment);
+    _adjustTimer?.cancel();
+    _adjustTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _adjusting = null);
+    });
+  }
+
+  // —— 竖向拖动:左半屏亮度、右半屏音量(B站/YouTube 那套)——
+  // 亮度没实现的平台上整屏都归音量,总比左半边是块死区强。
+  void _onVerticalDragStart(DragStartDetails details, double width) {
+    _adjustingBrightness =
+        _brightness != null && details.localPosition.dx < width / 2;
+    _controlsTimer?.cancel();
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details, double height) {
+    if (height <= 0) return;
+    // 六成屏高走完整个量程:再灵敏一点就容易手一抖静音。
+    final delta = -details.delta.dy / (height * 0.6);
+    if (_adjustingBrightness) {
+      _setBrightness((_brightness ?? 0) + delta);
+    } else {
+      _setVolume(_volume + delta * 100);
+    }
+  }
+
+  void _onVerticalDragEnd() => _scheduleHideControls();
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    // 桌面滚轮 = 音量,和大多数播放器一致。
+    if (event is! PointerScrollEvent) return;
+    _setVolume(_volume - event.scrollDelta.dy.sign * _volumeStep);
+  }
+
+  // ————————————————— 键盘(桌面)—————————————————
+
+  void _togglePlay() {
+    _showControls();
+    if (_playing) {
+      _session?.setUserPaused(true);
+    } else {
+      _session?.setUserPaused(false);
+      unawaited(_adapter?.play());
+    }
+  }
+
+  void _seekBy(int seconds) {
+    final duration = _playback.duration;
+    if (duration <= Duration.zero) return;
+    final requested = _playback.position + Duration(seconds: seconds);
+    final target = requested < Duration.zero
+        ? Duration.zero
+        : requested > duration
+            ? duration
+            : requested;
+    unawaited(_session?.seekTo(target, resumeAfterSeek: _playing));
+    _showControls();
+  }
+
+  /// 桌面快捷键。N/P 换集刻意和漫画阅读器的 N/P 换章对齐。
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final k = event.logicalKey;
+    if (k == LogicalKeyboardKey.space || k == LogicalKeyboardKey.keyK) {
+      _togglePlay();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      _seekBy(-10);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight) {
+      _seekBy(10);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      _setVolume(_volume + _volumeStep);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowDown) {
+      _setVolume(_volume - _volumeStep);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyM) {
+      _toggleMute();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyF) {
+      unawaited(_videoKey.currentState?.toggleFullscreen());
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyN) {
+      if (_i < widget.episodes.length - 1) _go(1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyP) {
+      if (_i > 0) _go(-1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.escape) {
+      // 面板开着就先收面板 —— Esc 一路退到底会把人直接踢出播放页。
+      final scaffold = _scaffoldKey.currentState;
+      if (scaffold?.isEndDrawerOpen ?? false) {
+        scaffold!.closeEndDrawer();
+      } else {
+        Navigator.of(context).maybePop();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   Future<void> _load() async {
     final generation = ++_loadGeneration;
     _autoAdvanced = false;
     if (mounted) {
-      setState(() => _playback = PlaybackState(
-            phase: PlaybackPhase.resolving,
-          ));
+      setState(() {
+        _playback = PlaybackState(phase: PlaybackPhase.resolving);
+        // 新的一集是新的一套轨道,旧的选择连同旧的内嵌列表一起作废。
+        _subtitle = SubtitleOption.off;
+        _embedded = const [];
+      });
     }
     try {
       final local = _localTrackForEpisode?.call(_ep.id);
       final tracks = local == null ? await _loadTracks!(_ep.id) : [local];
       if (_disposed || generation != _loadGeneration) return;
-      if (tracks.isEmpty) throw StateError(_noRouteMessage ?? '');
+      if (tracks.isEmpty) throw StateError(_messages!.noRoute);
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
@@ -605,6 +839,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (_disposed || generation != _loadGeneration) return;
       _session!.setManualQualityLocked(true);
       if (_rate != 1.0) await _adapter!.setRate(_rate);
+      // 换清晰度是同一集换个流:外挂字幕(标识是 URL)照旧有效,挂回去。
+      // 内嵌轨道号是 mpv 按流现编的,不能跨流复用,交给新流的默认。
+      if (_subtitle.isExternal) await _adapter!.setSubtitle(_subtitle);
     } catch (error) {
       if (!_disposed && generation == _loadGeneration && mounted) {
         setState(() => _playback = PlaybackState(
@@ -640,37 +877,56 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       key: _scaffoldKey,
       backgroundColor: Colors.black,
       endDrawer: _controlPanel(p),
+      // 抽屉会把焦点抢走,收回来时得还给播放页,否则开过一次面板之后快捷键就哑了。
+      onEndDrawerChanged: (opened) {
+        if (!opened && mounted) _focus.requestFocus();
+      },
       // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
       // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
-      body: LayoutBuilder(
-        builder: (context, constraints) => Stack(
-          fit: StackFit.expand,
-          children: [
-            AnimePlaybackSurface(
-              state: _playback,
-              video: _videoBuilder?.call(_fit) ??
-                  const ColoredBox(color: Colors.black),
-              onRetry: _load,
-            ),
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _toggleControls,
-                onLongPressStart: (_) => _startBoost(),
-                onLongPressEnd: (_) => _stopBoost(),
-                onLongPressCancel: _stopBoost,
-                onHorizontalDragStart: _onHorizontalDragStart,
-                onHorizontalDragUpdate: (details) =>
-                    _onHorizontalDragUpdate(details, constraints.maxWidth),
-                onHorizontalDragEnd: (_) => _onHorizontalDragEnd(),
-                onHorizontalDragCancel: _onHorizontalDragEnd,
+      body: Focus(
+        focusNode: _focus,
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimePlaybackSurface(
+                state: _playback,
+                video: _videoBuilder?.call(_fit) ??
+                    const ColoredBox(color: Colors.black),
+                onRetry: _load,
               ),
-            ),
-            if (_boosting) _boostBadge(),
-            if (_dragTarget != null) _seekBadge(),
-            _chrome(top: true, child: _topBar()),
-            _chrome(top: false, child: _bottomBar()),
-          ],
+              Positioned.fill(
+                child: Listener(
+                  onPointerSignal: _onPointerSignal,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _toggleControls,
+                    onLongPressStart: (_) => _startBoost(),
+                    onLongPressEnd: (_) => _stopBoost(),
+                    onLongPressCancel: _stopBoost,
+                    onHorizontalDragStart: _onHorizontalDragStart,
+                    onHorizontalDragUpdate: (details) =>
+                        _onHorizontalDragUpdate(details, constraints.maxWidth),
+                    onHorizontalDragEnd: (_) => _onHorizontalDragEnd(),
+                    onHorizontalDragCancel: _onHorizontalDragEnd,
+                    onVerticalDragStart: (details) =>
+                        _onVerticalDragStart(details, constraints.maxWidth),
+                    onVerticalDragUpdate: (details) =>
+                        _onVerticalDragUpdate(details, constraints.maxHeight),
+                    onVerticalDragEnd: (_) => _onVerticalDragEnd(),
+                    onVerticalDragCancel: _onVerticalDragEnd,
+                  ),
+                ),
+              ),
+              if (_boosting) _boostBadge(),
+              if (_dragTarget != null) _seekBadge(),
+              if (_adjusting != null) _adjustBadge(_adjusting!),
+              _chrome(top: true, child: _topBar()),
+              _chrome(top: false, child: _bottomBar()),
+            ],
+          ),
         ),
       ),
     );
@@ -766,15 +1022,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               duration: _playback.duration,
               playing: _playing,
               buffering: _buffering,
-              onPlayPause: () {
-                _showControls();
-                if (_playing) {
-                  _session?.setUserPaused(true);
-                } else {
-                  _session?.setUserPaused(false);
-                  unawaited(_adapter?.play());
-                }
-              },
+              onPlayPause: _togglePlay,
               onScrubStart: (wasPlaying) {
                 _controlsTimer?.cancel();
                 if (wasPlaying) unawaited(_adapter?.pause());
@@ -822,7 +1070,17 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         child: _PlayerBadge(
           key: const Key('player-boost-badge'),
           icon: Icons.fast_forward_rounded,
-          label: '${_boostRate.toStringAsFixed(0)}x 快进中',
+          label: context.l10n.player_boosting(_boostRate.toStringAsFixed(0)),
+        ),
+      );
+
+  Widget _adjustBadge(_Adjustment adjustment) => Align(
+        alignment: const Alignment(0, -0.55),
+        child: _PlayerBadge(
+          key: const Key('player-adjust-badge'),
+          icon: adjustment.icon,
+          label: '${adjustment.label}   '
+              '${(adjustment.value * 100).round()}%',
         ),
       );
 
@@ -855,9 +1113,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
 
   // ————————————————— 悬浮控制面板(右侧抽屉)—————————————————
 
+  // 面板底色不跟主题走:画面是黑的,浮在上面的面板也必须是暗的,否则浅色主题下
+  // 会在夜里糊人一脸白。选中高亮才跟主题走 —— 见 [_accent]。
   static const Color _panelBg = Color(0xFF161616);
   static const Color _panelChip = Color(0xFF2A2A2A);
-  static const Color _accent = Color(0xFFFF6699); // B站粉,作选中高亮
+
+  /// 选中高亮。跟随全局主题色,但因为面板底恒为近黑,暗色系强调色要先抬到可读。
+  Color get _accent => ensureContrast(context.palette.accent, _panelBg);
 
   Widget _controlPanel(AppPalette p) {
     final width = MediaQuery.of(context).size.width;
@@ -869,14 +1131,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 顶部分段:选集 / 线路 / 设置
+            // 顶部分段:选集 / 线路 / 字幕 / 设置
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
               child: Row(
                 children: [
                   _tabBtn(context.l10n.player_tabEpisodes, 0),
                   _tabBtn(context.l10n.player_tabRoutes, 1),
-                  _tabBtn(context.l10n.player_tabSettings, 2),
+                  _tabBtn(context.l10n.player_tabSubtitles, 2),
+                  _tabBtn(context.l10n.player_tabSettings, 3),
                 ],
               ),
             ),
@@ -885,6 +1148,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               child: switch (_panelTab) {
                 0 => _panelEpisodes(),
                 1 => _panelTracks(),
+                2 => _panelSubtitles(),
                 _ => _panelSettings(),
               },
             ),
@@ -922,6 +1186,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
 
   // —— 选集:话数网格 ——
   Widget _panelEpisodes() {
+    final accent = _accent;
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
@@ -937,7 +1202,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           message: widget.episodes[i].name,
           waitDuration: const Duration(milliseconds: 500),
           child: Material(
-            color: on ? _accent.withValues(alpha: 0.20) : _panelChip,
+            color: on ? accent.withValues(alpha: 0.20) : _panelChip,
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
@@ -946,13 +1211,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  border: on ? Border.all(color: _accent, width: 1.2) : null,
+                  border: on ? Border.all(color: accent, width: 1.2) : null,
                 ),
                 child: Text(_epShort(i),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: on ? _accent : Colors.white,
+                        color: on ? accent : Colors.white,
                         fontSize: 13,
                         fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
               ),
@@ -970,6 +1235,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           child: Text(context.l10n.player_noRoutes,
               style: const TextStyle(color: Colors.white38, fontSize: 13)));
     }
+    final accent = _accent;
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: _tracks.length,
@@ -978,19 +1244,95 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       itemBuilder: (_, i) {
         final t = _tracks[i];
         final on = t.url == _current?.url;
-        return ListTile(
-          dense: true,
+        return _panelRow(
+          accent: accent,
+          selected: on,
+          icon: on ? Icons.check_circle_rounded : Icons.hd_outlined,
+          label:
+              t.quality.isEmpty ? context.l10n.player_routeN(i + 1) : t.quality,
           onTap: () => _switchTrack(t),
-          leading: Icon(on ? Icons.check_circle_rounded : Icons.hd_outlined,
-              color: on ? _accent : Colors.white38, size: 20),
-          title: Text(t.quality.isEmpty ? context.l10n.player_routeN(i + 1) : t.quality,
-              style: TextStyle(
-                  color: on ? _accent : Colors.white,
-                  fontSize: 14,
-                  fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
         );
       },
     );
+  }
+
+  // —— 字幕:源给的外挂 + 流里自带的内嵌,合成一张表 ——
+  //
+  // 两者对用户是一回事(「这一集有哪些字幕」),对播放器却是两条路,所以合并只在
+  // 这里做,不往下渗到 playback/。
+  Widget _panelSubtitles() {
+    final l10n = context.l10n;
+    final options = <SubtitleOption>[
+      for (final asset in _current?.subtitles ?? const <SubtitleAsset>[])
+        SubtitleOption.asset(asset),
+      ..._embedded,
+    ];
+    if (options.isEmpty) {
+      return Center(
+          child: Text(l10n.player_noSubtitles,
+              style: const TextStyle(color: Colors.white38, fontSize: 13)));
+    }
+    final accent = _accent;
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: options.length + 1, // +1 = 置顶的「关闭字幕」
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, color: Colors.white10, indent: 16),
+      itemBuilder: (_, i) {
+        if (i == 0) {
+          final on = _subtitle.isOff;
+          return _panelRow(
+            accent: accent,
+            selected: on,
+            icon: on ? Icons.check_circle_rounded : Icons.subtitles_off_outlined,
+            label: l10n.player_subtitleOff,
+            onTap: () => _setSubtitle(SubtitleOption.off),
+          );
+        }
+        final option = options[i - 1];
+        final on = option == _subtitle;
+        return _panelRow(
+          accent: accent,
+          selected: on,
+          icon: on ? Icons.check_circle_rounded : Icons.subtitles_outlined,
+          label: option.label.isEmpty
+              ? l10n.player_subtitleN(i)
+              : option.label,
+          onTap: () => _setSubtitle(option),
+        );
+      },
+    );
+  }
+
+  Widget _panelRow({
+    required Color accent,
+    required bool selected,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) =>
+      ListTile(
+        dense: true,
+        onTap: onTap,
+        leading:
+            Icon(icon, color: selected ? accent : Colors.white38, size: 20),
+        title: Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: selected ? accent : Colors.white,
+                fontSize: 14,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+      );
+
+  Future<void> _setSubtitle(SubtitleOption option) async {
+    _scaffoldKey.currentState?.closeEndDrawer();
+    setState(() => _subtitle = option);
+    try {
+      await _adapter?.setSubtitle(option);
+    } on Object {
+      // 挂不上就算了,画面照播。
+    }
   }
 
   // —— 设置:倍速 + 画面比例 ——
@@ -1030,18 +1372,19 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   Widget _chip(String label, bool on, VoidCallback onTap) {
+    final accent = _accent;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: on ? _accent.withValues(alpha: 0.18) : _panelChip,
+          color: on ? accent.withValues(alpha: 0.18) : _panelChip,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: on ? _accent : Colors.transparent),
+          border: Border.all(color: on ? accent : Colors.transparent),
         ),
         child: Text(label,
             style: TextStyle(
-                color: on ? _accent : Colors.white70,
+                color: on ? accent : Colors.white70,
                 fontSize: 13,
                 fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
       ),
@@ -1049,7 +1392,22 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 }
 
-/// 画面中央的提示胶囊(长按快进 / 拖动定位)。
+/// 竖向拖动 / 键盘调节音量亮度时,中央胶囊要显示的一次读数。
+class _Adjustment {
+  const _Adjustment({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+
+  /// 0–1,展示成百分比。
+  final double value;
+}
+
+/// 画面中央的提示胶囊(长按快进 / 拖动定位 / 音量亮度)。
 class _PlayerBadge extends StatelessWidget {
   const _PlayerBadge({super.key, required this.icon, required this.label});
 

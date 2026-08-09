@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:dream_manga_reader/core/source/models.dart';
+import 'package:dream_manga_reader/features/anime/playback/playback_messages.dart';
+import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:dream_manga_reader/features/anime/playback/playback_session_controller.dart';
 import 'package:dream_manga_reader/features/anime/playback/playback_state.dart';
 import 'package:dream_manga_reader/features/anime/playback/player_adapter.dart';
@@ -46,6 +48,13 @@ class _FakePlayerAdapter implements PlayerAdapter {
   Stream<bool> get completed => completedController.stream;
   @override
   Stream<Object> get errors => errorController.stream;
+  @override
+  Stream<List<SubtitleOption>> get subtitles => const Stream.empty();
+
+  @override
+  Future<void> setVolume(double volume) async {}
+  @override
+  Future<void> setSubtitle(SubtitleOption option) async {}
 
   @override
   Future<void> open(VideoTrack track) async {
@@ -105,6 +114,18 @@ class _FakeTrackProvider implements PlaybackTrackProvider {
       available.where((track) => track.url != current.url).firstOrNull;
 }
 
+/// 文案用可辨认的英文占位:这层只关心「有没有把文案透出去」,不关心具体译文。
+const _messages = PlaybackMessages(
+  noRoute: 'no route',
+  bufferTimeout: 'buffer timeout',
+  recovering: _recovering,
+  recoverFailed: _recoverFailed,
+);
+
+String _recovering(int attempt, int total) => 'recovering $attempt/$total';
+
+String _recoverFailed(String detail) => 'recover failed: $detail';
+
 void main() {
   test('PlaybackState copyWith can explicitly clear a pending seek', () {
     final state = const PlaybackState(
@@ -125,6 +146,7 @@ void main() {
     final adapter = _FakePlayerAdapter();
     final progress = <Duration>[];
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -155,6 +177,7 @@ void main() {
     final adapter = _FakePlayerAdapter();
     final progress = <Duration>[];
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -178,6 +201,7 @@ void main() {
       () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
     );
@@ -199,6 +223,7 @@ void main() {
       () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
     );
@@ -220,6 +245,7 @@ void main() {
     fakeAsync((async) {
       final adapter = _FakePlayerAdapter();
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: _FakeTrackProvider(),
         delay: (_) async {},
@@ -252,6 +278,7 @@ void main() {
     final firstPause = Completer<void>();
     adapter.pauseGates.add(firstPause);
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -280,6 +307,7 @@ void main() {
       () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -307,6 +335,7 @@ void main() {
       () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -327,6 +356,7 @@ void main() {
   test('a confirmed seek resumes when resumeAfterSeek is true', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -349,6 +379,7 @@ void main() {
   test('initial playback seeks only after opening the track', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -369,6 +400,7 @@ void main() {
     final adapter = _FakePlayerAdapter();
     final progress = <(Duration, Duration)>[];
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -392,6 +424,7 @@ void main() {
     final adapter = _FakePlayerAdapter();
     var pauses = 0;
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -409,6 +442,7 @@ void main() {
   test('near-end resume restarts from zero', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -429,6 +463,7 @@ void main() {
   test('opens the initial track and enters playing on readiness', () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -448,6 +483,7 @@ void main() {
       final adapter = _FakePlayerAdapter();
       final delays = <Duration>[];
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: _FakeTrackProvider(),
         delay: (duration) async => delays.add(duration),
@@ -476,6 +512,7 @@ void main() {
     fakeAsync((async) {
       final adapter = _FakePlayerAdapter();
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: _FakeTrackProvider(),
         delay: (_) async {},
@@ -502,6 +539,7 @@ void main() {
       () async {
     final adapter = _FakePlayerAdapter();
     final controller = PlaybackSessionController(
+      messages: _messages,
       player: adapter,
       tracks: _FakeTrackProvider(),
       delay: (_) async {},
@@ -523,6 +561,7 @@ void main() {
       final provider = _FakeTrackProvider();
       final delays = <Duration>[];
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: provider,
         delay: (duration) async => delays.add(duration),
@@ -551,6 +590,7 @@ void main() {
       final adapter = _FakePlayerAdapter();
       final delays = <Duration>[];
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: _FakeTrackProvider(),
         delay: (duration) async => delays.add(duration),
@@ -576,6 +616,7 @@ void main() {
       final adapter = _FakePlayerAdapter();
       final provider = _FakeTrackProvider();
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: provider,
         delay: (_) async {},
@@ -604,6 +645,7 @@ void main() {
       final adapter = _FakePlayerAdapter();
       final pendingDelays = <Completer<void>>[];
       final controller = PlaybackSessionController(
+        messages: _messages,
         player: adapter,
         tracks: _FakeTrackProvider(),
         delay: (_) {

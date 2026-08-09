@@ -11,7 +11,9 @@ import 'package:dream_manga_reader/features/anime/anime_player_controls.dart';
 import 'package:dream_manga_reader/features/anime/playback/playback_session_controller.dart';
 import 'package:dream_manga_reader/features/anime/playback/playback_state.dart';
 import 'package:dream_manga_reader/features/anime/playback/player_adapter.dart';
+import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,6 +24,13 @@ const _track = VideoTrack(
 const _track360 = VideoTrack(
   url: 'https://media.example.test/video-360.mp4',
   quality: '360p',
+);
+const _subtitled = VideoTrack(
+  url: 'https://media.example.test/video.mp4',
+  quality: '480p',
+  subtitles: [
+    SubtitleAsset(url: 'https://media.example.test/zh.vtt', label: '简体中文'),
+  ],
 );
 
 Widget _host(PlaybackState state, {VoidCallback? onRetry}) => MaterialApp(
@@ -461,11 +470,129 @@ void main() {
     expect(loaded, ['ep-1', 'ep-2']);
     expect(find.textContaining('第二集'), findsWidgets);
   });
+
+  // 会话层一度只在换阶段(缓冲开停、播放暂停)时才发出位置,播放途中进度条是
+  // **不动的**。这里盯着读数,别再退回去。
+  testWidgets('elapsed readout follows the playback position', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 10));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    adapter.positionController.add(const Duration(seconds: 65));
+    await tester.pump();
+    expect(find.text('01:05'), findsOneWidget);
+
+    adapter.positionController.add(const Duration(seconds: 66));
+    await tester.pump();
+    expect(find.text('01:06'), findsOneWidget);
+  });
+
+  testWidgets('keyboard drives seek, volume, mute and play', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 10));
+    adapter.playingController.add(true);
+    await tester.pump();
+    adapter.positionController.add(const Duration(minutes: 2));
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(adapter.seeks.last, const Duration(minutes: 2, seconds: 10));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(adapter.seeks.last, const Duration(minutes: 2));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(adapter.volumes.last, 95);
+
+    // M 静音再按一次要回到静音前的音量,而不是傻乎乎地回到 100。
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pump();
+    expect(adapter.volumes.last, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pump();
+    expect(adapter.volumes.last, 95);
+
+    final pauses = adapter.pauseCalls;
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(adapter.pauseCalls, greaterThan(pauses));
+  });
+
+  testWidgets('vertical drag changes the volume', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 10));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(AnimePlaybackSurface)),
+    );
+    await tester.pump(const Duration(milliseconds: 40));
+    for (var step = 0; step < 4; step++) {
+      await gesture.moveBy(const Offset(0, 40)); // 往下 = 调小
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.byKey(const Key('player-adjust-badge')), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+
+    expect(adapter.volumes, isNotEmpty);
+    expect(adapter.volumes.last, lessThan(100));
+    // 竖着拖不该顺带把进度也拖了。
+    expect(adapter.seeks, isEmpty);
+  });
+
+  testWidgets('subtitle panel offers the source subtitles and applies one',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter, tracks: const [_subtitled]));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('选集 / 线路 / 设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('字幕'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('关闭字幕'), findsOneWidget);
+    await tester.tap(find.text('简体中文'));
+    await tester.pumpAndSettle();
+
+    expect(adapter.subtitlePicks.single.url,
+        'https://media.example.test/zh.vtt');
+  });
+
+  testWidgets('an episode without subtitles says so', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('选集 / 线路 / 设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('字幕'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('这一集没有字幕'), findsOneWidget);
+  });
 }
 
 Widget _playerHost(
   _PageFakeAdapter adapter, {
   List<Chapter> episodes = const [Chapter(id: 'ep-1', name: '第一集')],
+  List<VideoTrack> tracks = const [_track],
   void Function(String episodeId)? onLoadTracks,
 }) =>
     MaterialApp(
@@ -491,7 +618,7 @@ Widget _playerHost(
           tracks: _PageFakeTracks(),
           loadTracks: (episodeId) async {
             onLoadTracks?.call(episodeId);
-            return const [_track];
+            return tracks;
           },
           videoBuilder: (_) => const ColoredBox(color: Colors.black),
         ),
@@ -505,8 +632,12 @@ class _PageFakeAdapter implements PlayerAdapter {
   final durationController = StreamController<Duration>.broadcast(sync: true);
   final completedController = StreamController<bool>.broadcast(sync: true);
   final errorController = StreamController<Object>.broadcast(sync: true);
+  final subtitleController =
+      StreamController<List<SubtitleOption>>.broadcast(sync: true);
   final opened = <VideoTrack>[];
   final seeks = <Duration>[];
+  final volumes = <double>[];
+  final subtitlePicks = <SubtitleOption>[];
   int pauseCalls = 0;
   int playCalls = 0;
 
@@ -523,6 +654,8 @@ class _PageFakeAdapter implements PlayerAdapter {
   @override
   Stream<Object> get errors => errorController.stream;
   @override
+  Stream<List<SubtitleOption>> get subtitles => subtitleController.stream;
+  @override
   Future<void> open(VideoTrack track) async => opened.add(track);
   @override
   Future<void> rebuildDecoder(Duration resumePosition) async {}
@@ -536,6 +669,11 @@ class _PageFakeAdapter implements PlayerAdapter {
   @override
   Future<void> setRate(double rate) async => rates.add(rate);
   @override
+  Future<void> setVolume(double volume) async => volumes.add(volume);
+  @override
+  Future<void> setSubtitle(SubtitleOption option) async =>
+      subtitlePicks.add(option);
+  @override
   Future<void> dispose() async {
     await playingController.close();
     await bufferingController.close();
@@ -543,6 +681,7 @@ class _PageFakeAdapter implements PlayerAdapter {
     await durationController.close();
     await completedController.close();
     await errorController.close();
+    await subtitleController.close();
   }
 }
 

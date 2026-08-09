@@ -949,7 +949,7 @@ packages:
     source: hosted
     version: "2.1.6"
   screen_brightness_platform_interface:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: screen_brightness_platform_interface
       sha256: "2de60c0ba569b898950029cc1f7e9dd72bda44a22beb5054aac331cb6fce2ff2"

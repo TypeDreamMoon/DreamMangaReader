@@ -7,6 +7,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_store.dart';
 import 'package:dream_manga_reader/features/anime/playback/media_kit_player_adapter.dart';
+import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hls/hls.dart';
 
@@ -38,6 +39,8 @@ class _IntegrationBackend implements MediaKitBackend {
   @override
   Stream<Duration> get buffer => bufferController.stream;
   @override
+  Stream<List<SubtitleOption>> get subtitleTracks => const Stream.empty();
+  @override
   Duration get duration => const Duration(minutes: 24);
   @override
   Future<void> configure(VideoTrack track) async {}
@@ -55,6 +58,10 @@ class _IntegrationBackend implements MediaKitBackend {
   Future<void> seek(Duration position) async => seeks.add(position);
   @override
   Future<void> setRate(double rate) async {}
+  @override
+  Future<void> setVolume(double volume) async {}
+  @override
+  Future<void> setSubtitle(SubtitleOption option) async {}
   @override
   Future<void> dispose() async {}
 }

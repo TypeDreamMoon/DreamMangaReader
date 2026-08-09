@@ -8,6 +8,7 @@ import 'hls_cache_gateway.dart';
 import 'hls_session.dart';
 import 'mpv_network_options.dart';
 import 'player_adapter.dart';
+import 'subtitle_option.dart';
 
 abstract interface class MediaKitBackend {
   Stream<bool> get playing;
@@ -17,6 +18,7 @@ abstract interface class MediaKitBackend {
   Stream<bool> get completed;
   Stream<Object> get errors;
   Stream<Duration> get buffer;
+  Stream<List<SubtitleOption>> get subtitleTracks;
   Duration get duration;
 
   Future<void> configure(VideoTrack track);
@@ -27,6 +29,8 @@ abstract interface class MediaKitBackend {
   Future<void> play();
   Future<void> pause();
   Future<void> setRate(double rate);
+  Future<void> setVolume(double volume);
+  Future<void> setSubtitle(SubtitleOption option);
   Future<void> dispose();
 }
 
@@ -51,6 +55,20 @@ class NativeMediaKitBackend implements MediaKitBackend {
   Stream<Duration> get buffer => player.stream.buffer;
   @override
   Duration get duration => player.state.duration;
+
+  // mpv 的轨道表里混着 no/auto 两条伪轨道(=关闭/自动),那是选择动作不是字幕,
+  // 列进去会变成两条点了没反应的空条目。
+  @override
+  Stream<List<SubtitleOption>> get subtitleTracks =>
+      player.stream.tracks.map((tracks) => [
+            for (final track in tracks.subtitle)
+              if (track.id != 'no' && track.id != 'auto')
+                SubtitleOption(
+                  id: track.id,
+                  label: track.title ?? track.language ?? '',
+                  language: track.language,
+                ),
+          ]);
 
   @override
   Future<void> configure(VideoTrack track) async {
@@ -103,6 +121,22 @@ class NativeMediaKitBackend implements MediaKitBackend {
   @override
   Future<void> setRate(double rate) => player.setRate(rate);
   @override
+  Future<void> setVolume(double volume) => player.setVolume(volume);
+
+  @override
+  Future<void> setSubtitle(SubtitleOption option) => player.setSubtitleTrack(
+        option.isOff
+            ? SubtitleTrack.no()
+            : option.isExternal
+                ? SubtitleTrack.uri(
+                    option.url!,
+                    title: option.label.isEmpty ? null : option.label,
+                    language: option.language,
+                  )
+                : SubtitleTrack(option.id, option.label, option.language),
+      );
+
+  @override
   Future<void> dispose() => player.dispose();
 }
 
@@ -126,6 +160,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   final List<StreamSubscription<Object?>> _subscriptions = [];
   HlsSession? _session;
   VideoTrack? _originalTrack;
+  SubtitleOption? _subtitle;
   String? _pendingAudioUrl;
   Timer? _audioTimer;
   bool _audioAttached = false;
@@ -145,12 +180,16 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   Stream<bool> get completed => _backend.completed;
   @override
   Stream<Object> get errors => _errorController.stream;
+  @override
+  Stream<List<SubtitleOption>> get subtitles => _backend.subtitleTracks;
 
   @override
   Future<void> open(VideoTrack track) async {
     if (_originalTrack != null) await _resetAudioAttachment();
     await _closeSession();
     _position = Duration.zero;
+    // 换集就把字幕选择清掉:上一集的轨道号在新的一集里指向别的东西。
+    _subtitle = null;
     await _openTrack(track);
   }
 
@@ -162,6 +201,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     await _backend.configure(track);
     if (!track.hls) {
       await _backend.open(track);
+      await _restoreSubtitle();
       return;
     }
     final session = await _gateway.open(track, authScope: authScope);
@@ -171,6 +211,21 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
       quality: track.quality,
       hls: true,
     ));
+    await _restoreSubtitle();
+  }
+
+  /// 重开(换线路 / 自动恢复 / 网关回退)之后把字幕挂回去。
+  ///
+  /// 只补外挂字幕:它的标识就是 URL,换个流也还指向同一个文件。内嵌轨道的 id
+  /// 是 mpv 按当前文件现编的,拿旧号去点新流是错的,宁可让它回到流自己的默认。
+  Future<void> _restoreSubtitle() async {
+    final subtitle = _subtitle;
+    if (subtitle == null || !subtitle.isExternal) return;
+    try {
+      await _backend.setSubtitle(subtitle);
+    } on Object {
+      // 字幕挂不上不该把整个重开流程带崩 —— 画面比字幕重要。
+    }
   }
 
   @override
@@ -202,6 +257,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
       _pendingAudioUrl = track.audioUrl;
       await _backend.configure(track);
       await _backend.open(track);
+      await _restoreSubtitle();
       if (_position > Duration.zero) await _backend.seek(_position);
     } catch (error) {
       if (!_disposed) {
@@ -266,6 +322,14 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   Future<void> pause() => _backend.pause();
   @override
   Future<void> setRate(double rate) => _backend.setRate(rate);
+  @override
+  Future<void> setVolume(double volume) => _backend.setVolume(volume);
+
+  @override
+  Future<void> setSubtitle(SubtitleOption option) {
+    _subtitle = option.isOff ? null : option;
+    return _backend.setSubtitle(option);
+  }
 
   Future<void> _closeSession() async {
     final session = _session;

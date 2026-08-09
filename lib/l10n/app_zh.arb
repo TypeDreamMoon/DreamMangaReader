@@ -1254,6 +1254,38 @@
   "player_fitStretch": "拉伸",
   "player_speed": "倍速播放",
   "player_aspect": "画面比例",
+  "player_boosting": "{rate}x 快进中",
+  "@player_boosting": {
+    "placeholders": {
+      "rate": {}
+    }
+  },
+  "player_recovering": "正在恢复播放（{attempt}/{total}）",
+  "@player_recovering": {
+    "placeholders": {
+      "attempt": {},
+      "total": {}
+    }
+  },
+  "player_recoverFailed": "播放恢复失败:{error}",
+  "@player_recoverFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "player_bufferTimeout": "播放缓冲超时",
+  "player_volume": "音量",
+  "player_brightness": "亮度",
+  "player_muted": "已静音",
+  "player_tabSubtitles": "字幕",
+  "player_subtitleOff": "关闭字幕",
+  "player_noSubtitles": "这一集没有字幕",
+  "player_subtitleN": "字幕 {n}",
+  "@player_subtitleN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
   "bili_generatingQr": "正在生成二维码…",
   "bili_scanWithApp": "用哔哩哔哩 App 扫码登录",
   "bili_qrFailed": "二维码生成失败,点下方刷新:{error}",
