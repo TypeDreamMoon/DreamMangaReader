@@ -1196,6 +1196,14 @@
     }
   },
   "animeFavorite": "收藏番剧",
+  "anime_episodes": "分集",
+  "anime_episodesN": "{n} 集",
+  "anime_noEpisodes": "没有分集",
+  "@anime_episodesN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

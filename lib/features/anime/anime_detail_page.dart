@@ -349,8 +349,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
               ),
               child: DetailBody(
                 info: [_hero(p), _cta(p), _bangumiCard(), _synopsis(p)],
-                listing: (_) => DetailListing.slivers(
-                    [SliverToBoxAdapter(child: _episodeSection(p))]),
+                listing: (_) => DetailListing.slivers(_episodeSlivers(p)),
               ),
             ),
     );
@@ -507,63 +506,119 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     );
   }
 
-  Widget _episodeSection(AppPalette p) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  /// 分集列表。与漫画章节表 / 小说目录同一副长相:表头(带集数)+ 一列描边行。
+  /// 原来是一排数字方块(Wrap 网格)—— 长番几百集时既难扫读也难点,而且集名根本放不下。
+  ///
+  /// 走惰性 sliver:上百集也只建可见行(和漫画章节表同一个理由)。
+  List<Widget> _episodeSlivers(AppPalette p) {
+    final acc = coverAccent;
+    final header = SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+        child: Row(
           children: [
-            AppSectionHeading('分集', fontSize: 18),
-            const SizedBox(height: 12),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 40),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_episodes.isEmpty)
-              const EmptyState(
-                title: '没有分集',
-                padding: EdgeInsets.symmetric(vertical: 30, horizontal: 24),
-              )
-            else
-              _episodeGrid(p),
-          ],
-        ),
-      );
-
-  Widget _episodeGrid(AppPalette p) => Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (var i = 0; i < _episodes.length; i++)
-            ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 82, maxWidth: 220),
-              child: AppCard(
-                onTap: () => _play(i),
-                radius: context.radius,
-                padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        _epLabel(_episodes[i], i),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: p.textPrimary,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    _downloadControl(p, _episodes[i]),
-                  ],
-                ),
+            Expanded(
+              child: Text(
+                context.l10n.anime_episodes,
+                style: TextStyle(
+                    // 与漫画/小说表头同款:标题色向封面主色偏一点,融进页面。
+                    color: Color.lerp(p.textPrimary, acc, 0.4),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13),
               ),
             ),
-        ],
-      );
+            if (_episodes.isNotEmpty)
+              Text(context.l10n.anime_episodesN(_episodes.length),
+                  style: TextStyle(color: p.textMuted, fontSize: 12.5)),
+          ],
+        ),
+      ),
+    );
+    if (_loading) {
+      return [
+        header,
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        ),
+      ];
+    }
+    if (_episodes.isEmpty) {
+      return [
+        header,
+        SliverToBoxAdapter(
+          child: EmptyState(
+            title: context.l10n.anime_noEpisodes,
+            padding:
+                const EdgeInsets.symmetric(vertical: 30, horizontal: 24),
+          ),
+        ),
+      ];
+    }
+    // 续播的那一集高亮(小说目录标当前章的同一处理)。
+    final activeId = AnimeLibraryScope.maybeOf(context)
+        ?.historyFor(widget.meta.id, widget.anime.id)
+        ?.episodeId;
+    return [
+      header,
+      SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        sliver: SliverList.builder(
+          itemCount: _episodes.length,
+          itemBuilder: (context, index) => _episodeRow(p, index, activeId),
+        ),
+      ),
+    ];
+  }
+
+  Widget _episodeRow(AppPalette p, int index, String? activeId) {
+    final episode = _episodes[index];
+    final active = episode.id == activeId;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: GestureDetector(
+        onTap: () => _play(index),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(context.radius),
+            border: Border.all(
+                color: active ? p.accent.withValues(alpha: 0.35) : p.line),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 34,
+                child: Text('${index + 1}',
+                    style: TextStyle(
+                        color: p.textMuted,
+                        fontSize: 11,
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+              ),
+              Expanded(
+                child: Text(_epTitle(episode, index),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: active ? p.accentSoft : p.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5)),
+              ),
+              const SizedBox(width: 8),
+              if (active) ...[
+                Icon(Icons.play_circle_rounded, size: 15, color: p.accent),
+                const SizedBox(width: 8),
+              ],
+              _downloadControl(p, episode),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _downloadControl(AppPalette p, Chapter episode) {
     final downloads = AnimeDownloadScope.read(context);
@@ -611,14 +666,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     );
   }
 
-  // 集标签:优先数字集号,否则用名字(截断)。
-  String _epLabel(Chapter c, int i) {
-    final n = c.number;
-    if (n != null) {
-      return n == n.roundToDouble() ? '${n.toInt()}' : '$n';
-    }
+  /// 列表行的集名:优先源给的名字,没有才退回集号。
+  /// (原来的方块网格是反过来的 —— 一个格子只放得下一个数字。)
+  String _epTitle(Chapter c, int i) {
     final name = c.name.trim();
-    return name.isEmpty ? '${i + 1}' : name;
+    if (name.isNotEmpty) return name;
+    final n = c.number;
+    if (n != null) return n == n.roundToDouble() ? '${n.toInt()}' : '$n';
+    return '${i + 1}';
   }
 
   Widget _errorView(AppPalette p) => Center(
