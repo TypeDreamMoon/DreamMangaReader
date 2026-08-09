@@ -324,36 +324,41 @@ class _LibraryPageState extends State<LibraryPage> {
     final history = _query.isEmpty
         ? _history(mangaStore, novelStore, animeStore)
         : const <UnifiedHistoryItem>[];
-    // 内容延伸到毛玻璃标题栏之后 → 标题栏能糊到身后背景图;body 手动留出顶部内边距。
-    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
+    final appBar = GlassTitleBar(
+      // 类型 tab 贴在标题下沿,和毛玻璃连成一体(不再是悬在内容上方的一排 chip)。
+      bottom: _kindTabs(all),
+      title: Text(context.l10n.navBookshelf,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+      actions: [
+        IconButton(
+          tooltip: context.l10n.shelf_searchInFavsTooltip,
+          onPressed: () => setState(() {
+            _showSearch = !_showSearch;
+            if (!_showSearch) {
+              _searchCtrl.clear();
+              _query = '';
+            }
+          }),
+          icon: Icon(
+              _showSearch ? Icons.search_off_rounded : Icons.search_rounded),
+        ),
+        const NovelImportButton(compact: true),
+        IconButton(
+          tooltip: context.l10n.shelf_historyTooltip,
+          onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const HistoryPage())),
+          icon: const Icon(Icons.history_rounded),
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+    // 内容延伸到毛玻璃标题栏之后 → 标题栏能糊到身后背景图;body 手动留出顶部内边距
+    // (标题栏 + 类型 tab 的总高,别写死 kToolbarHeight)。
+    final topInset =
+        MediaQuery.of(context).viewPadding.top + appBar.preferredSize.height;
     return Scaffold(
       extendBodyBehindAppBar: true,
-      appBar: GlassTitleBar(
-        title: Text(context.l10n.navBookshelf,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
-        actions: [
-          IconButton(
-            tooltip: context.l10n.shelf_searchInFavsTooltip,
-            onPressed: () => setState(() {
-              _showSearch = !_showSearch;
-              if (!_showSearch) {
-                _searchCtrl.clear();
-                _query = '';
-              }
-            }),
-            icon: Icon(
-                _showSearch ? Icons.search_off_rounded : Icons.search_rounded),
-          ),
-          const NovelImportButton(compact: true),
-          IconButton(
-            tooltip: context.l10n.shelf_historyTooltip,
-            onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const HistoryPage())),
-            icon: const Icon(Icons.history_rounded),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
+      appBar: appBar,
       // 内容自下而上升起(标题栏则自上而下落,合成「上下对开」入场)。
       body: EntranceSlide(
         begin: const Offset(0, 0.06),
@@ -361,7 +366,6 @@ class _LibraryPageState extends State<LibraryPage> {
           padding: EdgeInsets.only(top: topInset),
           child: Column(
             children: [
-              _kindFilter(p, all),
               // 搜索框展开/收起用高度动画,避免书架内容硬跳。
               AnimatedSize(
                 duration: LibraryStore.animationsEnabled
@@ -420,67 +424,33 @@ class _LibraryPageState extends State<LibraryPage> {
 
   // ---- 类型筛选 ----
 
-  Widget _kindFilter(AppPalette p, List<ShelfItem> all) {
+  /// 类型 tab(全部 / 漫画 / 小说 / 番剧)。计数取自未筛选的全量投影,
+  /// 所以切档时数字不会跟着变 —— 它答的是「这类我有多少」,不是「当前显示多少」。
+  PreferredSizeWidget _kindTabs(List<ShelfItem> all) {
     final counts = <ShelfKind, int>{};
     for (final item in all) {
       counts[item.kind] = (counts[item.kind] ?? 0) + 1;
     }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _kindChip(p, null, context.l10n.libraryKindAll, Icons.apps_rounded,
-              all.length),
+    AppUnderlineTab<ShelfKind?> tab(ShelfKind? kind, String label, int count) =>
+        AppUnderlineTab(
+          value: kind,
+          label: label,
+          count: count > 0 ? count : null,
+          tabKey: ValueKey('shelf-kind-${kind?.name ?? 'all'}'),
+        );
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(38),
+      child: AppUnderlineTabs<ShelfKind?>(
+        selected: _kind,
+        onSelected: (kind) {
+          if (_kind == kind) return;
+          setState(() => _kind = kind);
+        },
+        tabs: [
+          tab(null, context.l10n.libraryKindAll, all.length),
           for (final kind in ShelfKind.values)
-            _kindChip(p, kind, shelfKindLabel(context, kind),
-                shelfKindIcon(kind), counts[kind] ?? 0),
+            tab(kind, shelfKindLabel(context, kind), counts[kind] ?? 0),
         ],
-      ),
-    );
-  }
-
-  Widget _kindChip(
-      AppPalette p, ShelfKind? kind, String label, IconData icon, int count) {
-    final sel = _kind == kind;
-    return GestureDetector(
-      key: ValueKey('shelf-kind-${kind?.name ?? 'all'}'),
-      onTap: () {
-        if (_kind == kind) return;
-        setState(() => _kind = kind);
-      },
-      child: AnimatedContainer(
-        duration: LibraryStore.animationsEnabled
-            ? const Duration(milliseconds: 160)
-            : Duration.zero,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: sel ? p.accent.withValues(alpha: 0.16) : p.surface,
-          borderRadius: BorderRadius.circular(context.radius),
-          border:
-              Border.all(color: sel ? p.accent : p.line, width: sel ? 1.5 : 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15, color: sel ? p.accent : p.textMuted),
-            const SizedBox(width: 5),
-            Text(label,
-                style: TextStyle(
-                    color: sel ? p.accent : p.textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
-            if (count > 0) ...[
-              const SizedBox(width: 6),
-              Text('$count',
-                  style: TextStyle(
-                      color: sel ? p.accent : p.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700)),
-            ],
-          ],
-        ),
       ),
     );
   }

@@ -426,15 +426,13 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     final p = context.palette;
     final store = LibraryScope.of(context);
     final columns = store.gridColumns;
-    final topInset = MediaQuery.of(context).viewPadding.top + kToolbarHeight;
     // 翻译回退命中:当前在用译名(≠原文)且有结果 → 提示用了哪个译名。
     final fallbackVia =
         (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)
             ? _query
             : null;
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: GlassTitleBar(
+    final appBar = GlassTitleBar(
+        bottom: _kindTabs(),
         title: Text(context.l10n.navDiscover,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
         actions: [
@@ -474,14 +472,19 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           ],
           const SizedBox(width: 8),
         ],
-      ),
+      );
+    // body 手动留出「标题栏 + 类型 tab」的总高(内容延伸到毛玻璃之后)。
+    final topInset =
+        MediaQuery.of(context).viewPadding.top + appBar.preferredSize.height;
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: appBar,
       body: EntranceSlide(
         begin: const Offset(0, 0.06),
         child: Padding(
           padding: EdgeInsets.only(top: topInset),
           child: Column(
         children: [
-          _kindSwitcher(p),
           if (_kind == ContentKind.manga) ...[
             // 源选择器默认隐藏(直接用混合源);设置里打开才显示。
             if (store.showSourcePicker) _sourcePicker(p, store),
@@ -533,63 +536,37 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     );
   }
 
-  // 内容类型切换:漫画 / 番剧 / 小说。
-  Widget _kindSwitcher(AppPalette p) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-        child: Row(
-          children: [
-            for (final k in ContentKind.values) ...[
-              _kindChip(p, k),
-              const SizedBox(width: 8),
-            ],
+  // 内容类型切换:漫画 / 番剧 / 小说。与书架的类型 tab 同一副长相(下划线 tab =
+  // 切内容视图),贴在毛玻璃标题栏下沿。
+  PreferredSizeWidget _kindTabs() => PreferredSize(
+        preferredSize: const Size.fromHeight(38),
+        child: AppUnderlineTabs<ContentKind>(
+          selected: _kind,
+          onSelected: _selectKind,
+          tabs: [
+            for (final k in ContentKind.values)
+              AppUnderlineTab(value: k, label: k.label),
           ],
         ),
       );
 
-  Widget _kindChip(AppPalette p, ContentKind k) {
-    final sel = _kind == k;
-    return GestureDetector(
-      // 换档收起搜索栏并清掉**共享**搜索态。_query/_origQuery/_searchCtrl 被漫画网格与番剧
-      // browser 共用;若不清,漫画分页(_loadMore 读 _query)会把另一档的搜索词接着当搜索翻页,
-      // 悄悄把发现流变成搜索结果。清掉后再 _reset() 让漫画列表回到干净的浏览态。
-      onTap: () {
-        if (_kind == k) return;
-        final hadQuery = _query.isNotEmpty;
-        setState(() {
-          _kind = k;
-          _showSearch = false;
-          if (hadQuery) {
-            _query = '';
-            _origQuery = '';
-            _fallbackQueue = null;
-            _searchCtrl.clear();
-          }
-        });
-        if (hadQuery) _reset(); // 漫画列表可能停在旧搜索结果 → 重置回发现浏览
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: sel ? p.accent.withValues(alpha: 0.16) : p.surface,
-          borderRadius: BorderRadius.circular(context.radius),
-          border:
-              Border.all(color: sel ? p.accent : p.line, width: sel ? 1.5 : 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(k.icon, size: 15, color: sel ? p.accent : p.textMuted),
-            const SizedBox(width: 5),
-            Text(k.label,
-                style: TextStyle(
-                    color: sel ? p.accent : p.textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
-          ],
-        ),
-      ),
-    );
+  /// 换档收起搜索栏并清掉**共享**搜索态。_query/_origQuery/_searchCtrl 被漫画网格与番剧
+  /// browser 共用;若不清,漫画分页(_loadMore 读 _query)会把另一档的搜索词接着当搜索翻页,
+  /// 悄悄把发现流变成搜索结果。清掉后再 _reset() 让漫画列表回到干净的浏览态。
+  void _selectKind(ContentKind k) {
+    if (_kind == k) return;
+    final hadQuery = _query.isNotEmpty;
+    setState(() {
+      _kind = k;
+      _showSearch = false;
+      if (hadQuery) {
+        _query = '';
+        _origQuery = '';
+        _fallbackQueue = null;
+        _searchCtrl.clear();
+      }
+    });
+    if (hadQuery) _reset(); // 漫画列表可能停在旧搜索结果 → 重置回发现浏览
   }
 
   Widget _comingSoon(AppPalette p, ContentKind kind) => Center(
