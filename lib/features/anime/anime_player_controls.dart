@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
+
 class AnimePlayerControls extends StatefulWidget {
   const AnimePlayerControls({
     super.key,
@@ -133,19 +135,19 @@ class _AnimePlayerControlsState extends State<AnimePlayerControls> {
                 child: Row(
                   children: [
                     _button(
-                      tooltip: widget.playing ? '暂停' : '播放',
+                      tooltip: widget.playing ? context.l10n.player_pause : context.l10n.player_play,
                       icon: widget.playing
                           ? Icons.pause_rounded
                           : Icons.play_arrow_rounded,
                       onPressed: widget.onPlayPause,
                     ),
                     _button(
-                      tooltip: '后退 10 秒',
+                      tooltip: context.l10n.player_back10,
                       icon: Icons.replay_10_rounded,
                       onPressed: enabled ? () => _shortSeek(-10) : null,
                     ),
                     _button(
-                      tooltip: '前进 10 秒',
+                      tooltip: context.l10n.player_forward10,
                       icon: Icons.forward_10_rounded,
                       onPressed: enabled ? () => _shortSeek(10) : null,
                     ),
@@ -162,12 +164,12 @@ class _AnimePlayerControlsState extends State<AnimePlayerControls> {
                       ),
                     const Spacer(),
                     _button(
-                      tooltip: '播放选项',
+                      tooltip: context.l10n.player_options,
                       icon: Icons.playlist_play_rounded,
                       onPressed: widget.onOpenPanel,
                     ),
                     _button(
-                      tooltip: '全屏',
+                      tooltip: context.l10n.player_fullscreen,
                       icon: Icons.fullscreen_rounded,
                       onPressed: widget.onFullscreen,
                     ),

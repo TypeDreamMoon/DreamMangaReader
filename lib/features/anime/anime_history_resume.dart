@@ -25,17 +25,20 @@ Future<void> openAnimeHistory(
   AnimeHistoryPlayerBuilder playerBuilder = _buildPlayer,
 }) async {
   MangaSource? source;
+  // 两条错误文案都在 await 之前取好 —— 拿到分集时 context 可能已经失效。
+  final sourceUnavailable = context.l10n.anime_sourceUnavailable;
+  final noPlayableEpisode = context.l10n.anime_noPlayableEpisode;
   try {
     final catalog = sources ?? registeredSources;
     final meta = catalog
         .where(
             (candidate) => candidate.id == entry.sourceId && candidate.isAnime)
         .firstOrNull;
-    if (meta == null) throw StateError('番剧源不可用');
+    if (meta == null) throw StateError(sourceUnavailable);
 
     source = sourceBuilder(meta);
     final episodes = await _loadEpisodes(source, entry.animeId);
-    if (episodes.isEmpty) throw StateError('没有可播放的分集');
+    if (episodes.isEmpty) throw StateError(noPlayableEpisode);
     final matchingIndex =
         episodes.indexWhere((episode) => episode.id == entry.episodeId);
     final index = matchingIndex >= 0

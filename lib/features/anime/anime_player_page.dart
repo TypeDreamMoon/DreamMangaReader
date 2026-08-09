@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' hide VideoTrack; // 用本项目的 VideoTrack
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -50,8 +51,8 @@ class AnimePlaybackSurface extends StatelessWidget {
               const Icon(Icons.error_outline_rounded,
                   color: Colors.white70, size: 42),
               const SizedBox(height: 12),
-              const Text('播放失败',
-                  style: TextStyle(
+              Text(context.l10n.player_failed,
+                  style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Padding(
@@ -66,7 +67,7 @@ class AnimePlaybackSurface extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text('重试'),
+                label: Text(context.l10n.retry),
               ),
             ],
           ),
@@ -75,10 +76,10 @@ class AnimePlaybackSurface extends StatelessWidget {
     }
 
     final status = switch (state.phase) {
-      PlaybackPhase.resolving => '正在获取播放地址',
-      PlaybackPhase.opening => '正在连接视频',
-      PlaybackPhase.buffering => '正在缓冲',
-      PlaybackPhase.recovering => state.message ?? '正在恢复播放',
+      PlaybackPhase.resolving => context.l10n.player_resolvingUrl,
+      PlaybackPhase.opening => context.l10n.player_connecting,
+      PlaybackPhase.buffering => context.l10n.player_buffering,
+      PlaybackPhase.recovering => state.message ?? context.l10n.player_resuming,
       _ => null,
     };
     return Stack(
@@ -268,7 +269,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _library = AnimeLibraryScope.maybeRead(context);
+    // _load() 由 initState 触发,那时还读不到 InheritedWidget(l10n 也是)。
+    // 这里缓存下来给异步流程用 —— didChangeDependencies 紧接 initState 跑,
+    // 早于 _load 里第一个 await 恢复,所以取到时一定已经有值。
+    _noRouteMessage = context.l10n.player_noRoute;
   }
+
+  String? _noRouteMessage;
 
   /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
   void _enterImmersiveLandscape() {
@@ -339,7 +346,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         if (manifest == null) return null;
         return VideoTrack(
           url: Uri.file(manifest, windows: Platform.isWindows).toString(),
-          quality: '离线',
+          quality: context.l10n.anime_offline,
         );
       }
 
@@ -379,7 +386,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (!_disposed && mounted) {
         setState(() => _playback = PlaybackState(
               phase: PlaybackPhase.failed,
-              message: '播放器初始化失败：$error',
+              message: context.l10n.player_initFailed('$error'),
             ));
       }
     }
@@ -527,7 +534,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       final local = _localTrackForEpisode?.call(_ep.id);
       final tracks = local == null ? await _loadTracks!(_ep.id) : [local];
       if (_disposed || generation != _loadGeneration) return;
-      if (tracks.isEmpty) throw StateError('没有解析到可播放的线路');
+      if (tracks.isEmpty) throw StateError(_noRouteMessage ?? '');
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
@@ -700,7 +707,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
             child: Row(
               children: [
                 IconButton(
-                  tooltip: '返回',
+                  tooltip: context.l10n.player_back,
                   icon: const Icon(Icons.arrow_back_rounded),
                   color: Colors.white,
                   onPressed: () => Navigator.of(context).maybePop(),
@@ -727,7 +734,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                             fontWeight: FontWeight.w600)),
                   ),
                 IconButton(
-                  tooltip: '选集 / 线路 / 设置',
+                  tooltip: context.l10n.player_menuTooltip,
                   icon: const Icon(Icons.playlist_play_rounded),
                   color: Colors.white,
                   onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
@@ -789,7 +796,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                   TextButton.icon(
                     onPressed: hasPrev ? () => _go(-1) : null,
                     icon: const Icon(Icons.skip_previous_rounded, size: 18),
-                    label: const Text('上一集'),
+                    label: Text(context.l10n.player_prevEpisode),
                     style:
                         TextButton.styleFrom(foregroundColor: Colors.white70),
                   ),
@@ -797,7 +804,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                   TextButton.icon(
                     onPressed: hasNext ? () => _go(1) : null,
                     icon: const Icon(Icons.skip_next_rounded, size: 18),
-                    label: const Text('下一集'),
+                    label: Text(context.l10n.player_nextEpisode),
                     style:
                         TextButton.styleFrom(foregroundColor: Colors.white70),
                   ),
@@ -867,9 +874,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
               child: Row(
                 children: [
-                  _tabBtn('选集', 0),
-                  _tabBtn('线路', 1),
-                  _tabBtn('设置', 2),
+                  _tabBtn(context.l10n.player_tabEpisodes, 0),
+                  _tabBtn(context.l10n.player_tabRoutes, 1),
+                  _tabBtn(context.l10n.player_tabSettings, 2),
                 ],
               ),
             ),
@@ -959,9 +966,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   // —— 线路 / 清晰度 ——
   Widget _panelTracks() {
     if (_tracks.isEmpty) {
-      return const Center(
-          child: Text('暂无可选线路',
-              style: TextStyle(color: Colors.white38, fontSize: 13)));
+      return Center(
+          child: Text(context.l10n.player_noRoutes,
+              style: const TextStyle(color: Colors.white38, fontSize: 13)));
     }
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -976,7 +983,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           onTap: () => _switchTrack(t),
           leading: Icon(on ? Icons.check_circle_rounded : Icons.hd_outlined,
               color: on ? _accent : Colors.white38, size: 20),
-          title: Text(t.quality.isEmpty ? '线路 ${i + 1}' : t.quality,
+          title: Text(t.quality.isEmpty ? context.l10n.player_routeN(i + 1) : t.quality,
               style: TextStyle(
                   color: on ? _accent : Colors.white,
                   fontSize: 14,
@@ -989,15 +996,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   // —— 设置:倍速 + 画面比例 ——
   Widget _panelSettings() {
     const rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-    const fits = [
-      ('适应', BoxFit.contain),
-      ('填充', BoxFit.cover),
-      ('拉伸', BoxFit.fill),
+    final fits = [
+      (context.l10n.player_fitContain, BoxFit.contain),
+      (context.l10n.player_fitCover, BoxFit.cover),
+      (context.l10n.player_fitStretch, BoxFit.fill),
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        const _PanelLabel('倍速播放'),
+        _PanelLabel(context.l10n.player_speed),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
@@ -1008,7 +1015,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           ],
         ),
         const SizedBox(height: 24),
-        const _PanelLabel('画面比例'),
+        _PanelLabel(context.l10n.player_aspect),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,

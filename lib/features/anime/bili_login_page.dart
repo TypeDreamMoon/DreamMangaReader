@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bili/bili_api.dart';
 import '../../core/bili/bili_auth.dart';
@@ -21,7 +22,9 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
   String? _key;
   Timer? _poll;
   BiliQrState _state = BiliQrState.waiting;
-  String _hint = '正在生成二维码…';
+  /// 当前提示;null = 还没有具体状态,读的时候回退到「正在生成二维码…」
+  /// (字段初始化拿不到 context,l10n 只能在 build 里取)。
+  String? _hint;
   bool _busy = false;
 
   @override
@@ -41,7 +44,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
     setState(() {
       _qrUrl = null;
       _state = BiliQrState.waiting;
-      _hint = '正在生成二维码…';
+      _hint = null;
       _busy = true;
     });
     try {
@@ -50,7 +53,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
       setState(() {
         _qrUrl = qr.url;
         _key = qr.key;
-        _hint = '用哔哩哔哩 App 扫码登录';
+        _hint = context.l10n.bili_scanWithApp;
         _busy = false;
       });
       _poll = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
@@ -59,7 +62,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
       setState(() {
         // 复用 expired 态:露出「刷新二维码」按钮 + 错误图标,避免卡在无限转圈无从重试。
         _state = BiliQrState.expired;
-        _hint = '二维码生成失败,点下方刷新:$e';
+        _hint = context.l10n.bili_qrFailed('$e');
         _busy = false;
       });
     }
@@ -83,14 +86,14 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
           if (mounted) Navigator.of(context).pop(true);
           return;
         case BiliQrState.scanned:
-          _hint = '已扫描,请在手机上确认登录';
+          _hint = context.l10n.bili_scannedConfirm;
           break;
         case BiliQrState.waiting:
-          _hint = '用哔哩哔哩 App 扫码登录';
+          _hint = context.l10n.bili_scanWithApp;
           break;
         case BiliQrState.expired:
           _poll?.cancel();
-          _hint = '二维码已失效,点下方刷新';
+          _hint = context.l10n.bili_qrExpired;
           break;
         case BiliQrState.error:
           // 偶发网络抖动:不打断,继续下一轮。
@@ -111,7 +114,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
         backgroundColor: p.background,
         foregroundColor: p.textPrimary,
         elevation: 0,
-        title: const Text('登录哔哩哔哩'),
+        title: Text(context.l10n.bili_loginTitle),
       ),
       body: Center(
         child: Padding(
@@ -166,7 +169,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
                                     const Icon(Icons.refresh_rounded,
                                         color: Colors.black54, size: 30),
                                     const SizedBox(height: 4),
-                                    Text('二维码已失效',
+                                    Text(context.l10n.bili_qrExpiredShort,
                                         style: TextStyle(
                                             color: Colors.black.withValues(
                                                 alpha: 0.7),
@@ -180,7 +183,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
               ),
               const SizedBox(height: 18),
               Text(
-                _hint,
+                _hint ?? context.l10n.bili_generatingQr,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: _state == BiliQrState.scanned
@@ -194,10 +197,10 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
                 FilledButton.icon(
                   onPressed: _busy ? null : _regenerate,
                   icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('刷新二维码'),
+                  label: Text(context.l10n.bili_refreshQr),
                 ),
               const SizedBox(height: 8),
-              Text('登录信息仅存本机(安全存储),不会同步或导出。',
+              Text(context.l10n.bili_localOnly,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.textMuted, fontSize: 11)),
             ],

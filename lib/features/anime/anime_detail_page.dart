@@ -149,7 +149,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     if (!mounted) return;
     if (info == null) {
       setState(() => _bgmLoading = false);
-      showAppNotify(context, '加载条目失败', kind: AppNotifyKind.error);
+      showAppNotify(context, context.l10n.anime_loadItemFailed, kind: AppNotifyKind.error);
       return;
     }
     LibraryScope.read(context).setBangumiBinding(_bgmKey, picked.id);
@@ -232,16 +232,16 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('下载全部分集'),
+        title: Text(context.l10n.anime_downloadAllEpisodes),
         content: Text('将 $pending.length 集加入下载队列。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(context.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('下载'),
+            child: Text(context.l10n.detail_download),
           ),
         ],
       ),
@@ -312,7 +312,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
           IconButton(
             key: const Key('anime-download-all'),
             onPressed: !_loading && _episodes.isNotEmpty ? _downloadAll : null,
-            tooltip: '下载全部分集',
+            tooltip: context.l10n.anime_downloadAllEpisodes,
             icon: const Icon(Icons.download_for_offline_rounded),
           ),
           const SizedBox(width: 4),
@@ -654,7 +654,9 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     return IconButton(
       key: Key('anime-download-${episode.id}'),
       onPressed: () => _queueDownload(episode),
-      tooltip: failed ? '重试下载' : '下载本集',
+      tooltip: failed
+          ? context.l10n.anime_retryDownload
+          : context.l10n.anime_downloadEpisode,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints.tightFor(width: 32, height: 32),
@@ -684,7 +686,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
             children: [
               Icon(Icons.cloud_off_rounded, size: 40, color: p.textMuted),
               const SizedBox(height: 12),
-              Text('加载失败',
+              Text(context.l10n.loadFailed,
                   style: TextStyle(
                       color: p.textPrimary,
                       fontSize: 15,
@@ -694,7 +696,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.textMuted, fontSize: 12)),
               const SizedBox(height: 14),
-              FilledButton(onPressed: _load, child: const Text('重试')),
+              FilledButton(onPressed: _load, child: Text(context.l10n.retry)),
             ],
           ),
         ),

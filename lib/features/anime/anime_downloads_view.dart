@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/app_strings.dart';
 import '../../app/anime_download_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/source/models.dart';
@@ -24,10 +25,10 @@ class AnimeDownloadsView extends StatelessWidget {
       ..sort((left, right) =>
           right.first.completedAt.compareTo(left.first.completedAt));
     if (entries.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.movie_outlined,
         iconSize: 48,
-        title: '暂无已下载番剧',
+        title: context.l10n.anime_noDownloads,
         titleSize: 16,
         dense: true,
       );
@@ -135,7 +136,7 @@ class _AnimeDownloadGroup extends StatelessWidget {
             .firstOrNull ??
         SourceMeta(
           id: first.sourceId,
-          name: '离线',
+          name: context.l10n.anime_offline,
           script: '',
           kind: 'anime',
         );

@@ -1,3 +1,4 @@
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:dream_manga_reader/features/anime/anime_player_controls.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,9 @@ void main() {
     final events = <String>[];
     Duration? committed;
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(
         body: AnimePlayerControls(
           position: const Duration(minutes: 2),
@@ -37,6 +41,9 @@ void main() {
   testWidgets('dragging while paused never requests resume', (tester) async {
     bool? resumeAfterSeek;
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(
         body: AnimePlayerControls(
           position: const Duration(minutes: 4),
@@ -61,6 +68,9 @@ void main() {
   testWidgets('short seek clamps to the media boundaries', (tester) async {
     final seeks = <Duration>[];
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(
         body: AnimePlayerControls(
           position: const Duration(seconds: 5),

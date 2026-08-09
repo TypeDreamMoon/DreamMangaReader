@@ -1,3 +1,4 @@
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -24,6 +25,9 @@ const _track360 = VideoTrack(
 );
 
 Widget _host(PlaybackState state, {VoidCallback? onRetry}) => MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(
         body: AnimePlaybackSurface(
           state: state,
@@ -52,6 +56,9 @@ void main() {
     );
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -98,6 +105,9 @@ void main() {
     );
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -208,6 +218,9 @@ void main() {
       ),
     );
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -249,6 +262,9 @@ void main() {
       videoBuilder: (_) => const ColoredBox(color: Colors.black),
     );
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -302,6 +318,9 @@ void main() {
     );
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -335,6 +354,9 @@ void main() {
       videoBuilder: (_) => const ColoredBox(color: Colors.black),
     );
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),
@@ -447,6 +469,9 @@ Widget _playerHost(
   void Function(String episodeId)? onLoadTracks,
 }) =>
     MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: ThemeData(extensions: const [
         AppTokens(palette: AppPalette.dark),
       ]),

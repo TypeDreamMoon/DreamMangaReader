@@ -1203,6 +1203,71 @@
     }
   },
   "animeFavorite": "收藏番剧",
+  "anime_biliLoggedIn": "已登录哔哩哔哩",
+  "anime_biliLoginHint": "登录后可看追番、解锁大会员清晰度",
+  "anime_biliScanLogin": "扫码登录",
+  "anime_signOut": "退出",
+  "anime_noSources": "还没有可用的番剧源",
+  "anime_noContent": "没有内容",
+  "anime_loadItemFailed": "加载条目失败",
+  "anime_downloadAllEpisodes": "下载全部分集",
+  "anime_downloadEpisode": "下载本集",
+  "anime_retryDownload": "重试下载",
+  "anime_noDownloads": "暂无已下载番剧",
+  "anime_offline": "离线",
+  "anime_sourceUnavailable": "番剧源不可用",
+  "anime_noPlayableEpisode": "没有可播放的分集",
+  "player_pause": "暂停",
+  "player_play": "播放",
+  "player_back10": "后退 10 秒",
+  "player_forward10": "前进 10 秒",
+  "player_options": "播放选项",
+  "player_fullscreen": "全屏",
+  "player_failed": "播放失败",
+  "player_resolvingUrl": "正在获取播放地址",
+  "player_connecting": "正在连接视频",
+  "player_buffering": "正在缓冲",
+  "player_resuming": "正在恢复播放",
+  "player_initFailed": "播放器初始化失败:{error}",
+  "@player_initFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "player_noRoute": "没有解析到可播放的线路",
+  "player_back": "返回",
+  "player_menuTooltip": "选集 / 线路 / 设置",
+  "player_prevEpisode": "上一集",
+  "player_nextEpisode": "下一集",
+  "player_tabEpisodes": "选集",
+  "player_tabRoutes": "线路",
+  "player_tabSettings": "设置",
+  "player_noRoutes": "暂无可选线路",
+  "player_routeN": "线路 {n}",
+  "@player_routeN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "player_fitContain": "适应",
+  "player_fitCover": "填充",
+  "player_fitStretch": "拉伸",
+  "player_speed": "倍速播放",
+  "player_aspect": "画面比例",
+  "bili_generatingQr": "正在生成二维码…",
+  "bili_scanWithApp": "用哔哩哔哩 App 扫码登录",
+  "bili_qrFailed": "二维码生成失败,点下方刷新:{error}",
+  "@bili_qrFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "bili_scannedConfirm": "已扫描,请在手机上确认登录",
+  "bili_qrExpired": "二维码已失效,点下方刷新",
+  "bili_qrExpiredShort": "二维码已失效",
+  "bili_loginTitle": "登录哔哩哔哩",
+  "bili_refreshQr": "刷新二维码",
+  "bili_localOnly": "登录信息仅存本机(安全存储),不会同步或导出。",
   "anime_episodes": "分集",
   "anime_episodesN": "{n} 集",
   "anime_noEpisodes": "没有分集",

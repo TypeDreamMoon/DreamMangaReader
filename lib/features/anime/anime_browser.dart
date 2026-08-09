@@ -462,7 +462,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                 Icon(Icons.translate_rounded, size: 13, color: p.textMuted),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text('「$_origQuery」没搜到,已用译名「$_query」',
+                  child: Text(context.l10n.disc_fallbackHint(_origQuery, _query),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: p.textMuted, fontSize: 11.5)),
@@ -503,8 +503,8 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                 loggedIn
                     ? (uname != null && uname.isNotEmpty
                         ? '已登录 · $uname'
-                        : '已登录哔哩哔哩')
-                    : '登录后可看追番、解锁大会员清晰度',
+                        : context.l10n.anime_biliLoggedIn)
+                    : context.l10n.anime_biliLoginHint,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: p.textPrimary, fontSize: 12.5),
@@ -519,7 +519,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                    child: const Text('退出'))
+                    child: Text(context.l10n.anime_signOut))
                 : FilledButton(
                     onPressed: _openBiliLogin,
                     style: FilledButton.styleFrom(
@@ -527,7 +527,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 14, vertical: 5),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                    child: const Text('扫码登录')),
+                    child: Text(context.l10n.anime_biliScanLogin)),
           ],
         ),
       ),
@@ -554,13 +554,13 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                     textAlign: TextAlign.center,
                     style: TextStyle(color: p.textMuted, fontSize: 12)),
                 const SizedBox(height: 12),
-                FilledButton(onPressed: _reset, child: const Text('重试')),
+                FilledButton(onPressed: _reset, child: Text(context.l10n.retry)),
               ],
             ),
           ),
         );
       }
-      return const EmptyState(title: '没有内容');
+      return EmptyState(title: context.l10n.anime_noContent);
     }
     return GridView.builder(
       controller: _scroll,
@@ -610,7 +610,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
           children: [
             Icon(Icons.movie_filter_rounded, size: 44, color: p.textMuted),
             const SizedBox(height: 14),
-            Text('还没有可用的番剧源',
+            Text(context.l10n.anime_noSources,
                 style: TextStyle(
                     color: p.textPrimary,
                     fontWeight: FontWeight.w700,
