@@ -12,6 +12,7 @@ import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/theme_controller.dart';
+import 'accent_color_sheet.dart';
 import '../../core/l10n/app_locale.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/app_proxy.dart';
@@ -81,6 +82,7 @@ class SettingsPage extends StatelessWidget {
                   selected: {theme.variant},
                   onSelectionChanged: (s) => theme.variant = s.first,
                 )),
+                _accentRow(context, l10n, theme),
                 _sliderRow(Icons.crop_square_rounded, l10n.controlRadius,
                     lib.controlRadius, 0, 28, 28, (v) => lib.controlRadius = v),
                 _switch(
@@ -595,6 +597,40 @@ class SettingsPage extends StatelessWidget {
 
   // 单个设置条目的独立描边卡(参照「开启动画」开关行:横向 + 边框)。
   // 每行自成一张 surface + line 描边卡,分组不再套外层大卡。
+  /// 主题色行:右侧显示当前色块,点开选色弹层。
+  Widget _accentRow(
+          BuildContext context, AppLocalizations l10n, ThemeController theme) =>
+      _rowCard(AppListRow(
+        icon: Icons.color_lens_rounded,
+        title: l10n.set_accentColor,
+        subtitle: l10n.set_accentColorSub,
+        onTap: () => showAccentColorSheet(context),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: theme.accent ?? context.palette.accent,
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: context.palette.line),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              theme.accent == null
+                  ? l10n.set_accentFollowTheme
+                  : l10n.set_accentCustom,
+              style:
+                  TextStyle(color: context.palette.textMuted, fontSize: 12.5),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                size: 18, color: context.palette.textMuted),
+          ],
+        ),
+      ));
+
   Widget _rowCard(Widget child,
           {EdgeInsetsGeometry padding = EdgeInsets.zero}) =>
       AppCard(width: double.infinity, padding: padding, child: child);

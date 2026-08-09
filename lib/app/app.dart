@@ -231,6 +231,7 @@ class _AppState extends State<App> {
                                     AppLocalizations.localizationsDelegates,
                                 theme: buildTheme(_theme.variant,
                                     controlRadius: _library.controlRadius,
+                                    accent: _theme.accent,
                                     // 字体只在桌面平台生效
                                     fontFamily:
                                         isDesktop ? _library.uiFont : ''),

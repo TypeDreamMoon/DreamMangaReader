@@ -89,7 +89,73 @@ class AppPalette {
     downloaded: Color(0xFFC8892C),
     brightness: Brightness.light,
   );
+
+  /// 换掉强调色,并据它**派生** [accentSoft] 与 [onAccent]。
+  ///
+  /// 用户在设置里能选任意颜色,这两个就不能再是常量:
+  /// - [accentSoft] 是同色相提亮一档(高亮/发光用)。深色底上提得多些,浅色底上少些,
+  ///   否则在白面上会淡到看不见。
+  /// - [onAccent] 是**压在强调色上的文字色**,按强调色的**实际亮度**选深或浅,
+  ///   而不是按主题走 —— 用户完全可能在深色主题下挑一个很暗的强调色,
+  ///   那时文字必须转成浅色才读得出来(反之亦然)。
+  AppPalette withAccent(Color value) {
+    final hsl = HSLColor.fromColor(value);
+    final lift = brightness == Brightness.dark ? 0.16 : 0.08;
+    final soft = HSLColor.fromAHSL(
+      1,
+      hsl.hue,
+      hsl.saturation,
+      (hsl.lightness + lift).clamp(0.0, 0.92),
+    ).toColor();
+    // 深浅两个候选各算一次对比度,取高的那个。
+    // 别用「亮度过某个阈值就配深字」那种一刀切 —— 高饱和的正红亮度只有 .21,
+    // 按阈值会配白字,实测对比度才 4.0,达不到 WCAG AA 的 4.5。
+    final deep = HSLColor.fromAHSL(
+        1, hsl.hue, (hsl.saturation * 0.9).clamp(0.0, 1.0), 0.08).toColor();
+    const pale = Color(0xFFFFFFFF);
+    final on = _contrast(value, deep) >= _contrast(value, pale) ? deep : pale;
+    return AppPalette(
+      background: background,
+      surface: surface,
+      elevated: elevated,
+      line: line,
+      textPrimary: textPrimary,
+      textMuted: textMuted,
+      accent: value,
+      accentSoft: soft,
+      onAccent: on,
+      downloaded: downloaded,
+      brightness: brightness,
+      statusOk: statusOk,
+      statusWarn: statusWarn,
+      statusFail: statusFail,
+      bangumi: bangumi,
+    );
+  }
 }
+
+/// WCAG 相对亮度对比度(1~21)。派生 onAccent 时用来在深/浅两个候选里挑。
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final hi = la > lb ? la : lb;
+  final lo = la > lb ? lb : la;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/// 主题色预设。都是**显式覆盖**——「跟随主题」是另一档(accent = null),
+/// 因为深色与浅色主题自带的青碧本来就不是同一个值。
+const List<Color> kAccentPresets = <Color>[
+  Color(0xFF22D3BD), // 青碧
+  Color(0xFF4C9AFF), // 靛蓝
+  Color(0xFF9B7BF0), // 藤紫
+  Color(0xFFF0728F), // 樱
+  Color(0xFFE58E3A), // 琥珀
+  Color(0xFF5FBE72), // 竹绿
+  Color(0xFFE05B5B), // 朱
+  Color(0xFF6FB3C7), // 天青
+];
+
 
 /// 把当前 [AppPalette] + 控件圆角挂到 [ThemeData] 上,组件通过 `context.palette`
 /// / `context.radius` 取用。圆角随设置里的「控件圆角」联动(主题重建时更新)。

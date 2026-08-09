@@ -9,10 +9,27 @@ class ThemeController extends ChangeNotifier {
   ThemeController([this._variant = AppThemeVariant.oled]);
 
   static const _kVariant = 'theme.variant';
+  static const _kAccent = 'theme.accent';
   SharedPreferences? _prefs;
 
   AppThemeVariant _variant;
   AppThemeVariant get variant => _variant;
+
+  Color? _accent;
+
+  /// 全局强调色;null = 跟随主题自带的青碧(深/浅两套本来就不是同一个值)。
+  Color? get accent => _accent;
+
+  set accent(Color? v) {
+    if (v == _accent) return;
+    _accent = v;
+    if (v == null) {
+      _prefs?.remove(_kAccent);
+    } else {
+      _prefs?.setInt(_kAccent, v.toARGB32());
+    }
+    notifyListeners();
+  }
 
   set variant(AppThemeVariant v) {
     if (v == _variant) return;
@@ -24,14 +41,22 @@ class ThemeController extends ChangeNotifier {
   /// 启动时读回保存的主题变体。
   Future<void> load() async {
     final prefs = _prefs = await SharedPreferences.getInstance();
-    final name = prefs.getString(_kVariant);
-    if (name == null) return;
-    final v = AppThemeVariant.values
-        .firstWhere((x) => x.name == name, orElse: () => _variant);
-    if (v != _variant) {
-      _variant = v;
-      notifyListeners();
+    var changed = false;
+    final argb = prefs.getInt(_kAccent);
+    if (argb != null) {
+      _accent = Color(argb);
+      changed = true;
     }
+    final name = prefs.getString(_kVariant);
+    if (name != null) {
+      final v = AppThemeVariant.values
+          .firstWhere((x) => x.name == name, orElse: () => _variant);
+      if (v != _variant) {
+        _variant = v;
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
   }
 }
 

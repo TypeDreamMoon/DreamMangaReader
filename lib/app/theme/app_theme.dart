@@ -39,9 +39,12 @@ const List<String> kFontFallback = <String>[
 /// 由某个主题变体构造 [ThemeData](Material 3)。
 /// [controlRadius]:统一控件圆角(设置里可调,默认 14)。
 /// [fontFamily]:桌面可指定字体族(空=用回退栈);始终带 [kFontFallback] 兜底。
+/// [accent]:全局强调色(设置里可选);null = 用该主题自带的。
 ThemeData buildTheme(AppThemeVariant variant,
-    {double controlRadius = 14, String fontFamily = ''}) {
-  final p = variant.palette;
+    {double controlRadius = 14, String fontFamily = '', Color? accent}) {
+  // 用户在设置里挑了强调色就覆盖掉主题自带的那个(accentSoft / onAccent 随之派生)。
+  final p =
+      accent == null ? variant.palette : variant.palette.withAccent(accent);
   final r = controlRadius;
   final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(r));
 
