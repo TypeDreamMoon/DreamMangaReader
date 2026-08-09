@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,15 +13,15 @@ import '../../app/theme/app_colors.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
-import '../../core/net/image_cache.dart';
 import '../../core/novel/models.dart';
 import '../../core/novel/novel_source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
-import '../library/manga_cover.dart' show coverGradient;
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/detail_hero.dart';
+import '../common/detail_synopsis.dart';
 import 'novel_cover.dart';
 import 'novel_reader_page.dart';
 import 'novel_source_sheet.dart';
@@ -387,136 +386,41 @@ class _NovelDetailPageState extends State<NovelDetailPage>
   }
 
   Widget _hero(AppPalette p) {
-    final grad = coverGradient(_novel.id);
-    final acc = coverAccent;
-    final gradTop = coverPalette?.primary ?? grad.first;
-    final gradBot = coverPalette?.secondary ?? grad.last;
-    final cover = _novel.cover;
-    final remote = Uri.tryParse(cover ?? '');
+    final authors =
+        _novel.authors.where((value) => value.trim().isNotEmpty).toList();
+    // 小说封面常是本地生成的(没有网络图)→ 只有真的是 http(s) 图才铺成背景大图。
+    final remote = Uri.tryParse(_novel.cover ?? '');
     final hasRemoteCover = remote != null &&
         (remote.scheme == 'http' || remote.scheme == 'https') &&
         remote.host.isNotEmpty;
-    final authors = _novel.authors.where((value) => value.trim().isNotEmpty);
-    final genres = _novel.genres.where((value) => value.trim().isNotEmpty);
-    return SizedBox(
+    return DetailHero(
       key: const Key('novel-detail-hero'),
-      height: 268,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 450),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [gradTop.withValues(alpha: 0.9), gradBot],
-              ),
-            ),
-          ),
-          if (hasRemoteCover)
-            ExcludeSemantics(
-              child: Opacity(
-                opacity: 0.55,
-                child: CachedNetworkImage(
-                  cacheManager: appImageCache,
-                  imageUrl: remote.toString(),
-                  httpHeaders: imageHeadersOf(_meta),
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const SizedBox.shrink(),
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                ),
-              ),
-            ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  p.background.withValues(alpha: 0.25),
-                  p.background.withValues(alpha: 0.7),
-                  p.background,
-                ],
-                stops: const [0.0, 0.65, 1.0],
-              ),
-            ),
-          ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 14,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                SizedBox(
-                  width: 88,
-                  child: NovelCover(
-                    novel: _novel,
-                    headers: imageHeadersOf(_meta),
-                    radius: 12,
-                    heroTag: widget.heroTag,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AppPill(
-                        text: _meta.name,
-                        fill: acc.withValues(alpha: 0.16),
-                        textColor: Color.lerp(acc, Colors.white, 0.35),
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
-                        radius: 6,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        _novel.title,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: p.textPrimary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                        ),
-                      ),
-                      if (authors.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          context.l10n.detail_authorPrefix(authors.join('、')),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: p.textMuted, fontSize: 12),
-                        ),
-                      ],
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          AppPill.accent(
-                              _statusLabel(context, _novel.status), acc),
-                          for (final genre in genres.take(6))
-                            AppPill.outlined(genre, p),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+      gradientSeed: _novel.id,
+      palette: coverPalette,
+      accent: coverAccent,
+      cover: NovelCover(
+        novel: _novel,
+        headers: imageHeadersOf(_meta),
+        radius: 12,
+        heroTag: widget.heroTag,
       ),
+      backdropUrl: hasRemoteCover ? remote.toString() : null,
+      backdropHeaders: imageHeadersOf(_meta),
+      sourceName: _meta.name,
+      title: _novel.title,
+      statusText: _statusLabel(context, _novel.status),
+      genres:
+          _novel.genres.where((value) => value.trim().isNotEmpty).toList(),
+      authorLine: authors.isEmpty
+          ? null
+          : Text(
+              context.l10n.detail_authorPrefix(authors.join('、')),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: p.textMuted, fontSize: 12),
+            ),
     );
   }
-
 
   Widget _cta(AppPalette p, bool favorite) {
     final progress = NovelLibraryScope.read(context).progressFor(_libraryKey);
@@ -596,78 +500,17 @@ class _NovelDetailPageState extends State<NovelDetailPage>
   }
 
 
-  Widget _synopsis(AppPalette p) {
-    final description = (_novel.description ?? '').trim();
-    if (description.isEmpty) return const SizedBox.shrink();
-    final canExpand = description.runes.length > 140;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(context.radius),
-          border: Border.all(color: p.line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(context.l10n.detail_synopsis,
-                style: TextStyle(
-                    color: coverAccent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0)),
-            const SizedBox(height: 8),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              alignment: Alignment.topCenter,
-              child: Text(
-                description,
-                key: const Key('novel-detail-description'),
-                maxLines: _descriptionExpanded ? null : 10,
-                overflow: _descriptionExpanded
-                    ? TextOverflow.visible
-                    : TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: p.textPrimary.withValues(alpha: 0.82),
-                    fontSize: 13,
-                    height: 1.55),
-              ),
-            ),
-            if (canExpand) ...[
-              const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () => setState(
-                    () => _descriptionExpanded = !_descriptionExpanded),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                        _descriptionExpanded
-                            ? context.l10n.detail_collapse
-                            : context.l10n.detail_expandAll,
-                        style: TextStyle(
-                            color: coverAccent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
-                    AnimatedRotation(
-                      turns: _descriptionExpanded ? 0.5 : 0,
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      child: Icon(Icons.keyboard_arrow_down_rounded,
-                          color: coverAccent, size: 18),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _synopsis(AppPalette p) => DetailSynopsis(
+        text: (_novel.description ?? '').trim(),
+        accent: coverAccent,
+        // 小说简介普遍更长,收起时给到 10 行(漫画/番剧 4 行)。
+        collapsedLines: 10,
+        expandThreshold: 140,
+        textKey: const Key('novel-detail-description'),
+        expanded: _descriptionExpanded,
+        onToggle: () =>
+            setState(() => _descriptionExpanded = !_descriptionExpanded),
+      );
 
   /// 目录。[height] 非空 = 嵌在窄屏单列滚动里的定高区;为空 = 宽屏右列自己占满。
   Widget _directory(AppPalette p, String? activeId, {double? height}) {

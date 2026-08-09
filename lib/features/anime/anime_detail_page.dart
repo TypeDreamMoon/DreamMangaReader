@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -14,7 +13,6 @@ import '../../core/bangumi/bangumi_api.dart';
 import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
-import '../../core/net/image_cache.dart';
 import '../../core/source/author_match.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
@@ -26,6 +24,8 @@ import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
 import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
+import '../common/detail_hero.dart';
+import '../common/detail_synopsis.dart';
 import '../library/manga_cover.dart';
 import 'anime_player_page.dart';
 
@@ -315,120 +315,26 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
 
   Widget _hero(AppPalette p) {
     final anime = _display;
-    final grad = coverGradient(widget.anime.id);
-    final cover = anime.cover;
     final acc = coverAccent;
-    final gradTop = coverPalette?.primary ?? grad.first;
-    final gradBot = coverPalette?.secondary ?? grad.last;
-    return SizedBox(
-      height: 268,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 450),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [gradTop.withValues(alpha: 0.9), gradBot],
-              ),
-            ),
-          ),
-          if (cover != null && cover.isNotEmpty)
-            ExcludeSemantics(
-              child: Opacity(
-                opacity: 0.55,
-                child: CachedNetworkImage(
-                  cacheManager: appImageCache,
-                  imageUrl: cover,
-                  httpHeaders: _imgHeaders,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const SizedBox.shrink(),
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                ),
-              ),
-            ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  p.background.withValues(alpha: 0.25),
-                  p.background.withValues(alpha: 0.7),
-                  p.background,
-                ],
-                stops: const [0.0, 0.65, 1.0],
-              ),
-            ),
-          ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 14,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                SizedBox(
-                  width: 88,
-                  child: MangaCover(
-                    manga: anime,
-                    headers: _imgHeaders,
-                    radius: 12,
-                    heroTag: widget.heroTag,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AppPill(
-                        text: widget.meta.name,
-                        fill: acc.withValues(alpha: 0.16),
-                        textColor: Color.lerp(acc, Colors.white, 0.35),
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
-                        radius: 6,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        _title,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: p.textPrimary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                        ),
-                      ),
-                      if (anime.authors.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        _authorLine(p, anime.authors, acc),
-                      ],
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          AppPill.accent(_statusText(anime.status), acc),
-                          for (final genre in anime.genres.take(6))
-                            AppPill.outlined(genre, p),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+    return DetailHero(
+      gradientSeed: widget.anime.id,
+      palette: coverPalette,
+      accent: acc,
+      cover: MangaCover(
+        manga: anime,
+        headers: _imgHeaders,
+        radius: 12,
+        heroTag: widget.heroTag,
       ),
+      backdropUrl: anime.cover,
+      backdropHeaders: _imgHeaders,
+      sourceName: widget.meta.name,
+      title: _title,
+      statusText: _statusText(anime.status),
+      genres: anime.genres,
+      authorLine: anime.authors.isNotEmpty
+          ? _authorLine(p, anime.authors, acc)
+          : null,
     );
   }
 
@@ -613,89 +519,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
 
   /// 简介卡:源没给就退回 Bangumi 的简介,长文可展开(与漫画详情一致)。
   Widget _synopsis(AppPalette p) {
-    var description = (_display.description ?? '').trim();
-    var fromBangumi = false;
-    if (description.isEmpty) {
-      description = (_bgm?.summary ?? '').trim();
-      fromBangumi = description.isNotEmpty;
-    }
-    if (description.isEmpty) return const SizedBox.shrink();
-    final acc = coverAccent;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(context.radius),
-          border: Border.all(color: p.line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(context.l10n.detail_synopsis,
-                    style: TextStyle(
-                        color: acc,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.0)),
-                if (fromBangumi) ...[
-                  const SizedBox(width: 6),
-                  Text(context.l10n.detail_fromBangumi,
-                      style: TextStyle(color: p.textMuted, fontSize: 10.5)),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              alignment: Alignment.topCenter,
-              child: Text(
-                description,
-                maxLines: _descExpanded ? null : 4,
-                overflow: _descExpanded
-                    ? TextOverflow.visible
-                    : TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: p.textPrimary.withValues(alpha: 0.82),
-                    fontSize: 13,
-                    height: 1.55),
-              ),
-            ),
-            if (description.length > 90) ...[
-              const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () => setState(() => _descExpanded = !_descExpanded),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                        _descExpanded
-                            ? context.l10n.detail_collapse
-                            : context.l10n.detail_expandAll,
-                        style: TextStyle(
-                            color: acc,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
-                    AnimatedRotation(
-                      turns: _descExpanded ? 0.5 : 0,
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      child: Icon(Icons.keyboard_arrow_down_rounded,
-                          color: acc, size: 18),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
+    final desc = resolveSynopsis(_display.description, _bgm?.summary);
+    return DetailSynopsis(
+      text: desc.text,
+      accent: coverAccent,
+      sourceNote:
+          desc.fromFallback ? context.l10n.detail_fromBangumi : null,
+      expanded: _descExpanded,
+      onToggle: () => setState(() => _descExpanded = !_descExpanded),
     );
   }
 
