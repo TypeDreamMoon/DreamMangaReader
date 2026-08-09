@@ -89,11 +89,21 @@ Map<String, String> imageHeadersOf(SourceMeta m) =>
     m.imageReferer == null ? const {} : {'Referer': m.imageReferer!};
 
 /// 源 id → 展示名(卡片角标用);未知 id 原样返回。
-String sourceNameOf(String id) {
+String sourceNameOf(String id) => sourceMetaById(id)?.name ?? id;
+
+/// 源 id → 元信息;源被删/未加载时为 null(调用方据此走「换源打开」或降级)。
+SourceMeta? sourceMetaById(String id) {
   for (final m in registeredSources) {
-    if (m.id == id) return m.name;
+    if (m.id == id) return m;
   }
-  return id;
+  return null;
+}
+
+/// 该源的图片请求头;源已不存在(id 未注册)时返回空表。
+Map<String, String> imageHeadersFor(String? sourceId) {
+  if (sourceId == null) return const {};
+  final meta = sourceMetaById(sourceId);
+  return meta == null ? const {} : imageHeadersOf(meta);
 }
 
 /// 运行时加载的源列表。启动前为空;由 [SourceRepository.load] 从外部清单填充。
