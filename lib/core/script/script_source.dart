@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:meta/meta.dart';
+
 import '../novel/models.dart';
 import '../novel/novel_source.dart';
 import '../source/auth_token.dart';
@@ -417,9 +419,25 @@ class ScriptSource implements MangaSource, NovelSource {
                   ?.map((k, v) => MapEntry(k.toString(), v.toString())),
               hls:
                   (m['hls'] as bool?) ?? (m['url'] as String).contains('.m3u8'),
+              subtitles: decodeSubtitles(m['subtitles']),
             ),
         ],
       );
+
+  /// `subtitles: [{url, label?, language?}]` —— 源可不给,给了也只认有 url 的。
+  @visibleForTesting
+  static List<SubtitleAsset> decodeSubtitles(Object? raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final s in raw.whereType<Map>())
+        if ((s['url'] as String?)?.isNotEmpty ?? false)
+          SubtitleAsset(
+            url: s['url'] as String,
+            label: (s['label'] as String?) ?? '',
+            language: s['language'] as String?,
+          ),
+    ];
+  }
 
   @override
   Future<SourceLogin> login(String username, String password) async {

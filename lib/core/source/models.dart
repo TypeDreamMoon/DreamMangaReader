@@ -71,6 +71,24 @@ class PageImage {
 
 /// 番剧一集的一个可播放视频源(不同清晰度 / 线路)。宿主把 [url] 交给播放器,
 /// [headers] 带上防盗链的 Referer/UA;[quality] 是给用户看的清晰度/线路标签。
+/// 源提供的**外挂字幕**文件(SRT / WebVTT / ASS 直链)。
+/// 流里自带的内嵌字幕不走这里 —— 那个由播放器从轨道列表里直接读。
+class SubtitleAsset {
+  final String url;
+
+  /// 展示名,如 "简体中文"。空则由 UI 用序号兜底。
+  final String label;
+
+  /// BCP-47 语言码,可空。
+  final String? language;
+
+  const SubtitleAsset({
+    required this.url,
+    this.label = '',
+    this.language,
+  });
+}
+
 class VideoTrack {
   final String url;
   final String quality; // 如 "1080p" / "线路1" / "Default"
@@ -81,12 +99,16 @@ class VideoTrack {
   /// 播放器据此给 mpv 设 `audio-files` 合流。headers 对音视频共用。
   final String? audioUrl;
 
+  /// 源另给的外挂字幕。headers 与音视频共用(字幕 CDN 通常同样锁 Referer)。
+  final List<SubtitleAsset> subtitles;
+
   const VideoTrack({
     required this.url,
     this.quality = '',
     this.headers,
     this.hls = false,
     this.audioUrl,
+    this.subtitles = const [],
   });
 }
 
