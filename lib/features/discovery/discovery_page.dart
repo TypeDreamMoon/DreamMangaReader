@@ -102,6 +102,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   // 番剧档:顶栏搜索复用漫画那套 UI,执行时经由此 key 转交给 AnimeBrowser。
   final GlobalKey<AnimeBrowserState> _animeKey = GlobalKey<AnimeBrowserState>();
   final GlobalKey<NovelBrowserState> _novelKey = GlobalKey<NovelBrowserState>();
+  // 番剧/小说档当前的源(由各自 browser 回传),画 tab 条右端的源标签用。
+  SourceSelection? _animeSource;
+  SourceSelection? _novelSource;
   late final RecommendController _recs =
       widget.recommendController ?? RecommendController();
   bool _showSearch = false;
@@ -486,8 +489,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           child: Column(
         children: [
           if (_kind == ContentKind.manga) ...[
-            // 源选择器默认隐藏(直接用混合源);设置里打开才显示。
-            if (store.showSourcePicker) _sourcePicker(),
             // 搜索框 / 筛选条:用 AnimatedSize 展开收起,避免整页内容硬跳。
             _animExpand(_showSearch
                 ? _searchField(p)
@@ -517,7 +518,12 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 (_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
                     ? _recentSearches(p, store)
                     : const SizedBox(width: double.infinity)),
-            Expanded(child: AnimeBrowser(key: _animeKey)),
+            Expanded(
+              child: AnimeBrowser(
+                key: _animeKey,
+                onSourceChanged: (s) => _onKindSource(ContentKind.anime, s),
+              ),
+            ),
           ] else if (_kind == ContentKind.novel) ...[
             _animExpand(_showSearch
                 ? _searchField(p)
@@ -526,7 +532,12 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 (_showSearch && _query.isEmpty && store.searchHistory.isNotEmpty)
                     ? _recentSearches(p, store)
                     : const SizedBox(width: double.infinity)),
-            Expanded(child: NovelBrowser(key: _novelKey)),
+            Expanded(
+              child: NovelBrowser(
+                key: _novelKey,
+                onSourceChanged: (s) => _onKindSource(ContentKind.novel, s),
+              ),
+            ),
           ] else
             Expanded(child: _comingSoon(p, _kind)),
         ],
@@ -541,11 +552,49 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   PreferredSizeWidget _kindTabs() => AppUnderlineTabs<ContentKind>(
         selected: _kind,
         onSelected: _selectKind,
+        // 源选择器并进同一行右端:左边「看哪一类」,右边「看哪个源」。
+        trailing: _sourceTrailing(),
         tabs: [
           for (final k in ContentKind.values)
             AppUnderlineTab(value: k, label: k.label),
         ],
       );
+
+  /// 番剧/小说的源状态由各自的 browser 回传(它们自管一套源机器);漫画档就是本页的。
+  void _onKindSource(ContentKind kind, SourceSelection selection) {
+    if (!mounted) return;
+    final current = kind == ContentKind.anime ? _animeSource : _novelSource;
+    if (current == selection) return; // 值没变就别白重建整页
+    setState(() {
+      if (kind == ContentKind.anime) {
+        _animeSource = selection;
+      } else {
+        _novelSource = selection;
+      }
+    });
+  }
+
+  /// 当前档的源标签。设置里关掉「显示源选择器」= 强制混合源,不给切,也就不显示。
+  Widget? _sourceTrailing() {
+    if (!LibraryScope.of(context).showSourcePicker) return null;
+    final (SourceSelection? selection, VoidCallback onTap) = switch (_kind) {
+      ContentKind.manga => (
+          SourceSelection(mixed: _mixed, sourceName: _meta?.name),
+          _pickSource
+        ),
+      ContentKind.anime => (
+          _animeSource,
+          () => _animeKey.currentState?.pickSource()
+        ),
+      ContentKind.novel => (
+          _novelSource,
+          () => _novelKey.currentState?.pickSource()
+        ),
+    };
+    if (selection == null) return null; // browser 还没配好源
+    return SourcePickerLabel(
+        kind: _kind, selection: selection, onTap: onTap);
+  }
 
   /// 换档收起搜索栏并清掉**共享**搜索态。_query/_origQuery/_searchCtrl 被漫画网格与番剧
   /// browser 共用;若不清,漫画分页(_loadMore 读 _query)会把另一档的搜索词接着当搜索翻页,
@@ -615,13 +664,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _sc?.current = picked; // → _onSourceChanged → _rebuildSource
     }
   }
-
-  Widget _sourcePicker() => SourcePickerBar(
-        kind: ContentKind.manga,
-        mixed: _mixed,
-        sourceName: _meta?.name,
-        onTap: _pickSource,
-      );
 
   Widget _searchField(AppPalette p) => Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),

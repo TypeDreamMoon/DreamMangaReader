@@ -7,21 +7,10 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 
-/// 发现页三档共用的源选择条:内边距、左对齐、图标与文案口径全在这里定死。
-///
-/// 之前漫画/番剧/小说各自拼这一行,于是漂成了三副长相 —— 内边距不同、只有小说左对齐、
-/// 文案一个「{源} · 分类浏览」一个硬编码「{源} · 番剧」一个只有源名、图标也各说各的。
-/// 现在只暴露「哪一档 + 是否混合 + 源名」,长相由本组件统一。
-class SourcePickerBar extends StatelessWidget {
-  const SourcePickerBar({
-    super.key,
-    required this.kind,
-    required this.mixed,
-    required this.sourceName,
-    required this.onTap,
-  });
-
-  final ContentKind kind;
+/// 某一档当前的源状态。三个 browser 各自持有自己的源,发现页要把源标签画到
+/// tab 条右端,就靠它们回传这个值。
+class SourceSelection {
+  const SourceSelection({required this.mixed, this.sourceName});
 
   /// 混合模式(全部启用源一起查)。
   final bool mixed;
@@ -29,69 +18,62 @@ class SourcePickerBar extends StatelessWidget {
   /// 单源模式下的源名;null = 还没选源。
   final String? sourceName;
 
-  final VoidCallback onTap;
+  @override
+  bool operator ==(Object other) =>
+      other is SourceSelection &&
+      other.mixed == mixed &&
+      other.sourceName == sourceName;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-        child: Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: SourcePickerPill(
-            // 混合用「全部源」的方格图标,单源用该内容类型的图标 —— 图标已经说明是哪一档,
-            // 文案就不必再缀「· 番剧」「· 分类浏览」了。
-            icon: mixed ? Icons.dashboard_rounded : kind.icon,
-            label: mixed
-                ? context.l10n.disc_mixedAllSources
-                : (sourceName ?? context.l10n.disc_selectSource),
-            onTap: onTap,
-          ),
-        ),
-      );
+  int get hashCode => Object.hash(mixed, sourceName);
 }
 
-/// 触发源选择弹层的胶囊按钮。三档的标准长相见 [SourcePickerBar]。
-class SourcePickerPill extends StatelessWidget {
-  const SourcePickerPill({
+/// tab 条右端的源标签:**无描边、无底色**,accent 图标 + 源名 + 一个小箭头。
+///
+/// 它答的是「我现在在看哪个源」,是上下文标签而非待填的表单项 —— 所以不做成
+/// 描边下拉框(那会和同一行无边框的 [AppUnderlineTabs] 打架),而是像一行面包屑。
+class SourcePickerLabel extends StatelessWidget {
+  const SourcePickerLabel({
     super.key,
-    required this.label,
+    required this.kind,
+    required this.selection,
     required this.onTap,
-    this.icon = Icons.dashboard_rounded,
   });
 
-  final String label;
+  final ContentKind kind;
+  final SourceSelection selection;
   final VoidCallback onTap;
-  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    final mixed = selection.mixed;
+    final label = mixed
+        ? context.l10n.disc_mixedAllSources
+        : (selection.sourceName ?? context.l10n.disc_selectSource);
     return Pressable(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: p.line),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: p.accent),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: p.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600)),
-            ),
-            const SizedBox(width: 4),
-            Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: p.textMuted),
-          ],
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 混合用「全部源」的方格图标,单源用该内容类型的图标。
+          Icon(mixed ? Icons.dashboard_rounded : kind.icon,
+              size: 14, color: p.accent),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: p.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(width: 2),
+          // 箭头压到比文字还小 —— 它是最不重要的那个元素。
+          Icon(Icons.keyboard_arrow_down_rounded, size: 15, color: p.textMuted),
+        ],
       ),
     );
   }

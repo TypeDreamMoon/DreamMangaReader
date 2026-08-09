@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../app/content_kind.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
@@ -36,11 +35,15 @@ class AnimeBrowser extends StatefulWidget {
     this.sourceBuilder = buildSource,
     this.sourceCatalog,
     this.searchVariants,
+    this.onSourceChanged,
   });
 
   final AnimeSourceFactory sourceBuilder;
   final List<SourceMeta>? sourceCatalog;
   final AnimeSearchVariants? searchVariants;
+
+  /// 源配置变化时回传当前源 —— 发现页把源标签画在 tab 条右端,状态在这里。
+  final ValueChanged<SourceSelection>? onSourceChanged;
 
   @override
   State<AnimeBrowser> createState() => AnimeBrowserState();
@@ -181,7 +184,20 @@ class AnimeBrowserState extends State<AnimeBrowser> {
       final meta = _meta;
       if (meta != null) _source = widget.sourceBuilder(meta);
     }
+    _notifySource();
     _reset();
+  }
+
+  /// 回传当前源。post-frame 发出 —— _configureSources 可能在 build 阶段被调用,
+  /// 直接回调会在父级 setState 时炸。
+  void _notifySource() {
+    final notify = widget.onSourceChanged;
+    if (notify == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        notify(SourceSelection(mixed: _mixed, sourceName: _meta?.name));
+      }
+    });
   }
 
   void _reset() {
@@ -362,7 +378,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     }
   }
 
-  Future<void> _pickSource() async {
+  Future<void> pickSource() async {
     final selected = await showSourcePicker(
       context,
       currentId: _mixed ? _mixedId : (_meta?.id ?? ''),
@@ -426,20 +442,14 @@ class AnimeBrowserState extends State<AnimeBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    final library = LibraryScope.of(context);
+    // 不在这里 LibraryScope.of —— 依赖已在 didChangeDependencies 注册过,
+    // 源选择器也搬去发现页 tab 条了,build 里没别的要读。
     final p = context.palette;
     if (_enabledSources.isEmpty) return _noSource(p);
 
     return Column(
       children: [
         // 源选择(搜索已统一到发现页顶栏,这里只留源选择器)。
-        if (library.showSourcePicker)
-          SourcePickerBar(
-            kind: ContentKind.anime,
-            mixed: _mixed,
-            sourceName: _meta?.name,
-            onTap: _pickSource,
-          ),
         if (_isBili) _biliBar(p),
         // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
         if (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)

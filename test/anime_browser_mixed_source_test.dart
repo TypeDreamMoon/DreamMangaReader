@@ -129,7 +129,15 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
   }
 }
 
-Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
+/// 源选择器已经搬到发现页的 tab 条右端,browser 自己不再画它。这里就直接持
+/// state 调 [AnimeBrowserState.pickSource],并收下它回传的源状态来做断言。
+Future<
+    ({
+      LibraryStore library,
+      SourceController controller,
+      GlobalKey<AnimeBrowserState> key,
+      List<SourceSelection> selections,
+    })> _pumpBrowser(
   WidgetTester tester, {
   required bool showSourcePicker,
   required Map<String, List<_FakeAnimeSource>> instances,
@@ -158,6 +166,8 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
     return instance;
   }
 
+  final key = GlobalKey<AnimeBrowserState>();
+  final selections = <SourceSelection>[];
   await tester.pumpWidget(MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
     locale: const Locale('zh'),
@@ -170,9 +180,11 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
         controller: controller,
         child: Scaffold(
           body: AnimeBrowser(
+            key: key,
             sourceBuilder: build,
             sourceCatalog: sources,
             searchVariants: searchVariants,
+            onSourceChanged: selections.add,
           ),
         ),
       ),
@@ -183,7 +195,12 @@ Future<({LibraryStore library, SourceController controller})> _pumpBrowser(
   } else {
     await tester.pump();
   }
-  return (library: library, controller: controller);
+  return (
+    library: library,
+    controller: controller,
+    key: key,
+    selections: selections
+  );
 }
 
 void main() {
@@ -205,7 +222,7 @@ void main() {
       harness.controller.dispose();
     });
 
-    expect(find.byType(SourcePickerPill), findsNothing);
+    expect(harness.selections.last.mixed, isTrue); // 强制混合,不给切源
     expect(instances['anime-a'], hasLength(1));
     expect(instances['anime-b'], hasLength(1));
     expect(instances['anime-a']!.single.discoveryCalls, 1);
@@ -225,7 +242,8 @@ void main() {
       harness.controller.dispose();
     });
 
-    expect(find.byType(SourcePickerPill), findsOneWidget);
+    expect(harness.selections.last.mixed, isFalse); // 单源,发现页会画出源标签
+    expect(harness.selections.last.sourceName, '番剧 B');
     expect(instances['anime-a'], isNull);
     expect(instances['anime-b'], hasLength(1));
     expect(instances['anime-b']!.single.discoveryCalls, 1);
@@ -430,13 +448,14 @@ void main() {
     });
     final oldA = instances['anime-a']!.single;
 
-    await tester.tap(find.byType(SourcePickerPill));
+    unawaited(harness.key.currentState!.pickSource());
     await tester.pumpAndSettle();
     await tester.tap(find.text('番剧 B').last);
     await tester.pumpAndSettle();
 
     expect(harness.controller.currentFor('anime')?.id, 'anime-b');
-    expect(find.textContaining('番剧 B'), findsOneWidget);
+    expect(harness.selections.last.mixed, isFalse);
+    expect(harness.selections.last.sourceName, '番剧 B');
     expect(oldA.disposed, isTrue);
     expect(instances['anime-b']!.single.discoveryCalls, 1);
   });
@@ -486,18 +505,18 @@ void main() {
       harness.controller.dispose();
     });
 
-    await tester.tap(find.byType(SourcePickerPill));
+    unawaited(harness.key.currentState!.pickSource());
     await tester.pumpAndSettle();
     await tester.tap(find.text('混合 · 全部源').last);
     await tester.pumpAndSettle();
-    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(harness.selections.last.mixed, isTrue);
     expect(instances['anime-a']!.last.discoveryCalls, 1);
     expect(instances['anime-b']!.last.discoveryCalls, 1);
 
     harness.library.feedLayout = FeedLayout.list;
     await tester.pump();
 
-    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(harness.selections.last.mixed, isTrue);
     expect(instances['anime-a']!.last.discoveryCalls, 1);
     expect(instances['anime-b']!.last.discoveryCalls, 1);
 
@@ -506,7 +525,7 @@ void main() {
     harness.library.setSourceEnabled('anime-b', false, 2);
     await tester.pumpAndSettle();
 
-    expect(find.text('混合 · 全部源'), findsOneWidget);
+    expect(harness.selections.last.mixed, isTrue);
     expect(mixedA.disposed, isTrue);
     expect(mixedB.disposed, isTrue);
     expect(instances['anime-a']!.last.discoveryCalls, 1);

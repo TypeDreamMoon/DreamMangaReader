@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../app/content_kind.dart';
 import '../../app/library_store.dart';
 import '../../app/source_controller.dart';
 import '../../app/theme/app_colors.dart';
@@ -26,7 +25,11 @@ class NovelBrowser extends StatefulWidget {
     super.key,
     this.sourceBuilder = buildNovelSource,
     this.sourceCatalog,
+    this.onSourceChanged,
   });
+
+  /// 源配置变化时回传当前源 —— 发现页把源标签画在 tab 条右端,状态在这里。
+  final ValueChanged<SourceSelection>? onSourceChanged;
 
   final NovelSourceFactory sourceBuilder;
   final List<SourceMeta>? sourceCatalog;
@@ -86,6 +89,18 @@ class NovelBrowserState extends State<NovelBrowser> {
     _originalQuery = _query;
     _fallbackQueue = null;
     _reset();
+  }
+
+  /// 回传当前源。post-frame 发出 —— _configureSources 可能在 build 阶段被调用,
+  /// 直接回调会在父级 setState 时炸。
+  void _notifySource() {
+    final notify = widget.onSourceChanged;
+    if (notify == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        notify(SourceSelection(mixed: _mixed, sourceName: _meta?.name));
+      }
+    });
   }
 
   @override
@@ -167,6 +182,7 @@ class NovelBrowserState extends State<NovelBrowser> {
         }
       }
     }
+    _notifySource();
     _reset();
   }
 
@@ -344,7 +360,7 @@ class NovelBrowserState extends State<NovelBrowser> {
           if (entry.value.isNotEmpty) entry.key: entry.value,
       };
 
-  Future<void> _pickSource() async {
+  Future<void> pickSource() async {
     final selected = await showSourcePicker(
       context,
       currentId: _mixed ? _mixedId : (_meta?.id ?? ''),
@@ -388,20 +404,14 @@ class NovelBrowserState extends State<NovelBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    final library = LibraryScope.of(context);
+    // 不在这里 LibraryScope.of —— 依赖已在 didChangeDependencies 注册过,
+    // 源选择器也搬去发现页 tab 条了,build 里没别的要读。
     final p = context.palette;
     if (_enabledSources.isEmpty) {
       return EmptyState(title: context.l10n.novel_browserNoSources);
     }
     return Column(
       children: [
-        if (library.showSourcePicker)
-          SourcePickerBar(
-            kind: ContentKind.novel,
-            mixed: _mixed,
-            sourceName: _meta?.name,
-            onTap: _pickSource,
-          ),
         if (!_mixed && _filters.isNotEmpty && _query.isEmpty) _filterBar(),
         if (_query.isNotEmpty &&
             _query != _originalQuery &&
