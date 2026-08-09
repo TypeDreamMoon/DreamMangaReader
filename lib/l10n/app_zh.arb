@@ -72,6 +72,26 @@
       "authors": {}
     }
   },
+  "author_worksTitle": "{author} 的作品",
+  "@author_worksTitle": {
+    "placeholders": {
+      "author": {}
+    }
+  },
+  "author_worksEmpty": "没找到「{author}」的其它作品",
+  "@author_worksEmpty": {
+    "placeholders": {
+      "author": {}
+    }
+  },
+  "author_worksCount": "共 {total} 部 · {confirmed} 部作者已核对",
+  "@author_worksCount": {
+    "placeholders": {
+      "total": {},
+      "confirmed": {}
+    }
+  },
+  "author_searchWorks": "查看该作者的其它作品",
   "detail_statusOngoing": "● 连载中",
   "detail_statusCompleted": "● 完结",
   "detail_statusHiatus": "● 休刊",

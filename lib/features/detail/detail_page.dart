@@ -15,6 +15,7 @@ import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
+import '../../core/source/author_match.dart';
 import '../../core/source/chapter_number.dart';
 import '../../core/source/models.dart';
 import '../../core/source/title_match.dart';
@@ -28,6 +29,7 @@ import '../common/animations.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
 import '../reader/reader_page.dart';
+import 'author_works_page.dart';
 import 'bangumi_search_sheet.dart';
 import 'chapter_order.dart';
 import 'cross_source_sheet.dart';
@@ -939,12 +941,7 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                       if (m.authors.isNotEmpty) ...[
                         const SizedBox(height: 4),
-                        Text(
-                            context.l10n
-                                .detail_authorPrefix(m.authors.join('、')),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: p.textMuted, fontSize: 12)),
+                        _authorLine(p, m.authors, acc),
                       ],
                       const SizedBox(height: 8),
                       Wrap(
@@ -965,6 +962,60 @@ class _DetailPageState extends State<DetailPage> {
         ],
       ),
     );
+  }
+
+  /// 作者行:每个作者名单独可点,点开「同作者作品」。源的搜索接口只吃关键词,
+  /// 所以整串「A / B」要先拆开,拿单个作者名去搜才有命中率。
+  Widget _authorLine(AppPalette p, List<String> authors, Color accent) {
+    final names = AuthorMatch.expand(authors);
+    if (names.isEmpty) {
+      return Text(
+        context.l10n.detail_authorPrefix(authors.join('、')),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: p.textMuted, fontSize: 12),
+      );
+    }
+    return Wrap(
+      spacing: 6,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(context.l10n.detail_authorPrefix('').trim(),
+            style: TextStyle(color: p.textMuted, fontSize: 12)),
+        for (final name in names)
+          InkWell(
+            key: Key('detail-author-$name'),
+            onTap: () => _openAuthorWorks(name),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+              child: Text(
+                name,
+                style: TextStyle(
+                  color: Color.lerp(accent, p.textPrimary, .25),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                  decorationColor: accent.withValues(alpha: .5),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openAuthorWorks(String author) {
+    Navigator.of(context).push(appRoute(AuthorWorksPage(
+      author: author,
+      meta: widget.meta,
+      kind: 'manga',
+      excludeMangaId: widget.manga.id,
+      onOpen: (context, meta, manga) => Navigator.of(context).push(
+        appRoute(DetailPage(manga: manga, meta: meta)),
+      ),
+    )));
   }
 
   String _statusText(MangaStatus s) {
