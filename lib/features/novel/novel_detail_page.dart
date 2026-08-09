@@ -21,6 +21,7 @@ import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
 import '../library/manga_cover.dart' show coverGradient;
+import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import 'novel_cover.dart';
 import 'novel_reader_page.dart';
@@ -366,74 +367,22 @@ class _NovelDetailPageState extends State<NovelDetailPage>
                   stops: const [0.0, 0.55],
                 ),
               ),
-              child: LayoutBuilder(
-                builder: (context, c) => c.maxWidth >= 760
-                    ? _wideBody(p, favorite, activeId)
-                    : _narrowBody(p, favorite, activeId),
-              ),
-            ),
-    );
-  }
-
-  /// 竖屏:hero + 操作条 + 简介 + 目录,单列纵向滚动。
-  Widget _narrowBody(AppPalette p, bool favorite, String? activeId) => Center(
-        child: ConstrainedBox(
-          key: const Key('novel-detail-narrow'),
-          constraints: const BoxConstraints(maxWidth: 820),
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(child: _hero(p)),
-              SliverToBoxAdapter(child: _cta(p, favorite)),
-              SliverToBoxAdapter(child: _synopsis(p)),
-              SliverToBoxAdapter(
-                child: _directory(
+              child: DetailBody(
+                narrowKey: const Key('novel-detail-narrow'),
+                wideKey: const Key('novel-detail-wide'),
+                info: [_hero(p), _cta(p, favorite), _synopsis(p)],
+                // 目录自带滚动:窄屏给它一个不吃掉整屏的定高,宽屏铺满右列。
+                listing: (wide) => DetailListing.fill(_directory(
                   p,
                   activeId,
-                  height: (MediaQuery.sizeOf(context).height * .72)
-                      .clamp(460, 680)
-                      .toDouble(),
-                ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 28)),
-            ],
-          ),
-        ),
-      );
-
-  /// 横屏/桌面:左列固定宽度(封面/信息/按钮/简介,独立滚动),右列目录(独立滚动)。
-  Widget _wideBody(AppPalette p, bool favorite, String? activeId) {
-    final topInset = MediaQuery.paddingOf(context).top + kToolbarHeight;
-    return Center(
-      child: ConstrainedBox(
-        key: const Key('novel-detail-wide'),
-        constraints: const BoxConstraints(maxWidth: 1180),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 380,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 28),
-                child: Column(
-                  children: [
-                    _hero(p),
-                    _cta(p, favorite),
-                    _synopsis(p),
-                  ],
-                ),
+                  height: wide
+                      ? null
+                      : (MediaQuery.sizeOf(context).height * .72)
+                          .clamp(460, 680)
+                          .toDouble(),
+                )),
               ),
             ),
-            VerticalDivider(width: 1, thickness: 1, color: p.line),
-            Expanded(
-              child: Padding(
-                // 右列顶部让开透明 AppBar。
-                padding: EdgeInsets.only(top: topInset),
-                child: _directory(p, activeId),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

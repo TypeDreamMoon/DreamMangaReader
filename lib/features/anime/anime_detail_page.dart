@@ -24,6 +24,7 @@ import '../common/bangumi_card.dart';
 import '../common/transitions.dart';
 import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
+import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import '../library/manga_cover.dart';
 import 'anime_player_page.dart';
@@ -303,65 +304,12 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                   stops: const [0.0, 0.55],
                 ),
               ),
-              child: LayoutBuilder(
-                builder: (context, constraints) => constraints.maxWidth >= 760
-                    ? _wideBody(p)
-                    : _narrowBody(p),
+              child: DetailBody(
+                info: [_hero(p), _cta(p), _bangumiCard(), _synopsis(p)],
+                listing: (_) => DetailListing.slivers(
+                    [SliverToBoxAdapter(child: _episodeSection(p))]),
               ),
             ),
-    );
-  }
-
-  /// 竖屏:信息 + 分集单列纵向滚动。
-  Widget _narrowBody(AppPalette p) => Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
-          child: AppScrollView(
-            padding: const EdgeInsets.only(bottom: 32),
-            children: [
-              _hero(p),
-              _cta(p),
-              _bangumiCard(),
-              _synopsis(p),
-              _episodeSection(p),
-            ],
-          ),
-        ),
-      );
-
-  /// 横屏/桌面:左列信息(独立滚动),右列分集(独立滚动)—— 与漫画详情同构。
-  Widget _wideBody(AppPalette p) {
-    final topInset = MediaQuery.of(context).padding.top + kToolbarHeight;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 380,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 28),
-                child: Column(
-                  children: [
-                    _hero(p),
-                    _cta(p),
-                    _bangumiCard(),
-                    _synopsis(p),
-                  ],
-                ),
-              ),
-            ),
-            VerticalDivider(width: 1, thickness: 1, color: p.line),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.only(top: topInset, bottom: 28),
-                child: _episodeSection(p),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

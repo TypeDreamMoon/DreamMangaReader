@@ -25,6 +25,7 @@ import '../../core/source/source_search.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
 import '../common/animations.dart';
+import '../common/detail_body.dart';
 import '../common/detail_cover_tint.dart';
 import '../common/transitions.dart';
 import '../library/manga_cover.dart';
@@ -731,69 +732,16 @@ class _DetailPageState extends State<DetailPage>
             stops: const [0.0, 0.55],
           ),
         ),
-        child: LayoutBuilder(
-          builder: (context, c) => c.maxWidth >= 760
-              ? _wideBody(p, store, dl) // 横屏/桌面:左信息 + 右章节
-              : _narrowBody(p, store, dl), // 竖屏:单列纵向滚动
-        ),
-      ),
-    );
-  }
-
-  /// 竖屏:信息 + 章节单列纵向滚动。
-  Widget _narrowBody(AppPalette p, LibraryStore store, DownloadStore dl) =>
-      Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
-          child: CustomScrollView(
-            // 章节走惰性 SliverList:上千章也只建可见行(否则全建出来又卡又刷爆语义树)。
-            slivers: [
-              SliverToBoxAdapter(child: _hero(p)),
-              SliverToBoxAdapter(child: _cta(p, store, dl)),
-              SliverToBoxAdapter(child: _bangumiCard(p)),
-              SliverToBoxAdapter(child: _synopsis(p)),
-              SliverToBoxAdapter(child: _recommendSection(p)),
-              ..._chapterSlivers(p, store, dl),
-            ],
-          ),
-        ),
-      );
-
-  /// 横屏/桌面:左列固定宽度(封面/信息/按钮/简介,独立滚动),右列章节表(独立滚动)。
-  Widget _wideBody(AppPalette p, LibraryStore store, DownloadStore dl) {
-    final topInset = MediaQuery.of(context).padding.top + kToolbarHeight;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 380,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 28),
-                child: Column(
-                  children: [
-                    _hero(p),
-                    _cta(p, store, dl),
-                    _bangumiCard(p),
-                    _synopsis(p),
-                    _recommendSection(p),
-                  ],
-                ),
-              ),
-            ),
-            VerticalDivider(width: 1, thickness: 1, color: p.line),
-            Expanded(
-              child: CustomScrollView(
-                slivers: [
-                  // 右列顶部让开透明 AppBar。
-                  SliverToBoxAdapter(child: SizedBox(height: topInset)),
-                  ..._chapterSlivers(p, store, dl),
-                ],
-              ),
-            ),
+        child: DetailBody(
+          info: [
+            _hero(p),
+            _cta(p, store, dl),
+            _bangumiCard(p),
+            _synopsis(p),
+            _recommendSection(p),
           ],
+          // 章节走惰性 SliverList:上千章也只建可见行(否则全建出来又卡又刷爆语义树)。
+          listing: (_) => DetailListing.slivers(_chapterSlivers(p, store, dl)),
         ),
       ),
     );
