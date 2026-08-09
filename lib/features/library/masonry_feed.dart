@@ -27,8 +27,9 @@ int columnsFor(double width, int columns) {
 
 /// 可切布局的封面信息流:瀑布流 / 网格 / 列表。
 /// - [cardBuilder]:封面+标题卡(瀑布流 / 网格用);[tileBuilder]:横排行(列表用)。
-/// - [controller]/[footer] 给独立滚动的场景(发现页无限滚动);[shrinkWrap]=true 供
-///   嵌进外层 ListView(书架收藏区)时用,自身不滚。纯 Dart 布局,Windows 安全。
+/// - [controller]/[header]/[footer] 给独立滚动的场景(发现页无限滚动 + 顶部推荐条);
+///   [shrinkWrap]=true 供嵌进外层 ListView(书架收藏区)时用,自身不滚。
+///   纯 Dart 布局,Windows 安全。
 class FeedView extends StatelessWidget {
   const FeedView({
     super.key,
@@ -37,6 +38,7 @@ class FeedView extends StatelessWidget {
     required this.cardBuilder,
     required this.tileBuilder,
     this.controller,
+    this.header,
     this.footer,
     this.columns = 0,
     this.shrinkWrap = false,
@@ -48,6 +50,9 @@ class FeedView extends StatelessWidget {
   final Widget Function(BuildContext, int) cardBuilder; // 瀑布流/网格
   final Widget Function(BuildContext, int) tileBuilder; // 列表
   final ScrollController? controller;
+
+  /// 跟着结果一起滚走的顶部区(发现页「为你推荐」)。
+  final Widget? header;
   final Widget? footer;
   final int columns;
   final bool shrinkWrap;
@@ -99,6 +104,7 @@ class FeedView extends StatelessWidget {
             shrinkWrap: shrinkWrap,
             physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
             slivers: [
+              if (header != null) SliverToBoxAdapter(child: header!),
               body,
               if (footer != null) SliverToBoxAdapter(child: footer!),
             ],

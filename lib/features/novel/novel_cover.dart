@@ -14,6 +14,7 @@ class NovelCover extends StatelessWidget {
     this.radius = 8,
     this.compactGeneratedTitle = false,
     this.heroTag,
+    this.aspect = 3 / 4,
   });
 
   final Novel novel;
@@ -21,6 +22,9 @@ class NovelCover extends StatelessWidget {
   final String? localCoverPath;
   final double radius;
   final bool compactGeneratedTitle;
+
+  /// 封面纵横比(宽:高)。默认 3:4;书架瀑布流传入按 id 派生的比例做高低错落。
+  final double aspect;
 
   /// 非空时启用 Hero 飞入动画(封面在列表→详情间过渡)。同屏内须唯一。
   final Object? heroTag;
@@ -66,7 +70,7 @@ class NovelCover extends StatelessWidget {
     if (heroTag != null) clip = Hero(tag: heroTag!, child: clip);
     // 封面纯装饰,排出无障碍树(与漫画封面一致:批量加载会刷爆 Windows AXTree)。
     return AspectRatio(
-      aspectRatio: 3 / 4,
+      aspectRatio: aspect,
       child: ExcludeSemantics(child: clip),
     );
   }
