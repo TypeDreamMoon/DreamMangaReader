@@ -34,6 +34,7 @@ class PlaybackSessionController {
     this.onProgress,
     this.onPaused,
     this.stallThreshold = const Duration(seconds: 8),
+    this.coldStartStallThreshold = const Duration(seconds: 24),
     this.stableResetThreshold = const Duration(seconds: 15),
   })  : _player = player,
         _tracks = tracks,
@@ -62,6 +63,12 @@ class PlaybackSessionController {
   final void Function(Duration position, Duration duration)? onProgress;
   final void Function()? onPaused;
   final Duration stallThreshold;
+
+  /// 开播(还没出过第一帧、也没有待确认的 seek)时的卡顿阈值。冷启动要串起
+  /// 解析清单 → 取密钥 → 拉头几片,慢线路/私有源上 8 秒根本不够;超时就重建解码器
+  /// 反而把已经预热的 HLS 会话丢掉,重来一遍更慢,最后走到「播放恢复失败」。
+  /// 出过第一帧之后仍用 [stallThreshold],真死流照样能被快速发现。
+  final Duration coldStartStallThreshold;
   final Duration stableResetThreshold;
   final _states = StreamController<PlaybackState>.broadcast(sync: true);
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -83,6 +90,7 @@ class PlaybackSessionController {
   int _recoveryRound = 0;
   bool _recovering = false;
   bool _playing = false;
+  bool _startedPlaying = false;
   bool _userPaused = false;
   bool _resumeAfterSeek = false;
   bool _disposed = false;
@@ -99,6 +107,7 @@ class PlaybackSessionController {
     _cancelTimers();
     _recovering = false;
     _userPaused = false;
+    _startedPlaying = false;
     _resumeAfterSeek = false;
     _pendingSeekTarget = null;
     _recoveryRound = 0;
@@ -198,6 +207,7 @@ class PlaybackSessionController {
       if (wasPlaying) onPaused?.call();
       return;
     }
+    _startedPlaying = true;
     _stallTimer?.cancel();
     _emit(_state.copyWith(
       phase: PlaybackPhase.playing,
@@ -242,7 +252,9 @@ class PlaybackSessionController {
     ));
     _stallTimer?.cancel();
     final generation = _generation;
-    _stallTimer = Timer(stallThreshold, () {
+    final coldStart = !_startedPlaying && _pendingSeekTarget == null;
+    _stallTimer = Timer(coldStart ? coldStartStallThreshold : stallThreshold,
+        () {
       if (_isCurrent(generation) &&
           (!_userPaused || _pendingSeekTarget != null)) {
         unawaited(_recover(StateError('播放缓冲超时'), generation));

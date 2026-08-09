@@ -63,7 +63,11 @@ b.m4s
     expect(result.text.indexOf('/init/init-b.mp4'),
         greaterThan(result.text.indexOf('#EXT-X-DISCONTINUITY')));
     expect(result.text, contains('#EXT-X-VENDOR-CUSTOM:keep-me'));
-    expect(result.text, contains('#EXT-X-BYTERANGE:10@30'));
+    // 范围已经绑进本地 URI(网关按注册时的 range 回源),清单里不能再留一份,
+    // 否则播放器会对着「已经切好的那一段」二次取偏移 —— 偏移叠加两次直接 416。
+    expect(result.text, isNot(contains('#EXT-X-BYTERANGE')));
+    expect(result.text, isNot(contains('BYTERANGE=')));
+    expect(result.text, contains('#EXT-X-MAP:URI="http://127.0.0.1/init/init-b.mp4"'));
     expect(result.text, contains('/key/a.key'));
     expect(result.duration, const Duration(seconds: 8));
   });

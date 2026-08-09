@@ -261,6 +261,9 @@ class HlsCacheGateway implements HlsSessionGateway {
         _upstream = upstream,
         _policy = HlsUpstreamPolicy(allowLoopback: allowLoopbackUpstream);
 
+  /// 缓冲健康时最多预读几片。再多也只是把带宽从正在播的那一片手里抢走。
+  static const int _maxPrefetchDepth = 3;
+
   final HlsCacheStore _cache;
   final HlsUpstreamClient _upstream;
   final bool allowLoopbackUpstream;
@@ -450,18 +453,17 @@ class HlsCacheGateway implements HlsSessionGateway {
       },
     );
 
+    // 每个分片记住紧随其后的几片。真正预取几片由 [_schedulePrefetch] 按缓冲健康度决定 ——
+    // 缓冲还没起来时只读 1 片,别让预读跟正在播的那一片抢带宽(那正是「像是要等全部分片
+    // 下完才开播」的由来:预读把上行队列占满,前台分片一直排在后面直到卡顿超时)。
     for (var index = 0; index < segmentResources.length; index++) {
       segmentResources[index].prefetchIds = isLive
           ? const []
           : segmentResources
               .skip(index + 1)
-              .take(3)
+              .take(_maxPrefetchDepth)
               .map((resource) => resource.id)
               .toList();
-      segmentResources[index].forwardPrefetchId =
-          isLive || index + 4 >= segmentResources.length
-              ? null
-              : segmentResources[index + 4].id;
     }
 
     return result.text;
@@ -483,32 +485,45 @@ class HlsCacheGateway implements HlsSessionGateway {
       );
       return;
     }
-    final cacheRequest = HlsCacheRequest(
-      url: resource.uri.toString(),
-      authScope: session.authScope,
-      rangeStart: resource.rangeStart,
-      rangeLength: resource.rangeLength,
-    );
-    final hit = resource.live ? null : await _cache.lookup(cacheRequest);
-    if (hit != null) {
-      try {
-        await _serveCacheHit(request, hit, range);
-      } finally {
-        await hit.release();
-      }
-      _schedulePrefetch(session, resource);
-      return;
-    }
+    final cacheRequest = _cacheRequestFor(session, resource);
+    // 播放器正在要的这一片优先:整个取流期间暂停预读队列。
+    session.foregroundRequests++;
+    try {
+      // 同一片的预读已经在下了 —— 等它落盘再走缓存,别再开一路把同样的字节下第二遍。
+      // 预读永远跑在播放位置前面,这一等换来的是省掉整整一片的重复流量。
+      final pending = session.prefetchInFlight[resource.id];
+      // 预读失败不能连累前台:吞掉错误,下面照常自己回源。
+      if (pending != null) await pending.then<void>((_) {}, onError: (_) {});
 
-    await _streamMediaMiss(
-      request,
-      session,
-      resource,
-      cacheRequest,
-      range,
-    );
+      final hit = resource.live ? null : await _cache.lookup(cacheRequest);
+      if (hit != null) {
+        try {
+          await _serveCacheHit(request, hit, range);
+        } finally {
+          await hit.release();
+        }
+      } else {
+        await _streamMediaMiss(
+          request,
+          session,
+          resource,
+          cacheRequest,
+          range,
+        );
+      }
+    } finally {
+      session.foregroundRequests--;
+    }
     if (range == null) _schedulePrefetch(session, resource);
   }
+
+  HlsCacheRequest _cacheRequestFor(_SessionData session, _Resource resource) =>
+      HlsCacheRequest(
+        url: resource.uri.toString(),
+        authScope: session.authScope,
+        rangeStart: resource.rangeStart,
+        rangeLength: resource.rangeLength,
+      );
 
   Future<void> _serveCacheHit(
     HttpRequest request,
@@ -709,18 +724,95 @@ class HlsCacheGateway implements HlsSessionGateway {
   }
 
   void _schedulePrefetch(_SessionData session, _Resource resource) {
-    if (resource.prefetchIds.isEmpty) return;
-    final generation = session.prefetchGeneration;
-    final ids = List<String>.of(resource.prefetchIds);
-    if (session.bufferHealthy && resource.forwardPrefetchId != null) {
-      ids.add(resource.forwardPrefetchId!);
-    }
-    session.prefetch =
-        (session.prefetch ?? Future<void>.value()).then((_) async {
-      if (session.closing) return;
-      await _prefetch(session, ids, generation);
-    });
+    if (resource.prefetchIds.isEmpty || session.closing) return;
+    // 缓冲还没起来(<15s)就只预读 1 片,把上行留给正在播的那一片。
+    final depth = session.bufferHealthy ? _maxPrefetchDepth : 1;
+    // 整批替换而不是追加:播放位置一动,上一批预读就作废了。老实现是往一条 Future 链上
+    // 不停追加,链只增不减,于是一直在下播放器早就不需要的分片 —— 前台分片被一路顶到
+    // 卡顿超时后面,看着就像「必须等所有分片下完才开播」。
+    session.prefetchQueue
+      ..clear()
+      ..addAll(resource.prefetchIds.take(depth));
+    if (session.prefetchRunning) return;
+    session.prefetchRunning = true;
+    session.prefetch = _drainPrefetch(session, session.prefetchGeneration);
     unawaited(session.prefetch);
+  }
+
+  Future<void> _drainPrefetch(_SessionData session, int generation) async {
+    try {
+      while (session.prefetchQueue.isNotEmpty) {
+        if (session.closing ||
+            generation != session.prefetchGeneration ||
+            !_sessions.containsKey(session.id)) {
+          return;
+        }
+        // 前台正在取流:让路。下一片播出去时 _schedulePrefetch 会重新拉起本循环。
+        if (session.foregroundRequests > 0) return;
+        final id = session.prefetchQueue.removeAt(0);
+        final resource = session.resources[id];
+        if (resource == null ||
+            resource.kind != _ResourceKind.segment ||
+            session.prefetchInFlight.containsKey(id)) {
+          continue;
+        }
+        final future = _prefetchOne(session, resource);
+        session.prefetchInFlight[id] = future;
+        try {
+          await future;
+        } catch (_) {
+          return; // 上游挂了:停掉本轮预读,前台取流会自己重试并把错误报出去
+        } finally {
+          session.prefetchInFlight.remove(id);
+        }
+      }
+    } finally {
+      session.prefetchRunning = false;
+    }
+  }
+
+  /// 预读一片:**流式写盘**,不把整段先堆进内存(1080p 单片几十 MB,老实现是
+  /// `dio.get<List<int>>` 全缓冲)。
+  Future<void> _prefetchOne(_SessionData session, _Resource resource) async {
+    final lease = await _cache.acquire(
+      _cacheRequestFor(session, resource),
+      (file) async {
+        final upstream = await _fetchStream(
+          session,
+          resource,
+          rangeStart: resource.rangeStart,
+          rangeLength: resource.rangeLength,
+        );
+        var stream = upstream.stream;
+        var length = upstream.contentLength;
+        final start = resource.rangeStart;
+        // 上游忽略 Range 直接回整个文件(私有源常见)→ 本地切,别把整段当成这一片存下来。
+        if (start != null && upstream.statusCode == HttpStatus.ok) {
+          length =
+              resource.rangeLength ?? (length == null ? null : length - start);
+          stream = _sliceByteStream(upstream.stream, skip: start, take: length);
+        }
+        final sink = file.openWrite();
+        var written = 0;
+        try {
+          await for (final chunk in stream) {
+            sink.add(chunk);
+            written += chunk.length;
+          }
+          await sink.flush();
+        } catch (_) {
+          await upstream.cancel();
+          rethrow;
+        } finally {
+          await sink.close();
+        }
+        return CacheDownloadResult(
+          contentType: upstream.contentType,
+          expectedLength: length ?? written,
+        );
+      },
+    );
+    await lease.release();
   }
 
   _RequestedRange? _parseRange(String? value) {
@@ -754,43 +846,6 @@ class HlsCacheGateway implements HlsSessionGateway {
       session.keyBytes[resource.id] = bytes;
     }
     await _writeResponse(request, bytes, 'application/octet-stream');
-  }
-
-  Future<void> _prefetch(
-    _SessionData session,
-    List<String> ids,
-    int generation,
-  ) async {
-    for (final id in ids) {
-      if (session.closing ||
-          generation != session.prefetchGeneration ||
-          !_sessions.containsKey(session.id)) {
-        return;
-      }
-      final resource = session.resources[id];
-      if (resource == null || resource.kind != _ResourceKind.segment) continue;
-      try {
-        final lease = await _cache.acquire(
-          HlsCacheRequest(
-            url: resource.uri.toString(),
-            authScope: session.authScope,
-            rangeStart: resource.rangeStart,
-            rangeLength: resource.rangeLength,
-          ),
-          (file) async {
-            final upstream = await _fetch(session, resource);
-            await file.writeAsBytes(upstream.bytes, flush: true);
-            return CacheDownloadResult(
-              contentType: upstream.contentType,
-              expectedLength: upstream.bytes.length,
-            );
-          },
-        );
-        await lease.release();
-      } catch (_) {
-        return;
-      }
-    }
   }
 
   Future<HlsUpstreamResponse> _fetch(
@@ -926,6 +981,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     final session = _sessions[id];
     if (session == null) return;
     session.closing = true;
+    session.prefetchQueue.clear();
     await session.prefetch;
     _sessions.remove(id);
     for (final bytes in session.keyBytes.values) {
@@ -943,6 +999,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     await _subscription?.cancel();
     await _server?.close(force: true);
     await Future.wait(List<Future<void>>.of(_activeRequests));
+    await _cache.flushIndex();
     _subscription = null;
     _server = null;
   }
@@ -1005,7 +1062,6 @@ class _Resource {
   final int? rangeLength;
   final bool live;
   List<String> prefetchIds = const [];
-  String? forwardPrefetchId;
 }
 
 class _SessionData {
@@ -1023,7 +1079,13 @@ class _SessionData {
   final Map<String, _Resource> resources = {};
   final Map<String, String> signatures = {};
   final Map<String, Uint8List> keyBytes = {};
+  /// 待预读的分片 id(整批替换,不追加);[prefetchInFlight] 是正在下的那一片,
+  /// 前台命中同一片时等它落盘而不是重新回源一遍。
+  final List<String> prefetchQueue = [];
+  final Map<String, Future<void>> prefetchInFlight = {};
   Future<void>? prefetch;
+  bool prefetchRunning = false;
+  int foregroundRequests = 0;
   bool closing = false;
   bool bufferHealthy = false;
   int prefetchGeneration = 0;

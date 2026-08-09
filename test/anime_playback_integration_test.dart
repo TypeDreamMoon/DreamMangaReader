@@ -173,6 +173,8 @@ ad.ts
     expect(backend.seeks.last, const Duration(seconds: 42));
     expect(backend.clearedAudioCount, 1);
 
+    // 索引是后台合并写的:先等它落盘,再读文件(否则读到的是正在被改写的那一刻)。
+    await store.flushIndex();
     final persisted = <String>[
       ...directory.listSync().map((entry) => entry.path),
       if (File('${directory.path}${Platform.pathSeparator}index.json')

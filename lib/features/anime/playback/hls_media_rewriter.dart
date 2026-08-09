@@ -109,7 +109,9 @@ class HlsMediaRewriter {
           trimmed.substring(trimmed.indexOf(':') + 1),
           implicitOffset: previousRangeEnd,
         );
-        if (!filteringAd()) emit(original);
+        // 不透传:范围已经编进注册出来的本地 URI(网关按 rangeStart/rangeLength 回源),
+        // 再留一行 BYTERANGE 会让播放器对着「已经切好的那一段」二次取偏移 —— 偏移叠加两次,
+        // 得到 416 或错位数据。整段单文件 fMP4 的清单就是这么整集播不出来的。
         continue;
       }
 
@@ -126,7 +128,10 @@ class HlsMediaRewriter {
             HlsUriKind.init,
             range,
           );
-          emit(_replaceUriAttribute(original, local.toString()));
+          // 同 #EXT-X-BYTERANGE:本地 URI 已经只返回这一段,属性必须一起摘掉。
+          emit(_removeByteRangeAttribute(
+            _replaceUriAttribute(original, local.toString()),
+          ));
         }
         continue;
       }
@@ -345,6 +350,16 @@ class HlsMediaRewriter {
     }
     return result;
   }
+
+  String _removeByteRangeAttribute(String line) => line
+      .replaceAll(
+        RegExp(r',\s*BYTERANGE=("[^"]*"|[^,]*)', caseSensitive: false),
+        '',
+      )
+      .replaceAll(
+        RegExp(r'(?<=:)\s*BYTERANGE=("[^"]*"|[^,]*),\s*', caseSensitive: false),
+        '',
+      );
 
   String _replaceUriAttribute(String line, String replacement) {
     final match =

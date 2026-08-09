@@ -104,6 +104,7 @@ class HlsCacheStore {
   int _limitBytes;
   Future<void>? _initializeFuture;
   Future<void> _persistTail = Future.value();
+  Future<void>? _queuedPersist;
 
   File get _indexFile =>
       File('${directory.path}${Platform.pathSeparator}index.json');
@@ -289,6 +290,10 @@ class HlsCacheStore {
     await _persist();
   }
 
+  /// 等所有排队中的索引写入落盘。索引是后台合并写的,读文件前必须先等干净
+  /// (Windows 上正被改写的文件是打不开的)。
+  Future<void> flushIndex() => _persistTail.catchError((_) {});
+
   Future<int> sizeBytes() async {
     await initialize();
     return _entries.values.fold<int>(0, (total, entry) => total + entry.size);
@@ -330,18 +335,29 @@ class HlsCacheStore {
     if (await file.exists()) await file.delete();
   }
 
+  /// 索引落盘。播放一集会产生成百上千次 lease/release,每次都整表重写一遍会把
+  /// 取流线程钉在磁盘 IO 上。这里合并写:同一时刻最多「一次进行中 + 一次排队」,
+  /// 排队的那次在真正执行时重新编码最新快照 —— 所以 `await _persist()` 返回后,
+  /// 调用点当时的状态一定已经在盘上了。
   Future<void> _persist() {
-    final encoded = jsonEncode({
-      'schemaVersion': 1,
-      'entries': _entries.values.map((entry) => entry.toJson()).toList(),
-    });
-    _persistTail = _persistTail.catchError((_) {}).then((_) async {
+    final queued = _queuedPersist;
+    if (queued != null) return queued;
+    final previous = _persistTail;
+    final future = () async {
+      await previous;
+      _queuedPersist = null;
+      final encoded = jsonEncode({
+        'schemaVersion': 1,
+        'entries': _entries.values.map((entry) => entry.toJson()).toList(),
+      });
       final temporary = File('${_indexFile.path}.tmp');
       await temporary.writeAsString(encoded, flush: true);
       if (await _indexFile.exists()) await _indexFile.delete();
       await temporary.rename(_indexFile.path);
-    });
-    return _persistTail;
+    }();
+    _queuedPersist = future;
+    _persistTail = future.catchError((_) {});
+    return future;
   }
 
   String _keyFor(HlsCacheRequest request) {

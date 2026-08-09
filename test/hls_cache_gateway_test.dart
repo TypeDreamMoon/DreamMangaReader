@@ -106,15 +106,22 @@ void main() {
     final first = await _get(media.segments.first.uri);
     expect(first.bytes, [0, 0, 0]);
 
+    // 缓冲还没起来:只预读紧邻的一片,别把带宽从正在播的那片手里抢走。
     for (var attempt = 0; attempt < 50; attempt++) {
-      if (upstream.requestCount('/360/003.ts') == 1) break;
+      if (upstream.requestCount('/360/001.ts') == 1) break;
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(upstream.requestCount('/360/001.ts'), 1);
-    expect(upstream.requestCount('/360/002.ts'), 1);
-    expect(upstream.requestCount('/360/003.ts'), 1);
-    await _get(media.segments[1].uri);
+    expect(upstream.requestCount('/360/002.ts'), 0);
+    expect(upstream.requestCount('/360/003.ts'), 0);
+    // 预读过的那片直接走缓存,不会再回源第二遍。
+    expect((await _get(media.segments[1].uri)).bytes, [1, 1, 1]);
     expect(upstream.requestCount('/360/001.ts'), 1);
+    for (var attempt = 0; attempt < 50; attempt++) {
+      if (upstream.requestCount('/360/002.ts') == 1) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(upstream.requestCount('/360/002.ts'), 1);
     expect(
       upstream.requests.every(
         (request) => request.authorization == 'Bearer fixture-token',
@@ -359,7 +366,58 @@ b.m4s
     await done.future;
   });
 
-  test('healthy buffer allows exactly one extra forward prefetch', () async {
+  test('a foreground segment joins the in-flight prefetch instead of '
+      'downloading it twice', () async {
+    upstream.addText('/join.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+0.ts
+#EXTINF:4,
+1.ts
+#EXTINF:4,
+2.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/0.ts', [0]);
+    upstream.addBytes('/2.ts', [2]);
+    final gate = Completer<void>();
+    upstream.addChunked(
+      '/1.ts',
+      [
+        [1],
+        [1]
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await gate.future; // 预读停在半路
+      },
+    );
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('join.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    await _get(media.segments.first.uri);
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (upstream.requestCount('/1.ts') == 1) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(upstream.requestCount('/1.ts'), 1);
+
+    // 播放器追上来要这一片:等预读落盘走缓存,而不是再开一路把同样的字节下第二遍。
+    final second = _get(media.segments[1].uri);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    gate.complete();
+    expect((await second).bytes, [1, 1]);
+    expect(upstream.requestCount('/1.ts'), 1);
+  });
+
+  test('healthy buffer prefetches deeper but still stays bounded', () async {
     upstream.addText('/forward.m3u8', '''#EXTM3U
 #EXT-X-TARGETDURATION:4
 #EXT-X-PLAYLIST-TYPE:VOD
@@ -391,13 +449,14 @@ b.m4s
     await _get(media.segments.first.uri);
 
     for (var attempt = 0; attempt < 50; attempt++) {
-      if (upstream.requestCount('/4.ts') == 1) break;
+      if (upstream.requestCount('/3.ts') == 1) break;
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(upstream.requestCount('/1.ts'), 1);
     expect(upstream.requestCount('/2.ts'), 1);
     expect(upstream.requestCount('/3.ts'), 1);
-    expect(upstream.requestCount('/4.ts'), 1);
+    // 再往后就不读了:预读只是热身,不是把整集拖下来。
+    expect(upstream.requestCount('/4.ts'), 0);
     session.notifySeek();
   });
 
