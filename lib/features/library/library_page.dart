@@ -438,20 +438,17 @@ class _LibraryPageState extends State<LibraryPage> {
           count: count > 0 ? count : null,
           tabKey: ValueKey('shelf-kind-${kind?.name ?? 'all'}'),
         );
-    return PreferredSize(
-      preferredSize: const Size.fromHeight(38),
-      child: AppUnderlineTabs<ShelfKind?>(
-        selected: _kind,
-        onSelected: (kind) {
-          if (_kind == kind) return;
-          setState(() => _kind = kind);
-        },
-        tabs: [
-          tab(null, context.l10n.libraryKindAll, all.length),
-          for (final kind in ShelfKind.values)
-            tab(kind, shelfKindLabel(context, kind), counts[kind] ?? 0),
-        ],
-      ),
+    return AppUnderlineTabs<ShelfKind?>(
+      selected: _kind,
+      onSelected: (kind) {
+        if (_kind == kind) return;
+        setState(() => _kind = kind);
+      },
+      tabs: [
+        tab(null, context.l10n.libraryKindAll, all.length),
+        for (final kind in ShelfKind.values)
+          tab(kind, shelfKindLabel(context, kind), counts[kind] ?? 0),
+      ],
     );
   }
 

@@ -31,7 +31,8 @@ class AppUnderlineTab<T> {
 ///
 /// 语义上与 [AppFilterChip] 刻意分开:**切内容视图**(书架的漫画/小说/番剧、发现页的
 /// 内容档)用它;**加筛选条件**(地区/进度/排序)用描边 chip。别拿 chip 当 tab 使。
-class AppUnderlineTabs<T> extends StatelessWidget {
+/// 自带 [preferredSize],可直接塞进 `GlassTitleBar(bottom:)` / `AppBar(bottom:)`。
+class AppUnderlineTabs<T> extends StatelessWidget implements PreferredSizeWidget {
   const AppUnderlineTabs({
     super.key,
     required this.tabs,
@@ -46,6 +47,11 @@ class AppUnderlineTabs<T> extends StatelessWidget {
   final ValueChanged<T> onSelected;
   final EdgeInsetsGeometry padding;
   final double fontSize;
+
+  /// 条高。给得比内容宽裕(14pt 中文 ≈ 20 + 间距 + 下划线 ≈ 30),
+  /// 富余留给系统字体放大 —— 内容贴底排,多出来的空间落在标题那一侧。
+  @override
+  Size get preferredSize => Size.fromHeight(fontSize * 2.2 + 14);
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +70,7 @@ class AppUnderlineTabs<T> extends StatelessWidget {
                 tab: tabs[i],
                 selected: tabs[i].value == selected,
                 fontSize: fontSize,
+                height: preferredSize.height,
                 onTap: () => onSelected(tabs[i].value),
               ),
             ],
@@ -79,12 +86,14 @@ class _Tab<T> extends StatelessWidget {
     required this.tab,
     required this.selected,
     required this.fontSize,
+    required this.height,
     required this.onTap,
   });
 
   final AppUnderlineTab<T> tab;
   final bool selected;
   final double fontSize;
+  final double height;
   final VoidCallback onTap;
 
   @override
@@ -101,50 +110,55 @@ class _Tab<T> extends StatelessWidget {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         // IntrinsicWidth:让下划线正好等宽于上面那行文字(stretch 取其固有宽)。
-        child: IntrinsicWidth(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(0, 10, 0, 7),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (tab.icon != null) ...[
-                      Icon(tab.icon, size: fontSize + 1, color: fg),
-                      const SizedBox(width: 5),
-                    ],
-                    AnimatedDefaultTextStyle(
-                      duration: duration,
-                      style: TextStyle(
-                        color: fg,
-                        fontSize: fontSize,
-                        fontWeight:
-                            selected ? FontWeight.w800 : FontWeight.w600,
-                        letterSpacing: 0.3,
-                      ),
-                      child: Text(tab.label),
-                    ),
-                    if (tab.count != null) ...[
-                      const SizedBox(width: 6),
+        // 定高 + 贴底:条高给得宽裕,系统字体放大时富余从上面吃掉,下划线始终贴着底边,
+        // 也就不会顶破 preferredSize。
+        child: SizedBox(
+          height: height,
+          child: IntrinsicWidth(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 7),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (tab.icon != null) ...[
+                        Icon(tab.icon, size: fontSize + 1, color: fg),
+                        const SizedBox(width: 5),
+                      ],
                       AnimatedDefaultTextStyle(
                         duration: duration,
                         style: TextStyle(
-                          color: selected
-                              ? p.accent.withValues(alpha: 0.7)
-                              : p.textMuted.withValues(alpha: 0.65),
-                          fontSize: fontSize - 3,
-                          fontWeight: FontWeight.w700,
+                          color: fg,
+                          fontSize: fontSize,
+                          fontWeight:
+                              selected ? FontWeight.w800 : FontWeight.w600,
+                          letterSpacing: 0.3,
                         ),
-                        child: Text('${tab.count}'),
+                        child: Text(tab.label),
                       ),
+                      if (tab.count != null) ...[
+                        const SizedBox(width: 6),
+                        AnimatedDefaultTextStyle(
+                          duration: duration,
+                          style: TextStyle(
+                            color: selected
+                                ? p.accent.withValues(alpha: 0.7)
+                                : p.textMuted.withValues(alpha: 0.65),
+                            fontSize: fontSize - 3,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          child: Text('${tab.count}'),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              _Underline(active: selected, duration: duration),
-            ],
+                _Underline(active: selected, duration: duration),
+              ],
+            ),
           ),
         ),
       ),

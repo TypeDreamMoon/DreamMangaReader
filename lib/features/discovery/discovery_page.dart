@@ -538,16 +538,13 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
 
   // 内容类型切换:漫画 / 番剧 / 小说。与书架的类型 tab 同一副长相(下划线 tab =
   // 切内容视图),贴在毛玻璃标题栏下沿。
-  PreferredSizeWidget _kindTabs() => PreferredSize(
-        preferredSize: const Size.fromHeight(38),
-        child: AppUnderlineTabs<ContentKind>(
-          selected: _kind,
-          onSelected: _selectKind,
-          tabs: [
-            for (final k in ContentKind.values)
-              AppUnderlineTab(value: k, label: k.label),
-          ],
-        ),
+  PreferredSizeWidget _kindTabs() => AppUnderlineTabs<ContentKind>(
+        selected: _kind,
+        onSelected: _selectKind,
+        tabs: [
+          for (final k in ContentKind.values)
+            AppUnderlineTab(value: k, label: k.label),
+        ],
       );
 
   /// 换档收起搜索栏并清掉**共享**搜索态。_query/_origQuery/_searchCtrl 被漫画网格与番剧
