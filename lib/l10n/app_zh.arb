@@ -452,7 +452,6 @@
   "shelf_histDeleted": "已删除阅读记录",
   "shelf_searchInFavsTooltip": "在收藏里搜索",
   "shelf_historyTooltip": "阅读历史",
-  "shelf_recommend": "推荐",
   "shelf_searchInFavsHint": "在收藏里搜索…",
   "shelf_noFavMatch": "收藏里没有匹配「{q}」的",
   "@shelf_noFavMatch": {
@@ -471,13 +470,6 @@
       "n": {}
     }
   },
-  "shelf_sourceLatest": "{name} · 最新更新",
-  "@shelf_sourceLatest": {
-    "placeholders": {
-      "name": {}
-    }
-  },
-  "shelf_noDataEmpty": "没有拿到数据(列表为空)",
   "cover_nSources": "{n}源",
   "@cover_nSources": {
     "placeholders": {
@@ -1196,6 +1188,18 @@
   "libraryMangaFavoritesEmpty": "暂无漫画收藏",
   "libraryNovelFavoritesEmpty": "暂无小说收藏",
   "libraryAnimeFavoritesEmpty": "暂无番剧收藏",
+  "libraryFavorites": "收藏",
+  "libraryFavoritesEmpty": "书架还是空的，去发现页找点想看的吧",
+  "libraryKindAll": "全部",
+  "libraryKindManga": "漫画",
+  "libraryKindNovel": "小说",
+  "libraryKindAnime": "番剧",
+  "shelf_sourceGone": "「{name}」源已不存在",
+  "@shelf_sourceGone": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "animeFavorite": "收藏番剧",
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
