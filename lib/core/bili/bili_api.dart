@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../source/models.dart';
 import 'bili_auth.dart';
+import 'bili_errors.dart';
 import 'bili_wbi.dart';
 
 /// Bilibili Web API 客户端(番剧向)。所有请求带浏览器 UA + Referer + 已登录 Cookie;
@@ -243,7 +244,8 @@ class BiliApi {
     );
     final b = _body(r);
     final res = b['result'] as Map?;
-    if (res == null) throw Exception('番剧详情为空:${b['message'] ?? ''}');
+    // 详情为空基本都是「这个地区看不了」,别再把裸 code 甩给用户。
+    if (res == null) throw biliExceptionOf(b);
     final manga = Manga(
       id: seasonId,
       title: '${res['title'] ?? ''}',
@@ -324,9 +326,8 @@ class BiliApi {
     final b = _body(r);
     final result = b['result'] as Map? ?? b['data'] as Map?;
     final vi = result?['video_info'] as Map?;
-    if (vi == null) {
-      throw Exception('取播放源失败:${b['message'] ?? b['code'] ?? ''}');
-    }
+    // 海外用户最常撞这里:番剧列得出来,一点播放就是版权地区限制。
+    if (vi == null) throw biliExceptionOf(b);
     const headers = {
       'Referer': 'https://www.bilibili.com/',
       'User-Agent': kBiliUa,

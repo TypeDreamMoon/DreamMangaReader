@@ -1316,6 +1316,18 @@
   "bili_loginTitle": "登录哔哩哔哩",
   "bili_refreshQr": "刷新二维码",
   "bili_localOnly": "登录信息仅存本机(安全存储),不会同步或导出。",
+  "bili_geoBlocked": "版权方限制了播放地区,当前网络看不了这部",
+  "bili_geoBlockedHint": "去「设置 → 网络代理」配一个能落地对应地区的出口(当前:{proxy})",
+  "@bili_geoBlockedHint": {
+    "placeholders": {
+      "proxy": {}
+    }
+  },
+  "bili_proxyDirect": "直连",
+  "bili_needsLogin": "这部要登录后才能看",
+  "bili_vipOnly": "这部要大会员",
+  "bili_rateLimited": "请求被拦下了,过一会儿再试",
+  "bili_notFound": "这部或这一集已经找不到了",
   "anime_episodes": "分集",
   "anime_episodesN": "{n} 集",
   "anime_noEpisodes": "没有分集",

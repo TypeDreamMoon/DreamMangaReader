@@ -19,6 +19,7 @@ import '../../app/anime_download_store.dart';
 import '../../app/anime_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import 'anime_player_controls.dart';
+import 'bili_failure_text.dart';
 import 'playback/hls_cache_settings.dart';
 import 'playback/media_kit_player_adapter.dart';
 import 'playback/mpv_network_options.dart';
@@ -788,7 +789,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (!_disposed && generation == _loadGeneration && mounted) {
         setState(() => _playback = PlaybackState(
               phase: PlaybackPhase.failed,
-              message: '$error',
+              message: describeSourceError(context, error),
             ));
       }
     }
@@ -846,7 +847,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (!_disposed && generation == _loadGeneration && mounted) {
         setState(() => _playback = PlaybackState(
               phase: PlaybackPhase.failed,
-              message: '$error',
+              message: describeSourceError(context, error),
               selectedTrack: t,
               manualQualityLocked: true,
             ));

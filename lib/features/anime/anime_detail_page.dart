@@ -19,6 +19,7 @@ import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../common/bangumi_card.dart';
 import '../common/transitions.dart';
+import 'bili_failure_text.dart';
 import '../detail/author_works_page.dart';
 import '../detail/bangumi_search_sheet.dart';
 import '../common/detail_body.dart';
@@ -108,7 +109,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = '$e';
+        _error = describeSourceError(context, e);
       });
     }
   }
