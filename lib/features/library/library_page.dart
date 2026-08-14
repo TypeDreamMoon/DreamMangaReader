@@ -120,11 +120,11 @@ class _LibraryPageState extends State<LibraryPage> {
       _openInOtherSource(title, excludeSourceId: sourceId);
       return;
     }
-    Navigator.of(context).push(appRoute(DetailPage(
+    pushPage(context, DetailPage(
       manga: Manga(id: mangaId, title: title, cover: cover),
       meta: meta,
       heroTag: heroTag,
-    )));
+    ));
   }
 
   void _openAnime(AnimeFavoriteEntry entry, {Object? heroTag}) {
@@ -133,11 +133,11 @@ class _LibraryPageState extends State<LibraryPage> {
       _snack(context.l10n.shelf_sourceGone(sourceNameOf(entry.sourceId)));
       return;
     }
-    Navigator.of(context).push(appRoute(AnimeDetailPage(
+    pushPage(context, AnimeDetailPage(
       meta: meta,
       anime: Manga(id: entry.animeId, title: entry.title, cover: entry.cover),
       heroTag: heroTag,
-    )));
+    ));
   }
 
   /// 书架卡片的统一打开入口:按类型派发到各自的详情/阅读入口。
@@ -346,8 +346,7 @@ class _LibraryPageState extends State<LibraryPage> {
         const NovelImportButton(compact: true),
         IconButton(
           tooltip: context.l10n.shelf_historyTooltip,
-          onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const HistoryPage())),
+          onPressed: () => pushRoute(context, MaterialPageRoute<void>(builder: (_) => const HistoryPage())),
           icon: const Icon(Icons.history_rounded),
         ),
         const SizedBox(width: 8),
@@ -496,8 +495,7 @@ class _LibraryPageState extends State<LibraryPage> {
               ),
               IconButton(
                 tooltip: context.l10n.shelf_historyTooltip,
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const HistoryPage()),
+                onPressed: () => pushRoute(context, MaterialPageRoute<void>(builder: (_) => const HistoryPage()),
                 ),
                 icon: const Icon(Icons.chevron_right_rounded),
               ),

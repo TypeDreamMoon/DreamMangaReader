@@ -161,14 +161,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   void _play(int index, {Duration position = Duration.zero}) =>
-      Navigator.of(context).push(appRoute(AnimePlayerPage(
+      pushPage(context, AnimePlayerPage(
         meta: widget.meta,
         animeId: widget.anime.id,
         animeTitle: _title,
         episodes: _episodes,
         index: index,
         initialPosition: position,
-      )));
+      ));
 
   String _downloadTaskId(Chapter episode) => contentDownloadTaskId(
         DownloadContentKind.anime,
@@ -391,16 +391,15 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       : widget.anime.title;
 
   void _openAuthorWorks(String author) {
-    Navigator.of(context).push(appRoute(AuthorWorksPage(
+    pushPage(context, AuthorWorksPage(
       author: author,
       meta: widget.meta,
       kind: 'anime',
       excludeMangaId: widget.anime.id,
-      onOpen: (context, meta, anime, heroTag) => Navigator.of(context).push(
-        appRoute(
-            AnimeDetailPage(meta: meta, anime: anime, heroTag: heroTag)),
+      onOpen: (context, meta, anime, heroTag) => pushPage(context, 
+            AnimeDetailPage(meta: meta, anime: anime, heroTag: heroTag),
       ),
-    )));
+    ));
   }
 
   String _statusText(MangaStatus status) => switch (status) {

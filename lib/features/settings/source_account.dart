@@ -86,7 +86,7 @@ String? sourceAccountUser(SourceAccount account, AuthStore auth) {
 Future<void> openSourceLogin(BuildContext context, SourceAccount account) =>
     switch (account.kind) {
       SourceLoginKind.qr =>
-        Navigator.of(context).push<bool>(appRoute(const BiliLoginPage())),
+        pushPage<bool>(context, const BiliLoginPage()),
       SourceLoginKind.password =>
         showSourceLoginSheet(context, account.primary),
     };

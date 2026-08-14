@@ -375,8 +375,7 @@ class _MangaDownloadsPage extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         onTap: meta == null
             ? null
-            : () => Navigator.of(context).push(
-                appRoute(DetailPage(manga: manga, meta: meta, heroTag: tag))),
+            : () => pushPage(context, DetailPage(manga: manga, meta: meta, heroTag: tag)),
         child: Row(
           children: [
             SizedBox(

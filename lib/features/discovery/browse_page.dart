@@ -190,8 +190,8 @@ class _BrowsePageState extends State<BrowsePage> {
               manga: m,
               headers: imageHeadersOf(widget.meta),
               heroTag: tag,
-              onTap: () => Navigator.of(context).push(appRoute(
-                  DetailPage(manga: m, meta: widget.meta, heroTag: tag))),
+              onTap: () => pushPage(context, 
+                  DetailPage(manga: m, meta: widget.meta, heroTag: tag)),
             ),
           ),
           const SizedBox(height: 6),

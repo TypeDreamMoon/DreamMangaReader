@@ -48,14 +48,14 @@ Future<void> openAnimeHistory(
     source = null;
     if (!context.mounted) return;
 
-    await Navigator.of(context).push(appRoute(playerBuilder(
+    await pushPage(context, playerBuilder(
       meta,
       entry.animeId,
       entry.title,
       episodes,
       index,
       Duration(seconds: entry.positionSeconds),
-    )));
+    ));
   } catch (error) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

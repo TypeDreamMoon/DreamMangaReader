@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../common/transitions.dart';
 import '../../app/anime_library_store.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
@@ -143,7 +144,7 @@ class HistoryPage extends StatelessWidget {
       ),
       onTap: meta == null
           ? null
-          : () => Navigator.of(context).push(MaterialPageRoute<void>(
+          : () => pushRoute(context, MaterialPageRoute<void>(
                 builder: (_) =>
                     DetailPage(manga: manga, meta: meta, heroTag: heroTag),
               )),

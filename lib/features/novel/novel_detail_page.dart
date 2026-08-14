@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../common/transitions.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/novel_library_store.dart';
@@ -217,7 +218,7 @@ class _NovelDetailPageState extends State<NovelDetailPage>
       );
     }
 
-    Navigator.of(context).push(MaterialPageRoute<void>(
+    pushRoute(context, MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: novel,
         chapters: chapters,

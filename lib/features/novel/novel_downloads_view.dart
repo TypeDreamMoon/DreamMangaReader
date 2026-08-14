@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../common/transitions.dart';
 import '../../app/novel_download_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
@@ -168,7 +169,7 @@ class NovelDownloadsView extends StatelessWidget {
       }
     }
     if (current != null) {
-      await Navigator.of(context).push(MaterialPageRoute<void>(
+      await pushRoute(context, MaterialPageRoute<void>(
         builder: (_) => NovelDetailPage(meta: current!, novel: group.novel),
       ));
       return;
@@ -181,7 +182,7 @@ class NovelDownloadsView extends StatelessWidget {
       );
       return;
     }
-    await Navigator.of(context).push(MaterialPageRoute<void>(
+    await pushRoute(context, MaterialPageRoute<void>(
       builder: (_) => _OfflineNovelPage(store: store, group: group),
     ));
   }
@@ -272,7 +273,7 @@ class _OfflineNovelPage extends StatelessWidget {
       );
     }
 
-    await Navigator.of(context).push(MaterialPageRoute<void>(
+    await pushRoute(context, MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: group.novel,
         chapters: chapters,

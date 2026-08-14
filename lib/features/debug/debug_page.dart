@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:html/parser.dart' as html_parser;
 import 'package:path_provider/path_provider.dart';
 
+import '../common/transitions.dart';
 import '../../app/app_info.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/net/dio_http_service.dart';
@@ -311,8 +312,7 @@ class _DebugPageState extends State<DebugPage> {
             p,
             '④ Cloudflare 过盾',
             'WebView 过挑战 → 取 cf_clearance → dio 复验。',
-            () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const CloudflareSpikePage()),
+            () => pushRoute(context, MaterialPageRoute(builder: (_) => const CloudflareSpikePage()),
             ),
             '打开过盾验证 →',
           ),

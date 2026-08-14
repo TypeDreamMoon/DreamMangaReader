@@ -140,7 +140,7 @@ class _AnimeDownloadGroup extends StatelessWidget {
           script: '',
           kind: 'anime',
         );
-    Navigator.of(context).push(appRoute(AnimePlayerPage(
+    pushPage(context, AnimePlayerPage(
       meta: meta,
       animeId: first.animeId,
       animeTitle: first.animeTitle,
@@ -149,7 +149,7 @@ class _AnimeDownloadGroup extends StatelessWidget {
           Chapter(id: episode.episodeId, name: episode.episodeTitle),
       ],
       index: index,
-    )));
+    ));
   }
 }
 

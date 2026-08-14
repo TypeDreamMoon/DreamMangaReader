@@ -414,19 +414,19 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   void _open(_AnimeResult result, {Object? heroTag}) {
-    Navigator.of(context).push(appRoute(AnimeDetailPage(
+    pushPage(context, AnimeDetailPage(
       meta: result.meta,
       anime: result.anime,
       heroTag: heroTag,
       sourceBuilder: widget.sourceBuilder,
-    )));
+    ));
   }
 
   bool get _isBili => !_mixed && _meta?.id == kBiliSourceId;
 
   Future<void> _openBiliLogin() async {
     final ok =
-        await Navigator.of(context).push<bool>(appRoute(const BiliLoginPage()));
+        await pushPage<bool>(context, const BiliLoginPage());
     if (!mounted) return;
     if (ok == true) {
       _reset(); // 登录成功:重新拉追番

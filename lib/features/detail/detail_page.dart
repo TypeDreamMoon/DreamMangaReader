@@ -299,14 +299,14 @@ class _DetailPageState extends State<DetailPage>
     final os = _otherSources.firstWhere((o) => o.meta.id == prov.meta.id);
     var idx = os.chapters.indexWhere((x) => x.id == prov.chapter.id);
     if (idx < 0) idx = 0;
-    Navigator.of(context).push(appRoute(ReaderPage(
+    pushPage(context, ReaderPage(
       source: os.source,
       // 用他源自己的书名/封面(进度记在它 sid:mid 下,元数据别串成当前源的)。
       manga: Manga(id: os.mangaId, title: os.title, cover: os.cover),
       chapters: os.chapters,
       index: idx,
       imageHeaders: imageHeadersOf(os.meta),
-    )));
+    ));
   }
 
   /// 章节行右键/长按:列出提供本话的源,选谁用谁打开(当前源带勾)。
@@ -685,15 +685,14 @@ class _DetailPageState extends State<DetailPage>
     final list = _chapters ?? [c];
     var idx = list.indexWhere((x) => x.id == c.id);
     if (idx < 0) idx = 0;
-    Navigator.of(context).push(
-      appRoute(ReaderPage(
+    pushPage(context, ReaderPage(
         source: _source,
         manga: widget.manga,
         chapters: list,
         index: idx,
         imageHeaders: _imgHeaders,
         initialPage: initialPage,
-      )),
+      ),
     );
   }
 
@@ -793,15 +792,14 @@ class _DetailPageState extends State<DetailPage>
   }
 
   void _openAuthorWorks(String author) {
-    Navigator.of(context).push(appRoute(AuthorWorksPage(
+    pushPage(context, AuthorWorksPage(
       author: author,
       meta: widget.meta,
       kind: 'manga',
       excludeMangaId: widget.manga.id,
-      onOpen: (context, meta, manga, heroTag) => Navigator.of(context).push(
-        appRoute(DetailPage(manga: manga, meta: meta, heroTag: heroTag)),
+      onOpen: (context, meta, manga, heroTag) => pushPage(context, DetailPage(manga: manga, meta: meta, heroTag: heroTag),
       ),
-    )));
+    ));
   }
 
   String _statusText(MangaStatus s) {

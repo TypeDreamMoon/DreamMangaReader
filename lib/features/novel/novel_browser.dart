@@ -398,13 +398,13 @@ class NovelBrowserState extends State<NovelBrowser> {
       );
 
   void _open(_NovelResult result, {Object? heroTag}) {
-    Navigator.of(context).push(appRoute(NovelDetailPage(
+    pushPage(context, NovelDetailPage(
       meta: result.meta,
       novel: result.novel,
       heroTag: heroTag,
       sourceBuilder: widget.sourceBuilder,
       sourceCatalog: widget.sourceCatalog,
-    )));
+    ));
   }
 
   @override

@@ -270,14 +270,14 @@ class SettingsPage extends StatelessWidget {
                   l10n.proxy_title,
                   l10n.set_proxyCurrent(AppProxy.current ?? l10n.proxy_direct,
                       AppProxy.sourceLabel),
-                  () => Navigator.of(context).push(MaterialPageRoute(
+                  () => pushRoute(context, MaterialPageRoute(
                       builder: (_) => const ProxySettingsPage())),
                 ),
                 _tile(
                   Icons.translate_rounded,
                   l10n.trans_title,
                   l10n.set_translateSubtitle(lib.translateProvider.label),
-                  () => Navigator.of(context).push(MaterialPageRoute(
+                  () => pushRoute(context, MaterialPageRoute(
                       builder: (_) => const TranslateSettingsPage())),
                 ),
                 _switch(
@@ -349,7 +349,7 @@ class SettingsPage extends StatelessWidget {
                     Icons.source_rounded,
                     l10n.srcmgmt_title,
                     l10n.set_srcMgmtSub,
-                    () => Navigator.of(context).push(MaterialPageRoute(
+                    () => pushRoute(context, MaterialPageRoute(
                         builder: (_) => const SourceManagementPage()))),
                 _tile(Icons.backup_rounded, l10n.set_backup, l10n.set_backupSub,
                     () => _backup(context, lib)),
@@ -357,8 +357,7 @@ class SettingsPage extends StatelessWidget {
                     Icons.cloud_sync_rounded,
                     l10n.set_sync,
                     l10n.set_syncSub,
-                    () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const SyncPage()))),
+                    () => pushRoute(context, MaterialPageRoute(builder: (_) => const SyncPage()))),
                 _tile(Icons.cleaning_services_rounded, l10n.set_clearCache,
                     l10n.set_clearCacheSub, () => _showCacheSheet(context)),
               ]),
@@ -387,13 +386,13 @@ class SettingsPage extends StatelessWidget {
                   Icons.receipt_long_rounded,
                   l10n.log_title,
                   l10n.set_logSub,
-                  () => Navigator.of(context).push(appRoute(const LogPage())),
+                  () => pushPage(context, const LogPage()),
                 ),
                 _tile(
                   Icons.info_outline_rounded,
                   l10n.about,
                   '${AppInfo.name} · v${AppInfo.version}',
-                  () => Navigator.of(context).push(appRoute(const AboutPage())),
+                  () => pushPage(context, const AboutPage()),
                 ),
               ]),
             ],

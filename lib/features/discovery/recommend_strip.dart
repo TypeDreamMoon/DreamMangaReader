@@ -150,8 +150,7 @@ class _RecommendStripState extends State<RecommendStrip> {
               manga: m,
               headers: imageHeadersOf(rec.meta),
               heroTag: tag,
-              onTap: () => Navigator.of(context).push(
-                  appRoute(DetailPage(manga: m, meta: rec.meta, heroTag: tag))),
+              onTap: () => pushPage(context, DetailPage(manga: m, meta: rec.meta, heroTag: tag)),
             ),
           ),
           const SizedBox(height: 6),

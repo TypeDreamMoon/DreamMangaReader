@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../app/library_store.dart' show LibraryStore;
+import '../common/transitions.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
@@ -439,7 +440,7 @@ Future<void> openNovelLibraryEntry(
           ? 0
           : book.chapters
               .indexWhere((chapter) => chapter.id == saved.chapterId);
-      await Navigator.of(context).push(MaterialPageRoute<void>(
+      await pushRoute(context, MaterialPageRoute<void>(
         builder: (_) => NovelReaderPage(
           novel: book.novel,
           chapters: book.chapters,
@@ -471,7 +472,7 @@ Future<void> openNovelLibraryEntry(
     );
     return;
   }
-  await Navigator.of(context).push(MaterialPageRoute<void>(
+  await pushRoute(context, MaterialPageRoute<void>(
     builder: (_) => NovelDetailPage(
       meta: meta!,
       heroTag: heroTag,
