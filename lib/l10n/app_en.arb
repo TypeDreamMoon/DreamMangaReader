@@ -779,6 +779,7 @@
   "player_forward10": "Forward 10s",
   "player_options": "Playback options",
   "player_fullscreen": "Fullscreen",
+  "player_exitFullscreen": "Exit fullscreen",
   "player_failed": "Playback failed",
   "player_resolvingUrl": "Resolving stream…",
   "player_connecting": "Connecting…",

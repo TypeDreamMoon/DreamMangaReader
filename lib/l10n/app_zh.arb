@@ -1240,6 +1240,7 @@
   "player_forward10": "前进 10 秒",
   "player_options": "播放选项",
   "player_fullscreen": "全屏",
+  "player_exitFullscreen": "退出全屏",
   "player_failed": "播放失败",
   "player_resolvingUrl": "正在获取播放地址",
   "player_connecting": "正在连接视频",

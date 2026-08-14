@@ -779,6 +779,7 @@
   "player_forward10": "10秒進む",
   "player_options": "再生オプション",
   "player_fullscreen": "全画面",
+  "player_exitFullscreen": "全画面を終了",
   "player_failed": "再生に失敗しました",
   "player_resolvingUrl": "再生URLを取得中",
   "player_connecting": "接続中",

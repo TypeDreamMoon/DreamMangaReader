@@ -12,6 +12,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 
 import '../../core/l10n/app_strings.dart';
+import '../../core/platform/window_fullscreen.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
@@ -686,6 +687,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     }
   }
 
+  /// 全屏 = 把**窗口**变成无边框全屏,而不是 media_kit 那个「再推一个只有画面的
+  /// 路由」—— 那个路由里 controls 是 NoVideoControls,键盘监听又留在下面那层,
+  /// 进去就没有任何退出的办法。这样切,本页的 chrome 全程都在。
+  void _toggleFullscreen() {
+    if (!WindowFullscreen.supported) return;
+    setState(() => WindowFullscreen.instance.toggle());
+    _showControls();
+  }
+
   void _seekBy(int seconds) {
     final duration = _playback.duration;
     if (duration <= Duration.zero) return;
@@ -730,7 +740,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyF) {
-      unawaited(_videoKey.currentState?.toggleFullscreen());
+      _toggleFullscreen();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyN) {
@@ -742,10 +752,12 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.escape) {
-      // 面板开着就先收面板 —— Esc 一路退到底会把人直接踢出播放页。
+      // Esc 一层层往外退,不要一步踢出播放页:先收面板,再退全屏,最后才离开。
       final scaffold = _scaffoldKey.currentState;
       if (scaffold?.isEndDrawerOpen ?? false) {
         scaffold!.closeEndDrawer();
+      } else if (WindowFullscreen.instance.isFullscreen) {
+        _toggleFullscreen();
       } else {
         Navigator.of(context).maybePop();
       }
@@ -1046,8 +1058,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                 );
               },
               onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
-              onFullscreen: () =>
-                  unawaited(_videoKey.currentState?.toggleFullscreen()),
+              // 移动端的播放页本来就是沉浸式横屏、已经占满整屏,再给一个全屏键
+              // 只会让人点了没反应 —— 干脆不显示。
+              onFullscreen:
+                  WindowFullscreen.supported ? _toggleFullscreen : null,
+              fullscreen: WindowFullscreen.instance.isFullscreen,
             ),
           ),
         ),

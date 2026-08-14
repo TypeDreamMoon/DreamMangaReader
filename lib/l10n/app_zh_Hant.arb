@@ -779,6 +779,7 @@
   "player_forward10": "前進 10 秒",
   "player_options": "播放選項",
   "player_fullscreen": "全螢幕",
+  "player_exitFullscreen": "退出全螢幕",
   "player_failed": "播放失敗",
   "player_resolvingUrl": "正在取得播放位址",
   "player_connecting": "正在連接影片",
