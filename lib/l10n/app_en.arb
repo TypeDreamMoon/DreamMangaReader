@@ -761,6 +761,7 @@
   "anime_biliLoggedIn": "Signed in to Bilibili",
   "anime_biliLoginHint": "Sign in for your follow list and premium quality",
   "anime_biliScanLogin": "Scan to sign in",
+  "anime_hideLoginBar": "Hide this bar",
   "anime_signOut": "Sign out",
   "anime_noSources": "No anime sources yet",
   "anime_noContent": "Nothing here",

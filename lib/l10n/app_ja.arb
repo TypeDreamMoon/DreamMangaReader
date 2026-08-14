@@ -761,6 +761,7 @@
   "anime_biliLoggedIn": "Bilibili にログイン済み",
   "anime_biliLoginHint": "ログインすると追跡リストと高画質が使えます",
   "anime_biliScanLogin": "QRコードでログイン",
+  "anime_hideLoginBar": "この行を表示しない",
   "anime_signOut": "ログアウト",
   "anime_noSources": "利用できるアニメソースがありません",
   "anime_noContent": "コンテンツがありません",

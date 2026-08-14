@@ -208,6 +208,7 @@ class LibraryStore extends ChangeNotifier {
   static const _kDetailTintStrength = 'lib.detailTintStrength'; // 详情页封面色融合强度
   static const _kReaderGestures = 'lib.readerGestures'; // 阅读器点击分区翻页
   static const _kReaderGestureHintSeen = 'lib.readerGestureHintSeen'; // 手势提示已看过
+  static const _kBiliBarDismissed = 'lib.biliBarDismissed'; // 番剧页 B 站登录条已关掉
   static const _kVolumeKeyPaging = 'lib.volumeKeyPaging'; // Android 音量键翻页
   static const _kInvertTapZones = 'lib.invertTapZones'; // 反转左右点击翻页方向
   static const _kReaderBg = 'lib.readerBg'; // 阅读器底色预设
@@ -274,6 +275,7 @@ class LibraryStore extends ChangeNotifier {
   double _detailTintStrength = 0.55; // 详情页封面色融合强度(0=纯底色/黑,1=纯封面色)
   bool _readerGestures = true; // 阅读器左右点击翻页
   bool _readerGestureHintSeen = false; // 首次进入阅读器的手势提示是否已展示
+  bool _biliBarDismissed = false; // 番剧页顶部那条 B 站登录条被手动关掉了
   bool _volumeKeyPaging = false; // Android 音量键翻页
   bool _invertTapZones = false; // 反转左右点击翻页方向(左=下一页)
   ReaderBackground _readerBg = ReaderBackground.dark; // 阅读器底色预设
@@ -346,6 +348,7 @@ class LibraryStore extends ChangeNotifier {
   double get detailTintStrength => _detailTintStrength;
   bool get readerGestures => _readerGestures;
   bool get readerGestureHintSeen => _readerGestureHintSeen;
+  bool get biliBarDismissed => _biliBarDismissed;
   bool get volumeKeyPaging => _volumeKeyPaging;
   bool get invertTapZones => _invertTapZones;
   ReaderBackground get readerBg => _readerBg;
@@ -685,6 +688,7 @@ class LibraryStore extends ChangeNotifier {
           (prefs.getDouble(_kDetailTintStrength) ?? 0.55).clamp(0, 1);
       _readerGestures = prefs.getBool(_kReaderGestures) ?? true;
       _readerGestureHintSeen = prefs.getBool(_kReaderGestureHintSeen) ?? false;
+      _biliBarDismissed = prefs.getBool(_kBiliBarDismissed) ?? false;
       _volumeKeyPaging = prefs.getBool(_kVolumeKeyPaging) ?? false;
       _invertTapZones = prefs.getBool(_kInvertTapZones) ?? false;
       _readerBg = ReaderBackground.values.firstWhere(
@@ -1104,6 +1108,15 @@ class LibraryStore extends ChangeNotifier {
     if (v == _readerGestureHintSeen) return;
     _readerGestureHintSeen = v;
     _prefs?.setBool(_kReaderGestureHintSeen, v);
+  }
+
+  /// 关掉番剧页顶部那条 B 站登录条。登录入口在「设置 → 账号」里是全的,
+  /// 这条只是个就地快捷方式,关了就别再占一行。
+  set biliBarDismissed(bool v) {
+    if (v == _biliBarDismissed) return;
+    _biliBarDismissed = v;
+    _prefs?.setBool(_kBiliBarDismissed, v);
+    notifyListeners();
   }
 
   /// 手动把某本漫画绑定到指定 bgm 条目(null=解绑)。

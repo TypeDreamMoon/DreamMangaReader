@@ -761,6 +761,7 @@
   "anime_biliLoggedIn": "已登入嗶哩嗶哩",
   "anime_biliLoginHint": "登入後可看追番、解鎖大會員畫質",
   "anime_biliScanLogin": "掃碼登入",
+  "anime_hideLoginBar": "不再顯示這一條",
   "anime_signOut": "登出",
   "anime_noSources": "還沒有可用的番劇來源",
   "anime_noContent": "沒有內容",

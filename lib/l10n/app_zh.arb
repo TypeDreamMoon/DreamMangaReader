@@ -1222,6 +1222,7 @@
   "anime_biliLoggedIn": "已登录哔哩哔哩",
   "anime_biliLoginHint": "登录后可看追番、解锁大会员清晰度",
   "anime_biliScanLogin": "扫码登录",
+  "anime_hideLoginBar": "不再显示这一条",
   "anime_signOut": "退出",
   "anime_noSources": "还没有可用的番剧源",
   "anime_noContent": "没有内容",

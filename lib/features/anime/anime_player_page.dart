@@ -949,6 +949,16 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         ),
       );
 
+  /// 顶栏标题。分集名里常常已经带了番剧名(源给的就是「龙与虎」这种),
+  /// 再拼一次就成了「龙与虎 · 第1话 龙与虎」。带了就只显示分集名。
+  String get _headline {
+    final title = widget.animeTitle.trim();
+    final episode = _ep.name.trim();
+    if (title.isEmpty) return episode;
+    if (episode.isEmpty) return title;
+    return episode.contains(title) ? episode : '$title · $episode';
+  }
+
   Widget _topBar() => DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -971,7 +981,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                 ),
                 Expanded(
                   child: Text(
-                    '${widget.animeTitle} · ${_ep.name}',
+                    _headline,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1002,28 +1012,29 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         ),
       );
 
-  Widget _bottomBar() {
-    final hasPrev = _i > 0;
-    final hasNext = _i < widget.episodes.length - 1;
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Color(0xCC000000), Color(0x00000000)],
+  /// 底部 chrome。**只有这一层画底** —— 一整块从下往上淡出的渐变,控件浮在上面。
+  /// 控件自己再铺一块实心底,就会在渐变上留一道硬缝。
+  Widget _bottomBar() => DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [Color(0xE6000000), Color(0x00000000)],
+          ),
         ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimePlayerControls(
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 18),
+            child: AnimePlayerControls(
               position: _dragTarget ?? _playback.position,
               duration: _playback.duration,
               playing: _playing,
               buffering: _buffering,
               onPlayPause: _togglePlay,
+              onPrevEpisode: _i > 0 ? () => _go(-1) : null,
+              onNextEpisode:
+                  _i < widget.episodes.length - 1 ? () => _go(1) : null,
               onScrubStart: (wasPlaying) {
                 _controlsTimer?.cancel();
                 if (wasPlaying) unawaited(_adapter?.pause());
@@ -1038,33 +1049,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               onFullscreen: () =>
                   unawaited(_videoKey.currentState?.toggleFullscreen()),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    onPressed: hasPrev ? () => _go(-1) : null,
-                    icon: const Icon(Icons.skip_previous_rounded, size: 18),
-                    label: Text(context.l10n.player_prevEpisode),
-                    style:
-                        TextButton.styleFrom(foregroundColor: Colors.white70),
-                  ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: hasNext ? () => _go(1) : null,
-                    icon: const Icon(Icons.skip_next_rounded, size: 18),
-                    label: Text(context.l10n.player_nextEpisode),
-                    style:
-                        TextButton.styleFrom(foregroundColor: Colors.white70),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    );
-  }
+      );
 
   Widget _boostBadge() => Align(
         alignment: const Alignment(0, -0.55),

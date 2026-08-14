@@ -452,7 +452,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
     return Column(
       children: [
         // 源选择(搜索已统一到发现页顶栏,这里只留源选择器)。
-        if (_isBili) _biliBar(p),
+        if (_isBili && !LibraryScope.of(context).biliBarDismissed) _biliBar(p),
         // 翻译回退提示:原文没搜到、改用译名搜到时,告诉用户用的哪个译名。
         if (_query.isNotEmpty && _query != _origQuery && _results.isNotEmpty)
           Padding(
@@ -476,6 +476,9 @@ class AnimeBrowserState extends State<AnimeBrowser> {
   }
 
   /// B站登录条:显示登录态,提供扫码登录 / 退出入口。
+  ///
+  /// 可以关掉,关了就不再出现 —— 登录态和登录入口在「设置 → 账号」里是全的,
+  /// 这里只是个就地快捷方式,已经登上的人不该被它长期占掉一行。
   Widget _biliBar(AppPalette p) {
     final auth = BiliAuth.instance;
     final loggedIn = auth.isLoggedIn;
@@ -528,6 +531,16 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                             horizontal: 14, vertical: 5),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                     child: Text(context.l10n.anime_biliScanLogin)),
+            const SizedBox(width: 2),
+            IconButton(
+              tooltip: context.l10n.anime_hideLoginBar,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              onPressed: () =>
+                  LibraryScope.of(context).biliBarDismissed = true,
+              icon: Icon(Icons.close_rounded, size: 16, color: p.textMuted),
+            ),
           ],
         ),
       ),

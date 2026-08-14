@@ -145,7 +145,8 @@ void main() {
     adapter.positionController.add(const Duration(seconds: 42));
     await tester.pump();
 
-    await tester.tap(find.text('下一集'));
+    // 上/下一集现在是控件行里的图标按钮,不再单独占一整行文字按钮。
+    await tester.tap(find.byTooltip('下一集'));
     await tester.pump();
 
     final prefs = await SharedPreferences.getInstance();
@@ -481,13 +482,38 @@ void main() {
     adapter.playingController.add(true);
     await tester.pump();
 
+    // 当前 / 总时长是同一个 Text,挨在一起显示。
     adapter.positionController.add(const Duration(seconds: 65));
     await tester.pump();
-    expect(find.text('01:05'), findsOneWidget);
+    expect(find.text('01:05 / 10:00'), findsOneWidget);
 
     adapter.positionController.add(const Duration(seconds: 66));
     await tester.pump();
-    expect(find.text('01:06'), findsOneWidget);
+    expect(find.text('01:06 / 10:00'), findsOneWidget);
+  });
+
+  // 源给的分集名常常已经含番剧名,再拼一次就是「龙与虎 · 第1话 龙与虎」。
+  testWidgets('分集名已经带了番剧名就不再拼一遍', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [Chapter(id: 'ep-1', name: '第1话 测试番剧')],
+    ));
+    await tester.pump();
+
+    expect(find.text('第1话 测试番剧'), findsOneWidget);
+    expect(find.textContaining('测试番剧 · '), findsNothing);
+  });
+
+  testWidgets('分集名与番剧名无关时照常拼', (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+    ));
+    await tester.pump();
+
+    expect(find.text('测试番剧 · 第一集'), findsOneWidget);
   });
 
   testWidgets('keyboard drives seek, volume, mute and play', (tester) async {
