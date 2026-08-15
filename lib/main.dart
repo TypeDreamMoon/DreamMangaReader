@@ -27,17 +27,33 @@ void main() async {
       defaultTargetPlatform == TargetPlatform.iOS;
   PaintingBinding.instance.imageCache.maximumSizeBytes =
       (mobile ? 128 : 256) * 1024 * 1024;
-  // 繁→简折叠字表(OpenCC 资源)读进内存,供发现页多源同名去重折繁简变体。
-  await ChineseFold.load();
-  // 解析并注入系统/环境代理(否则从无代理环境变量的终端启动会直连、被墙的源握手失败)。
-  await AppProxy.init();
-  // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;未配置则为空)。
-  await SourceRepository.instance.load();
-  // B站账号态(扫码登录后的 Cookie,安全存储)读回;不进云同步。
-  await BiliAuth.instance.load();
-  // 云同步配置(WebDAV 地址/账密/自动开关)读回;自动同步在书架读档后触发(见 App.initState)。
-  await SyncController.instance.load();
-  // 桌面:预热系统字体列表(GDI 枚举,~几十毫秒;非 Windows 立即返回)。
-  await SystemFonts.ensureLoaded();
+
+  // 以下几项互不依赖,且都是真异步 I/O(资源读 / SharedPreferences / 安全存储 /
+  // 可能的网络),串行 await 只是让它们排队等对方。并发跑,首帧提前到最慢的那个
+  // 完成时,而不是所有耗时之和。**唯一的真依赖是代理 → 源清单**:源仓可能配的是
+  // 远程 URL,不先注入代理,被墙的源会直接握手失败。
+  final sourcesReady = AppProxy.init()
+      // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;
+      // 未配置则为空)。
+      .then((_) => SourceRepository.instance.load());
+  await Future.wait([
+    sourcesReady,
+    // 繁→简折叠字表(OpenCC 资源)读进内存,供发现页多源同名去重折繁简变体。
+    ChineseFold.load(),
+    // B站账号态(扫码登录后的 Cookie,安全存储)读回;不进云同步。
+    BiliAuth.instance.load(),
+    // 云同步配置(WebDAV 地址/账密/自动开关)读回。首帧后 App.initState 里的
+    // 自动同步会用到它,所以必须在 runApp 前就位 —— 只是不必单独排队。
+    SyncController.instance.load(),
+  ]);
+
   runApp(const App());
+
+  // 桌面系统字体枚举。`ensureLoaded` 虽是 async,内部 GDI 枚举却是同步 FFI ——
+  // 放进上面的 Future.wait 一样会卡住 isolate(几十毫秒),等于没并行。挪到首帧
+  // 之后:代价照付,但付在用户已经看到界面之后。唯一的消费方是设置页的字体选择器,
+  // 它在列表为空时有回退字体栈,拿不到也不会坏。非 Windows 上直接返回空。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    SystemFonts.ensureLoaded();
+  });
 }
