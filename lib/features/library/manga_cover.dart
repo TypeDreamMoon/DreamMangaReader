@@ -209,9 +209,20 @@ class MangaCover extends StatelessWidget {
     return Pressable(
       onTap: onTap,
       hoverElevate: true, // 桌面悬停微亮 + 点按回弹
-      // 封面(渐变/网点/网络图)排出无障碍树:纯装饰,且批量加载会刷爆 Windows AXTree。
+      // 封面内部(渐变/网点/网络图/角标)全部排出无障碍树 —— 纯装饰,且批量加载
+      // 会刷爆 Windows AXTree。但整张卡不能就此变成一个没有名字的点击目标:
+      // 用 excludeSemantics 的 Semantics 顶替 ExcludeSemantics,屏蔽的还是同一批
+      // 子节点,对外只多出**一个**有书名的按钮节点,节点数没变,读屏能念出来了。
+      // (桌面整棵语义树在 App.builder 里已关掉,这里实际只作用于手机。)
       child: AspectRatio(
-          aspectRatio: aspect, child: ExcludeSemantics(child: clip)),
+        aspectRatio: aspect,
+        child: Semantics(
+          label: manga.title,
+          button: onTap != null,
+          excludeSemantics: true,
+          child: clip,
+        ),
+      ),
     );
   }
 }

@@ -154,6 +154,9 @@ class _SourceLoginFormState extends State<_SourceLoginForm> {
           autofillHints: const [AutofillHints.password],
           onSubmitted: (_) => _busy ? null : _login(),
           suffixIcon: IconButton(
+            tooltip: _obscure
+                ? context.l10n.sync_showPassword
+                : context.l10n.sync_hidePassword,
             icon: Icon(
                 _obscure
                     ? Icons.visibility_off_rounded

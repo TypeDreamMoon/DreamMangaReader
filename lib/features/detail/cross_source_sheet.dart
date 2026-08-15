@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source.dart';
@@ -219,6 +220,7 @@ class _CrossSourceSheetState extends State<CrossSourceSheet> {
             hintText: '在其它源搜索书名(自动翻译简/繁/英)',
             hintStyle: TextStyle(color: p.textMuted),
             suffixIcon: IconButton(
+              tooltip: context.l10n.disc_searchTooltip,
               onPressed: _run,
               icon: const Icon(Icons.search_rounded, size: 20),
               color: p.accent,

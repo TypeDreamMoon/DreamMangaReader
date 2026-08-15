@@ -1202,6 +1202,7 @@ class _ReaderPageState extends State<ReaderPage> {
           child: Padding(
             padding: const EdgeInsets.only(top: 28, left: 4),
             child: IconButton(
+              tooltip: context.l10n.back,
               onPressed: () => Navigator.of(context).maybePop(),
               icon: const Icon(Icons.arrow_back_rounded, color: Colors.white70),
             ),
@@ -1232,6 +1233,7 @@ class _ReaderPageState extends State<ReaderPage> {
           child: Row(
             children: [
               IconButton(
+                tooltip: context.l10n.back,
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
               ),
@@ -1266,6 +1268,7 @@ class _ReaderPageState extends State<ReaderPage> {
               IconButton(
                 onPressed: _openSettings,
                 icon: const Icon(Icons.tune_rounded, color: Colors.white),
+                tooltip: context.l10n.reader_settings,
               ),
             ],
           ),
@@ -1273,8 +1276,10 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
       );
 
-  Widget _chapBtn(IconData icon, VoidCallback? onTap) => IconButton(
+  Widget _chapBtn(IconData icon, VoidCallback? onTap, String tooltip) =>
+      IconButton(
         visualDensity: VisualDensity.compact,
+        tooltip: tooltip,
         onPressed: onTap,
         icon: Icon(icon,
             color: onTap != null ? Colors.white : Colors.white24, size: 22),
@@ -1300,8 +1305,10 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
         child: Row(
           children: [
-            _chapBtn(Icons.skip_previous_rounded,
-                _hasPrevChapter ? () => _jumpChapter(-1) : null),
+            _chapBtn(
+                Icons.skip_previous_rounded,
+                _hasPrevChapter ? () => _jumpChapter(-1) : null,
+                context.l10n.reader_prevChapter),
             Text('${(_scrubLocal ?? fp.localPage) + 1}',
                 style: const TextStyle(
                     color: Colors.white70,
@@ -1331,8 +1338,10 @@ class _ReaderPageState extends State<ReaderPage> {
                     color: Colors.white70,
                     fontSize: 12,
                     fontFeatures: [FontFeature.tabularFigures()])),
-            _chapBtn(Icons.skip_next_rounded,
-                _hasNextChapter ? () => _jumpChapter(1) : null),
+            _chapBtn(
+                Icons.skip_next_rounded,
+                _hasNextChapter ? () => _jumpChapter(1) : null,
+                context.l10n.reader_nextChapter),
           ],
         ),
       ),
@@ -1389,8 +1398,10 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
         child: Column(
           children: [
-            _chapBtn(Icons.skip_previous_rounded,
-                _hasPrevChapter ? () => _jumpChapter(-1) : null),
+            _chapBtn(
+                Icons.skip_previous_rounded,
+                _hasPrevChapter ? () => _jumpChapter(-1) : null,
+                context.l10n.reader_prevChapter),
             Text('${(_scrubLocal ?? fp.localPage) + 1}',
                 style: const TextStyle(
                     color: Colors.white,
@@ -1427,8 +1438,10 @@ class _ReaderPageState extends State<ReaderPage> {
                     color: Colors.white54,
                     fontSize: 11,
                     fontFeatures: [FontFeature.tabularFigures()])),
-            _chapBtn(Icons.skip_next_rounded,
-                _hasNextChapter ? () => _jumpChapter(1) : null),
+            _chapBtn(
+                Icons.skip_next_rounded,
+                _hasNextChapter ? () => _jumpChapter(1) : null,
+                context.l10n.reader_nextChapter),
           ],
         ),
       ),

@@ -94,14 +94,20 @@ class ShelfCover extends StatelessWidget {
       );
     }
     // 小说封面组件自身不带点击态/悬停,包一层 Pressable 与漫画封面对齐。
-    return Pressable(
-      onTap: onTap,
-      hoverElevate: true,
-      child: NovelCover(
-        novel: Novel(id: id, title: title, cover: cover, authors: authors),
-        radius: radius ?? LibraryScope.read(context).coverRadius,
-        aspect: aspect,
-        heroTag: heroTag,
+    // NovelCover 内部已 ExcludeSemantics(纯装饰),所以点击目标的名字得在这里给,
+    // 否则读屏只会念到「按钮」而不知道是哪一本 —— 与 MangaCover 同一口径。
+    return Semantics(
+      label: title,
+      button: onTap != null,
+      child: Pressable(
+        onTap: onTap,
+        hoverElevate: true,
+        child: NovelCover(
+          novel: Novel(id: id, title: title, cover: cover, authors: authors),
+          radius: radius ?? LibraryScope.read(context).coverRadius,
+          aspect: aspect,
+          heroTag: heroTag,
+        ),
       ),
     );
   }

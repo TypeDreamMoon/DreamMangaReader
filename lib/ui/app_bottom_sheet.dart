@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme/app_colors.dart';
+import '../core/l10n/app_strings.dart';
 import 'glass.dart';
 
 /// 统一底部弹层外壳:圆角顶 + SafeArea + 内边距 + 标题行(+可选拖拽条/关闭/尾部文字)。
@@ -52,6 +53,7 @@ Future<T?> showAppSheet<T>(
           if (showCloseButton) ...[
             if (trailingText == null) const Spacer(),
             IconButton(
+              tooltip: ctx.l10n.close,
               onPressed: () => Navigator.of(ctx).pop(),
               icon: const Icon(Icons.close_rounded, size: 20),
               color: pp.textMuted,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/translate/translated_search.dart';
 import '../../ui/ui.dart';
@@ -87,6 +88,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
             hintText: '输入条目名',
             hintStyle: TextStyle(color: p.textMuted),
             suffixIcon: IconButton(
+              tooltip: context.l10n.disc_searchTooltip,
               onPressed: _run,
               icon: const Icon(Icons.search_rounded, size: 20),
               color: p.accent,

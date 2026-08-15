@@ -696,6 +696,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             prefixIcon: Icon(Icons.search_rounded, size: 18, color: p.textMuted),
             suffixIcon: _query.isNotEmpty
                 ? IconButton(
+                    tooltip: context.l10n.disc_clear,
                     icon: Icon(Icons.clear_rounded, size: 18, color: p.textMuted),
                     onPressed: () {
                       _searchCtrl.clear();
