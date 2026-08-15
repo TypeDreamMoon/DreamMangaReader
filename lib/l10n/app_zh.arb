@@ -1215,6 +1215,49 @@
   "libraryKindNovel": "小说",
   "libraryKindAnime": "番剧",
   "shelf_sourceGone": "「{name}」源已不存在",
+  "shelf_newChapters": "{n} 话新",
+  "@shelf_newChapters": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "shelf_checkUpdates": "检查更新",
+  "shelf_updateChecking": "检查更新中 {done}/{total}",
+  "@shelf_updateChecking": {
+    "placeholders": {
+      "done": {
+        "type": "num"
+      },
+      "total": {
+        "type": "num"
+      }
+    }
+  },
+  "shelf_updateNone": "没有新章节",
+  "shelf_updateFound": "{works} 本有更新 · 共 {chapters} 话",
+  "@shelf_updateFound": {
+    "placeholders": {
+      "works": {
+        "type": "num"
+      },
+      "chapters": {
+        "type": "num"
+      }
+    }
+  },
+  "shelf_updateFailed": "{n} 本检查失败",
+  "@shelf_updateFailed": {
+    "placeholders": {
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "shelf_markAllSeen": "全部标为已看",
+  "set_autoCheckUpdates": "启动时检查追更",
+  "set_autoCheckUpdatesSub": "收藏出现新章节时在封面标出;最多每 6 小时查一次",
   "@shelf_sourceGone": {
     "placeholders": {
       "name": {}

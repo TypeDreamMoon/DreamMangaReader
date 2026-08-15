@@ -1,6 +1,7 @@
 import '../../app/anime_library_store.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
+import '../../core/library/update_checker.dart';
 import '../../core/source/title_match.dart';
 
 /// 书架上的内容类型。书架不再是「漫画 + 两条附属横条」,三类同级,
@@ -115,6 +116,39 @@ abstract final class ShelfProjector {
       return byKind != 0 ? byKind : a.key.compareTo(b.key);
     });
     return List.unmodifiable(filtered);
+  }
+
+  /// 追更要检查的收藏。口径与书架卡片一致(漫画已跨源去重,查的就是卡片代表的
+  /// 那个源),所以角标贴回卡片时一定对得上。
+  ///
+  /// 本地导入的小说没有源、更新无从谈起,直接排除 —— 否则它们会永远停在
+  /// 「检查失败」那一栏里。
+  static List<UpdateTarget> updateTargets({
+    required LibraryStore manga,
+    required NovelLibraryStore novel,
+    required AnimeLibraryStore anime,
+  }) {
+    final out = <UpdateTarget>[];
+    for (final item in build(manga: manga, novel: novel, anime: anime)) {
+      final (String, String)? ref = switch (item.kind) {
+        ShelfKind.manga => (item.mangaEntry!.sourceId, item.mangaEntry!.mangaId),
+        ShelfKind.anime => (item.animeEntry!.sourceId, item.animeEntry!.animeId),
+        // 本地导入的小说没有 sourceId,跳过。
+        ShelfKind.novel => switch (item.novelEntry!) {
+            final e when e.sourceId != null && e.novelId != null =>
+              (e.sourceId!, e.novelId!),
+            _ => null,
+          },
+      };
+      if (ref == null) continue;
+      out.add(UpdateTarget(
+        shelfKey: item.key,
+        sourceId: ref.$1,
+        itemId: ref.$2,
+        title: item.title,
+      ));
+    }
+    return List.unmodifiable(out);
   }
 
   /// 收藏去重:同一部书的多源副本合成一组,代表优先「最后阅读的源」的那条

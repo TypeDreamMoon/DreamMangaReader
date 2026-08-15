@@ -15,6 +15,7 @@ import '../../app/theme/theme_controller.dart';
 import 'accent_color_sheet.dart';
 import '../../core/l10n/app_locale.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/library/update_tracker.dart';
 import '../../core/net/app_proxy.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
@@ -204,6 +205,17 @@ class SettingsPage extends StatelessWidget {
                     l10n.set_showSourcePickerSub,
                     lib.showSourcePicker,
                     (v) => lib.showSourcePicker = v),
+                // 追更开关不在 LibraryStore 里(账本自成一份存档),所以单独
+                // 订阅它自己 —— 页面是无状态的,靠 LibraryScope 的 notify 带不动。
+                ListenableBuilder(
+                  listenable: LibraryUpdateTracker.instance,
+                  builder: (_, __) => _switch(
+                      Icons.notifications_active_rounded,
+                      l10n.set_autoCheckUpdates,
+                      l10n.set_autoCheckUpdatesSub,
+                      LibraryUpdateTracker.instance.autoCheck,
+                      (v) => LibraryUpdateTracker.instance.autoCheck = v),
+                ),
               ]),
               _group(l10n.set_secBackground, [
                 _tile(

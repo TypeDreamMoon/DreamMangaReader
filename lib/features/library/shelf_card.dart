@@ -160,17 +160,62 @@ class ShelfKindBadge extends StatelessWidget {
   }
 }
 
-/// 封面 + 左下类型角标。[showKind]=false 时原样返回封面(不多包一层 Stack)。
+/// 追更角标:右上角一颗数字点,表示这本有几话没看过。
+///
+/// 只显示数字不带单位 —— 角标就那么大,而「话/集/章」三类叫法还不一样;
+/// 完整语义交给 [Semantics.label](读屏会念「3 话新」),视觉上数字最省地方。
+class ShelfUpdateBadge extends StatelessWidget {
+  const ShelfUpdateBadge({super.key, required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    // 三位数以上没有意义,而且会把角标撑变形。
+    final text = count > 99 ? '99+' : '$count';
+    return Semantics(
+      label: context.l10n.shelf_newChapters(count),
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: p.accent,
+          borderRadius: BorderRadius.circular(9),
+          // 深色封面上贴亮角标容易糊在一起,描一圈底色把它托起来。
+          border: Border.all(color: p.background.withValues(alpha: 0.55)),
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: p.onAccent,
+            fontSize: 10,
+            height: 1.1,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 封面 + 左下类型角标 + 右上追更角标。两个角标都不需要时原样返回封面
+/// (不多包一层 Stack)。
 Widget shelfCoverWithBadge({
   required Widget cover,
   required ShelfKind kind,
   required bool showKind,
+  int pending = 0,
 }) {
-  if (!showKind) return cover;
+  if (!showKind && pending <= 0) return cover;
   return Stack(
     children: [
       cover,
-      Positioned(left: 6, bottom: 6, child: ShelfKindBadge(kind: kind)),
+      if (showKind)
+        Positioned(left: 6, bottom: 6, child: ShelfKindBadge(kind: kind)),
+      if (pending > 0)
+        Positioned(right: 5, top: 5, child: ShelfUpdateBadge(count: pending)),
     ],
   );
 }

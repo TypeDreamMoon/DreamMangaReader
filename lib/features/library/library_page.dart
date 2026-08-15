@@ -5,6 +5,8 @@ import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
+import '../../core/library/update_checker.dart';
+import '../../core/library/update_tracker.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../core/source/source_search.dart';
@@ -45,8 +47,28 @@ class _LibraryPageState extends State<LibraryPage> {
   String _query = ''; // 非空 = 在收藏里筛选
   final ScrollController _historyScroll = ScrollController();
 
+  /// 追更账本(角标数据源)。它是全局单例、不在 InheritedNotifier 里,
+  /// 所以手动订阅:检查完 / 消角标都要让书架重画。
+  final _updates = LibraryUpdateTracker.instance;
+  late final LibraryUpdateChecker _checker =
+      LibraryUpdateChecker(tracker: _updates);
+
+  /// 非 null = 正在检查,值为 (已完成, 总数),驱动标题栏上的进度。
+  (int, int)? _sweepProgress;
+
+  @override
+  void initState() {
+    super.initState();
+    _updates.addListener(_onUpdatesChanged);
+  }
+
+  void _onUpdatesChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _updates.removeListener(_onUpdatesChanged);
     _searchCtrl.dispose();
     _historyScroll.dispose();
     super.dispose();
@@ -141,7 +163,40 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   /// 书架卡片的统一打开入口:按类型派发到各自的详情/阅读入口。
+  /// 手动检查追更:扫一遍书架收藏,把结果做成角标。不受自动检查的 6 小时节流限制。
+  Future<void> _checkUpdates() async {
+    if (_checker.running) return;
+    final targets = ShelfProjector.updateTargets(
+      manga: LibraryScope.read(context),
+      novel: NovelLibraryScope.read(context),
+      anime: AnimeLibraryScope.read(context),
+    );
+    if (targets.isEmpty) return;
+    setState(() => _sweepProgress = (0, targets.length));
+    try {
+      final r = await _checker.sweep(
+        targets,
+        now: DateTime.now().millisecondsSinceEpoch,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _sweepProgress = (done, total));
+        },
+      );
+      if (!mounted) return;
+      final l = context.l10n;
+      final head = r.hasUpdates
+          ? l.shelf_updateFound(r.updatedWorks, r.newChapters)
+          : l.shelf_updateNone;
+      // 有失败也照报结果 —— 死掉一个源不该把「其余 40 本没更新」这个结论也吞掉。
+      _snack(r.failed > 0 ? '$head · ${l.shelf_updateFailed(r.failed)}' : head);
+    } finally {
+      // sweep 自身不抛(逐本容错),但进度条无论如何都得收掉。
+      if (mounted) setState(() => _sweepProgress = null);
+    }
+  }
+
   void _openItem(ShelfItem item, {Object? heroTag}) {
+    // 点开就算看过了:角标归零,但保留话数作为下次比较的基线。
+    _updates.markSeen(item.key);
     switch (item.kind) {
       case ShelfKind.manga:
         final f = item.mangaEntry!;
@@ -343,6 +398,7 @@ class _LibraryPageState extends State<LibraryPage> {
           icon: Icon(
               _showSearch ? Icons.search_off_rounded : Icons.search_rounded),
         ),
+        _checkUpdatesButton(p),
         const NovelImportButton(compact: true),
         IconButton(
           tooltip: context.l10n.shelf_historyTooltip,
@@ -426,6 +482,34 @@ class _LibraryPageState extends State<LibraryPage> {
 
   /// 类型 tab(全部 / 漫画 / 小说 / 番剧)。计数取自未筛选的全量投影,
   /// 所以切档时数字不会跟着变 —— 它答的是「这类我有多少」,不是「当前显示多少」。
+  /// 标题栏上的「检查更新」。扫描中换成进度环并禁用点击 —— 图标位置不变,
+  /// 不让标题栏在按下去的一瞬间抖一下。
+  Widget _checkUpdatesButton(AppPalette p) {
+    final progress = _sweepProgress;
+    if (progress == null) {
+      return IconButton(
+        tooltip: context.l10n.shelf_checkUpdates,
+        onPressed: _checkUpdates,
+        icon: const Icon(Icons.refresh_rounded),
+      );
+    }
+    final (done, total) = progress;
+    return IconButton(
+      tooltip: context.l10n.shelf_updateChecking(done, total),
+      onPressed: null,
+      icon: SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: p.accent,
+          // 总数已知,给确定性进度(转圈只说明「在忙」,进度环说明「还剩多少」)。
+          value: total > 0 ? done / total : null,
+        ),
+      ),
+    );
+  }
+
   PreferredSizeWidget _kindTabs(List<ShelfItem> all) {
     final counts = <ShelfKind, int>{};
     for (final item in all) {
@@ -687,6 +771,7 @@ class _LibraryPageState extends State<LibraryPage> {
     final cover = shelfCoverWithBadge(
       showKind: _kind == null,
       kind: item.kind,
+      pending: _updates.pendingFor(item.key),
       cover: ShelfCover.item(
         item,
         // 瀑布流:按 id 派生高低错落;网格:统一 3:4。
@@ -735,7 +820,13 @@ class _LibraryPageState extends State<LibraryPage> {
             children: [
               SizedBox(
                 width: 56,
-                child: ShelfCover.item(item, radius: 8, heroTag: tag),
+                // 类型这一行下面已经有 ShelfKindBadge 了,封面上只贴追更角标。
+                child: shelfCoverWithBadge(
+                  showKind: false,
+                  kind: item.kind,
+                  pending: _updates.pendingFor(item.key),
+                  cover: ShelfCover.item(item, radius: 8, heroTag: tag),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(

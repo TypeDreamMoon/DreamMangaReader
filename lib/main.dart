@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'app/app.dart';
 import 'app/app_info.dart';
 import 'core/bili/bili_auth.dart';
+import 'core/library/update_tracker.dart';
 import 'core/log/app_log.dart';
 import 'core/log/crash_guard.dart';
 import 'core/source/chinese_fold.dart';
@@ -49,6 +50,8 @@ void main() async {
     // 云同步配置(WebDAV 地址/账密/自动开关)读回。首帧后 App.initState 里的
     // 自动同步会用到它,所以必须在 runApp 前就位 —— 只是不必单独排队。
     SyncController.instance.load(),
+    // 追更账本读回(书架封面上的「N 话新」角标)。首帧书架就要用,不能推到帧后。
+    LibraryUpdateTracker.instance.load(),
   ]);
 
   runApp(const App());

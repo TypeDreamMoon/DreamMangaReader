@@ -11,6 +11,8 @@ import '../core/downloads/download_coordinator.dart';
 import '../core/downloads/android_download_foreground.dart';
 import '../core/downloads/download_policy.dart';
 import '../core/downloads/download_task_repository.dart';
+import '../core/library/update_checker.dart';
+import '../core/library/update_tracker.dart';
 import '../core/log/app_log.dart';
 import '../core/platform/windows_window_bridge.dart';
 import 'anime_download_store.dart';
@@ -29,6 +31,7 @@ import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import '../features/common/ui_scale.dart';
+import '../features/library/shelf_item.dart';
 import '../features/shell/home_shell.dart';
 import '../features/shell/splash_gate.dart';
 import '../ui/app_background.dart';
@@ -102,8 +105,28 @@ class _AppState extends State<App> {
         _novelLibrary,
         SourceRepository.instance,
       );
+      if (!mounted) return;
+      await _autoCheckUpdates();
     });
     _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+  }
+
+  /// 启动时的追更检查。三重闸门:设置里开着、距上次扫描已过
+  /// [LibraryUpdateTracker.autoInterval]、书架里确实有可查的收藏。
+  ///
+  /// 排在云同步之后 —— 同步可能刚拉回一批新收藏,那些也该算进这一轮。
+  /// 扫描内部逐本容错(死源只记 failed),所以这里不需要再包一层 try。
+  Future<void> _autoCheckUpdates() async {
+    final tracker = LibraryUpdateTracker.instance;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!tracker.autoCheck || !tracker.sweepDue(now)) return;
+    final targets = ShelfProjector.updateTargets(
+      manga: _library,
+      novel: _novelLibrary,
+      anime: _animeLibrary,
+    );
+    if (targets.isEmpty) return;
+    await LibraryUpdateChecker(tracker: tracker).sweep(targets, now: now);
   }
 
   Future<void> _loadDownloadState() async {
