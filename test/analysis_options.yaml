@@ -1,0 +1,10 @@
+# 测试代码的分析配置:继承根配置,只放宽两条测试天然会踩、且在测试里无害的规则。
+# 生产代码(lib/)仍受完整规则约束 —— 这两条在 lib/ 里当前都是零违规。
+include: ../analysis_options.yaml
+
+linter:
+  rules:
+    # 测试要直接戳 JSON / 假数据的动态字段,逐个补类型只会让断言更难读。
+    avoid_dynamic_calls: false
+    # 测试里的 StreamController 随测试进程一起消亡,不关不构成泄漏。
+    close_sinks: false

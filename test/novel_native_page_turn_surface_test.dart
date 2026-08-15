@@ -243,8 +243,12 @@ void main() {
         .painter as dynamic;
     final afterCylinder = afterPainter.nullableCylinder as dynamic;
 
-    expect(afterCylinder.center.x, closeTo(beforeCylinder.center.x, .001));
-    expect(afterCylinder.center.y, closeTo(beforeCylinder.center.y, .001));
+    // painter / cylinder 是私有类型,只能走 dynamic 取字段;closeTo 要 num,
+    // 显式标出来(隐式 dynamic→num 已被 strict-casts 禁掉)。
+    expect(afterCylinder.center.x,
+        closeTo(beforeCylinder.center.x as num, .001));
+    expect(afterCylinder.center.y,
+        closeTo(beforeCylinder.center.y as num, .001));
   });
 
   testWidgets('uses pre-rasterized spreads instead of repainting page text',

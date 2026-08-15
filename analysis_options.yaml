@@ -1,28 +1,32 @@
-# This file configures the analyzer, which statically analyzes Dart code to
-# check for errors, warnings, and lints.
-#
-# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
-# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
-# invoked from the command line by running `flutter analyze`.
-
-# The following line activates a set of recommended lints for Flutter apps,
-# packages, and plugins designed to encourage good coding practices.
+# 静态分析配置。`flutter analyze` 与 IDE 都读它;CI 每次 push 都会跑
+# (见 .github/workflows/ci.yml),所以这里的每条规则都必须是**零违规**的 ——
+# 长期飘红的规则等于没有规则。
 include: package:flutter_lints/flutter.yaml
 
-linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
-  rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+analyzer:
+  language:
+    # 禁止隐式向下转型(dynamic → T)。这个项目大量消费源脚本返回的 JSON,
+    # 隐式转型出错时不在解析处报,而是在很远的使用处炸成一句
+    # 「type 'String' is not a subtype of type 'int'」,极难定位。
+    strict-casts: true
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+linter:
+  rules:
+    # —— 能抓真缺陷的(当前均为零违规,加进来是防以后)——
+    - avoid_dynamic_calls # dynamic 上直接调方法:名字打错要到运行期才发现
+    - cancel_subscriptions # StreamSubscription 忘了 cancel = 泄漏 + 幽灵回调
+    - close_sinks # 同上,针对 Sink / StreamController
+    - throw_in_finally # finally 里抛异常会顶掉真正的那个错误
+    - unnecessary_statements # 写了却没有任何效果的表达式,多半是打错了
+    - avoid_empty_else # `else ;` 这种手滑
+    - test_types_in_equals # == 里不检查类型 → 遇到别的类型直接崩
+    - unrelated_type_equality_checks # 两个不相干类型比 ==,永远 false
+    - prefer_void_to_null
+
+# 没有采用、以及为什么:
+# - strict-inference / strict-raw-types:分别 62 / 46 处违规,基本是补写显式
+#   类型参数的风格改动,收益小于一次性改近百处的风险。要上的话代价已经量过了。
+# - avoid_slow_async_io:171 处,且它的建议(改用同步 IO)对 Flutter 应用本身
+#   就可疑 —— UI isolate 上异步 IO 通常反而更对。
+# - no_adjacent_strings_in_list:唯一命中是 sync_controller.dart 里故意拆行的
+#   长签名字符串,是误报。

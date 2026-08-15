@@ -429,7 +429,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
           key: _videoKey,
           controller: videoController,
           fit: fit,
-          controls: NoVideoControls,
+          // media_kit_video 把它声明成 `const NoVideoControls = null`,无类型
+          // 注解的 null 会被推断成 dynamic,于是这里成了一次隐式下转。值本身就是
+          // null(=不要自带控件,我们用自己的控制条),显式标注掉即可。
+          controls: NoVideoControls as VideoControlsBuilder?,
         ),
       );
       await _load();
