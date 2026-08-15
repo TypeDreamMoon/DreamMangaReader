@@ -7,7 +7,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.10.0';
+  static const version = '1.11.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -30,6 +30,7 @@ class AppInfo {
     '番剧断线自愈:退避重连 → 刷新地址 → 自动降码率 / 换线路 · 本地分片缓存与预取',
     '哔哩哔哩番剧:扫码登录 · DASH 高清 · 追番 / 热门 · Bangumi 评分',
     '统一书架:漫画 / 小说 / 番剧按类型筛选 · 一个收藏网格 · 跨源同作品去重',
+    '书架追更:收藏出现新话时封面标出话数 · 三类通用 · 启动自动检查(可关)',
     '发现页:内容类型下划线 tab 并入标题栏 · 源选择器收进 tab 行右端',
     '瀑布流发现页 + 随机飞入动画(漫画 / 小说共用布局与列数设置)',
     '详情页:三种内容共用一套骨架 · 封面飞入全局统一 · 三端都能换源',
