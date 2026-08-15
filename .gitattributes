@@ -1,0 +1,24 @@
+# 仓库的 core.autocrlf=true:Windows 检出时把 LF 转成 CRLF。但 Flutter 工具
+# 生成的这几个文件是它自己按 LF 写盘的,于是每跑一次 pub get / build 它们就
+# 立刻变回 LF、被 git 判成「已修改」—— 工作区常年脏两行,真改动被埋在噪音里。
+# 声明成 eol=lf,git 就按 LF 来比,和工具写出来的一致,不再天天冒出来。
+**/generated_plugin_registrant.cc text eol=lf
+**/generated_plugin_registrant.h  text eol=lf
+**/generated_plugins.cmake        text eol=lf
+**/GeneratedPluginRegistrant.java text eol=lf
+**/GeneratedPluginRegistrant.swift text eol=lf
+
+# shell 脚本必须是 LF,否则在 CI(ubuntu-latest)上会因为 \r 直接执行失败。
+*.sh text eol=lf
+
+# 二进制资源不做任何行尾转换(git 多半也能自己认出来,写明更保险)。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.jks binary
+*.keystore binary
