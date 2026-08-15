@@ -1,0 +1,50 @@
+# 日常验证:每次 push / PR 跑静态分析与单元测试。
+# 发布构建在 release.yml(只认 v* tag),两者互不重叠 —— 这里不打包、不签名、不发布。
+name: CI
+
+on:
+  # 只声明 branches:推 tag 时 ref 是 refs/tags/*,不匹配,自然交给 release.yml。
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 同一分支上新的推送取消仍在跑的旧任务(PR 连续 push 时省 CI 时间)。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.5'
+
+jobs:
+  verify:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter config --no-analytics
+      - run: flutter pub get
+
+      # 生成的本地化代码不进版本库时也能跑;已生成则是幂等操作。
+      - name: Generate localizations
+        run: flutter gen-l10n
+
+      - name: Analyze
+        run: flutter analyze --no-pub
+
+      # integration_test/ 需要真机或模拟器,不在这里跑;`flutter test` 默认只跑 test/。
+      # 报告格式不指定:在 Actions 上默认就是 github reporter(失败会标注到行)。
+      - name: Test
+        run: flutter test --no-pub
