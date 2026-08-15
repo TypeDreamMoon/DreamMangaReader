@@ -310,6 +310,8 @@
   "log_copiedOne": "コピーしました",
   "log_nothingToCopy": "コピーできるログがありません",
   "log_copiedN": "{n} 件のログをコピーしました",
+  "err_renderFailed": "この部分を表示できませんでした",
+  "err_renderFailedHint": "詳細は「設定 › 実行ログ」に記録されています",
   "srcmgmt_pickLocalDirTitle": "index.json を含むソースフォルダを選択",
   "srcmgmt_pickSourceFileTitle": "ソーススクリプト(.js)またはパッケージ(.zip)を選択",
   "srcmgmt_importedZipN": "zip から {n} 個のソースをインポートしました",

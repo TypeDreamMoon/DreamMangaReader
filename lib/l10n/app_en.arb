@@ -310,6 +310,8 @@
   "log_copiedOne": "Entry copied",
   "log_nothingToCopy": "No logs to copy",
   "log_copiedN": "Copied {n, plural, =1{1 log entry} other{{n} log entries}}",
+  "err_renderFailed": "This part failed to render",
+  "err_renderFailedHint": "Details were recorded in Settings › Run Log",
   "srcmgmt_pickLocalDirTitle": "Select the source folder containing index.json",
   "srcmgmt_pickSourceFileTitle": "Select a source script (.js) or package (.zip)",
   "srcmgmt_importedZipN": "Imported {n, plural, =1{1 source} other{{n} sources}} from zip",

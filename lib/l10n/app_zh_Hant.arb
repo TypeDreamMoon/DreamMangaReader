@@ -310,6 +310,8 @@
   "log_copiedOne": "已複製該條",
   "log_nothingToCopy": "暫無日誌可複製",
   "log_copiedN": "已複製 {n} 條日誌",
+  "err_renderFailed": "這一部分沒能顯示出來",
+  "err_renderFailedHint": "詳情已記進「設定 › 執行日誌」",
   "srcmgmt_pickLocalDirTitle": "選擇包含 index.json 的源目錄",
   "srcmgmt_pickSourceFileTitle": "選擇源腳本(.js)或源包(.zip)",
   "srcmgmt_importedZipN": "已從 zip 匯入 {n} 個源",

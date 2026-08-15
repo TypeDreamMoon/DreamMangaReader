@@ -7,6 +7,7 @@ import 'app/app.dart';
 import 'app/app_info.dart';
 import 'core/bili/bili_auth.dart';
 import 'core/log/app_log.dart';
+import 'core/log/crash_guard.dart';
 import 'core/source/chinese_fold.dart';
 import 'core/net/app_proxy.dart';
 import 'core/platform/system_fonts.dart';
@@ -15,6 +16,9 @@ import 'core/sync/sync_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 未捕获错误的兜底(框架错误 / 根 zone 异步错误 / 构建失败的占位 widget)。
+  // 尽量早装:这之后启动阶段自己出的错也进得了运行日志。
+  installCrashGuard();
   // 运行日志随每次启动清空(内存缓冲本就为空,这里显式重置并记一条启动)。
   AppLog.i.clear();
   AppLog.i.success(LogCat.app, '应用启动 · v${AppInfo.version}');

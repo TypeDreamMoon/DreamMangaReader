@@ -545,6 +545,8 @@
       }
     }
   },
+  "err_renderFailed": "这一部分没能显示出来",
+  "err_renderFailedHint": "详情已记进「设置 › 运行日志」",
   "srcmgmt_pickLocalDirTitle": "选择包含 index.json 的源目录",
   "srcmgmt_pickSourceFileTitle": "选择源脚本(.js)或源包(.zip)",
   "srcmgmt_importedZipN": "已从 zip 导入 {n} 个源",

@@ -16,7 +16,8 @@ enum LogCat {
   sync('同步', Color(0xFF9B8CFF)),
   update('更新', Color(0xFF3FB950)),
   search('搜索', Color(0xFFF09199)),
-  network('网络', Color(0xFFB0BEC5));
+  network('网络', Color(0xFFB0BEC5)),
+  crash('异常', Color(0xFFE5534B)); // 未捕获错误(见 crash_guard.dart)
 
   const LogCat(this.label, this.color);
   final String label;
