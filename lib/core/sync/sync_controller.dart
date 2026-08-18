@@ -55,18 +55,19 @@ class SyncController extends ChangeNotifier {
   String username = '';
   String password = '';
 
-  // 账号服务配置
-  String hertzSyncUrl = '';
-  String hertzIssuer = '';
-  String hertzClientId = 'dreamreader';
-
-  /// 账号服务预设:'custom'(手填) | 'hertz'(官方 64hz 服务,地址锁定)。
-  String hertzPreset = 'hertz';
-
-  /// 官方 Hertz Service 预设值(选中后三项锁定为此)。
+  /// 官方账号服务地址。以前这三项可以在「Custom」预设里手填,现在固定 ——
+  /// 登录、注册全在 App 内走 IAM 的原生 auth API,自建 IAM 的适配成本(逐个
+  /// consumer 注册、grant 白名单、邮件通道)不该压在用户的设置页上。
+  ///
+  /// 做成 getter 而不是「每次记得赋值」的字段:这样「地址永远是官方常量」是
+  /// 结构上成立的,不依赖某处调用有没有漏掉。
   static const hzPresetSyncUrl = 'https://api.mr.64hz.cn';
   static const hzPresetIssuer = 'https://account.64hz.cn';
   static const hzPresetClientId = 'dream_manga_reader';
+
+  String get hertzSyncUrl => hzPresetSyncUrl;
+  String get hertzIssuer => hzPresetIssuer;
+  String get hertzClientId => hzPresetClientId;
 
   bool auto = false;
 
@@ -126,16 +127,7 @@ class SyncController extends ChangeNotifier {
     url = p.getString(_kUrl) ?? '';
     username = p.getString(_kUser) ?? '';
     password = p.getString(_kPass) ?? '';
-    hertzSyncUrl = p.getString(_kHSyncUrl) ?? '';
-    hertzIssuer = p.getString(_kHIssuer) ?? '';
-    hertzClientId = p.getString(_kHClientId) ?? 'dreamreader';
-    hertzPreset = p.getString(_kHPreset) ?? 'custom';
-    // 预设为官方服务时地址以常量为准(即便旧值不同或常量随版本更新)。
-    if (hertzPreset == 'hertz') {
-      hertzSyncUrl = hzPresetSyncUrl;
-      hertzIssuer = hzPresetIssuer;
-      hertzClientId = hzPresetClientId;
-    }
+    await _migrateOffCustomIam(p);
     auto = p.getBool(_kAuto) ?? false;
     // 旧配置只在首次升级时迁移 readerNotes；之后用户可独立关闭它。
     final migrateReaderNotes = p.getBool(_kReaderNotesMigrated) != true;
@@ -491,37 +483,24 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 保存账号服务配置(并同步更新 IamAuth 的 issuer/clientId)。
-  Future<void> saveHertzConfig({
-    required String syncUrl,
-    required String issuer,
-    required String clientId,
-  }) async {
-    hertzSyncUrl = syncUrl.trim();
-    hertzIssuer = issuer.trim();
-    hertzClientId = clientId.trim().isEmpty ? 'dreamreader' : clientId.trim();
-    final p = await _p;
-    await p.setString(_kHSyncUrl, hertzSyncUrl);
-    await p.setString(_kHIssuer, hertzIssuer);
-    await p.setString(_kHClientId, hertzClientId);
-    IamAuth.instance.configure(issuer: hertzIssuer, clientId: hertzClientId);
-    notifyListeners();
-  }
-
-  /// 切换账号服务预设。选官方服务(hertz)时锁定为常量地址并落盘。
-  Future<void> setHertzPreset(String preset) async {
-    if (preset != 'custom' && preset != 'hertz') return;
-    hertzPreset = preset;
-    await (await _p).setString(_kHPreset, preset);
-    if (preset == 'hertz') {
-      await saveHertzConfig(
-        syncUrl: hzPresetSyncUrl,
-        issuer: hzPresetIssuer,
-        clientId: hzPresetClientId,
-      );
-    } else {
-      notifyListeners();
+  /// 一次性迁移:把「Custom 自建 IAM」时代留下的地址存档清掉。
+  ///
+  /// 关键的一步是清登录态。指过自建 IAM 的用户,本机存的 token 是**那台**签的,
+  /// issuer 和 audience 都对不上官方服务 —— 留着不会自动失效,只会变成「界面显示
+  /// 已登录,但每次同步都 401」这种最难自查的状态。宁可让他重登一次。
+  ///
+  /// 键删掉后 [oldIssuer] 就恒为 null,重复执行不会误伤已经登好的账号。
+  Future<void> _migrateOffCustomIam(SharedPreferences p) async {
+    final oldIssuer = p.getString(_kHIssuer)?.trim();
+    if (oldIssuer != null &&
+        oldIssuer.isNotEmpty &&
+        oldIssuer.replaceAll(RegExp(r'/+$'), '') != hzPresetIssuer) {
+      await IamAuth.instance.logout();
     }
+    await p.remove(_kHSyncUrl);
+    await p.remove(_kHIssuer);
+    await p.remove(_kHClientId);
+    await p.remove(_kHPreset);
   }
 
   SyncBackend _backend() => isHertz

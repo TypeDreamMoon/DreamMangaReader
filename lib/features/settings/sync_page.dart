@@ -8,6 +8,7 @@ import '../../core/source/source_repository.dart';
 import '../../core/sync/sync_controller.dart';
 import '../../core/sync/sync_data.dart';
 import '../../ui/ui.dart';
+import 'auth_page.dart';
 
 /// 同步内容类别的本地化名(页面与下载弹窗共用)。多语言下不能是 const map,
 /// 走 context.l10n(阅读设置类别复用阅读器的 reader_settings)。
@@ -44,19 +45,9 @@ class _SyncPageState extends State<SyncPage> {
   late final _urlCtrl = TextEditingController(text: _sync.url);
   late final _userCtrl = TextEditingController(text: _sync.username);
   late final _passCtrl = TextEditingController(text: _sync.password);
-  // 账号服务(Custom）地址
-  late final _hSyncCtrl = TextEditingController(text: _sync.hertzSyncUrl);
-  late final _hIssuerCtrl = TextEditingController(text: _sync.hertzIssuer);
-  late final _hClientCtrl = TextEditingController(text: _sync.hertzClientId);
-  // Custom 密码登录
-  final _loginUserCtrl = TextEditingController();
-  final _loginPassCtrl = TextEditingController();
-
   late String _kind = _sync.backendKind;
-  late String _preset = _sync.hertzPreset; // 'custom' | 'hertz'
   late bool _auto = _sync.auto;
   bool _busy = false;
-  bool _loginBusy = false;
   String _result = '';
 
   @override
@@ -64,11 +55,6 @@ class _SyncPageState extends State<SyncPage> {
     _urlCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
-    _hSyncCtrl.dispose();
-    _hIssuerCtrl.dispose();
-    _hClientCtrl.dispose();
-    _loginUserCtrl.dispose();
-    _loginPassCtrl.dispose();
     super.dispose();
   }
 
@@ -76,11 +62,7 @@ class _SyncPageState extends State<SyncPage> {
   Future<void> _persist() async {
     await _sync.setBackendKind(_kind);
     if (_kind == 'hertz') {
-      await _sync.saveHertzConfig(
-        syncUrl: _hSyncCtrl.text,
-        issuer: _hIssuerCtrl.text,
-        clientId: _hClientCtrl.text,
-      );
+      // 账号服务地址是常量,这里没有可落盘的配置,只剩自动同步开关。
       await _sync.setAuto(_auto);
     } else {
       await _sync.saveConfig(
@@ -92,35 +74,9 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
-  /// 登录:Hertz 走浏览器 OAuth;Custom 走用户名/密码。
+  /// 登录 / 注册都在统一登录页里做,这页只负责在登录态变化后重画。
   Future<void> _login() async {
-    setState(() => _loginBusy = true);
-    await _sync.saveHertzConfig(
-      syncUrl: _hSyncCtrl.text,
-      issuer: _hIssuerCtrl.text,
-      clientId: _hClientCtrl.text,
-    );
-    try {
-      if (_preset == 'hertz') {
-        await _sync.auth.loginBrowser();
-      } else {
-        await _sync.auth
-            .loginPassword(_loginUserCtrl.text, _loginPassCtrl.text);
-        _loginPassCtrl.clear();
-      }
-      if (!mounted) return;
-      setState(() => _loginBusy = false);
-      showAppNotify(
-          context,
-          context.l10n.sync_loginSuccess(
-              _sync.auth.username ?? context.l10n.sync_account),
-          kind: AppNotifyKind.success);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loginBusy = false);
-      showAppNotify(context, context.l10n.sync_loginFailed('$e'),
-          kind: AppNotifyKind.error);
-    }
+    if (await openAuthPage(context) && mounted) setState(() {});
   }
 
   Future<void> _logout() async {
@@ -354,59 +310,17 @@ class _SyncPageState extends State<SyncPage> {
         ),
       );
 
-  void _onPreset(String v) {
-    setState(() {
-      _preset = v;
-      if (v == 'hertz') {
-        _hSyncCtrl.text = SyncController.hzPresetSyncUrl;
-        _hIssuerCtrl.text = SyncController.hzPresetIssuer;
-        _hClientCtrl.text = SyncController.hzPresetClientId;
-      }
-    });
-    _sync.setHertzPreset(v);
-  }
-
+  /// 账号卡片。地址不再可配(见 [SyncController.hzPresetIssuer] 的说明),
+  /// 所以这里只剩两种状态:已登录显示是谁 + 退出,未登录给一个入口。
   Widget _hertzCard(AppPalette p) {
+    final l = context.l10n;
     final loggedIn = _sync.auth.isLoggedIn;
-    final isHertzPreset = _preset == 'hertz';
     return AppCard(
       radius: 14,
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
-                  value: 'hertz',
-                  label: Text('Hertz Service'),
-                  icon: Icon(Icons.verified_rounded, size: 16)),
-              ButtonSegment(
-                  value: 'custom',
-                  label: Text('Custom'),
-                  icon: Icon(Icons.tune_rounded, size: 16)),
-            ],
-            selected: {_preset},
-            onSelectionChanged:
-                (_busy || _loginBusy) ? null : (s) => _onPreset(s.first),
-          ),
-          const SizedBox(height: 12),
-          // Custom 才显示地址三项;Hertz Service 地址已内置,直接给登录。
-          if (!isHertzPreset) ...[
-            _field(p, _hSyncCtrl, context.l10n.sync_serviceUrl,
-                context.l10n.sync_serviceUrlHint),
-            const SizedBox(height: 10),
-            _field(p, _hIssuerCtrl, context.l10n.sync_iamUrl,
-                context.l10n.sync_iamUrlHint),
-            const SizedBox(height: 10),
-            _field(
-                p, _hClientCtrl, 'client_id', context.l10n.sync_clientIdHint),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Divider(height: 1, color: p.line),
-            ),
-          ] else
-            const SizedBox(height: 2),
           if (loggedIn)
             Row(
               children: [
@@ -414,36 +328,20 @@ class _SyncPageState extends State<SyncPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                      context.l10n.sync_loggedInAs(
-                          _sync.auth.username ?? context.l10n.sync_account),
+                      l.sync_loggedInAs(_sync.auth.username ?? l.sync_account),
                       style: TextStyle(
                           color: p.textPrimary,
                           fontSize: 13.5,
                           fontWeight: FontWeight.w700)),
                 ),
                 TextButton(
-                  onPressed: _loginBusy ? null : _logout,
-                  child: Text(context.l10n.sync_logout),
+                  onPressed: _busy ? null : _logout,
+                  child: Text(l.sync_logout),
                 ),
               ],
             )
-          else if (isHertzPreset) ...[
-            Text(context.l10n.sync_browserLoginHint,
-                style:
-                    TextStyle(color: p.textMuted, fontSize: 12, height: 1.5)),
-            const SizedBox(height: 12),
-            _loginButton(p, context.l10n.sync_browserLogin,
-                Icons.open_in_browser_rounded),
-          ] else ...[
-            _field(p, _loginUserCtrl, context.l10n.sync_username,
-                context.l10n.sync_usernameHint),
-            const SizedBox(height: 10),
-            _field(p, _loginPassCtrl, context.l10n.sync_password,
-                context.l10n.sync_loginPasswordHint,
-                obscure: true),
-            const SizedBox(height: 12),
-            _loginButton(p, context.l10n.sync_login, Icons.login_rounded),
-          ],
+          else
+            _loginButton(p, l.sync_login, Icons.login_rounded),
         ],
       ),
     );
@@ -452,8 +350,8 @@ class _SyncPageState extends State<SyncPage> {
   Widget _loginButton(AppPalette p, String label, IconData icon) => SizedBox(
         width: double.infinity,
         child: FilledButton.icon(
-          onPressed: _loginBusy ? null : _login,
-          icon: _loginBusy
+          onPressed: _busy ? null : _login,
+          icon: _busy
               ? const SizedBox(
                   width: 15,
                   height: 15,

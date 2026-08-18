@@ -6,6 +6,7 @@ import '../../core/bili/bili_auth.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/sync/sync_controller.dart';
 import '../../ui/ui.dart';
+import 'auth_page.dart';
 import 'source_account.dart';
 import 'sync_page.dart';
 
@@ -25,40 +26,11 @@ class AccountPage extends StatefulWidget {
 
 class _AccountPageState extends State<AccountPage> {
   final SyncController _sync = SyncController.instance;
-  bool _iamBusy = false;
-
   Future<void> _iamLogin() async {
-    // 自建 IAM(custom + 已填 issuer)多用密码登录,而账号服务地址还没配的时候
-    // 连登哪儿都不知道 —— 这两种情况转交云同步页,它带着预设感知的配置表单。
-    if (_sync.hertzPreset == 'custom' && _sync.hertzIssuer.trim().isNotEmpty) {
-      await _openSync();
-      return;
-    }
-    setState(() => _iamBusy = true);
-    try {
-      // 新用户没配过账号服务地址时,默认套官方「梦漫账号」服务(浏览器 OAuth)。
-      if (_sync.hertzIssuer.trim().isEmpty) {
-        await _sync.saveHertzConfig(
-          syncUrl: SyncController.hzPresetSyncUrl,
-          issuer: SyncController.hzPresetIssuer,
-          clientId: SyncController.hzPresetClientId,
-        );
-      }
-      await _sync.auth.loginBrowser();
-      if (!mounted) return;
-      showAppNotify(context, context.l10n.acct_loginOk,
-          kind: AppNotifyKind.success);
-      // 昵称是登录后异步拉取的(IamAuth 非 ChangeNotifier),稍后再刷让卡片显示账号名。
-      Future.delayed(const Duration(milliseconds: 1800), () {
-        if (mounted) setState(() {});
-      });
-    } catch (e) {
-      if (!mounted) return;
-      showAppNotify(context, context.l10n.sync_loginFailed('$e'),
-          kind: AppNotifyKind.error);
-    } finally {
-      if (mounted) setState(() => _iamBusy = false);
-    }
+    // 登录 / 注册 / 找回密码全在这一页里完成。以前这里要先判断预设、必要时把
+    // 配置塞回去、再跳浏览器,登完还得 `Future.delayed(1800ms)` 等 userinfo 异步
+    // 落地才敢刷新昵称 —— 现在地址是常量、昵称随登录响应一起回来,都不需要了。
+    if (await openAuthPage(context) && mounted) setState(() {});
   }
 
   Future<void> _openSync() async {
@@ -126,7 +98,6 @@ class _AccountPageState extends State<AccountPage> {
                   : l10n.acct_loggedIn)
               : l10n.acct_appAccountHint,
           loggedIn: on,
-          busy: _iamBusy,
           onLogin: _iamLogin,
           onLogout: () async {
             await _sync.auth.logout();
