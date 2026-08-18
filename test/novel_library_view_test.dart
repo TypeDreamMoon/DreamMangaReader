@@ -18,7 +18,14 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    sandbox = await Directory.systemTemp.createTemp('novel-library-ui-');
+    // 解析一次再用:Windows 的 %TEMP% 往往是 8.3 短名(C:\Users\RUNNER~1\...),
+    // 而被测的 _safeExistingFile 出于目录穿越防护会返回 resolveSymbolicLinks()
+    // 之后的长名。不在这儿统一口径,断言就会拿短名去比长名 —— 只有用户名超过
+    // 8 个字符的机器才会露出来(CI 的 runneradmin 是,开发机的短用户名不是)。
+    sandbox = Directory(
+      await (await Directory.systemTemp.createTemp('novel-library-ui-'))
+          .resolveSymbolicLinks(),
+    );
   });
 
   tearDown(() async {

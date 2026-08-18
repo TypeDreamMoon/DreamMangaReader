@@ -39,6 +39,20 @@ Future<
   }
 }
 
+/// 等一个后台条件成立。预读是链式推进的,机器越忙推得越慢 —— 原来各处写死
+/// 50×10ms(=500ms),在开发机上够、在 CI 上不够,超时后又**静默继续**,于是断言
+/// 拿着半成品状态去比,报出来只是一句没头没脑的 "Expected: <1> Actual: <0>"。
+///
+/// 上限放到 5 秒:够吸收负载抖动,真坏掉时也不至于挂满整个测试超时。等不到就带着
+/// [what] 直接失败,让错误信息自己说清楚等的是什么。
+Future<void> _waitUntil(String what, bool Function() done) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) fail('等不到:$what');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   late Directory temp;
   late FaultHttpServer upstream;
@@ -107,20 +121,16 @@ void main() {
     expect(first.bytes, [0, 0, 0]);
 
     // 缓冲还没起来:只预读紧邻的一片,别把带宽从正在播的那片手里抢走。
-    for (var attempt = 0; attempt < 50; attempt++) {
-      if (upstream.requestCount('/360/001.ts') == 1) break;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+    await _waitUntil('预读 /360/001.ts',
+        () => upstream.requestCount('/360/001.ts') == 1);
     expect(upstream.requestCount('/360/001.ts'), 1);
     expect(upstream.requestCount('/360/002.ts'), 0);
     expect(upstream.requestCount('/360/003.ts'), 0);
     // 预读过的那片直接走缓存,不会再回源第二遍。
     expect((await _get(media.segments[1].uri)).bytes, [1, 1, 1]);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    for (var attempt = 0; attempt < 50; attempt++) {
-      if (upstream.requestCount('/360/002.ts') == 1) break;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+    await _waitUntil('预读 /360/002.ts',
+        () => upstream.requestCount('/360/002.ts') == 1);
     expect(upstream.requestCount('/360/002.ts'), 1);
     expect(
       upstream.requests.every(
@@ -403,10 +413,7 @@ b.m4s
     final media = HlsParser.parse((await _get(session.localUri)).text)
         as HlsMediaPlaylist;
     await _get(media.segments.first.uri);
-    for (var attempt = 0; attempt < 100; attempt++) {
-      if (upstream.requestCount('/1.ts') == 1) break;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+    await _waitUntil('预读 /1.ts', () => upstream.requestCount('/1.ts') == 1);
     expect(upstream.requestCount('/1.ts'), 1);
 
     // 播放器追上来要这一片:等预读落盘走缓存,而不是再开一路把同样的字节下第二遍。
@@ -448,10 +455,13 @@ b.m4s
         as HlsMediaPlaylist;
     await _get(media.segments.first.uri);
 
-    for (var attempt = 0; attempt < 50; attempt++) {
-      if (upstream.requestCount('/3.ts') == 1) break;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+    // 等的就是接下来要断言的三片都到齐,而不是只等最后一片。
+    await _waitUntil(
+        '预读 /1.ts /2.ts /3.ts',
+        () =>
+            upstream.requestCount('/1.ts') == 1 &&
+            upstream.requestCount('/2.ts') == 1 &&
+            upstream.requestCount('/3.ts') == 1);
     expect(upstream.requestCount('/1.ts'), 1);
     expect(upstream.requestCount('/2.ts'), 1);
     expect(upstream.requestCount('/3.ts'), 1);
