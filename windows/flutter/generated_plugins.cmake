@@ -5,7 +5,6 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   battery_plus
   charset_converter
-  desktop_webview_window
   flutter_inappwebview_windows
   flutter_js
   flutter_secure_storage_windows
@@ -14,7 +13,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   share_plus
   url_launcher_windows
   volume_controller
-  window_to_front
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
