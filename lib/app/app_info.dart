@@ -7,7 +7,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.11.0';
+  static const version = '1.12.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -46,7 +46,8 @@ class AppInfo {
     '漫画失败图片点击重试 · 页面切换不再短暂重叠',
     'Windows 关闭到托盘:托盘菜单显示主窗口 / 退出',
     '统一账号页:梦漫账号 + 哔哩哔哩 + 各源账号一处管理(共用登录的源合并成一行)',
-    '云同步:WebDAV / 账号登录(IAM 浏览器授权)· 可选类别双向合并',
+    '梦漫账号:App 内登录 / 注册 / 邮箱验证码找回密码,全程不跳浏览器',
+    '云同步:WebDAV / 梦漫账号 · 可选类别双向合并',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓 · 刷新后脚本立即生效',
     '私有源认证:登录凭据存入系统安全存储 · 多源共用一份登录 · 备份 / 同步不带凭据',
     '分页集合协议:超大章节表 / 图片集分批拉取(上限 500 次续拉)',
