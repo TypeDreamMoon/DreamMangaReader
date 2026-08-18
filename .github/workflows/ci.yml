@@ -26,7 +26,13 @@ env:
 jobs:
   verify:
     name: Analyze and test
-    runs-on: ubuntu-latest
+    # windows-latest,不是 ubuntu:这个 App 只发 Windows 与 Android,而 lib/ 里有
+    # 十几个文件按 Platform.isWindows / isAndroid 分支。跑在 Linux 上,它们全走
+    # 一条永远不出货的路 —— 绿了也说明不了什么。首次上 CI 就撞见了实例:
+    # update_dialog_test 断言 Windows 更新流程,但 UpdateInstaller.supported 在
+    # Linux 上是 false,于是对话框渲染的是「不兼容」态,9 条断言全落空。
+    # release.yml 的 Windows 构建用的也是这个 runner,两边保持一致。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
