@@ -202,6 +202,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   @override
   Future<void> open(VideoTrack track, {Duration startAt = Duration.zero}) async {
     if (_originalTrack != null) await _resetAudioAttachment();
+    await _session?.clearCache();
     await _closeSession();
     _position = startAt;
     // 换集就把字幕选择清掉:上一集的轨道号在新的一集里指向别的东西。

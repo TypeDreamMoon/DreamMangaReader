@@ -299,9 +299,10 @@ void main() {
     adapter.playingController.add(true);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('清晰度'));
+    await tester.tap(find.descendant(
+      of: find.byType(TextButton),
+      matching: find.text('480p'),
+    ));
     await tester.pumpAndSettle();
     await tester.tap(find.text('360p'));
     await tester.pump(const Duration(milliseconds: 350));
@@ -348,21 +349,15 @@ void main() {
     adapter.playingController.add(true);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('清晰度'));
+    await tester.tap(find.descendant(
+      of: find.byType(TextButton),
+      matching: find.text('1080P'),
+    ));
     await tester.pumpAndSettle();
 
-    final row = find.ancestor(
-      of: find.text('这条流只提供这一种清晰度'),
-      matching: find.byType(ListTile),
-    );
-    expect(row, findsOneWidget);
-    expect(find.descendant(of: row, matching: find.text('1080P')),
-        findsOneWidget);
-    expect(tester.widget<ListTile>(row).onTap, isNull);
-    // 标题栏角落和右下角那颗按钮也报同一个清晰度 —— 不用开面板就看得到。
+    // 唯一清晰度仍显示读数，但不再塞进重复的设置抽屉页签。
     expect(find.text('1080P'), findsNWidgets(3));
+    expect(find.text('这条流只提供这一种清晰度'), findsNothing);
   });
 
   // 改倍速不该盖住半个画面:右下角那颗按钮弹的是一张贴着底栏的小卡片,
@@ -431,7 +426,7 @@ void main() {
     expect(find.byType(AspectRatio), findsNothing);
     expect(fits.last, BoxFit.contain);
 
-    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
     await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
@@ -441,6 +436,32 @@ void main() {
     final framed = tester.widget<AspectRatio>(find.byType(AspectRatio));
     expect(framed.aspectRatio, closeTo(16 / 9, 0.001));
     expect(fits.last, BoxFit.cover);
+  });
+
+  testWidgets('the three-dot menu keeps only subtitles and playback settings',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    expect(find.byIcon(Icons.more_vert_rounded), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('字幕'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('选集'), findsNothing);
+    expect(find.text('清晰度'), findsNothing);
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('单集循环'), findsOneWidget);
+    expect(find.text('列表循环'), findsOneWidget);
+    expect(find.text('不循环'), findsOneWidget);
+    expect(find.text('自动连播'), findsOneWidget);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
   });
 
   testWidgets('a double tap pauses and the next one resumes', (tester) async {
@@ -760,6 +781,7 @@ void main() {
   });
 
   testWidgets('finishing an episode rolls on to the next one', (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
     final adapter = _PageFakeAdapter();
     final loaded = <String>[];
     await tester.pumpWidget(_playerHost(
@@ -779,6 +801,36 @@ void main() {
 
     expect(loaded, ['ep-1', 'ep-2']);
     expect(find.textContaining('第二集'), findsWidgets);
+  });
+
+  testWidgets('single loop reopens the current episode', (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final adapter = _PageFakeAdapter();
+    final loaded = <String>[];
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [
+        Chapter(id: 'ep-1', name: '第一集'),
+        Chapter(id: 'ep-2', name: '第二集'),
+      ],
+      onLoadTracks: loaded.add,
+    ));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('单集循环'));
+    await tester.pump();
+
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+
+    expect(loaded, ['ep-1', 'ep-1']);
   });
 
   // 会话层一度只在换阶段(缓冲开停、播放暂停)时才发出位置,播放途中进度条是
@@ -903,7 +955,7 @@ void main() {
     adapter.playingController.add(true);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
     await tester.pumpAndSettle();
     await tester.tap(find.text('字幕'));
     await tester.pumpAndSettle();
@@ -923,7 +975,7 @@ void main() {
     adapter.playingController.add(true);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
     await tester.pumpAndSettle();
     await tester.tap(find.text('字幕'));
     await tester.pumpAndSettle();

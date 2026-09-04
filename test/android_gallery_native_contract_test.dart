@@ -15,6 +15,7 @@ void main() {
     expect(source, contains('dream_manga_reader/gallery'));
     // 相册看得到的落点,不是那串 /Android/data/<包名>/files。
     expect(source, contains('Environment.DIRECTORY_DCIM'));
+    expect(source, contains('private const val ALBUM = "ScreenShot"'));
     expect(source, contains('MediaStore.Images.Media.RELATIVE_PATH'));
     expect(source, contains('MediaStore.Images.Media.EXTERNAL_CONTENT_URI'));
     // 写完之前对相册不可见,免得扫描器抓到半个文件。

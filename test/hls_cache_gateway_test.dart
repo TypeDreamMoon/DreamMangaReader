@@ -57,12 +57,14 @@ void main() {
   late Directory temp;
   late FaultHttpServer upstream;
   late HlsCacheGateway gateway;
+  late HlsCacheStore cache;
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('dmr-hls-gateway-test-');
     upstream = await FaultHttpServer.start();
+    cache = HlsCacheStore(directory: temp, limitBytes: 1024 * 1024);
     gateway = HlsCacheGateway(
-      cache: HlsCacheStore(directory: temp, limitBytes: 1024 * 1024),
+      cache: cache,
       upstream: DioHlsUpstreamClient(Dio(),
           policy: const HlsUpstreamPolicy(allowLoopback: true)),
       allowLoopbackUpstream: true,
@@ -120,12 +122,16 @@ void main() {
     final first = await _get(media.segments.first.uri);
     expect(first.bytes, [0, 0, 0]);
 
-    // 缓冲还没起来:只预读紧邻的一片,别把带宽从正在播的那片手里抢走。
+    // VOD 会继续预读后续分片,不因初始缓冲较小而停在一片。
     await _waitUntil('预读 /360/001.ts',
         () => upstream.requestCount('/360/001.ts') == 1);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    expect(upstream.requestCount('/360/002.ts'), 0);
-    expect(upstream.requestCount('/360/003.ts'), 0);
+    await _waitUntil('预读 /360/002.ts',
+        () => upstream.requestCount('/360/002.ts') == 1);
+    await _waitUntil('预读 /360/003.ts',
+        () => upstream.requestCount('/360/003.ts') == 1);
+    expect(upstream.requestCount('/360/002.ts'), 1);
+    expect(upstream.requestCount('/360/003.ts'), 1);
     // 预读过的那片直接走缓存,不会再回源第二遍。
     expect((await _get(media.segments[1].uri)).bytes, [1, 1, 1]);
     expect(upstream.requestCount('/360/001.ts'), 1);
@@ -141,6 +147,7 @@ void main() {
 
     await session.close();
     expect((await _get(session.localUri)).status, HttpStatus.notFound);
+    expect(await cache.sizeBytes(), greaterThan(0));
   });
 
   test('preserves map and byte ranges and keeps AES keys in session memory',
@@ -465,8 +472,9 @@ b.m4s
     expect(upstream.requestCount('/1.ts'), 1);
     expect(upstream.requestCount('/2.ts'), 1);
     expect(upstream.requestCount('/3.ts'), 1);
-    // 再往后就不读了:预读只是热身,不是把整集拖下来。
-    expect(upstream.requestCount('/4.ts'), 0);
+    // VOD 预取会一直跑到清单末尾。
+    await _waitUntil('预读 /4.ts', () => upstream.requestCount('/4.ts') == 1);
+    expect(upstream.requestCount('/4.ts'), 1);
     session.notifySeek();
   });
 

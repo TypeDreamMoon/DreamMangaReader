@@ -285,7 +285,10 @@ class ScriptSource implements MangaSource, NovelSource {
   Future<Paged<Manga>> getSearch(String query, int page,
           {Map<String, Object?>? filters}) =>
       _run('prepareSearch', [query, page, filters ?? {}], 'handleSearch',
-          (j) => Paged(_mangaList(j)));
+          (j) {
+        final items = _mangaList(j);
+        return Paged(items, hasNext: items.isNotEmpty);
+      });
 
   @override
   Future<Paged<Novel>> getNovelDiscovery(int page,
@@ -306,7 +309,10 @@ class ScriptSource implements MangaSource, NovelSource {
   Future<Paged<Novel>> getNovelSearch(String query, int page,
           {Map<String, Object?>? filters}) =>
       _run('prepareSearch', [query, page, filters ?? {}], 'handleSearch',
-          (j) => Paged(_novelList(j)));
+          (j) {
+        final items = _novelList(j);
+        return Paged(items, hasNext: items.isNotEmpty);
+      });
 
   @override
   Future<Novel> getNovelDetail(String novelId) => _run(

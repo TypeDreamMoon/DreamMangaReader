@@ -79,6 +79,18 @@ var __source = {
 };
 ''';
 
+const searchScript = r'''
+var __source = {
+  meta: { id: 'search-paging', name: 'Search paging', baseUrl: 'https://example.test' },
+  prepareSearch: function (query, page) {
+    return { url: 'https://example.test/search?q=' + query + '&page=' + page };
+  },
+  handleSearch: function () {
+    return [{ id: 'result-1', title: '搜索结果', cover: 'https://example.test/cover.jpg' }];
+  }
+};
+''';
+
 const continuationScript = r'''
 var __source = {
   meta: { id: 'paging', name: 'Paging', baseUrl: 'https://example.test' },
@@ -154,6 +166,24 @@ void main() {
     final result = await source.getDiscovery(1);
 
     expect(result.items.single.updatedAt, 1785600000000);
+  });
+
+  test('script searches advertise another page when the current page has results',
+      () async {
+    final source = ScriptSource(
+      engine: JsEngine(),
+      http: RoutingHttp((_) => jsonResponse({'unused': true})),
+      scriptCode: searchScript,
+    );
+    addTearDown(source.dispose);
+
+    final manga = await source.getSearch('keyword', 1);
+    final novel = await source.getNovelSearch('keyword', 1);
+
+    expect(manga.items, hasLength(1));
+    expect(manga.hasNext, isTrue);
+    expect(novel.items, hasLength(1));
+    expect(novel.hasNext, isTrue);
   });
 
   test('chapter decoding preserves script publish times', () async {

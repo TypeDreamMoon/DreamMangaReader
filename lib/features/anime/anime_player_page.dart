@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' hide VideoTrack; // 用本项目的 VideoTrack
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // media_kit_video 本来就依赖它(MaterialVideoControls 的亮度手势用的同一套),
 // 这里提为直接依赖只是为了自己调用。安卓有原生实现,别的平台调了会抛,已 catch。
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
@@ -135,6 +136,7 @@ class AnimePlaybackSurface extends StatelessWidget {
       ],
     );
   }
+
 }
 
 class AnimePlayerDependencies {
@@ -246,9 +248,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   // 悬浮控制面板(右侧抽屉):选集 / 线路 / 字幕 / 设置。
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
-  int _panelTab = 0; // 0=选集 1=线路 2=字幕 3=设置
+  int _panelTab = 0; // 0=字幕 1=设置
   double _rate = 1.0; // 倍速(跨集保持)
   PlayerAspect _aspect = PlayerAspect.fit; // 画面比例
+  _LoopMode _loopMode = _LoopMode.none;
+  bool _autoPlay = true;
+  static const _loopModeKey = 'anime.player.loopMode';
+  static const _autoPlayKey = 'anime.player.autoPlay';
 
   /// 右下角那三颗按钮弹出的小卡片。B站那套:浮在按钮上方的一小张,而不是把整块
   /// 抽屉拉出来 —— 改个倍速不该盖住半个画面。
@@ -320,6 +326,30 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   void initState() {
     super.initState();
     _enterImmersiveLandscape();
+    unawaited(_loadPlaybackPreferences());
+  }
+
+  Future<void> _loadPlaybackPreferences() async {
+    final preferences = await SharedPreferences.getInstance();
+    final storedMode = preferences.getString(_loopModeKey);
+    final mode = _LoopMode.values.where((value) => value.name == storedMode).firstOrNull;
+    if (!mounted) return;
+    setState(() {
+      _loopMode = mode ?? _LoopMode.none;
+      _autoPlay = preferences.getBool(_autoPlayKey) ?? true;
+    });
+  }
+
+  void _setLoopMode(_LoopMode value) {
+    setState(() => _loopMode = value);
+    unawaited(SharedPreferences.getInstance()
+        .then((preferences) => preferences.setString(_loopModeKey, value.name)));
+  }
+
+  void _setAutoPlay(bool value) {
+    setState(() => _autoPlay = value);
+    unawaited(SharedPreferences.getInstance()
+        .then((preferences) => preferences.setBool(_autoPlayKey, value)));
   }
 
   /// 开播放在这儿而不是 initState:整条链路要用 l10n(失败文案、恢复提示),
@@ -537,14 +567,22 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       if (!mounted) return;
       setState(() => _embedded = options);
     });
-    // 一集播完自动接下一集(番剧的默认期待,也顺带把历史推进到下一集)。
+    // 一集播完按循环模式和自动连播设置处理。
     // 用 _autoAdvanced 兜一层:后端在换源/重开时可能再报一次 completed,
     // 没有这道闸就会一口气跳过两集。
     _completedSubscription = adapter.completed.listen((completed) {
       if (!completed || !mounted || _disposed || _autoAdvanced) return;
-      if (_i >= widget.episodes.length - 1) return;
+      if (_loopMode != _LoopMode.single && !_autoPlay) return;
+      if (_loopMode == _LoopMode.none &&
+          _i >= widget.episodes.length - 1) {
+        return;
+      }
       _autoAdvanced = true;
-      _go(1);
+      if (_loopMode == _LoopMode.single) {
+        unawaited(_load());
+      } else {
+        _go(_i >= widget.episodes.length - 1 ? -_i : 1);
+      }
     });
   }
 
@@ -1197,7 +1235,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                 ..._topActions(),
                 IconButton(
                   tooltip: context.l10n.player_menuTooltip,
-                  icon: const Icon(Icons.playlist_play_rounded),
+                  icon: const Icon(Icons.more_vert_rounded),
                   color: Colors.white,
                   onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
                 ),
@@ -1249,7 +1287,6 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               onQuality:
                   _tracks.isEmpty ? null : () => _toggleQuick(_QuickPanel.quality),
               qualityLabel: _current?.quality ?? '',
-              onOpenPanel: () => _scaffoldKey.currentState?.openEndDrawer(),
               // 移动端的播放页本来就是沉浸式横屏、已经占满整屏,再给一个全屏键
               // 只会让人点了没反应 —— 干脆不显示。
               onFullscreen:
@@ -1457,41 +1494,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
 
   Widget _quickEpisodes() => SizedBox(
         width: 280,
-        child: GridView.builder(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 56,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 1.6,
-          ),
-          itemCount: widget.episodes.length,
-          itemBuilder: (_, i) {
-            final on = i == _i;
-            return GestureDetector(
-              onTap: () {
-                _toggleQuick(_QuickPanel.episodes);
-                unawaited(_goTo(i));
-              },
-              child: Container(
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: on ? _accent.withValues(alpha: 0.2) : _panelChip,
-                  borderRadius: BorderRadius.circular(6),
-                  border:
-                      Border.all(color: on ? _accent : Colors.transparent),
-                ),
-                child: Text(
-                  _epShort(i),
-                  style: TextStyle(
-                    color: on ? _accent : Colors.white70,
-                    fontSize: 12.5,
-                    fontWeight: on ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-              ),
-            );
+        child: _episodeList(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          onTap: (i) {
+            _toggleQuick(_QuickPanel.episodes);
+            unawaited(_goTo(i));
           },
         ),
       );
@@ -1716,24 +1723,20 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 顶部分段:选集 / 清晰度 / 字幕 / 设置
+            // 顶部分段:字幕 / 设置。选集与清晰度已有底栏入口。
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
               child: Row(
                 children: [
-                  _tabBtn(context.l10n.player_tabEpisodes, 0),
-                  _tabBtn(context.l10n.player_tabQuality, 1),
-                  _tabBtn(context.l10n.player_tabSubtitles, 2),
-                  _tabBtn(context.l10n.player_tabSettings, 3),
+                  _tabBtn(context.l10n.player_tabSubtitles, 0),
+                  _tabBtn(context.l10n.player_tabSettings, 1),
                 ],
               ),
             ),
             const Divider(height: 1, color: Colors.white12),
             Expanded(
               child: switch (_panelTab) {
-                0 => _panelEpisodes(),
-                1 => _panelTracks(),
-                2 => _panelSubtitles(),
+                0 => _panelSubtitles(),
                 _ => _panelSettings(),
               },
             ),
@@ -1769,84 +1772,66 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     );
   }
 
-  // —— 选集:话数网格 ——
-  Widget _panelEpisodes() {
-    final accent = _accent;
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 68,
-        mainAxisExtent: 40,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-      ),
+  Widget _episodeList({
+    required EdgeInsets padding,
+    required ValueChanged<int> onTap,
+  }) => ListView.separated(
+      padding: padding,
       itemCount: widget.episodes.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
       itemBuilder: (_, i) {
         final on = i == _i;
         return Tooltip(
           message: widget.episodes[i].name,
           waitDuration: const Duration(milliseconds: 500),
           child: Material(
-            color: on ? accent.withValues(alpha: 0.20) : _panelChip,
-            borderRadius: BorderRadius.circular(8),
+            color: on ? _accent.withValues(alpha: 0.18) : _panelChip,
+            borderRadius: BorderRadius.circular(7),
             child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _goTo(i),
+              borderRadius: BorderRadius.circular(7),
+              onTap: () => onTap(i),
               child: Container(
-                alignment: Alignment.center,
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: on ? Border.all(color: accent, width: 1.2) : null,
+                  borderRadius: BorderRadius.circular(7),
+                  border: on ? Border.all(color: _accent, width: 1.2) : null,
                 ),
-                child: Text(_epShort(i),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: on ? accent : Colors.white,
-                        fontSize: 13,
-                        fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 58,
+                      child: Text(
+                        '第${_epShort(i)}集',
+                        style: TextStyle(
+                          color: on ? _accent : Colors.white70,
+                          fontSize: 13,
+                          fontWeight: on ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.episodes[i].name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: on ? Colors.white : Colors.white70,
+                          fontSize: 13,
+                          fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    if (on) Icon(Icons.play_arrow_rounded, color: _accent, size: 18),
+                  ],
+                ),
               ),
             ),
           ),
         );
       },
     );
-  }
-
-  // —— 清晰度 ——
-  //
-  // 这一栏列的是 HLS 主清单里的变体。以前叫「线路」,而多数源的主清单只有一条
-  // 变体,于是它永远只有一行、还写着「608p」这种没人认得的数字(那是 2.35:1
-  // 宽银幕番剧的真实行数)。名字改成它实际是的东西,只有一档时也不再摆成一份
-  // 点了没反应的选单。
-  Widget _panelTracks() {
-    if (_tracks.isEmpty) {
-      return Center(
-          child: Text(context.l10n.player_noQuality,
-              style: const TextStyle(color: Colors.white38, fontSize: 13)));
-    }
-    final accent = _accent;
-    final fixed = _tracks.length == 1;
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _tracks.length,
-      separatorBuilder: (_, __) =>
-          const Divider(height: 1, color: Colors.white10, indent: 16),
-      itemBuilder: (_, i) {
-        final t = _tracks[i];
-        final on = t.url == _current?.url;
-        return _panelRow(
-          accent: accent,
-          selected: on,
-          icon: on && !fixed ? Icons.check_circle_rounded : Icons.hd_outlined,
-          label:
-              t.quality.isEmpty ? context.l10n.player_routeN(i + 1) : t.quality,
-          subtitle: fixed ? context.l10n.player_qualityOnlyOne : null,
-          onTap: fixed ? null : () => _switchTrack(t),
-        );
-      },
-    );
-  }
 
   // —— 字幕:源给的外挂 + 流里自带的内嵌,合成一张表 ——
   //
@@ -1948,6 +1933,29 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
+        _PanelLabel('循环播放'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _chip('单集循环', _loopMode == _LoopMode.single,
+                () => _setLoopMode(_LoopMode.single)),
+            _chip('列表循环', _loopMode == _LoopMode.list,
+                () => _setLoopMode(_LoopMode.list)),
+            _chip('不循环', _loopMode == _LoopMode.none,
+                () => _setLoopMode(_LoopMode.none)),
+          ],
+        ),
+        const SizedBox(height: 20),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('自动连播'),
+          subtitle: const Text('当前集结束后自动播放下一集'),
+          value: _autoPlay,
+          onChanged: _setAutoPlay,
+        ),
+        const SizedBox(height: 8),
         _PanelLabel(context.l10n.player_speed),
         const SizedBox(height: 10),
         Wrap(
@@ -2016,6 +2024,8 @@ enum PlayerAspect {
 
 /// 右下角三颗按钮各自弹出的小卡片。
 enum _QuickPanel { none, episodes, rate, quality }
+
+enum _LoopMode { single, list, none }
 
 /// 一次拖动认的是哪件事。单指起手时还看不出来,所以先 [undecided],
 /// 走够一段再定;定了就不再改 —— 中途换轴会让一个手势同时改进度和音量。

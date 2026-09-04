@@ -18,7 +18,7 @@ import java.io.File
 /**
  * 把一张图片交给系统相册。
  *
- * 落点是 DCIM/DreamMangaReader:相册里看得到,文件管理器一眼找得到。写应用私有目录
+ * 落点是 DCIM/ScreenShot:相册里看得到,文件管理器一眼找得到。写应用私有目录
  * (/storage/emulated/0/Android/data/<包名>/files/…)也能成、还不要权限,但那串路径
  * 报给用户等于没报 —— 念都念不完,相册里也永远不出现。
  *
@@ -153,7 +153,7 @@ class GalleryBridge(private val activity: FlutterActivity) {
 
     companion object {
         private const val CHANNEL = "dream_manga_reader/gallery"
-        private const val ALBUM = "DreamMangaReader"
+        private const val ALBUM = "ScreenShot"
         private const val DEFAULT_MIME = "image/jpeg"
         private const val STORAGE_PERMISSION_REQUEST = 0x6741
         private val RELATIVE_PATH = "${Environment.DIRECTORY_DCIM}/$ALBUM"

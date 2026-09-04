@@ -176,6 +176,17 @@ class HlsCacheStore {
     return _lease(key, entry);
   }
 
+  Future<void> remove(HlsCacheRequest request) async {
+    await initialize();
+    final key = _keyFor(request);
+    if ((_inUse[key] ?? 0) > 0 || _inFlight.containsKey(key)) return;
+    final entry = _entries.remove(key);
+    if (entry == null) return;
+    final file = _fileFor(key);
+    if (await file.exists()) await file.delete();
+    await _persist();
+  }
+
   Future<HlsCacheWriter> beginWrite(HlsCacheRequest request) async {
     await initialize();
     final key = _keyFor(request);

@@ -22,7 +22,7 @@ class AnimePlayerControls extends StatefulWidget {
     required this.onPlayPause,
     required this.onScrubStart,
     required this.onSeek,
-    required this.onOpenPanel,
+    this.onOpenPanel,
     required this.onFullscreen,
     this.fullscreen = false,
     this.onPrevEpisode,
@@ -46,7 +46,7 @@ class AnimePlayerControls extends StatefulWidget {
   final VoidCallback onPlayPause;
   final ValueChanged<bool> onScrubStart;
   final void Function(Duration target, bool resumeAfterSeek) onSeek;
-  final VoidCallback onOpenPanel;
+  final VoidCallback? onOpenPanel;
 
   /// null = 这个平台没有窗口全屏(移动端本来就占满屏),整个按钮不显示。
   final VoidCallback? onFullscreen;
@@ -237,11 +237,6 @@ class _AnimePlayerControlsState extends State<AnimePlayerControls> {
                         : widget.qualityLabel,
                     widget.onQuality!,
                   ),
-                _button(
-                  tooltip: l10n.player_options,
-                  icon: Icons.playlist_play_rounded,
-                  onPressed: widget.onOpenPanel,
-                ),
                 if (widget.onFullscreen != null)
                   _button(
                     tooltip: widget.fullscreen
