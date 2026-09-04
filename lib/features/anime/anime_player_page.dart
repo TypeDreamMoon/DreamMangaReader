@@ -1824,7 +1824,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                     SizedBox(
                       width: 58,
                       child: Text(
-                        '第${_epShort(i)}集',
+                        context.l10n.player_episodeN(_epShort(i)),
                         style: TextStyle(
                           color: on ? _accent : Colors.white70,
                           fontSize: 13,

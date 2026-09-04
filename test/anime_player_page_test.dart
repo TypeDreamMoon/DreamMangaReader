@@ -566,6 +566,39 @@ void main() {
     expect(wrappers().evaluate().length, before);
   });
 
+  // 选集原来是一格格的数字方阵:横屏拿着手机点不中,也看不出哪一集是什么。
+  // 排成一竖列、每行带上集名之后,才是能扫一眼就找到那一集的样子(#34)。
+  testWidgets('the episode picker is a list of named rows, not a grid',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [
+        Chapter(id: 'ep-1', name: '第一集 出发'),
+        Chapter(id: 'ep-2', name: '第二集 抵达'),
+      ],
+    ));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await tester.tap(find.text('选集'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GridView), findsNothing);
+    expect(find.text('第一集 出发'), findsOneWidget);
+    expect(find.text('第二集 抵达'), findsOneWidget);
+
+    // 每一行都够一根手指点。
+    for (final name in const ['第一集 出发', '第二集 抵达']) {
+      final row = find.ancestor(
+        of: find.text(name),
+        matching: find.byType(InkWell),
+      );
+      expect(tester.getSize(row.first).height, greaterThanOrEqualTo(44.0));
+    }
+  });
+
   testWidgets('complete offline episode bypasses online track resolution',
       (tester) async {
     final adapter = _PageFakeAdapter();

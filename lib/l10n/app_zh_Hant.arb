@@ -852,6 +852,7 @@
   "player_noQuality": "暫無清晰度資訊",
   "player_qualityOnlyOne": "這條串流只提供這一種清晰度",
   "player_routeN": "線路 {n}",
+  "player_episodeN": "第 {n} 集",
   "player_fitContain": "適應",
   "player_fitCover": "填充",
   "player_fitStretch": "拉伸",

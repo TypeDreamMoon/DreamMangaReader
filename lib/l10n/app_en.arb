@@ -852,6 +852,7 @@
   "player_noQuality": "No quality information",
   "player_qualityOnlyOne": "The only quality this stream offers",
   "player_routeN": "Stream {n}",
+  "player_episodeN": "Ep. {n}",
   "player_fitContain": "Fit",
   "player_fitCover": "Fill",
   "player_fitStretch": "Stretch",

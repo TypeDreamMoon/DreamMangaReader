@@ -1369,6 +1369,12 @@
   "player_noQuality": "暂无清晰度信息",
   "player_qualityOnlyOne": "这条流只提供这一种清晰度",
   "player_routeN": "线路 {n}",
+  "player_episodeN": "第 {n} 集",
+  "@player_episodeN": {
+    "placeholders": {
+      "n": { "type": "String" }
+    }
+  },
   "@player_routeN": {
     "placeholders": {
       "n": {}

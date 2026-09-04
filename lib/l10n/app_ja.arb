@@ -852,6 +852,7 @@
   "player_noQuality": "画質情報がありません",
   "player_qualityOnlyOne": "このストリームはこの画質のみ",
   "player_routeN": "ルート {n}",
+  "player_episodeN": "第{n}話",
   "player_fitContain": "フィット",
   "player_fitCover": "塗りつぶし",
   "player_fitStretch": "引き伸ばし",
