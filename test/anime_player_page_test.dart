@@ -355,9 +355,15 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // 唯一清晰度仍显示读数，但不再塞进重复的设置抽屉页签。
+    // 唯一清晰度仍显示读数,只是不再塞进重复的设置抽屉页签。
     expect(find.text('1080P'), findsNWidgets(3));
-    expect(find.text('这条流只提供这一种清晰度'), findsNothing);
+    // 那一行点了没反应,得说一句为什么 —— 不说就跟坏了一样,那正是 #31 的观感。
+    expect(find.text('这条流只提供这一种清晰度'), findsOneWidget);
+    final row = find.ancestor(
+      of: find.text('这条流只提供这一种清晰度'),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.widget<InkWell>(row.first).onTap, isNull);
   });
 
   // 改倍速不该盖住半个画面:右下角那颗按钮弹的是一张贴着底栏的小卡片,

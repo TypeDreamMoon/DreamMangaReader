@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_store.dart';
+import 'package:dream_manga_reader/features/anime/playback/hls_session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hls/hls.dart';
@@ -122,22 +123,23 @@ void main() {
     final first = await _get(media.segments.first.uri);
     expect(first.bytes, [0, 0, 0]);
 
-    // VOD 会继续预读后续分片,不因初始缓冲较小而停在一片。
+    // 缓冲还没起来:只预读紧邻的一片,别把上行从正在播的那片手里抢走。
     await _waitUntil('预读 /360/001.ts',
         () => upstream.requestCount('/360/001.ts') == 1);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    await _waitUntil('预读 /360/002.ts',
-        () => upstream.requestCount('/360/002.ts') == 1);
-    await _waitUntil('预读 /360/003.ts',
-        () => upstream.requestCount('/360/003.ts') == 1);
-    expect(upstream.requestCount('/360/002.ts'), 1);
-    expect(upstream.requestCount('/360/003.ts'), 1);
+    expect(upstream.requestCount('/360/002.ts'), 0);
+    expect(upstream.requestCount('/360/003.ts'), 0);
+
+    // 缓冲起来了才往前铺 —— 暂停之后能一直缓下去,靠的是这一步。
+    session.reportBuffer(const Duration(seconds: 20));
     // 预读过的那片直接走缓存,不会再回源第二遍。
     expect((await _get(media.segments[1].uri)).bytes, [1, 1, 1]);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    await _waitUntil('预读 /360/002.ts',
-        () => upstream.requestCount('/360/002.ts') == 1);
-    expect(upstream.requestCount('/360/002.ts'), 1);
+    await _waitUntil(
+        '预读 /360/002.ts /360/003.ts',
+        () =>
+            upstream.requestCount('/360/002.ts') == 1 &&
+            upstream.requestCount('/360/003.ts') == 1);
     expect(
       upstream.requests.every(
         (request) => request.authorization == 'Bearer fixture-token',
@@ -148,6 +150,46 @@ void main() {
     await session.close();
     expect((await _get(session.localUri)).status, HttpStatus.notFound);
     expect(await cache.sizeBytes(), greaterThan(0));
+  });
+
+  // 退出播放器、关掉应用都走普通 close:缓存留着,回来接着看不用重下。换一集
+  // 才丢 —— 而且必须等会话关完再丢,不然正在用的条目会被跳过,删了个寂寞。
+  test('closing keeps the cache and only a discarding close clears it',
+      () async {
+    upstream.addText('/media.m3u8', """#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXTINF:4,
+0.ts
+#EXTINF:4,
+1.ts
+#EXT-X-ENDLIST
+""");
+    for (var index = 0; index < 2; index++) {
+      upstream.addBytes('/$index.ts', List<int>.filled(64, index));
+    }
+
+    Future<HlsSession> play() async {
+      final session = await gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('media.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      );
+      final media = HlsParser.parse((await _get(session.localUri)).text)
+          as HlsMediaPlaylist;
+      await _get(media.segments.first.uri);
+      await _waitUntil('预读 /1.ts', () => upstream.requestCount('/1.ts') == 1);
+      return session;
+    }
+
+    final kept = await play();
+    await kept.close();
+    expect(await cache.sizeBytes(), greaterThan(0));
+
+    final discarded = await play();
+    await discarded.close(discardCache: true);
+    expect(await cache.sizeBytes(), 0);
   });
 
   test('preserves map and byte ranges and keeps AES keys in session memory',

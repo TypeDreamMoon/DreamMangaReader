@@ -1379,6 +1379,12 @@
   "player_fitStretch": "拉伸",
   "player_speed": "倍速播放",
   "player_speedShort": "倍速",
+  "player_loop": "循环播放",
+  "player_loopSingle": "单集循环",
+  "player_loopList": "列表循环",
+  "player_loopOff": "不循环",
+  "player_autoPlay": "自动连播",
+  "player_autoPlayHint": "当前集结束后自动播放下一集",
   "player_aspect": "画面比例",
   "player_boosting": "{rate}x 快进中",
   "@player_boosting": {

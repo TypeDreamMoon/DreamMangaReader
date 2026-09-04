@@ -94,7 +94,10 @@ class _FakeSession {
   _FakeSession(int index) {
     value = HlsSession(
       localUri: Uri.parse('http://127.0.0.1:4567/session/$index'),
-      onClose: () async {},
+      onClose: ({required bool discardCache}) async {
+        discarded = discardCache;
+        closes++;
+      },
       onBuffer: (_) {},
       onSeek: () => seekNotifications++,
     );
@@ -102,6 +105,8 @@ class _FakeSession {
 
   late final HlsSession value;
   int seekNotifications = 0;
+  int closes = 0;
+  bool discarded = false;
 }
 
 void main() {

@@ -202,8 +202,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   @override
   Future<void> open(VideoTrack track, {Duration startAt = Duration.zero}) async {
     if (_originalTrack != null) await _resetAudioAttachment();
-    await _session?.clearCache();
-    await _closeSession();
+    // 换一集/换一部就把上一集的分片丢掉;离开播放页、关掉应用都走 dispose,
+    // 那条路留着缓存 —— 回来接着看不用重下。
+    await _closeSession(discardCache: true);
     _position = startAt;
     // 换集就把字幕选择清掉:上一集的轨道号在新的一集里指向别的东西。
     _subtitle = null;
@@ -355,10 +356,10 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     return _backend.setSubtitle(option);
   }
 
-  Future<void> _closeSession() async {
+  Future<void> _closeSession({bool discardCache = false}) async {
     final session = _session;
     _session = null;
-    await session?.close();
+    await session?.close(discardCache: discardCache);
   }
 
   @override

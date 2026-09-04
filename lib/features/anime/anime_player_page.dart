@@ -578,10 +578,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         return;
       }
       _autoAdvanced = true;
-      if (_loopMode == _LoopMode.single) {
+      final last = _i >= widget.episodes.length - 1;
+      // 列表循环走到末集就回第一集。只有一集时「回第一集」= 留在原地,_goTo 会
+      // 因为同集直接返回 —— 那就重开这一集,否则选了循环却停住了。
+      if (_loopMode == _LoopMode.single || (last && _i == 0)) {
         unawaited(_load());
       } else {
-        _go(_i >= widget.episodes.length - 1 ? -_i : 1);
+        _go(last ? -_i : 1);
       }
     });
   }
@@ -1473,24 +1476,30 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     );
   }
 
-  Widget _quickQualities() => ListView(
-        shrinkWrap: true,
-        children: [
-          for (var i = 0; i < _tracks.length; i++)
-            _quickRow(
-              label: _tracks[i].quality.isEmpty
-                  ? context.l10n.player_routeN(i + 1)
-                  : _tracks[i].quality,
-              selected: _tracks[i].url == _current?.url,
-              onTap: _tracks.length == 1
-                  ? null
-                  : () {
-                      unawaited(_switchTrack(_tracks[i]));
-                      _toggleQuick(_QuickPanel.quality);
-                    },
-            ),
-        ],
-      );
+  Widget _quickQualities() {
+    // 只有一档时那一行点了没反应。不说一句「就这一种」,它看着就像坏了 ——
+    // 那正是 #31 里「线路只有一条 608p」给人的观感。
+    final fixed = _tracks.length == 1;
+    return ListView(
+      shrinkWrap: true,
+      children: [
+        for (var i = 0; i < _tracks.length; i++)
+          _quickRow(
+            label: _tracks[i].quality.isEmpty
+                ? context.l10n.player_routeN(i + 1)
+                : _tracks[i].quality,
+            hint: fixed ? context.l10n.player_qualityOnlyOne : null,
+            selected: _tracks[i].url == _current?.url,
+            onTap: fixed
+                ? null
+                : () {
+                    unawaited(_switchTrack(_tracks[i]));
+                    _toggleQuick(_QuickPanel.quality);
+                  },
+          ),
+      ],
+    );
+  }
 
   Widget _quickEpisodes() => SizedBox(
         width: 280,
@@ -1507,18 +1516,31 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     required String label,
     required bool selected,
     required VoidCallback? onTap,
+    String? hint,
   }) =>
       InkWell(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? _accent : Colors.white,
-              fontSize: 13.5,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? _accent : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              if (hint != null) ...[
+                const SizedBox(height: 2),
+                Text(hint,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 11.5)),
+              ],
+            ],
           ),
         ),
       );
@@ -1933,25 +1955,26 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        _PanelLabel('循环播放'),
+        _PanelLabel(context.l10n.player_loop),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            _chip('单集循环', _loopMode == _LoopMode.single,
+            _chip(context.l10n.player_loopSingle,
+                _loopMode == _LoopMode.single,
                 () => _setLoopMode(_LoopMode.single)),
-            _chip('列表循环', _loopMode == _LoopMode.list,
+            _chip(context.l10n.player_loopList, _loopMode == _LoopMode.list,
                 () => _setLoopMode(_LoopMode.list)),
-            _chip('不循环', _loopMode == _LoopMode.none,
+            _chip(context.l10n.player_loopOff, _loopMode == _LoopMode.none,
                 () => _setLoopMode(_LoopMode.none)),
           ],
         ),
         const SizedBox(height: 20),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
-          title: const Text('自动连播'),
-          subtitle: const Text('当前集结束后自动播放下一集'),
+          title: Text(context.l10n.player_autoPlay),
+          subtitle: Text(context.l10n.player_autoPlayHint),
           value: _autoPlay,
           onChanged: _setAutoPlay,
         ),

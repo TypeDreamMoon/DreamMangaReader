@@ -261,6 +261,14 @@ class HlsCacheGateway implements HlsSessionGateway {
         _upstream = upstream,
         _policy = HlsUpstreamPolicy(allowLoopback: allowLoopbackUpstream);
 
+  /// 一次预读最多跑在播放位置前面多少片。
+  ///
+  /// 「整集全预取」听着更爽,实际是把带宽和磁盘一起赌上:一集 1080p 番剧七百多兆,
+  /// 而缓存默认上限 512 MiB —— 尾巴把头顶掉,下下来的分片在看到之前就被淘汰,
+  /// 白烧一集的流量(手机上还是蜂窝流量,那条「仅 Wi-Fi」的下载开关管不到这里)。
+  /// 三十片够暂停之后缓一两分钟,也留得住。
+  static const int _maxPrefetchDepth = 30;
+
   final HlsCacheStore _cache;
   final HlsUpstreamClient _upstream;
   final bool allowLoopbackUpstream;
@@ -290,10 +298,14 @@ class HlsCacheGateway implements HlsSessionGateway {
     final root = _register(data, source, _ResourceKind.playlist);
     return HlsSession(
       localUri: _localUri(id, root.id),
-      onClose: () => _closeSession(id),
-      onClearCache: () => _clearSessionCache(id),
+      onClose: ({required bool discardCache}) =>
+          _closeSession(id, discardCache: discardCache),
       onBuffer: (buffer) {
-        data.bufferHealthy = buffer >= const Duration(seconds: 15);
+        final healthy = buffer >= const Duration(seconds: 15);
+        // 缓冲从健康掉下来 = 上行不够用了。作废这一批预读,把带宽还给正在播的
+        // 那一片;下一片播出去时 _schedulePrefetch 会按新的水位重新排。
+        if (data.bufferHealthy && !healthy) data.prefetchGeneration++;
+        data.bufferHealthy = healthy;
       },
       onSeek: () => data.prefetchGeneration++,
     );
@@ -723,10 +735,12 @@ class HlsCacheGateway implements HlsSessionGateway {
 
   void _schedulePrefetch(_SessionData session, _Resource resource) {
     if (resource.prefetchIds.isEmpty || session.closing) return;
-    // VOD 直接排入当前片之后的全部分片;预取器逐片下载,暂停时也继续直到本集结束。
+    // 缓冲还没起来(<15s)就只预读 1 片,把上行整个留给正在播的那一片;起来了
+    // 才往前铺。整批替换而不是追加:播放位置一动,上一批预读就作废了。
+    final depth = session.bufferHealthy ? _maxPrefetchDepth : 1;
     session.prefetchQueue
       ..clear()
-      ..addAll(resource.prefetchIds);
+      ..addAll(resource.prefetchIds.take(depth));
     if (session.prefetchRunning) return;
     session.prefetchRunning = true;
     session.prefetch = _drainPrefetch(session, session.prefetchGeneration);
@@ -741,6 +755,10 @@ class HlsCacheGateway implements HlsSessionGateway {
             !_sessions.containsKey(session.id)) {
           return;
         }
+        // 前台正在取流:让路。播放器每隔几秒才要一片,中间那段空档就够预读跑;
+        // 真撞上的时候少下一点,总比把正在播的那一片挤到卡顿超时后面强 —— 私有源
+        // 上那正是「分片频繁超时」的成因。下一片播出去时本循环会被重新拉起。
+        if (session.foregroundRequests > 0) return;
         final id = session.prefetchQueue.removeAt(0);
         final resource = session.resources[id];
         if (resource == null ||
@@ -969,13 +987,15 @@ class HlsCacheGateway implements HlsSessionGateway {
         (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
       ).join();
 
-  Future<void> _closeSession(String id) async {
+  Future<void> _closeSession(String id, {bool discardCache = false}) async {
     final session = _sessions[id];
     if (session == null) return;
     session.closing = true;
     session.prefetchQueue.clear();
     await session.prefetch;
     _sessions.remove(id);
+    // 先把预读停干净、租约还回去,再删条目 —— 否则 remove 会跳过正在用的那些。
+    if (discardCache) await _discardSegments(session);
     for (final bytes in session.keyBytes.values) {
       bytes.fillRange(0, bytes.length, 0);
     }
@@ -984,16 +1004,16 @@ class HlsCacheGateway implements HlsSessionGateway {
     session.signatures.clear();
   }
 
-  Future<void> _clearSessionCache(String id) async {
-    final session = _sessions[id];
-    if (session == null) return;
-    final resources = List<_Resource>.of(session.resources.values);
-    for (final resource in resources) {
-      if (!resource.live &&
-          (resource.kind == _ResourceKind.segment ||
-              resource.kind == _ResourceKind.init)) {
-        await _cache.remove(_cacheRequestFor(session, resource));
+  /// 丢掉这一集的分片。留下的是播放列表和密钥那类小条目 —— 它们不占地方,
+  /// 而分片是唯一会把缓存撑爆的东西。
+  Future<void> _discardSegments(_SessionData session) async {
+    for (final resource in List<_Resource>.of(session.resources.values)) {
+      if (resource.live) continue;
+      if (resource.kind != _ResourceKind.segment &&
+          resource.kind != _ResourceKind.init) {
+        continue;
       }
+      await _cache.remove(_cacheRequestFor(session, resource));
     }
   }
 
