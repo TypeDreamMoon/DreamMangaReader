@@ -243,6 +243,14 @@ class LibraryStore extends ChangeNotifier {
   final Map<String, ReadState> _history = {};
   // 作品级共享进度:key = normalizeTitle(标题)。同名书跨源共用续读点 + 已读章集合。
   final Map<String, WorkProgress> _workProgress = {};
+  // 标题 → 分组 key 的索引。解析一次要拿 coreTitle 跟 _workProgress 的**全部** key
+  // 比一遍(容繁简),而阅读器每翻一页都要问一次 —— 缓存起来,只在 key 集合变了
+  // (加了新作品 / 删了记录 / 导入)时整体作废。
+  final Map<String, String> _workKeyCache = {};
+
+  /// 历史条数上限。历史每 ~600ms 全量重写成一份 JSON,不封顶的话用得越久写得越慢
+  /// (也越占空间)。超出时裁掉最久没读的那几条。
+  static const int maxHistoryEntries = 500;
   final Set<String> _disabledSources = {};
   ReaderMode _readerMode = ReaderMode.paged;
   int _gridColumns = 0; // 0 = 自适应
@@ -659,6 +667,7 @@ class LibraryStore extends ChangeNotifier {
             ReadState.fromJson((v as Map).cast<String, dynamic>());
       });
     });
+    _workKeyCache.clear();
     _workProgressLoadFailed = !_readSection(prefs, _kWorkProgress, (raw) {
       final m = jsonDecode(raw);
       if (m is! Map) throw const FormatException('workProgress 不是对象');
@@ -1222,6 +1231,7 @@ class LibraryStore extends ChangeNotifier {
       st.chapters[chapterId] = ChapterMark(page, total);
     }
     _history[key] = st;
+    _trimHistory();
     // 同步推进作品级共享进度(跨源同名共用续读点/已读章;解析不出话数的章自动忽略)。
     recordWork(
       title: title,
@@ -1234,6 +1244,20 @@ class LibraryStore extends ChangeNotifier {
     // 停手/退出后自然刷新一次。避免每翻一页就全量重建后台书架/详情(LibraryScope.of 依赖者),
     // 也避免在 reader.dispose 锁定期同步 notify(会报 framework locked)。
     _scheduleNotify();
+  }
+
+  /// 超出 [maxHistoryEntries] 时裁掉最久没读的几条。
+  ///
+  /// 只动 _history:作品级共享进度是「这部书读到哪」,和历史列表长度无关,
+  /// 不该被自动裁剪顺手抹掉(它自己按作品去重,不会随翻页无限增长)。
+  void _trimHistory() {
+    final excess = _history.length - maxHistoryEntries;
+    if (excess <= 0) return;
+    final oldest = _history.values.toList()
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    for (var i = 0; i < excess; i++) {
+      _history.remove(oldest[i].key);
+    }
   }
 
   // 防抖通知(高频进度更新用)。
@@ -1249,6 +1273,7 @@ class LibraryStore extends ChangeNotifier {
     // 作品级共享进度是历史的另一半(详情页的续读点和章节勾都读它)。只清 _history
     // 会让「清空历史」之后详情页照旧打勾、照旧「继续阅读」—— 记录明明已经没了。
     _workProgress.clear();
+    _workKeyCache.clear();
     // 用户明确要清空:删键(而非用残片覆盖),之后这段就没什么可保护的了。
     _historyLoadFailed = false;
     _workProgressLoadFailed = false;
@@ -1266,6 +1291,7 @@ class LibraryStore extends ChangeNotifier {
     if (workKey.isNotEmpty &&
         !_history.values.any((h) => _workKeyFor(h.title) == workKey)) {
       _workProgress.remove(workKey);
+      _workKeyCache.clear();
     }
     _persistHistoryNow();
     notifyListeners();
@@ -1278,11 +1304,13 @@ class LibraryStore extends ChangeNotifier {
   String _workKeyFor(String title) {
     final core = coreTitle(title);
     if (core.isEmpty) return '';
-    if (_workProgress.containsKey(core)) return core;
+    final cached = _workKeyCache[core];
+    if (cached != null) return cached;
+    if (_workProgress.containsKey(core)) return _workKeyCache[core] = core;
     for (final k in _workProgress.keys) {
-      if (sameCoreKey(core, k)) return k;
+      if (sameCoreKey(core, k)) return _workKeyCache[core] = k;
     }
-    return core;
+    return _workKeyCache[core] = core;
   }
 
   /// 取某作品的共享进度(容繁简/副标题);无则 null。
@@ -1307,6 +1335,7 @@ class LibraryStore extends ChangeNotifier {
     if (num == null) return;
     final wp = _workProgress[key];
     if (wp == null) {
+      _workKeyCache.clear(); // 键集变了:之前解析出的分组 key 可能不再是最优解
       _workProgress[key] = WorkProgress(
         chapterNumber: num,
         chapterLabel: chapterName,
@@ -1448,6 +1477,7 @@ class LibraryStore extends ChangeNotifier {
     if (replaceHistory && j.containsKey('workProgress')) {
       _workProgressLoadFailed = false;
       _workProgress.clear();
+      _workKeyCache.clear();
       ((j['workProgress'] as Map?) ?? const {}).forEach((k, v) {
         if (v is Map) {
           _workProgress[k as String] =

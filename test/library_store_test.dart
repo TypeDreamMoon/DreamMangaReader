@@ -270,4 +270,87 @@ void main() {
       expect(await _onDisk(_kWorkProgress), anyOf(isNull, '{}'));
     });
   });
+
+  group('历史规模', () {
+    test('超过上限时裁掉最旧的', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      for (var i = 0; i < LibraryStore.maxHistoryEntries + 20; i++) {
+        store.markProgress(
+          sourceId: 'src',
+          mangaId: 'm$i',
+          title: '书 $i',
+          chapterId: 'ch-1',
+          chapterName: '第 1 话',
+          page: 1,
+          total: 10,
+          nowMs: 1000 + i,
+        );
+      }
+
+      expect(store.history, hasLength(LibraryStore.maxHistoryEntries));
+      expect(store.readState('src', 'm0'), isNull, reason: '最旧的先出局');
+      expect(
+          store.readState(
+              'src', 'm${LibraryStore.maxHistoryEntries + 19}'),
+          isNotNull,
+          reason: '刚读的必须留着');
+    });
+
+    test('workKey 索引不改变跨源同名的归并语义', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      store.markProgress(
+        sourceId: 'a',
+        mangaId: 'm1',
+        title: '雾山五行',
+        chapterId: 'ch-3',
+        chapterName: '第 3 话',
+        page: 1,
+        total: 10,
+        nowMs: 5,
+      );
+      // 繁体 + 装饰副标题:与上面同一部作品,共享进度必须归到一起。
+      store.markProgress(
+        sourceId: 'b',
+        mangaId: 'm2',
+        title: '[连载]霧山五行',
+        chapterId: 'ch-4',
+        chapterName: '第 4 话',
+        page: 1,
+        total: 10,
+        nowMs: 6,
+      );
+
+      expect(store.readChaptersFor('雾山五行'), {3.0, 4.0});
+      expect(store.workProgressFor('霧山五行')?.chapterNumber, 4);
+    });
+
+    test('新作品出现后,之前解析过的标题重新归组', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      // 先问一次:此时还没有任何作品进度,解析结果是「就是它自己」。
+      expect(store.workProgressFor('雾山五行'), isNull);
+
+      store.markProgress(
+        sourceId: 'b',
+        mangaId: 'm2',
+        title: '霧山五行',
+        chapterId: 'ch-4',
+        chapterName: '第 4 话',
+        page: 1,
+        total: 10,
+        nowMs: 6,
+      );
+
+      expect(store.workProgressFor('雾山五行')?.chapterNumber, 4,
+          reason: '键集变了,索引必须跟着失效,不能返回缓存里的旧答案');
+    });
+  });
 }
