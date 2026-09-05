@@ -428,8 +428,14 @@ class NovelNativeDocumentController extends ChangeNotifier
   @override
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
     _locator = _currentLocator();
+    final previousLayout = _preferenceLayoutSignature(_preferences);
     _preferences = preferences;
-    _invalidateLayout();
+    if (_preferenceLayoutSignature(preferences) == previousLayout) {
+      // 只改了颜色 / 背景 / 亮度:断行没变,重排整章纯属浪费,丢掉页帧重画即可。
+      _clearRasterCache();
+    } else {
+      _invalidateLayout();
+    }
     notifyListeners();
   }
 
@@ -551,8 +557,15 @@ class NovelNativeDocumentController extends ChangeNotifier
     _styleSignature = '';
   }
 
+  /// 页帧缓存的 key。
+  ///
+  /// 排版指纹只描述「字断在哪里」，换主题、换背景、拉亮度都不会动它 —— 于是
+  /// `NovelPageCache.invalidateLayout` 认不出旧页帧，换了夜间模式还在用白天配色的
+  /// 位图。所以帧 key = 排版指纹 + 像素密度 + 所有只影响像素的设置。
   String _rasterFingerprint(NovelPaginationResult pagination) =>
-      '${pagination.layoutFingerprint}@${_rasterDevicePixelRatio.toStringAsFixed(2)}';
+      '${pagination.layoutFingerprint}'
+      '@${_rasterDevicePixelRatio.toStringAsFixed(2)}'
+      '@${_preferencePaintSignature(_preferences)}';
 
   Future<ui.Image> _rasterizeSpread(
     NovelPaginationResult pagination,
@@ -749,6 +762,7 @@ class NovelNativeDocumentView extends StatelessWidget {
   }
 }
 
+/// 影响**断行**的设置。变了就必须重排整章。
 String _preferenceLayoutSignature(NovelReaderPreferences value) => [
       value.fontFamily,
       value.fontSize,
@@ -759,10 +773,19 @@ String _preferenceLayoutSignature(NovelReaderPreferences value) => [
       value.bottomMargin,
       value.firstLineIndent,
       value.textAlignment.name,
-      value.theme.name,
-      value.foregroundArgb,
       // 滚动模式用的是「整章一页」的版心,和分页排版结果完全不同 —— 切模式必须重排。
       value.turnMode == NovelPageTurnMode.scroll ? 'scroll' : 'paged',
+    ].join('|');
+
+/// 只影响**像素**的设置。变了不用重排,但已经栅格化的页帧全部作废。
+String _preferencePaintSignature(NovelReaderPreferences value) => [
+      value.theme.name,
+      value.foregroundArgb,
+      value.backgroundAssetId ?? '',
+      value.backgroundFit.name,
+      value.textureStrength.toStringAsFixed(3),
+      value.brightness.toStringAsFixed(3),
+      value.showPageNumber,
     ].join('|');
 
 String? _flutterFontFamily(String id) => switch (normalizeNovelFontId(id)) {

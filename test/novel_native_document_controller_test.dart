@@ -65,6 +65,71 @@ void main() {
     expect(controller.cachedPageImageCount, lessThanOrEqualTo(3));
   });
 
+  testWidgets('a theme change retires cached page frames without repaginating',
+      (tester) async {
+    final controller = NovelNativeDocumentController();
+    addTearDown(controller.dispose);
+    await controller.loadChapter(
+      'chapter-1',
+      NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          30,
+          (index) => '第${index + 1}段 ${List.filled(26, '换肤正文').join()}',
+        ).join('\n'),
+      ),
+      const NovelReaderPreferences(),
+    );
+    controller.ensurePagination(const Size(420, 720));
+    final layout = controller.pagination!.layoutFingerprint;
+    final light = await tester.runAsync(() => controller.capturePage(0));
+
+    await controller.applyPreferences(
+      const NovelReaderPreferences(theme: NovelReaderTheme.black),
+    );
+    controller.ensurePagination(const Size(420, 720));
+    final dark = await tester.runAsync(() => controller.capturePage(0));
+
+    // 断行没变 —— 换主题不该重排整章。
+    expect(controller.pagination!.layoutFingerprint, layout);
+    // 但页帧 key 必须变,否则 NovelPageCache 会留着白天配色的位图。
+    expect(
+      dark!.key.layoutFingerprint,
+      isNot(light!.key.layoutFingerprint),
+    );
+    expect(dark.bytes, isNot(light.bytes));
+  });
+
+  testWidgets('brightness and texture settings retire cached page frames',
+      (tester) async {
+    final controller = NovelNativeDocumentController();
+    addTearDown(controller.dispose);
+    await controller.loadChapter(
+      'chapter-1',
+      NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          20,
+          (index) => '第${index + 1}段 ${List.filled(24, '亮度正文').join()}',
+        ).join('\n'),
+      ),
+      const NovelReaderPreferences(),
+    );
+    controller.ensurePagination(const Size(420, 720));
+    final base = await tester.runAsync(() => controller.capturePage(0));
+
+    await controller.applyPreferences(
+      const NovelReaderPreferences(brightness: .7),
+    );
+    controller.ensurePagination(const Size(420, 720));
+    final dimmed = await tester.runAsync(() => controller.capturePage(0));
+
+    expect(
+      dimmed!.key.layoutFingerprint,
+      isNot(base!.key.layoutFingerprint),
+    );
+  });
+
   testWidgets('defers pagination out of the build phase', (tester) async {
     final controller = NovelNativeDocumentController();
     addTearDown(controller.dispose);
