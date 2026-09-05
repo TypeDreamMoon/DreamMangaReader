@@ -5,6 +5,10 @@ import 'dart:typed_data';
 import 'package:charset/charset.dart' as charset;
 import 'package:charset_converter/charset_converter.dart';
 
+/// 判定为 UTF-16 所需的单侧 NUL 占比。ASCII 正文接近 1.0,中文正文靠换行和
+/// 标点也能过线;真正的 UTF-8 正文一个 NUL 都不该有。
+const double _utf16NulRatio = 0.2;
+
 abstract interface class LegacyCharsetDecoder {
   Future<String> decode(String encoding, Uint8List bytes);
 }
@@ -59,6 +63,14 @@ class NovelTextDecoder {
     }
     if (_startsWith(bytes, const [0xfe, 0xff])) {
       return _result(_decodeUtf16(bytes, false, 2), 'utf-16be');
+    }
+
+    // 没有 BOM 的 UTF-16 必须在 UTF-8 之前判:纯 ASCII 正文的 UTF-16 每个字符
+    // 都带一个 NUL 补位,而 NUL 本身是合法 UTF-8,严格解码会「成功」,
+    // 读者拿到的却是字里夹着空字符的乱码。
+    final utf16 = _detectUtf16(bytes);
+    if (utf16 != null) {
+      return _result(_decodeUtf16(bytes, utf16 == 'utf-16le', 0), utf16);
     }
 
     try {
@@ -155,6 +167,22 @@ String _canonicalEncoding(String value) {
     default:
       throw ArgumentError.value(value, 'forcedEncoding', 'unsupported charset');
   }
+}
+
+/// 无 BOM 的 UTF-16 探测:看 NUL 落在偶数位还是奇数位。UTF-8 正文里根本不该
+/// 出现 NUL,所以「一侧大量 NUL + 另一侧几乎没有」就足够判定,不会误伤中文。
+String? _detectUtf16(Uint8List bytes) {
+  if (bytes.length < 4 || bytes.length.isOdd) return null;
+  var evenNul = 0;
+  var oddNul = 0;
+  for (var index = 0; index < bytes.length; index += 2) {
+    if (bytes[index] == 0) evenNul++;
+    if (bytes[index + 1] == 0) oddNul++;
+  }
+  final threshold = (bytes.length ~/ 2) * _utf16NulRatio;
+  if (oddNul > threshold && evenNul * 4 < oddNul) return 'utf-16le';
+  if (evenNul > threshold && oddNul * 4 < evenNul) return 'utf-16be';
+  return null;
 }
 
 String _decodeUtf16(Uint8List bytes, bool littleEndian, int offset) {

@@ -63,6 +63,37 @@ void main() {
     expect(bigEndian.encoding, 'utf-16be');
   });
 
+  test('BOM-less UTF-16 is detected before strict UTF-8 succeeds', () async {
+    final legacy = FakeLegacyDecoder();
+    final decoder = NovelTextDecoder(legacy);
+    const plain = 'Chapter One\nHello there.\n';
+    final littleEndian = <int>[
+      for (final unit in plain.codeUnits) ...[unit & 0xff, unit >> 8],
+    ];
+    final bigEndian = <int>[
+      for (final unit in plain.codeUnits) ...[unit >> 8, unit & 0xff],
+    ];
+
+    final le = await decoder.decode(littleEndian);
+    final be = await decoder.decode(bigEndian);
+
+    expect(le.encoding, 'utf-16le');
+    expect(le.text, plain);
+    expect(be.encoding, 'utf-16be');
+    expect(be.text, plain);
+    expect(legacy.calls, isEmpty);
+  });
+
+  test('plain UTF-8 prose is never mistaken for UTF-16', () async {
+    final decoder = NovelTextDecoder(FakeLegacyDecoder());
+
+    final result = await decoder.decode(
+      utf8.encode('第一章 开始\n正文一。\nplain ascii tail\n'),
+    );
+
+    expect(result.encoding, 'utf-8');
+  });
+
   test('manual legacy encoding overrides detection', () async {
     final legacy = FakeLegacyDecoder(values: {'gb18030': '第一章 开始'});
     final decoder = NovelTextDecoder(legacy);

@@ -332,6 +332,8 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
               runSpacing: 8,
               children: [
                 _encodingChip('UTF-8', 'utf-8', txt.encoding),
+                _encodingChip('UTF-16 LE', 'utf-16le', txt.encoding),
+                _encodingChip('UTF-16 BE', 'utf-16be', txt.encoding),
                 _encodingChip('GB18030 / GBK', 'gb18030', txt.encoding),
                 _encodingChip('Big5', 'big5', txt.encoding),
               ],
