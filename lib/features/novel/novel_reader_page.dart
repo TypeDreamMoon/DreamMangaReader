@@ -125,6 +125,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   NovelTurnState _turnState = const NovelTurnState.idle();
   NovelTurnDecision? _settlement;
   int _pageGeneration = 0;
+
+  /// 章节加载的代际,和页帧代际分开数:改设置只作废页帧,不该把在途的换章作废。
+  int _chapterLoadGeneration = 0;
   DateTime _statusNow = DateTime.now();
   int? _batteryLevel;
   Object? _volumeKeyToken;
@@ -238,6 +241,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     NovelLocator? restore,
     bool retainCurrentFrame = false,
   }) async {
+    final loadGeneration = ++_chapterLoadGeneration;
     final pageGeneration = ++_pageGeneration;
     // 换章 = 邻章换了一批,预取闸门跟着重置。
     _warmedChapterIds
@@ -263,7 +267,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final chapter = _chapter;
     try {
       final document = await widget.loadDocument(chapter);
-      if (!mounted || chapter.id != _chapter.id) return false;
+      // 只比 chapter.id 挡不住 A→B→A:回到 A 时第一次 A 的请求还在路上,它一落地
+      // 就会再 loadChapter + restoreLocator 一遍,把刚定位好的位置冲掉。
+      if (!mounted ||
+          loadGeneration != _chapterLoadGeneration ||
+          chapter.id != _chapter.id) {
+        return false;
+      }
       _loadedDocuments[chapter.id] = document;
       await _controller.loadChapter(chapter.id, document, _preferences);
       await _applyChapterAnnotations();

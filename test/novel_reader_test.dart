@@ -1081,6 +1081,62 @@ void main() {
     );
   });
 
+  testWidgets('a stale chapter load never reloads the chapter behind us',
+      (tester) async {
+    final gates = <Completer<NovelDocument>>[];
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+      loadDocument: (chapter) {
+        final gate = Completer<NovelDocument>();
+        gates.add(gate);
+        return gate.future;
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pump();
+
+    // 首章还没加载完,转圈动画一直在跑,pumpAndSettle 永远等不到静止。
+    Future<void> settle() async {
+      for (var attempt = 0; attempt < 16; attempt++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+    }
+
+    final directory = find.byKey(const Key('novel-reader-directory'));
+    Future<void> pickChapter(String title) async {
+      // 关目录时 _resumeControls 会把工具栏留着,别再 toggle 一次给关掉。
+      if (directory.evaluate().isEmpty) {
+        controller.onCommand!(NovelReaderCommand.toggleControls);
+        await settle();
+      }
+      await tester.tap(directory);
+      await settle();
+      await tester.tap(find.text(title));
+      await settle();
+    }
+
+    // c1(第一次,还在路上)→ c2 → c1(第二次)。
+    await pickChapter('第二章');
+    await pickChapter('第一章');
+    expect(gates, hasLength(3));
+
+    gates[0].complete(
+      NovelDocument(format: NovelDocumentFormat.text, content: '过期的第一章'),
+    );
+    await settle();
+    expect(controller.loadedChapterIds, isEmpty);
+
+    gates[2].complete(
+      NovelDocument(format: NovelDocumentFormat.text, content: '最新的第一章'),
+    );
+    await settle();
+    expect(controller.loadedChapterIds, ['c1']);
+    expect(controller.lastRestored?.chapterId, 'c1');
+  });
+
   testWidgets('novel reader takes volume keys only when the switch is on',
       (tester) async {
     const channel = MethodChannel('dream_manga_reader/reader_keys');
