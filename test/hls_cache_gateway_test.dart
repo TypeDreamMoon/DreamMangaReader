@@ -554,6 +554,50 @@ broken.ts
     session.notifySeek();
   });
 
+  // 两次 open 撞在一起时,老实现两边都看到 `_server == null` 各绑一个端口,后绑的
+  // 覆盖前一个 —— 前一个再也没人关得掉,整个进程期间白占着一个回环端口。
+  test('concurrent opens share one loopback server that close() releases',
+      () async {
+    const playlist = '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+0.ts
+#EXT-X-ENDLIST
+''';
+    upstream.addText('/one.m3u8', playlist);
+    upstream.addText('/two.m3u8', playlist);
+    upstream.addBytes('/0.ts', const [0]);
+
+    final opened = await Future.wait([
+      gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('one.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      ),
+      gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('two.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      ),
+    ]);
+
+    final port = opened.first.localUri.port;
+    expect(opened.last.localUri.port, port);
+    expect((await _get(opened.first.localUri)).status, HttpStatus.ok);
+    expect((await _get(opened.last.localUri)).status, HttpStatus.ok);
+
+    await gateway.close();
+    await expectLater(
+      Socket.connect(InternetAddress.loopbackIPv4, port),
+      throwsA(isA<SocketException>()),
+    );
+  });
+
   // 正文已经发出去之后再想写错误头,dart:io 直接抛 StateError;它是从 unawaited 的
   // 请求处理里逃出来的,没人接,一路打穿宿主 zone。
   test('an error raised after the body started closes the connection quietly',

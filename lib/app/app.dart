@@ -31,6 +31,7 @@ import '../core/source/source_repository.dart';
 import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import '../features/anime/playback/hls_cache_settings.dart';
 import '../features/common/ui_scale.dart';
 import '../features/library/shelf_item.dart';
 import '../features/shell/home_shell.dart';
@@ -315,6 +316,8 @@ class _AppState extends State<App> {
     _downloadSettings.dispose();
     if (_ownsDownloadCoordinator) _downloadCoordinator.dispose();
     _auth.dispose();
+    // 播放网关在回环上开了一个 HttpServer,谁都没关过它。
+    unawaited(HlsCacheController.instance.close());
     super.dispose();
   }
 }

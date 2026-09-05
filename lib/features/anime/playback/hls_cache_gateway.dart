@@ -299,6 +299,7 @@ class HlsCacheGateway implements HlsSessionGateway {
   final Set<HttpResponse> _startedResponses = Set.identity();
   HttpServer? _server;
   StreamSubscription<HttpRequest>? _subscription;
+  Completer<void>? _binding;
 
   @override
   Future<HlsSession> open(
@@ -334,11 +335,29 @@ class HlsCacheGateway implements HlsSessionGateway {
     );
   }
 
+  /// 绑本地端口。两次 [open] 撞在一起时,两边都会看到 `_server == null` 然后各绑一个 ——
+  /// 后绑的覆盖前一个,前一个再也没人关得掉,端口就那么一直占着。用一个 Completer
+  /// 把并发的调用串到同一次绑定上。
   Future<void> _ensureServer() async {
     if (_server != null) return;
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    _server = server;
-    _subscription = server.listen(_acceptRequest);
+    final pending = _binding;
+    if (pending != null) return pending.future;
+    final binding = Completer<void>();
+    _binding = binding;
+    // 绑定失败时若没人等这个 future,它就成了未捕获异步错误;真正的错误由下面 rethrow
+    // 交给调用方。
+    unawaited(binding.future.then<void>((_) {}, onError: (_) {}));
+    try {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _server = server;
+      _subscription = server.listen(_acceptRequest);
+      binding.complete();
+    } on Object catch (error, stackTrace) {
+      binding.completeError(error, stackTrace);
+      rethrow;
+    } finally {
+      _binding = null;
+    }
   }
 
   void _acceptRequest(HttpRequest request) {

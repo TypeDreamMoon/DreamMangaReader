@@ -111,9 +111,16 @@ class HlsCacheController implements VideoCacheSettingsController {
     await cache.clear();
   }
 
+  /// 放掉本地网关和它占的回环端口(宿主退出时)。
+  ///
+  /// 连 [_initializing] 一起清:只把 [_gateway] 置空的话,已经记忆下来的初始化 future
+  /// 会让后续 [initialize] 直接返回,而 [gateway] 取值只剩一个 StateError。
   Future<void> close() async {
-    await _gateway?.close();
+    final gateway = _gateway;
     _gateway = null;
+    _cache = null;
+    _initializing = null;
+    await gateway?.close();
   }
 
   static Future<Directory> _defaultDirectory() async {
