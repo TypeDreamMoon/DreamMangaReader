@@ -99,8 +99,16 @@ class LocalNovelBook {
     if (origin == NovelOrigin.localTxt) {
       final start = (data['contentOffset'] as num?)?.toInt();
       final end = (data['endOffset'] as num?)?.toInt();
-      if (start == null || end == null || start < 0 || end <= start) {
+      if (start == null || end == null || start < 0) {
         throw const FormatException('TXT 章节偏移无效');
+      }
+      // 空章节(标题后面直接是下一条标题)不是坏索引,别把整本书堵死。
+      // NovelDocument 不收空正文,退化成只有标题的一页。
+      if (end <= start) {
+        return NovelDocument(
+          format: NovelDocumentFormat.text,
+          content: chapter.title,
+        );
       }
       final file = File(_join(directory.path, 'content.txt'));
       final handle = await file.open();

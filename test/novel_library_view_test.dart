@@ -70,6 +70,44 @@ void main() {
     expect(document.content, '第二章\n丙丁');
   });
 
+  test('local TXT loader returns a title-only page for an empty chapter',
+      () async {
+    final directory = Directory(
+      '${sandbox.path}${Platform.pathSeparator}local-txt-empty',
+    );
+    await directory.create();
+    const content = '第一章\n甲乙';
+    final bytes = utf8.encode(content);
+    await File('${directory.path}${Platform.pathSeparator}content.txt')
+        .writeAsBytes(bytes);
+    await File('${directory.path}${Platform.pathSeparator}index.json')
+        .writeAsString(jsonEncode({
+      'origin': 'localTxt',
+      'title': '空章节',
+      'authors': <String>[],
+      'chapters': [
+        {
+          'id': 'c1',
+          'title': '第一章',
+          'contentOffset': 0,
+          'endOffset': bytes.length,
+        },
+        {
+          'id': 'c2',
+          'title': '第二章',
+          'contentOffset': bytes.length,
+          'endOffset': bytes.length,
+        },
+      ],
+    }));
+
+    final book = await LocalNovelBook.open(directory);
+    final document = await book.loadDocument(book.chapters.last);
+
+    expect(document.format, NovelDocumentFormat.text);
+    expect(document.content, '第二章');
+  });
+
   test('local EPUB loader uses the chapter file as its file base URL',
       () async {
     final directory = Directory(

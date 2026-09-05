@@ -68,6 +68,7 @@ class TxtChapterParser {
     unicode: true,
   );
   static final RegExp _sentencePunctuation = RegExp(r'[，,。！？!?；;：:…]');
+  static const int _tableOfContentsRun = 3;
   static final RegExp _authorPattern = RegExp(r'^\s*作\s*者\s*[:：]\s*(.+?)\s*$');
   static const Set<String> _specialHeadings = {
     '序章',
@@ -86,9 +87,12 @@ class TxtChapterParser {
     final candidates = _collectCandidates(lines);
     _applyContinuity(candidates);
 
-    final accepted = candidates
-        .where((candidate) => candidate.score >= candidate.threshold)
-        .toList(growable: false);
+    final accepted = _withoutTableOfContents(
+      candidates
+          .where((candidate) => candidate.score >= candidate.threshold)
+          .toList(growable: false),
+      lines,
+    );
     if (!accepted.any((candidate) => candidate.kind != _HeadingKind.volume)) {
       return _fallback(normalized);
     }
@@ -155,6 +159,7 @@ class TxtChapterParser {
       if (chapterMatch != null) {
         candidate = _HeadingCandidate(
           line: line,
+          index: index,
           title: trimmed,
           kind: _HeadingKind.chapter,
           number: _parseNumber(chapterMatch.group(1)!),
@@ -163,6 +168,7 @@ class TxtChapterParser {
       } else if (_specialHeadings.contains(trimmed)) {
         candidate = _HeadingCandidate(
           line: line,
+          index: index,
           title: trimmed,
           kind: _HeadingKind.special,
           score: 3,
@@ -172,6 +178,7 @@ class TxtChapterParser {
         if (volumeMatch != null && _validVolumeTail(volumeMatch.group(3)!)) {
           candidate = _HeadingCandidate(
             line: line,
+            index: index,
             title: trimmed,
             kind: _HeadingKind.volume,
             number: _parseNumber(volumeMatch.group(1)!),
@@ -196,6 +203,60 @@ class TxtChapterParser {
       candidates.add(candidate);
     }
     return candidates;
+  }
+
+  /// 目录页里的「第N章」同样命中标题正则。整块目录的特征是连续多条标题之间
+  /// 一行正文都没有 —— 整块丢掉,否则每一条目录行都会切出一个空章节,读者点进去
+  /// 只会撞上「章节偏移无效」。落单的空章节(后面还有别的章节)并入下一章。
+  /// 卷标题天然可以紧跟着章标题,不参与落单判定。
+  static List<_HeadingCandidate> _withoutTableOfContents(
+    List<_HeadingCandidate> accepted,
+    List<_LineInfo> lines,
+  ) {
+    if (accepted.isEmpty) return accepted;
+    final empty = <bool>[];
+    for (var index = 0; index < accepted.length; index++) {
+      final start = accepted[index].index + 1;
+      final end = index + 1 < accepted.length
+          ? accepted[index + 1].index
+          : lines.length;
+      var blank = true;
+      for (var line = start; line < end && blank; line++) {
+        blank = lines[line].text.trim().isEmpty;
+      }
+      empty.add(blank);
+    }
+
+    final dropped = List<bool>.filled(accepted.length, false);
+    var cursor = 0;
+    while (cursor < accepted.length) {
+      if (!empty[cursor]) {
+        cursor++;
+        continue;
+      }
+      var end = cursor;
+      while (end < accepted.length && empty[end]) {
+        end++;
+      }
+      // 目录块后面必须还有正文章节,否则这就是一本只有标题的书,不是目录。
+      if (end - cursor >= _tableOfContentsRun && end < accepted.length) {
+        for (var item = cursor; item < end; item++) {
+          dropped[item] = true;
+        }
+      }
+      cursor = end;
+    }
+    for (var item = 0; item < accepted.length - 1; item++) {
+      if (empty[item] && accepted[item].kind != _HeadingKind.volume) {
+        dropped[item] = true;
+      }
+    }
+
+    final kept = <_HeadingCandidate>[
+      for (var item = 0; item < accepted.length; item++)
+        if (!dropped[item]) accepted[item],
+    ];
+    return kept.isEmpty ? accepted : kept;
   }
 
   static void _applyContinuity(List<_HeadingCandidate> candidates) {
@@ -313,6 +374,7 @@ class _LineInfo {
 class _HeadingCandidate {
   _HeadingCandidate({
     required this.line,
+    required this.index,
     required this.title,
     required this.kind,
     required this.score,
@@ -320,6 +382,9 @@ class _HeadingCandidate {
   });
 
   final _LineInfo line;
+
+  /// 标题在 `_buildLines` 结果里的行号 —— 判断两条标题之间有没有正文要靠它。
+  final int index;
   final String title;
   final _HeadingKind kind;
   final int? number;
