@@ -12,6 +12,11 @@
 
 #include "win32_window.h"
 
+// 单实例握手用的系统级消息 id。RegisterWindowMessageW 保证全系统唯一:第二个进程
+// 广播它,只有本应用的窗口会认,收到就从托盘恢复自己。首次调用时注册,之后返回
+// 同一个 id;注册失败返回 0。
+UINT ShowExistingInstanceMessage();
+
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
  public:

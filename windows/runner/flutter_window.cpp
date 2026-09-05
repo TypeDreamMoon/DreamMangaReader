@@ -17,6 +17,12 @@ constexpr UINT kExitApplicationCommand = 40002;
 constexpr char kWindowChannelName[] = "dream_manga_reader/window";
 }  // namespace
 
+UINT ShowExistingInstanceMessage() {
+  static const UINT message =
+      RegisterWindowMessageW(L"DreamMangaReaderShowExistingInstance");
+  return message;
+}
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
@@ -94,6 +100,13 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   if (taskbar_created_message_ != 0 && message == taskbar_created_message_) {
     tray_icon_added_ = false;
     AddTrayIcon();
+    return 0;
+  }
+
+  // 用户又点了一次快捷方式:第二个进程发现互斥体已被占,广播这条消息后自己退出。
+  // 这边负责把窗口从托盘拉回来 —— 对用户来说就是「又打开了一次」。
+  if (message == ShowExistingInstanceMessage() && message != 0) {
+    ShowFromTray();
     return 0;
   }
 
