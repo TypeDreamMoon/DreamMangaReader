@@ -501,6 +501,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
           _turnState = _turnController.state;
           _settlement = null;
         });
+        // 拖到章内尽头:和点击路径(_requestDiscrete)一样回落到跨章翻页,
+        // 老实现只是 cancel —— 拖拽永远翻不出这一章。
+        if (decision.commit) unawaited(_legacyTurn(decision.direction));
         return;
       }
       setState(() {

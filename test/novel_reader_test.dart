@@ -1075,6 +1075,48 @@ void main() {
     );
   });
 
+  testWidgets('dragging past the last page still crosses the chapter boundary',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      preferences: const NovelReaderPreferences(
+        turnMode: NovelPageTurnMode.cover,
+        toolbarAutoHideSeconds: 0,
+      ),
+      // 一章只有一页:章内已经翻不动了,拖拽必须回落成「翻到下一章」。
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: '${chapter.title}的正文',
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    String statusChapter() => tester
+        .widget<Text>(find.byKey(const Key('novel-status-chapter')))
+        .data!;
+    expect(statusChapter(), '第一章');
+
+    final gesture = await tester.startGesture(const Offset(390, 400));
+    await gesture.moveTo(const Offset(40, 404));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    // 换章后的页帧预渲染是定时驱动的,pumpAndSettle 不会替它走完。
+    for (var attempt = 0; attempt < 25; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(statusChapter(), '第二章');
+  });
+
   testWidgets('scroll mode renders a scrollable chapter and tracks progress',
       (tester) async {
     tester.view.devicePixelRatio = 1;
