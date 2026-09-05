@@ -505,7 +505,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
               child: Text(
                 loggedIn
                     ? (uname != null && uname.isNotEmpty
-                        ? '已登录 · $uname'
+                        ? context.l10n.anime_biliLoggedInAs(uname)
                         : context.l10n.anime_biliLoggedIn)
                     : context.l10n.anime_biliLoginHint,
                 maxLines: 1,
@@ -629,7 +629,7 @@ class AnimeBrowserState extends State<AnimeBrowser> {
                     fontWeight: FontWeight.w700,
                     fontSize: 15)),
             const SizedBox(height: 8),
-            Text('在「设置 › 漫画源」里启用番剧源(如 AllAnime)后即可浏览。',
+            Text(context.l10n.anime_noSourcesHint,
                 textAlign: TextAlign.center,
                 style:
                     TextStyle(color: p.textMuted, fontSize: 13, height: 1.5)),

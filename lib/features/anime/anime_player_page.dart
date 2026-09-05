@@ -391,9 +391,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       bufferTimeout: l10n.player_bufferTimeout,
       recovering: l10n.player_recovering,
       recoverFailed: l10n.player_recoverFailed,
+      configureFailed: l10n.player_configureFailed,
+      gatewayFallbackFailed: l10n.player_gatewayFallbackFailed,
     );
-    // 语言切换会把这里再跑一遍,顺手把已开的会话换成新文案。
+    // 语言切换会把这里再跑一遍,顺手把已开的会话和适配器换成新文案。
     _session?.messages = _messages!;
+    _nativeAdapter?.messages = _messages!;
+    _nativeBackend?.messages = _messages!;
     if (_bootstrapped) return;
     _bootstrapped = true;
     unawaited(_initBrightness());
@@ -413,6 +417,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   PlaybackMessages? _messages;
+
+  /// 原生那条链路自己也要出文案(网络参数配失败、网关回退失败),语言切换时
+  /// 和会话一起换掉。注入依赖的测试路径下这两个都是 null。
+  MediaKitPlayerAdapter? _nativeAdapter;
+  NativeMediaKitBackend? _nativeBackend;
   bool _bootstrapped = false;
 
   /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
@@ -514,11 +523,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         },
         refreshTracks: () => loadTracks(_ep.id),
       );
+      final backend = NativeMediaKitBackend(player, messages: _messages!);
       final adapter = MediaKitPlayerAdapter(
-        backend: NativeMediaKitBackend(player),
+        backend: backend,
         gateway: cache.gateway,
         authScope: 'source:${widget.meta.id}',
+        messages: _messages!,
       );
+      _nativeBackend = backend;
+      _nativeAdapter = adapter;
       _configurePlayback(
         adapter: adapter,
         tracks: resolver,

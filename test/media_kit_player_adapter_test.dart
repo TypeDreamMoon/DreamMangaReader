@@ -4,6 +4,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_session.dart';
 import 'package:dream_manga_reader/features/anime/playback/media_kit_player_adapter.dart';
+import 'package:dream_manga_reader/features/anime/playback/playback_messages.dart';
 import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +14,25 @@ const _hls = VideoTrack(
   headers: {'Authorization': 'Bearer private'},
   hls: true,
 );
+
+/// 文案用可辨认的英文占位:这层只关心「有没有把注入的文案透出去」。
+const _messages = PlaybackMessages(
+  noRoute: 'no route',
+  bufferTimeout: 'buffer timeout',
+  recovering: _recovering,
+  recoverFailed: _recoverFailed,
+  configureFailed: _configureFailed,
+  gatewayFallbackFailed: _gatewayFallbackFailed,
+);
+
+String _recovering(int attempt, int total) => 'recovering $attempt/$total';
+
+String _recoverFailed(String detail) => 'recover failed: $detail';
+
+String _configureFailed(String key, String detail) =>
+    'cannot configure $key: $detail';
+
+String _gatewayFallbackFailed(String detail) => 'gateway fallback: $detail';
 
 class _FakeBackend implements MediaKitBackend {
   final playingController = StreamController<bool>.broadcast(sync: true);
@@ -31,6 +51,9 @@ class _FakeBackend implements MediaKitBackend {
   final subtitles = <SubtitleOption>[];
   int clearedAudioCount = 0;
   Duration mediaDuration = Duration.zero;
+
+  /// true = 下一次 open 抛错。用来把「网关回退也失败了」这条路走通。
+  bool failOpen = false;
 
   @override
   Stream<bool> get playing => playingController.stream;
@@ -57,6 +80,7 @@ class _FakeBackend implements MediaKitBackend {
   Future<void> open(VideoTrack track, {Duration startAt = Duration.zero}) async {
     opened.add(track);
     openStarts.add(startAt);
+    if (failOpen) throw StateError('fixture open failure');
   }
   @override
   Future<void> attachAudio(String url) async => attachedAudio.add(url);
@@ -118,6 +142,7 @@ void main() {
       backend: backend,
       gateway: gateway,
       authScope: 'source:test',
+      messages: _messages,
     );
 
     await adapter.open(_hls);
@@ -135,6 +160,7 @@ void main() {
       backend: backend,
       gateway: _FakeGateway(),
       authScope: 'source:test',
+      messages: _messages,
     );
     await adapter.open(_hls);
     backend.positionController.add(const Duration(minutes: 12));
@@ -158,6 +184,7 @@ void main() {
       backend: backend,
       gateway: _FakeGateway(),
       authScope: 'source:test',
+      messages: _messages,
     );
     final surfaced = <Object>[];
     final subscription = adapter.errors.listen(surfaced.add);
@@ -177,6 +204,30 @@ void main() {
     await adapter.dispose();
   });
 
+  // 这一条会一路冒到「播放失败」框里,不能是写死在 core 层的一句中文。
+  test('a dead gateway fallback reports the injected copy', () async {
+    final backend = _FakeBackend();
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: _FakeGateway(),
+      authScope: 'source:test',
+      messages: _messages,
+    );
+    final surfaced = <Object>[];
+    final subscription = adapter.errors.listen(surfaced.add);
+    await adapter.open(_hls);
+
+    // 网关塌了 → 回退直连 → 直连也开不起来。
+    backend.failOpen = true;
+    backend.errorController.add(StateError('gateway gone'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect('${surfaced.single}', contains('gateway fallback: '));
+    expect('${surfaced.single}', contains('gateway gone'));
+    await subscription.cancel();
+    await adapter.dispose();
+  });
+
   test('keeps direct DASH playback and attaches its audio after readiness',
       () async {
     const dash = VideoTrack(
@@ -189,6 +240,7 @@ void main() {
       backend: backend,
       gateway: _FakeGateway(),
       authScope: 'source:test',
+      messages: _messages,
     );
 
     await adapter.open(dash);
@@ -208,6 +260,7 @@ void main() {
       backend: backend,
       gateway: gateway,
       authScope: 'source:test',
+      messages: _messages,
     );
     await adapter.open(_hls);
 
@@ -230,6 +283,7 @@ void main() {
       backend: backend,
       gateway: _FakeGateway(),
       authScope: 'source:test',
+      messages: _messages,
     );
     await adapter.open(dash);
     backend.playingController.add(true);
@@ -261,6 +315,7 @@ void main() {
       backend: backend,
       gateway: _FakeGateway(),
       authScope: 'source:test',
+      messages: _messages,
     );
     await adapter.open(hlsWithAudio);
     backend.playingController.add(true);

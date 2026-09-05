@@ -137,7 +137,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   Future<void> _openBangumiSearch() async {
     final picked = await showAppSheet<BangumiCandidate>(
       context,
-      title: '搜索 Bangumi',
+      title: context.l10n.anime_searchBangumi,
       showCloseButton: true,
       resizeForKeyboard: true,
       heightFactor: 0.7,
@@ -265,7 +265,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       await _queueDownload(episode);
     }
     if (mounted) {
-      showAppNotify(context, '已加入 ${pending.length} 个下载任务',
+      showAppNotify(context, context.l10n.anime_downloadQueuedN(pending.length),
           kind: AppNotifyKind.success);
     }
   }

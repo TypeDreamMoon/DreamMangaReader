@@ -208,6 +208,49 @@ void main() {
     registeredSources = [];
   });
 
+  // 空态那句原来是写死的中文,换个语言还是中文。
+  testWidgets('the empty-source hint follows the app language', (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    registeredSources = [];
+    final library = LibraryStore();
+    await library.load();
+    const placeholder = SourceMeta(
+      id: 'anime-a',
+      name: 'Anime A',
+      script: '',
+      kind: 'anime',
+    );
+    final controller = SourceController(placeholder);
+    await controller.load();
+    addTearDown(() {
+      library.dispose();
+      controller.dispose();
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('en'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: AnimeBrowser(
+              sourceBuilder: _FakeAnimeSource.new,
+              sourceCatalog: const [],
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.textContaining('Settings › Manga sources'), findsOneWidget);
+    expect(find.textContaining('启用番剧源'), findsNothing);
+  });
+
   testWidgets(
       'hides source picker and loads every enabled anime source in mixed mode',
       (tester) async {

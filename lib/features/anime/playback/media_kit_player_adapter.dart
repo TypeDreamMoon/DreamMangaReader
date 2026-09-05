@@ -7,6 +7,7 @@ import '../../../core/source/models.dart';
 import 'hls_cache_gateway.dart';
 import 'hls_session.dart';
 import 'mpv_network_options.dart';
+import 'playback_messages.dart';
 import 'player_adapter.dart';
 import 'subtitle_option.dart';
 
@@ -35,9 +36,12 @@ abstract interface class MediaKitBackend {
 }
 
 class NativeMediaKitBackend implements MediaKitBackend {
-  NativeMediaKitBackend(this.player);
+  NativeMediaKitBackend(this.player, {required this.messages});
 
   final Player player;
+
+  /// 可写:语言切换后播放页会重新灌一份。
+  PlaybackMessages messages;
 
   @override
   Stream<bool> get playing => player.stream.playing;
@@ -85,7 +89,7 @@ class NativeMediaKitBackend implements MediaKitBackend {
           waitForInitialization: false,
         );
       } catch (error) {
-        throw StateError('无法配置播放器网络参数 $key: $error');
+        throw StateError(messages.configureFailed(key, '$error'));
       }
     }
 
@@ -154,6 +158,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     required MediaKitBackend backend,
     required HlsSessionGateway gateway,
     required this.authScope,
+    required this.messages,
   })  : _backend = backend,
         _gateway = gateway {
     _subscriptions.add(_backend.errors.listen(_onBackendError));
@@ -170,6 +175,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   final MediaKitBackend _backend;
   final HlsSessionGateway _gateway;
   final String authScope;
+
+  /// 可写:语言切换后播放页会重新灌一份。
+  PlaybackMessages messages;
   final _errorController = StreamController<Object>.broadcast(sync: true);
   final List<StreamSubscription<Object?>> _subscriptions = [];
   HlsSession? _session;
@@ -287,7 +295,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     } catch (error) {
       if (!_disposed) {
         _errorController.add(
-          StateError('HLS 网关回退失败: $originalError; $error'),
+          StateError(
+            messages.gatewayFallbackFailed('$originalError; $error'),
+          ),
         );
       }
     }

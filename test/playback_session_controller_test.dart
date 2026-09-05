@@ -131,11 +131,18 @@ const _messages = PlaybackMessages(
   bufferTimeout: 'buffer timeout',
   recovering: _recovering,
   recoverFailed: _recoverFailed,
+  configureFailed: _configureFailed,
+  gatewayFallbackFailed: _gatewayFallbackFailed,
 );
 
 String _recovering(int attempt, int total) => 'recovering $attempt/$total';
 
 String _recoverFailed(String detail) => 'recover failed: $detail';
+
+String _configureFailed(String key, String detail) =>
+    'cannot configure $key: $detail';
+
+String _gatewayFallbackFailed(String detail) => 'gateway fallback: $detail';
 
 void main() {
   test('PlaybackState copyWith can explicitly clear a pending seek', () {

@@ -1445,6 +1445,19 @@
       "n": {}
     }
   },
+  "player_configureFailed": "无法配置播放器网络参数 {key}:{error}",
+  "@player_configureFailed": {
+    "placeholders": {
+      "key": {},
+      "error": {}
+    }
+  },
+  "player_gatewayFallbackFailed": "HLS 网关回退失败:{error}",
+  "@player_gatewayFallbackFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "bili_generatingQr": "正在生成二维码…",
   "bili_scanWithApp": "用哔哩哔哩 App 扫码登录",
   "bili_qrFailed": "二维码生成失败,点下方刷新:{error}",
@@ -1485,6 +1498,20 @@
       "n": {}
     }
   },
+  "anime_downloadQueuedN": "已加入 {n} 个下载任务",
+  "@anime_downloadQueuedN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "anime_biliLoggedInAs": "已登录 · {name}",
+  "@anime_biliLoggedInAs": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "anime_noSourcesHint": "在「设置 › 漫画源」里启用番剧源(如 AllAnime)后即可浏览。",
+  "anime_searchBangumi": "搜索 Bangumi",
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

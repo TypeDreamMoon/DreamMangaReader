@@ -161,8 +161,13 @@ void main() {
     // 少了花括号的插值会把「1 集」写成「Instance of 'Chapter'.length 集」。
     expect(find.text('将 1 集加入下载队列。'), findsOneWidget);
     expect(find.textContaining('.length'), findsNothing);
-    await tester.tap(find.text('取消'));
-    await tester.pumpAndSettle();
+
+    // 入队后那句提示同样要走 l10n。
+    await tester.tap(find.text('下载'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('已加入 1 个下载任务'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
