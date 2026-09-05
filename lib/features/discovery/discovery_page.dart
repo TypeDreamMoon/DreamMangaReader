@@ -66,10 +66,17 @@ String contentKindLabel(BuildContext context, ContentKind kind) =>
 /// 漫画档顶部还有一条据书架口味算的「为你推荐」(见 [RecommendStrip])——
 /// 找新内容都归发现页,书架只留「我的收藏与历史」。
 class DiscoveryPage extends StatefulWidget {
-  const DiscoveryPage({super.key, this.recommendController});
+  const DiscoveryPage({
+    super.key,
+    this.recommendController,
+    this.sourceBuilder = buildSource,
+  });
 
   /// 测试注入用;不传则本页自建自管(dispose 时释放)。
   final RecommendController? recommendController;
+
+  /// 测试注入用;正式代码走 [buildSource]。
+  final MangaSource Function(SourceMeta meta) sourceBuilder;
 
   @override
   State<DiscoveryPage> createState() => _DiscoveryPageState();
@@ -172,7 +179,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final store = LibraryScope.read(context);
       for (final s in registeredSources) {
         if (s.isManga && store.isSourceEnabled(s.id)) {
-          _mixedSources.add(_MixedCursor(s, buildSource(s)));
+          _mixedSources.add(_MixedCursor(s, widget.sourceBuilder(s)));
         }
       }
       _reset();
@@ -188,7 +195,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       return;
     }
     _meta = cur;
-    _source = buildSource(cur);
+    _source = widget.sourceBuilder(cur);
     _filters = _source!.filters;
     for (final f in _filters) {
       if (f.type == 'sort' && f.options.isNotEmpty) {
@@ -287,6 +294,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _hasNext = page.hasNext && page.items.isNotEmpty;
         _page++;
         _loading = false;
+        // 上一页失败、这一页成功 → 错误态到此为止。不清的话页脚会一直挂着
+        // 「加载失败」,_maybeFallback 也会被 `_error != null` 一直挡在门外。
+        _error = null;
       });
       _maybeFallback(); // 首页零结果 → 尝试译名回退
     } catch (e) {
@@ -317,6 +327,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       c.page++;
       c.hasNext = r.hasNext && r.items.isNotEmpty;
       c.errored = false; // 成功返回(哪怕空页)—— 不是失败
+      // 没有源还挂着错时把上一轮的错误消息也丢掉,免得它被后面的错误视图复用。
+      if (!_mixedSources.any((m) => m.errored)) _mixedError = null;
     } catch (e) {
       if (gen == _loadGen) {
         c.hasNext = false; // 某源失败:停掉它
@@ -383,6 +395,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _mixedSources.isNotEmpty &&
         _mixedSources.every((c) => c.errored)) {
       _error = _mixedError ?? context.l10n.disc_allSourcesFailed;
+    } else {
+      // 重试成功 / 又有源开始加载 → 错误态跟着消失(它只描述「此刻全挂了」)。
+      _error = null;
     }
   }
 
