@@ -269,7 +269,9 @@ class _ReaderPageState extends State<ReaderPage> {
   // 读到接近末尾时,自动加载并接上下一章。
   Future<void> _maybeLoadNext() async {
     if (_loadingNext || _reachedEnd || _flat.isEmpty) return;
-    if (_curFlat < _flat.length - 3) return; // 还没接近末尾
+    // 接近末尾的阈值:双页一次跨两页,3 页的余量最少只剩一次翻页就到底,
+    // 放宽到 4(= 两对开页)才来得及在读者翻到末尾前接上下一章。
+    if (_curFlat < _flat.length - (_dualActive ? 4 : 3)) return;
     final nextIndex = _segments.last.chapterIndex + 1;
     if (nextIndex >= widget.chapters.length) {
       _reachedEnd = true;

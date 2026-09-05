@@ -118,6 +118,60 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });
+
+  /// 回归 E11:双页模式下一次跨两页,3 页的余量意味着「最后一对开页」翻到时
+  /// 下一章才刚开始拉;阈值要放宽到 4。
+  testWidgets('double page starts the next chapter one spread earlier',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = LibraryStore();
+    await store.load();
+    store.doublePage = true;
+
+    var loadedChapters = 0;
+    await tester.pumpWidget(harness(
+      store: store,
+      source: _FakeSource({'c1': _pages(10), 'c2': _pages(10)}),
+      chapters: const [
+        Chapter(id: 'c1', name: '第1话'),
+        Chapter(id: 'c2', name: '第2话'),
+      ],
+      // 扁平第 6 页:10-4 == 6,双页阈值下正好该开始接续(单页阈值 3 则不会)。
+      initialPage: 6,
+      onDebugFlat: (chapters, _) => loadedChapters = chapters,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(loadedChapters, 2, reason: '双页阈值 4:扁平第 6 页起就该接上下一章');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
+
+  testWidgets('single page keeps the 3-page threshold', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = LibraryStore();
+    await store.load();
+    store.doublePage = false;
+
+    var loadedChapters = 0;
+    await tester.pumpWidget(harness(
+      store: store,
+      source: _FakeSource({'c1': _pages(10), 'c2': _pages(10)}),
+      chapters: const [
+        Chapter(id: 'c1', name: '第1话'),
+        Chapter(id: 'c2', name: '第2话'),
+      ],
+      initialPage: 6,
+      onDebugFlat: (chapters, _) => loadedChapters = chapters,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(loadedChapters, 1, reason: '单页阈值仍是 3,第 6 页还不接续');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
 }
 
 class _FakeSource implements MangaSource {
