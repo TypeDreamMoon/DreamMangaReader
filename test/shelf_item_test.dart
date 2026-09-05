@@ -132,4 +132,71 @@ void main() {
     expect(novel.entryFor(entry.key), isNotNull);
     expect(project(), isEmpty);
   });
+
+  group('作品分组索引', () {
+    test('繁简/装饰副标题仍归成一张卡,并累加源数', () {
+      var at = 100;
+      for (final (src, title) in [
+        ('a', '雾山五行'),
+        ('b', '霧山五行'),
+        ('c', '[连载]雾山五行'),
+      ]) {
+        manga.toggleFavorite(FavoriteEntry(
+          sourceId: src,
+          mangaId: '1',
+          title: title,
+          addedAt: at++,
+        ));
+      }
+
+      final items = project();
+      expect(items, hasLength(1), reason: '同一部书不该出三张卡');
+      expect(items.single.sourceCount, 3);
+    });
+
+    test('加了后缀的续作不会被并进本篇', () {
+      manga.toggleFavorite(FavoriteEntry(
+        sourceId: 'a',
+        mangaId: '1',
+        title: '雾山五行',
+        addedAt: 100,
+      ));
+      manga.toggleFavorite(FavoriteEntry(
+        sourceId: 'a',
+        mangaId: '2',
+        title: '雾山五行外传',
+        addedAt: 101,
+      ));
+
+      expect(project(), hasLength(2));
+    });
+
+    test('分组不再拿每个标题跟全表比一遍', () {
+      // realistic 形状:300 部不同的书,标题等长、每 10 部共用一个常见字
+      // (同长 + 共字才可能是同作,是索引唯一需要真比一次的情况)。
+      const n = 300;
+      for (var i = 0; i < n; i++) {
+        final shared = String.fromCharCode(0x9000 + i % 30);
+        final rest = String.fromCharCodes([
+          0x4E00 + i * 3,
+          0x4E00 + i * 3 + 1,
+          0x4E00 + i * 3 + 2,
+        ]);
+        manga.toggleFavorite(FavoriteEntry(
+          sourceId: 's$i',
+          mangaId: '$i',
+          title: '$shared$rest',
+          addedAt: i,
+        ));
+      }
+
+      ShelfProjector.debugWorkKeyComparisons = 0;
+      final items = project();
+
+      expect(items, hasLength(n), reason: '共用一个字不等于同一部作品');
+      // 旧实现每个标题都跟已有的全部 key 比一遍 ≈ n²/2 ≈ 45000 次。
+      expect(ShelfProjector.debugWorkKeyComparisons, lessThan(3000),
+          reason: '只该跟同长且共字的那几个比');
+    });
+  });
 }

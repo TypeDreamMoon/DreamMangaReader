@@ -5,6 +5,7 @@ import 'package:dream_manga_reader/app/source_controller.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/features/library/library_page.dart';
+import 'package:dream_manga_reader/features/library/shelf_item.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,6 +81,50 @@ void main() {
     expect(find.text('历史小说'), findsNothing);
     expect(find.text('历史番剧'), findsNothing);
   });
+
+  testWidgets('搜索框每敲一个字不重算书架投影', (tester) async {
+    final fixture = await _LibraryFixture.create();
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1200, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(const LibraryPage()));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byIcon(Icons.search_rounded));
+    await tester.pump();
+
+    ShelfProjector.debugBuildCount = 0;
+    for (final q in ['共', '共同', '共同漫']) {
+      await tester.enterText(find.byType(TextField), q);
+      await tester.pump();
+    }
+
+    // 跨源去重不便宜,收藏没变就不该为了一个字重跑一遍。
+    expect(ShelfProjector.debugBuildCount, 0);
+    expect(find.text('共同漫画'), findsWidgets);
+  });
+
+  testWidgets('收藏变化会让缓存失效', (tester) async {
+    final fixture = await _LibraryFixture.create();
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1200, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(const LibraryPage()));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    fixture.manga.toggleFavorite(FavoriteEntry(
+      sourceId: 'manga-source',
+      mangaId: 'manga-new',
+      title: '新来的漫画',
+      addedAt: 999,
+    ));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('新来的漫画'), findsWidgets);
+    expect(find.text('收藏 · 4'), findsOneWidget);
+  });
+
 }
 
 class _LibraryFixture {

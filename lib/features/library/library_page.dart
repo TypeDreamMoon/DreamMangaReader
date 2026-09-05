@@ -58,10 +58,49 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 非 null = 正在检查,值为 (已完成, 总数),驱动标题栏上的进度。
   (int, int)? _sweepProgress;
 
+  // ---- 书架投影缓存 ----
+  //
+  // ShelfProjector.build 要跨源去重(按标题分组),不便宜;而 build() 会因为
+  // 换主题、展开搜索框、进度条走一格等等被反复调用,搜索框更是**每敲一个字**
+  // 就重跑一次。所以缓存两层:全量投影按三个 store 的变更失效,筛选结果按
+  // (投影, 类型, 查询) 记忆。
+  LibraryStore? _mangaStore;
+  NovelLibraryStore? _novelStore;
+  AnimeLibraryStore? _animeStore;
+  List<ShelfItem>? _shelfCache;
+  List<ShelfItem>? _viewCache;
+  List<ShelfItem>? _viewSource;
+  ShelfKind? _viewKind;
+  String _viewQuery = '';
+
   @override
   void initState() {
     super.initState();
     _updates.addListener(_onUpdatesChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 收藏/进度一变就作废缓存。store 的 notify 一定早于随之而来的重建,
+    // 所以这里清掉、build 时自然重算。
+    _mangaStore = _rebind(_mangaStore, LibraryScope.of(context));
+    _novelStore = _rebind(_novelStore, NovelLibraryScope.of(context));
+    _animeStore = _rebind(_animeStore, AnimeLibraryScope.of(context));
+  }
+
+  T _rebind<T extends ChangeNotifier>(T? old, T next) {
+    if (identical(old, next)) return next;
+    old?.removeListener(_invalidateShelf);
+    next.addListener(_invalidateShelf);
+    _invalidateShelf();
+    return next;
+  }
+
+  void _invalidateShelf() {
+    _shelfCache = null;
+    _viewCache = null;
+    _viewSource = null;
   }
 
   void _onUpdatesChanged() {
@@ -71,9 +110,33 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   void dispose() {
     _updates.removeListener(_onUpdatesChanged);
+    _mangaStore?.removeListener(_invalidateShelf);
+    _novelStore?.removeListener(_invalidateShelf);
+    _animeStore?.removeListener(_invalidateShelf);
     _searchCtrl.dispose();
     _historyScroll.dispose();
     super.dispose();
+  }
+
+  /// 当前可见的收藏:类型筛选 + 搜索词。输入没变就直接返回上次的结果。
+  List<ShelfItem> _visible(List<ShelfItem> all, String query) {
+    final cached = _viewCache;
+    if (cached != null &&
+        identical(_viewSource, all) &&
+        _viewKind == _kind &&
+        _viewQuery == query) {
+      return cached;
+    }
+    final out = <ShelfItem>[
+      for (final item in all)
+        if ((_kind == null || item.kind == _kind) &&
+            (query.isEmpty || item.matches(query)))
+          item
+    ];
+    _viewSource = all;
+    _viewKind = _kind;
+    _viewQuery = query;
+    return _viewCache = out;
   }
 
   // ---- 打开条目 ----
@@ -366,18 +429,14 @@ class _LibraryPageState extends State<LibraryPage> {
     final novelStore = NovelLibraryScope.of(context);
     final animeStore = AnimeLibraryScope.of(context);
     // 一次投影出全部收藏(漫画跨源去重不便宜),筛选条计数与网格都从它派生。
-    final all = ShelfProjector.build(
+    // 缓存命中时这两步都不会真的重算(见 _invalidateShelf / _visible)。
+    final all = _shelfCache ??= ShelfProjector.build(
       manga: mangaStore,
       novel: novelStore,
       anime: animeStore,
     );
     final q = _query.toLowerCase();
-    final items = [
-      for (final item in all)
-        if ((_kind == null || item.kind == _kind) &&
-            (q.isEmpty || item.matches(q)))
-          item
-    ];
+    final items = _visible(all, q);
     // 搜索时历史条让位,不必白算一遍。
     final history = _query.isEmpty
         ? _history(mangaStore, novelStore, animeStore)
