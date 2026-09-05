@@ -106,4 +106,46 @@ void main() {
     expect(find.byType(Divider), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  // 回归:正文来自远端(GitHub Release Note / 源脚本),链接的 scheme 不可信。
+  // 以前直接 Uri.parse + launchUrl,等于把「打开任意深链」的口子交出去。
+  group('外链只放行 http/https/mailto', () {
+    test('放行的协议原样返回', () {
+      expect(
+        markdownLinkTarget('https://github.com/TypeDreamMoon'),
+        Uri.parse('https://github.com/TypeDreamMoon'),
+      );
+      expect(markdownLinkTarget('http://example.com'), isNotNull);
+      expect(markdownLinkTarget('mailto:a@b.c'), isNotNull);
+      // 大小写与首尾空白不该绕过判断,也不该误伤。
+      expect(markdownLinkTarget('  HTTPS://example.com  '), isNotNull);
+    });
+
+    test('其余协议一律拒绝', () {
+      for (final bad in [
+        'javascript:alert(1)',
+        'JavaScript:alert(1)',
+        'file:///C:/Windows/System32/drivers/etc/hosts',
+        'intent://evil#Intent;scheme=http;end',
+        'ms-settings:defaultapps',
+        'data:text/html,<script>1</script>',
+        'content://com.other.app/private',
+      ]) {
+        expect(markdownLinkTarget(bad), isNull, reason: bad);
+      }
+    });
+
+    test('没有 scheme 的相对路径也拒绝', () {
+      expect(markdownLinkTarget('docs/readme.md'), isNull);
+      expect(markdownLinkTarget('//example.com'), isNull);
+      expect(markdownLinkTarget(''), isNull);
+    });
+  });
+
+  testWidgets('不放行的链接仍然渲染成文字,点了不会启动任何东西', (tester) async {
+    await tester.pumpWidget(_host('点[这里](javascript:alert(1))试试'));
+    await tester.pump();
+    expect(find.textContaining('这里'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
 }
