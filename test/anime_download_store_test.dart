@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dream_manga_reader/app/anime_download_store.dart';
@@ -65,6 +66,70 @@ two.ts
     expect(manifest, contains('segment-0.bin'));
     expect(result.resourceCount, 3);
     expect(progress.last.$1, progress.last.$2);
+  });
+
+  // 音轨常常是主清单里独立的 EXT-X-MEDIA 渲染流。只存视频那条清单的话,
+  // 离线播放就是一部默片。
+  test('packages the split audio rendition of the selected variant', () async {
+    final upstream = _FakeUpstream({
+      'https://video.test/master.m3u8': _text(
+        File('test/fixtures/hls/master_split_audio.m3u8').readAsStringSync(),
+      ),
+      'https://video.test/480p/index.m3u8': _text('''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+video-0.ts
+#EXTINF:4,
+video-1.ts
+#EXT-X-ENDLIST
+'''),
+      'https://video.test/audio/ja/index.m3u8': _text('''
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+audio-0.aac
+#EXTINF:4,
+audio-1.aac
+#EXT-X-ENDLIST
+'''),
+      'https://video.test/480p/video-0.ts': _bytes([1]),
+      'https://video.test/480p/video-1.ts': _bytes([2]),
+      'https://video.test/audio/ja/audio-0.aac': _bytes([3]),
+      'https://video.test/audio/ja/audio-1.aac': _bytes([4]),
+    });
+
+    final result = await AnimeHlsPackageWriter(upstream).write(
+      playlistUri: Uri.parse('https://video.test/master.m3u8'),
+      headers: const {},
+      directory: root,
+      context: _context([]),
+    );
+
+    // 字幕渲染流不在下载范围里,别顺手把它也拉了。
+    expect(upstream.requested,
+        isNot(contains('https://video.test/subs/zh/index.m3u8')));
+    expect(await File('${root.path}/audio-segment-0.bin').readAsBytes(), [3]);
+    expect(await File('${root.path}/audio-segment-1.bin').readAsBytes(), [4]);
+    expect(await File('${root.path}/segment-0.bin').readAsBytes(), [1]);
+    expect(result.resourceCount, 4);
+
+    // index.m3u8 变成主清单,把两条本地清单挂在一起。
+    final manifest = await result.manifest.readAsString();
+    expect(manifest, contains('#EXT-X-MEDIA:'));
+    expect(manifest, contains('URI="audio.m3u8"'));
+    expect(manifest, contains('AUDIO="audio"'));
+    expect(manifest, contains('video.m3u8'));
+    expect(manifest, isNot(contains('https://')));
+    final audio = await File('${root.path}/audio.m3u8').readAsString();
+    expect(audio, contains('audio-segment-0.bin'));
+    final video = await File('${root.path}/video.m3u8').readAsString();
+    expect(video, contains('segment-0.bin'));
+    expect(video, isNot(contains('audio-segment-0.bin')));
   });
 
   test('withholds credential headers from cross-host offline resources',
@@ -253,7 +318,7 @@ DownloadExecutionContext _context(List<(int, int)> progress) =>
 
 HlsUpstreamResponse _text(String value) => HlsUpstreamResponse(
       statusCode: 200,
-      bytes: value.trimLeft().codeUnits,
+      bytes: utf8.encode(value.trimLeft()),
       headers: const {
         HttpHeaders.contentTypeHeader: ['application/vnd.apple.mpegurl'],
       },

@@ -290,6 +290,21 @@ class UnsupportedAnimePlaylist implements Exception {
   String toString() => message;
 }
 
+/// 一集里挑好的那条视频清单,外加(如果有的话)跟着它走的独立音轨。
+class _ResolvedPlaylist {
+  const _ResolvedPlaylist({
+    required this.video,
+    this.variant,
+    this.audio,
+    this.audioRendition,
+  });
+
+  final HlsMediaPlaylist video;
+  final HlsVariant? variant;
+  final HlsMediaPlaylist? audio;
+  final HlsRendition? audioRendition;
+}
+
 class AnimeHlsPackageResult {
   const AnimeHlsPackageResult({
     required this.manifest,
@@ -327,14 +342,149 @@ class AnimeHlsPackageWriter {
       headers,
       originHost,
     );
-    final playlist = resolved.playlist;
+    final playlist = resolved.video;
+    _requirePlayable(playlist);
+    final audio = resolved.audio;
+    if (audio != null) _requirePlayable(audio);
+
+    final total =
+        _resourceCount(playlist) + (audio == null ? 0 : _resourceCount(audio));
+    var completed = 0;
+    var byteCount = 0;
+
+    Future<void> downloaded(File file) async {
+      completed++;
+      byteCount += await file.length();
+      await context.reportProgress(completed, total);
+      await context.checkpoint();
+    }
+
+    final localVideo = await _downloadPlaylist(
+      playlist: playlist,
+      prefix: '',
+      headers: headers,
+      originHost: originHost,
+      directory: directory,
+      context: context,
+      downloaded: downloaded,
+    );
+    final localAudio = audio == null
+        ? null
+        : await _downloadPlaylist(
+            playlist: audio,
+            prefix: 'audio-',
+            headers: headers,
+            originHost: originHost,
+            directory: directory,
+            context: context,
+            downloaded: downloaded,
+          );
+
+    if (localAudio == null) {
+      await _writePlaylist(manifest, localVideo, context);
+    } else {
+      // 音轨是主清单里独立的 EXT-X-MEDIA 渲染流,不在视频分片里 —— 只存视频清单
+      // 的话离线播放就是一部默片。落盘成「主清单 + 视频清单 + 音频清单」三件套。
+      final base = directory.path + Platform.pathSeparator;
+      await _writePlaylist(File('${base}video.m3u8'), localVideo, context);
+      await _writePlaylist(File('${base}audio.m3u8'), localAudio, context);
+      await _writePlaylist(
+        manifest,
+        _localMaster(resolved),
+        context,
+      );
+    }
+    return AnimeHlsPackageResult(
+      manifest: manifest,
+      resourceCount: total,
+      byteCount: byteCount,
+    );
+  }
+
+  void _requirePlayable(HlsMediaPlaylist playlist) {
     if (playlist.isLive) {
       throw const UnsupportedAnimePlaylist('暂不支持下载直播 HLS 清单');
     }
     if (playlist.segments.isEmpty) {
       throw const UnsupportedAnimePlaylist('HLS 清单没有可下载分片');
     }
+  }
 
+  /// 这一条清单一共有多少个要下的资源(分片 + 初始化段 + 去重后的密钥)。
+  int _resourceCount(HlsMediaPlaylist playlist) {
+    final keys = <String>{};
+    for (final segment in playlist.segments) {
+      final key = segment.key;
+      if (key == null || key.method == 'NONE' || key.uri == null) continue;
+      keys.add(key.uri.toString());
+    }
+    return playlist.segments.length +
+        (playlist.initSegment == null ? 0 : 1) +
+        keys.length;
+  }
+
+  /// 指向包内三个本地清单的主清单。分辨率/带宽沿用选中的那条变体,音轨挂在
+  /// 一个固定的 GROUP-ID 上 —— 包里本来也只有一路音频。
+  HlsMasterPlaylist _localMaster(_ResolvedPlaylist resolved) {
+    const audioGroup = 'audio';
+    final rendition = resolved.audioRendition!;
+    final variant = resolved.variant;
+    return HlsMasterPlaylist(
+      version: resolved.video.version,
+      independentSegments: resolved.video.independentSegments,
+      renditions: [
+        HlsRendition(
+          type: HlsMediaType.audio,
+          groupId: audioGroup,
+          name: rendition.name,
+          language: rendition.language,
+          channels: rendition.channels,
+          isDefault: true,
+          autoselect: true,
+          uri: Uri(path: 'audio.m3u8'),
+        ),
+      ],
+      variants: [
+        HlsVariant(
+          uri: Uri(path: 'video.m3u8'),
+          bandwidth: variant?.bandwidth ?? 1,
+          codecs: variant?.codecs,
+          width: variant?.width,
+          height: variant?.height,
+          frameRate: variant?.frameRate,
+          audioGroupId: audioGroup,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _writePlaylist(
+    File target,
+    HlsPlaylist playlist,
+    DownloadExecutionContext context,
+  ) async {
+    final temporary = File('${target.path}.download');
+    await temporary.writeAsString(
+      HlsComposer.compose(playlist),
+      encoding: utf8,
+      flush: true,
+    );
+    context.cancellation.throwIfCancelled();
+    if (await target.exists()) await target.delete();
+    await temporary.rename(target.path);
+  }
+
+  /// 把一条媒体清单连同它的密钥/初始化段/分片全部落到 [directory],返回改写成
+  /// 本地文件名的清单。[prefix] 把视频和音频的分片分开命名。
+  Future<HlsMediaPlaylist> _downloadPlaylist({
+    required HlsMediaPlaylist playlist,
+    required String prefix,
+    required Map<String, String> headers,
+    required String originHost,
+    required Directory directory,
+    required DownloadExecutionContext context,
+    required Future<void> Function(File file) downloaded,
+  }) async {
     final uniqueKeys = <String, HlsSegmentKey>{};
     for (final segment in playlist.segments) {
       final key = segment.key;
@@ -347,24 +497,11 @@ class AnimeHlsPackageWriter {
       uniqueKeys.putIfAbsent(key.uri.toString(), () => key);
     }
 
-    final total = playlist.segments.length +
-        (playlist.initSegment == null ? 0 : 1) +
-        uniqueKeys.length;
-    var completed = 0;
-    var byteCount = 0;
-
-    Future<void> downloaded(File file) async {
-      completed++;
-      byteCount += await file.length();
-      await context.reportProgress(completed, total);
-      await context.checkpoint();
-    }
-
     final localKeys = <String, HlsSegmentKey>{};
     var keyIndex = 0;
     for (final entry in uniqueKeys.entries) {
       context.cancellation.throwIfCancelled();
-      final name = 'key-${keyIndex++}.bin';
+      final name = '${prefix}key-${keyIndex++}.bin';
       final file = File('${directory.path}${Platform.pathSeparator}$name');
       await _downloadResource(
         uri: entry.value.uri!,
@@ -391,7 +528,7 @@ class AnimeHlsPackageWriter {
     final sourceInit = playlist.initSegment;
     if (sourceInit != null) {
       context.cancellation.throwIfCancelled();
-      const name = 'init-0.bin';
+      final name = '${prefix}init-0.bin';
       final file = File('${directory.path}${Platform.pathSeparator}$name');
       final range = sourceInit.byteRange;
       final start = range == null
@@ -417,7 +554,7 @@ class AnimeHlsPackageWriter {
     for (var index = 0; index < playlist.segments.length; index++) {
       context.cancellation.throwIfCancelled();
       final source = playlist.segments[index];
-      final name = 'segment-$index.bin';
+      final name = '${prefix}segment-$index.bin';
       final file = File('${directory.path}${Platform.pathSeparator}$name');
       final range = source.byteRange;
       final start = range == null
@@ -449,7 +586,7 @@ class AnimeHlsPackageWriter {
       await downloaded(file);
     }
 
-    final localPlaylist = HlsMediaPlaylist(
+    return HlsMediaPlaylist(
       version: playlist.version,
       targetDuration: playlist.targetDuration,
       mediaSequence: playlist.mediaSequence,
@@ -461,28 +598,17 @@ class AnimeHlsPackageWriter {
       independentSegments: playlist.independentSegments,
       segments: localSegments,
     );
-    final temporary = File('${manifest.path}.download');
-    await temporary.writeAsString(
-      HlsComposer.compose(localPlaylist),
-      encoding: utf8,
-      flush: true,
-    );
-    context.cancellation.throwIfCancelled();
-    await temporary.rename(manifest.path);
-    return AnimeHlsPackageResult(
-      manifest: manifest,
-      resourceCount: total,
-      byteCount: byteCount,
-    );
   }
 
-  Future<({HlsMediaPlaylist playlist, Uri uri})> _resolveMediaPlaylist(
+  Future<_ResolvedPlaylist> _resolveMediaPlaylist(
     Uri uri,
     Map<String, String> headers,
     String originHost,
   ) async {
     final root = await _fetchPlaylist(uri, headers, originHost);
-    if (root is HlsMediaPlaylist) return (playlist: root, uri: uri);
+    if (root is HlsMediaPlaylist) {
+      return _ResolvedPlaylist(video: root);
+    }
     if (root is! HlsMasterPlaylist || root.variants.isEmpty) {
       throw const UnsupportedAnimePlaylist('未知或空的 HLS 清单');
     }
@@ -501,7 +627,41 @@ class AnimeHlsPackageWriter {
     if (media is! HlsMediaPlaylist) {
       throw const UnsupportedAnimePlaylist('HLS 变体不是媒体清单');
     }
-    return (playlist: media, uri: selectedUri);
+    // 音轨常常是独立的 EXT-X-MEDIA 渲染流(变体里只有画面)。跟着选中变体的
+    // AUDIO 组走;没有 URI 的那种是混流音轨,已经在视频分片里了,不用另存。
+    final rendition = _audioRenditionFor(root, selected);
+    if (rendition == null) {
+      return _ResolvedPlaylist(video: media, variant: selected);
+    }
+    final audio = await _fetchPlaylist(rendition.uri!, headers, originHost);
+    if (audio is! HlsMediaPlaylist) {
+      throw const UnsupportedAnimePlaylist('HLS 音轨不是媒体清单');
+    }
+    return _ResolvedPlaylist(
+      video: media,
+      variant: selected,
+      audio: audio,
+      audioRendition: rendition,
+    );
+  }
+
+  HlsRendition? _audioRenditionFor(
+    HlsMasterPlaylist master,
+    HlsVariant variant,
+  ) {
+    final group = variant.audioGroupId;
+    if (group == null || group.isEmpty) return null;
+    final candidates = master.renditions
+        .where((rendition) =>
+            rendition.type == HlsMediaType.audio &&
+            rendition.groupId == group &&
+            rendition.uri != null)
+        .toList();
+    if (candidates.isEmpty) return null;
+    return candidates.firstWhere(
+      (rendition) => rendition.isDefault,
+      orElse: () => candidates.first,
+    );
   }
 
   Future<HlsPlaylist> _fetchPlaylist(
