@@ -307,11 +307,15 @@ class UpdateDownloader {
     );
   }
 
+  /// 校验 206 的续传起点。RFC 9110 允许总长度未知时写 `*`(`bytes 100-199/*`),
+  /// CDN 在分片回源时经常这么回;之前只认 `/<digits>` 会把合法响应判成非法,
+  /// 续传直接失败。分隔空格也放宽成任意空白(个别代理会重写成多个空格)。
+  /// 真正要守住的只有一件事:起点必须等于本地已有的字节数。
   static void _validateContentRange(Headers headers, int expectedStart) {
     final value = headers.value('content-range');
     final match = value == null
         ? null
-        : RegExp(r'^bytes (\d+)-\d+/\d+$').firstMatch(value);
+        : RegExp(r'^bytes\s+(\d+)-(\d+)/(?:\d+|\*)$').firstMatch(value.trim());
     if (match == null || int.parse(match.group(1)!) != expectedStart) {
       throw const UpdateDownloadException('Invalid resume Content-Range');
     }

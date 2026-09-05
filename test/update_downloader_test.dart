@@ -139,6 +139,54 @@ void main() {
     expect(downloaded.readAsBytesSync(), [1, 2, 3]);
   });
 
+  test('206 with an unknown total length still resumes', () async {
+    // RFC 9110 允许总长度未知时写 `*`,CDN 分片回源时常这么回。
+    final partial = File(
+      '${temp.path}${Platform.pathSeparator}$_cacheName.download',
+    )..writeAsBytesSync([1, 2]);
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        expect(_rangeHeader(options), 'bytes=2-');
+        return ResponseBody.fromBytes(
+          [3],
+          206,
+          headers: {
+            Headers.contentLengthHeader: ['1'],
+            'content-range': ['bytes 2-2/*'],
+          },
+        );
+      });
+
+    final downloaded = await UpdateDownloader(
+      dio: dio,
+      cacheDirectory: temp,
+    ).download(_asset());
+
+    expect(partial.existsSync(), isFalse);
+    expect(downloaded.readAsBytesSync(), [1, 2, 3]);
+  });
+
+  test('206 whose Content-Range starts elsewhere is still rejected', () async {
+    File('${temp.path}${Platform.pathSeparator}$_cacheName.download')
+        .writeAsBytesSync([1, 2]);
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        return ResponseBody.fromBytes(
+          [2, 3],
+          206,
+          headers: {
+            Headers.contentLengthHeader: ['2'],
+            'content-range': ['bytes 1-2/*'],
+          },
+        );
+      });
+
+    await expectLater(
+      UpdateDownloader(dio: dio, cacheDirectory: temp).download(_asset()),
+      throwsA(isA<UpdateDownloadException>()),
+    );
+  });
+
   test('200 response to a resume attempt truncates and restarts', () async {
     File('${temp.path}${Platform.pathSeparator}$_cacheName.download')
         .writeAsBytesSync([9, 9]);
