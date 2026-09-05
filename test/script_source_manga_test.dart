@@ -48,15 +48,97 @@ void main() {
       expect(engine.disposeCount, 1);
     });
   });
+
+  /// 回归 E5:JS 里没有 int/String 之分,源脚本把 `id` 写成数字、`index` 写成
+  /// 字符串都很常见。旧代码用裸 `as int` / `as String`,一条记录类型不对就以
+  /// 一句看不出字段名的 TypeError 崩掉整章 / 整页搜索结果。
+  group('loose script values', () {
+    ScriptSource sourceWith(Map<String, String> handlers) => ScriptSource(
+          engine: _FakeEngine(handlers: handlers),
+          http: _EchoHttp(),
+          scriptCode: 'var __source = {};',
+        );
+
+    test('a numeric page index and a numeric id still parse', () async {
+      final source = sourceWith({
+        'handleChapter': '[{"index":"1","url":"https://e.test/b.png"},'
+            '{"index":0,"url":"https://e.test/a.png"}]',
+      });
+      final pages = await source.getPages('m', 'c');
+      expect(pages.map((p) => p.index), [0, 1]);
+      expect(pages.first.url, 'https://e.test/a.png');
+      source.dispose();
+    });
+
+    test('a numeric manga id becomes a string', () async {
+      final source = sourceWith({
+        'handleSearch': '[{"id":12345,"title":"数字 id","updatedAt":"1700000000"}]',
+      });
+      final page = await source.getSearch('q', 1);
+      expect(page.items.single.id, '12345');
+      expect(page.items.single.updatedAt, 1700000000);
+      source.dispose();
+    });
+
+    test('a numeric chapter id and a string chapter number parse', () async {
+      final source = sourceWith({
+        'handleChapterList': '[{"id":7,"name":"第7话","number":"7.5"}]',
+      });
+      final page = await source.getChapters('m');
+      expect(page.items.single.id, '7');
+      expect(page.items.single.number, 7.5);
+      source.dispose();
+    });
+
+    test('non-string entries in authors are coerced, not fatal', () async {
+      final source = sourceWith({
+        'handleSearch': '[{"id":"a","title":"t","authors":["甲",2,null]}]',
+      });
+      final page = await source.getSearch('q', 1);
+      expect(page.items.single.authors, ['甲', '2']);
+      source.dispose();
+    });
+
+    test('a missing required field names the field it could not read',
+        () async {
+      final source = sourceWith({
+        'handleChapter': '[{"url":"https://e.test/a.png"}]',
+      });
+      await expectLater(
+        source.getPages('m', 'c'),
+        throwsA(isA<FormatException>()
+            .having((e) => e.message, 'message', contains('index'))),
+      );
+      source.dispose();
+    });
+
+    test('a record that is not an object is reported, not a TypeError',
+        () async {
+      final source = sourceWith({'handleSearch': '["not an object"]'});
+      await expectLater(
+        source.getSearch('q', 1),
+        throwsA(isA<FormatException>()),
+      );
+      source.dispose();
+    });
+  });
 }
 
-/// 不碰原生 QuickJS 的假引擎:只回答 [ScriptSource] 构造期问的那几个 eval。
+/// 不碰原生 QuickJS 的假引擎:按 `__source.<fn>` 的函数名回放事先写好的 JSON,
+/// 于是 prepare→fetch→handle 的整条链路可以在纯 Dart 单测里跑完。
 class _FakeEngine implements JsEngine {
-  _FakeEngine({this.failOn, this.metaJson = '{"id":"fake","name":"Fake"}'});
+  _FakeEngine({
+    this.failOn,
+    this.metaJson = '{"id":"fake","name":"Fake"}',
+    Map<String, String>? handlers,
+  }) : handlers = handlers ?? const {};
 
   /// eval 到含这段文本的代码就抛(模拟脚本语法错 / 运行时抛出)。
   final String? failOn;
   final String metaJson;
+
+  /// `handleXxx` / `prepareXxx` → 该调用返回的 JSON 文本。
+  final Map<String, String> handlers;
   int disposeCount = 0;
 
   @override
@@ -68,6 +150,13 @@ class _FakeEngine implements JsEngine {
     if (code.contains('__source.meta')) return metaJson;
     if (code.contains('__source.filters')) return 'null';
     if (code.contains('__source.sections')) return 'null';
+    for (final entry in handlers.entries) {
+      if (code.contains('__source.${entry.key}(')) return entry.value;
+    }
+    // 没显式给的 prepare* 一律回一个最小请求描述,好让 _run 走到 handle*。
+    if (code.contains('__source.prepare')) {
+      return '{"url":"https://example.test/"}';
+    }
     return '';
   }
 
@@ -90,4 +179,11 @@ class _NoHttp implements HttpService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// 每次请求都回同一段(空)响应体 —— 解析结果全由假引擎的 handler 决定。
+class _EchoHttp implements HttpService {
+  @override
+  Future<HostResponse> fetch(HostRequest request) async =>
+      const HostResponse(status: 200, headers: {}, body: '');
 }

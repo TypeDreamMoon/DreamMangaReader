@@ -14,6 +14,77 @@ import 'lz_host.dart';
 
 const int maxSourceContinuationRequests = 500;
 
+/// 脚本返回值的宽松取值 helper。
+///
+/// 源脚本是**用户可安装的外部代码**,JS 里没有 int/String 之分:`id` 常常是数字、
+/// `index` 常常是字符串。裸 `as int` / `as String` 会在解析中途以一句看不出字段名的
+/// TypeError 崩掉整章。这里统一做数字/字符串互转,取不到就抛**带字段名**的
+/// [FormatException] —— 与 `getNovelDocument` 的守卫风格一致,能被上层错误处理接住。
+@visibleForTesting
+class ScriptValues {
+  const ScriptValues._();
+
+  /// 必填字符串:数字/布尔按其字面量转,缺失或空对象抛。
+  static String requireString(Map<String, dynamic> m, String field) {
+    final v = optionalString(m, field);
+    if (v == null) {
+      throw FormatException('源返回值缺少字符串字段 `$field`(实际:${_desc(m[field])})');
+    }
+    return v;
+  }
+
+  /// 可选字符串:缺失 / null / 无法表示成标量时给 null。
+  static String? optionalString(Map<String, dynamic> m, String field) {
+    final v = m[field];
+    if (v == null) return null;
+    if (v is String) return v;
+    if (v is num || v is bool) return '$v';
+    return null;
+  }
+
+  /// 必填整数:字符串按十进制解析(`"12"` / `"12.0"` 都认),不成抛。
+  static int requireInt(Map<String, dynamic> m, String field) {
+    final v = optionalInt(m, field);
+    if (v == null) {
+      throw FormatException('源返回值缺少整数字段 `$field`(实际:${_desc(m[field])})');
+    }
+    return v;
+  }
+
+  static int? optionalInt(Map<String, dynamic> m, String field) =>
+      optionalDouble(m, field)?.toInt();
+
+  static double? optionalDouble(Map<String, dynamic> m, String field) {
+    final v = m[field];
+    if (v == null) return null;
+    if (v is num) return v.isFinite ? v.toDouble() : null;
+    if (v is String) return double.tryParse(v.trim());
+    return null;
+  }
+
+  /// 字符串数组:整条缺失给空表;逐项宽松转换,转不动的项跳过而不是整条报废。
+  static List<String> stringList(Map<String, dynamic> m, String field) {
+    final v = m[field];
+    if (v is! List) return const [];
+    return [
+      for (final e in v)
+        if (e is String)
+          e
+        else if (e is num || e is bool)
+          '$e',
+    ];
+  }
+
+  /// 头表:键值一律 toString;整条缺失给 null(与「不带额外头」区分开)。
+  static Map<String, String>? headers(Map<String, dynamic> m, String field) {
+    final v = m[field];
+    if (v is! Map) return null;
+    return v.map((key, value) => MapEntry(key.toString(), value.toString()));
+  }
+
+  static String _desc(Object? v) => v == null ? 'null' : '${v.runtimeType} $v';
+}
+
 /// 用一段 JS 脚本(实现 `prepare*/handle*` 契约)+ 宿主编排,落地一个 [MangaSource]。
 ///
 /// 核心思想:**宿主拥有全部 I/O**。
@@ -327,7 +398,7 @@ class ScriptSource implements MangaSource, NovelSource {
         'prepareMangaInfo',
         [novelId],
         'handleMangaInfo',
-        (j) => _toNovel((j as Map).cast<String, dynamic>()),
+        (j) => _toNovel(_asMap(j, 'novel')),
       );
 
   @override
@@ -337,8 +408,7 @@ class ScriptSource implements MangaSource, NovelSource {
         [novelId, page ?? 1],
         'handleChapterList',
         (j) => Paged([
-          for (final m in (j as List).cast<Map<String, dynamic>>())
-            _toNovelChapter(m),
+          for (final m in _asMapList(j, 'novel chapter')) _toNovelChapter(m),
         ]),
       );
 
@@ -352,7 +422,7 @@ class ScriptSource implements MangaSource, NovelSource {
         [novelId, chapterId],
         'handleChapter',
         (json) {
-          final map = (json as Map).cast<String, dynamic>();
+          final map = _asMap(json, 'novel chapter');
           // 源脚本是用户可安装的,畸形返回值要走已有的错误处理，
           // 而不是以裸 TypeError 崩掉。
           final content = map['content'];
@@ -376,7 +446,7 @@ class ScriptSource implements MangaSource, NovelSource {
         'prepareMangaInfo',
         [mangaId],
         'handleMangaInfo',
-        (j) => _toManga((j as Map).cast<String, dynamic>()),
+        (j) => _toManga(_asMap(j, 'manga')),
       );
 
   @override
@@ -389,7 +459,7 @@ class ScriptSource implements MangaSource, NovelSource {
     final seen = <String>{};
     final chapters = <Chapter>[];
     for (final value in values) {
-      final chapter = _toChapter((value as Map).cast<String, dynamic>());
+      final chapter = _toChapter(_asMap(value, 'chapter'));
       if (seen.add(chapter.id)) chapters.add(chapter);
     }
     return Paged(chapters);
@@ -404,13 +474,12 @@ class ScriptSource implements MangaSource, NovelSource {
     );
     final pagesByIndex = <int, PageImage>{};
     for (final value in values) {
-      final map = (value as Map).cast<String, dynamic>();
+      final map = _asMap(value, 'page');
       final page = PageImage(
-        index: map['index'] as int,
-        url: map['url'] as String,
+        index: ScriptValues.requireInt(map, 'index'),
+        url: ScriptValues.requireString(map, 'url'),
         // 每图可带 Referer/UA(防盗链);与 VideoTrack 一致,源脚本可选返回。
-        headers: (map['headers'] as Map?)
-            ?.map((key, value) => MapEntry(key.toString(), value.toString())),
+        headers: ScriptValues.headers(map, 'headers'),
       );
       pagesByIndex.putIfAbsent(page.index, () => page);
     }
@@ -425,16 +494,17 @@ class ScriptSource implements MangaSource, NovelSource {
         [animeId, episodeId],
         'handleVideo',
         (j) => [
-          for (final m in (j as List).cast<Map<String, dynamic>>())
-            VideoTrack(
-              url: m['url'] as String,
-              quality: (m['quality'] as String?) ?? '',
-              headers: (m['headers'] as Map?)
-                  ?.map((k, v) => MapEntry(k.toString(), v.toString())),
-              hls:
-                  (m['hls'] as bool?) ?? (m['url'] as String).contains('.m3u8'),
-              subtitles: decodeSubtitles(m['subtitles']),
-            ),
+          for (final m in _asMapList(j, 'video track'))
+            () {
+              final url = ScriptValues.requireString(m, 'url');
+              return VideoTrack(
+                url: url,
+                quality: ScriptValues.optionalString(m, 'quality') ?? '',
+                headers: ScriptValues.headers(m, 'headers'),
+                hls: (m['hls'] as bool?) ?? url.contains('.m3u8'),
+                subtitles: decodeSubtitles(m['subtitles']),
+              );
+            }(),
         ],
       );
 
@@ -442,15 +512,18 @@ class ScriptSource implements MangaSource, NovelSource {
   @visibleForTesting
   static List<SubtitleAsset> decodeSubtitles(Object? raw) {
     if (raw is! List) return const [];
-    return [
-      for (final s in raw.whereType<Map>())
-        if ((s['url'] as String?)?.isNotEmpty ?? false)
-          SubtitleAsset(
-            url: s['url'] as String,
-            label: (s['label'] as String?) ?? '',
-            language: s['language'] as String?,
-          ),
-    ];
+    final assets = <SubtitleAsset>[];
+    for (final entry in raw.whereType<Map>()) {
+      final s = entry.cast<String, dynamic>();
+      final url = ScriptValues.optionalString(s, 'url');
+      if (url == null || url.isEmpty) continue;
+      assets.add(SubtitleAsset(
+        url: url,
+        label: ScriptValues.optionalString(s, 'label') ?? '',
+        language: ScriptValues.optionalString(s, 'language'),
+      ));
+    }
+    return assets;
   }
 
   @override
@@ -471,22 +544,39 @@ class ScriptSource implements MangaSource, NovelSource {
   @override
   void dispose() => _js.dispose();
 
+  /// 脚本返回的一条记录必须是对象;不是就抛带上下文的 [FormatException]。
+  static Map<String, dynamic> _asMap(Object? value, String what) {
+    if (value is! Map) {
+      throw FormatException(
+          '源返回的 $what 不是对象(实际:${ScriptValues._desc(value)})');
+    }
+    return value.cast<String, dynamic>();
+  }
+
+  static List<Map<String, dynamic>> _asMapList(Object? value, String what) {
+    if (value is! List) {
+      throw FormatException(
+          '源返回的 $what 不是数组(实际:${ScriptValues._desc(value)})');
+    }
+    return [for (final e in value) _asMap(e, what)];
+  }
+
   List<Manga> _mangaList(Object? j) =>
-      [for (final m in (j as List).cast<Map<String, dynamic>>()) _toManga(m)];
+      [for (final m in _asMapList(j, 'manga')) _toManga(m)];
 
   List<Novel> _novelList(Object? j) =>
-      [for (final m in (j as List).cast<Map<String, dynamic>>()) _toNovel(m)];
+      [for (final m in _asMapList(j, 'novel')) _toNovel(m)];
 
   Manga _toManga(Map<String, dynamic> m) => Manga(
-        id: m['id'] as String,
-        title: (m['title'] as String?) ?? '',
-        url: m['url'] as String?,
-        cover: m['cover'] as String?,
-        authors: (m['authors'] as List?)?.cast<String>() ?? const [],
-        genres: (m['genres'] as List?)?.cast<String>() ?? const [],
-        description: m['description'] as String?,
-        status: _parseStatus(m['status'] as String?),
-        updatedAt: (m['updatedAt'] as num?)?.toInt(),
+        id: ScriptValues.requireString(m, 'id'),
+        title: ScriptValues.optionalString(m, 'title') ?? '',
+        url: ScriptValues.optionalString(m, 'url'),
+        cover: ScriptValues.optionalString(m, 'cover'),
+        authors: ScriptValues.stringList(m, 'authors'),
+        genres: ScriptValues.stringList(m, 'genres'),
+        description: ScriptValues.optionalString(m, 'description'),
+        status: _parseStatus(ScriptValues.optionalString(m, 'status')),
+        updatedAt: ScriptValues.optionalInt(m, 'updatedAt'),
       );
 
   MangaStatus _parseStatus(String? s) {
@@ -505,15 +595,15 @@ class ScriptSource implements MangaSource, NovelSource {
   }
 
   Novel _toNovel(Map<String, dynamic> m) => Novel(
-        id: m['id'] as String,
-        title: (m['title'] as String?) ?? '',
-        url: m['url'] as String?,
-        cover: m['cover'] as String?,
-        authors: (m['authors'] as List?)?.cast<String>() ?? const [],
-        genres: (m['genres'] as List?)?.cast<String>() ?? const [],
-        description: m['description'] as String?,
-        status: _parseNovelStatus(m['status'] as String?),
-        updatedAt: (m['updatedAt'] as num?)?.toInt(),
+        id: ScriptValues.requireString(m, 'id'),
+        title: ScriptValues.optionalString(m, 'title') ?? '',
+        url: ScriptValues.optionalString(m, 'url'),
+        cover: ScriptValues.optionalString(m, 'cover'),
+        authors: ScriptValues.stringList(m, 'authors'),
+        genres: ScriptValues.stringList(m, 'genres'),
+        description: ScriptValues.optionalString(m, 'description'),
+        status: _parseNovelStatus(ScriptValues.optionalString(m, 'status')),
+        updatedAt: ScriptValues.optionalInt(m, 'updatedAt'),
       );
 
   NovelStatus _parseNovelStatus(String? s) {
@@ -532,20 +622,22 @@ class ScriptSource implements MangaSource, NovelSource {
   }
 
   NovelChapter _toNovelChapter(Map<String, dynamic> m) => NovelChapter(
-        id: m['id'] as String,
-        title: (m['title'] as String?) ?? (m['name'] as String?) ?? '',
-        number: (m['number'] as num?)?.toDouble(),
-        publishedAt: (m['publishedAt'] as num?)?.toInt(),
-        volumeId: m['volumeId'] as String?,
-        volumeTitle: m['volumeTitle'] as String?,
-        epubAnchor: m['epubAnchor'] as String?,
+        id: ScriptValues.requireString(m, 'id'),
+        title: ScriptValues.optionalString(m, 'title') ??
+            ScriptValues.optionalString(m, 'name') ??
+            '',
+        number: ScriptValues.optionalDouble(m, 'number'),
+        publishedAt: ScriptValues.optionalInt(m, 'publishedAt'),
+        volumeId: ScriptValues.optionalString(m, 'volumeId'),
+        volumeTitle: ScriptValues.optionalString(m, 'volumeTitle'),
+        epubAnchor: ScriptValues.optionalString(m, 'epubAnchor'),
       );
 
   Chapter _toChapter(Map<String, dynamic> m) => Chapter(
-        id: m['id'] as String,
-        name: (m['name'] as String?) ?? '',
-        url: m['url'] as String?,
-        number: (m['number'] as num?)?.toDouble(),
-        publishedAt: (m['publishedAt'] as num?)?.toInt(),
+        id: ScriptValues.requireString(m, 'id'),
+        name: ScriptValues.optionalString(m, 'name') ?? '',
+        url: ScriptValues.optionalString(m, 'url'),
+        number: ScriptValues.optionalDouble(m, 'number'),
+        publishedAt: ScriptValues.optionalInt(m, 'publishedAt'),
       );
 }
