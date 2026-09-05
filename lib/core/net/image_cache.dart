@@ -4,6 +4,7 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../log/app_log.dart';
+import 'url_redaction.dart';
 
 /// 全 App 共用的图片磁盘缓存管理器(封面 + 章节页共用)。
 ///
@@ -23,7 +24,10 @@ final CacheManager appImageCache = CacheManager(
 );
 
 /// 图片拉取加一层运行日志(排查「封面加载不出来」):非 2xx 记警告、连不上/超时
-/// 记错误,带完整 URL 和 Referer;成功不记(封面+章节图量大,会刷屏)。
+/// 记错误,带**脱敏后**的 URL 和 Referer;成功不记(封面+章节图量大,会刷屏)。
+///
+/// 图源地址常带防盗链签名(`token`/`sign`/`X-Amz-Signature`…),Referer 也可能带;
+/// 日志页能整份复制发出去,所以两者都得先过 [redactUrlCredentials]。
 class _LoggingImageService extends HttpFileService {
   @override
   Future<FileServiceResponse> get(String url,
@@ -36,15 +40,23 @@ class _LoggingImageService extends HttpFileService {
       if ((code < 200 || code >= 300) && code != 304) {
         AppLog.i.warn(LogCat.network,
             'IMG ${shortUrl(url)} · $code · ${sw.elapsedMilliseconds}ms',
-            detail: '$url\nReferer: ${headers?['Referer'] ?? '(无)'}');
+            detail: _detail(url, headers));
       }
       return r;
     } catch (e) {
       AppLog.i.err(LogCat.network,
           'IMG ${shortUrl(url)} · 失败 · ${sw.elapsedMilliseconds}ms',
-          detail: '$url\nReferer: ${headers?['Referer'] ?? '(无)'}\n$e');
+          detail: '${_detail(url, headers)}\n${redactUrlCredentials('$e')}');
       rethrow;
     }
+  }
+
+  static String _detail(String url, Map<String, String>? headers) {
+    final referer = headers?['Referer'];
+    final shown = (referer == null || referer.isEmpty)
+        ? '(无)'
+        : redactUrlCredentials(referer);
+    return '${redactUrlCredentials(url)}\nReferer: $shown';
   }
 }
 
