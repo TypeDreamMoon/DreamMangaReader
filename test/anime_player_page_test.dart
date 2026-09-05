@@ -477,6 +477,90 @@ void main() {
     expect(tester.widget<InkWell>(row.first).onTap, isNull);
   });
 
+  // 安卓返回键该和桌面 Esc 一样一层层往外退,不该一按就把人踢出播放页。
+  testWidgets('the system back button peels one layer at a time',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () =>
+                  Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => AnimePlayerPage(
+                  meta: const SourceMeta(
+                    id: 'test-anime',
+                    name: 'Test Anime',
+                    script: '',
+                    kind: 'anime',
+                  ),
+                  animeId: 'anime-1',
+                  animeTitle: '测试番剧',
+                  episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+                  index: 0,
+                  dependencies: AnimePlayerDependencies(
+                    player: adapter,
+                    tracks: _PageFakeTracks(),
+                    loadTracks: (_) async => const [_track],
+                    videoBuilder: (_) => const ColoredBox(color: Colors.black),
+                  ),
+                ),
+              )),
+              child: const Text('打开播放页'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开播放页'));
+    await tester.pump();
+    // 开播前那颗转圈是永动的,得先让它进「已开播」再 pumpAndSettle。
+    await tester.pump(const Duration(seconds: 1));
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    // 抽屉开着:先收抽屉。
+    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('字幕'), findsOneWidget);
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('字幕'), findsNothing);
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+
+    // 快捷卡开着:先收卡片。
+    await tester.tap(find.text('倍速'));
+    await tester.pumpAndSettle();
+    expect(find.text('1.5x'), findsOneWidget);
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('1.5x'), findsNothing);
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+
+    // 锁上之后返回键和别的手势一样失效 —— 兜里蹭一下不该退出播放。
+    await tester.tap(find.byTooltip('锁定屏幕'));
+    await tester.pumpAndSettle();
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+    await tester.tap(find.byTooltip('解锁屏幕'));
+    await tester.pumpAndSettle();
+
+    // 都收干净了才真的离开。
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(AnimePlayerPage), findsNothing);
+    expect(find.text('打开播放页'), findsOneWidget);
+  });
+
   // 改倍速不该盖住半个画面:右下角那颗按钮弹的是一张贴着底栏的小卡片,
   // 不是把整块抽屉拉出来。
   testWidgets('the speed button opens a card, not the whole drawer',
@@ -1133,6 +1217,15 @@ void main() {
     expect(find.text('这一集没有字幕'), findsOneWidget);
   });
 }
+
+/// 安卓返回键:平台往框架发一条 popRoute,和真机上按下去走的是同一条路。
+Future<void> _pressSystemBack(WidgetTester tester) =>
+    tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'flutter/navigation',
+      const JSONMethodCodec()
+          .encodeMethodCall(const MethodCall('popRoute')),
+      (_) {},
+    );
 
 Widget _playerHost(
   _PageFakeAdapter adapter, {

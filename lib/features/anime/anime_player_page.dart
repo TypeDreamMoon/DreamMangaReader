@@ -960,18 +960,33 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.escape) {
-      // Esc 一层层往外退,不要一步踢出播放页:先收面板,再退全屏,最后才离开。
-      final scaffold = _scaffoldKey.currentState;
-      if (scaffold?.isEndDrawerOpen ?? false) {
-        scaffold!.closeEndDrawer();
-      } else if (playerWindowFullscreen.isOn) {
-        _toggleFullscreen();
-      } else {
-        Navigator.of(context).maybePop();
-      }
+      if (!_popOneLayer()) Navigator.of(context).maybePop();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  /// 「往外退一层」:先收抽屉,再收快捷卡,再退桌面全屏,都没有才轮到离开播放页。
+  /// 桌面 Esc 和安卓返回键共用它 —— 两边一步就把人踢出播放页都是同一种恼人。
+  /// 锁屏时一律吃掉:锁的就是「别再响应任何东西」。
+  ///
+  /// 返回 true = 这一层已经消化掉了这次返回,调用方不要再往外退。
+  bool _popOneLayer() {
+    if (_locked) return true;
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold?.isEndDrawerOpen ?? false) {
+      scaffold!.closeEndDrawer();
+      return true;
+    }
+    if (_quick != _QuickPanel.none) {
+      setState(() => _quick = _QuickPanel.none);
+      return true;
+    }
+    if (playerWindowFullscreen.isOn) {
+      _toggleFullscreen();
+      return true;
+    }
+    return false;
   }
 
   Future<void> _load() async {
@@ -1105,74 +1120,84 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: Colors.black,
-      endDrawer: _controlPanel(p),
-      // 抽屉会把焦点抢走,收回来时得还给播放页,否则开过一次面板之后快捷键就哑了。
-      onEndDrawerChanged: (opened) {
-        if (!opened && mounted) _focus.requestFocus();
+    // 安卓返回键和桌面 Esc 走同一套逐层退出:抽屉 → 快捷卡 → 全屏 → 离开。
+    // canPop 恒 false + 自己 pop:抽屉开没开不是 build 期能读到的状态,
+    // 拿它去算 canPop 只会算出一个过期的答案。
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _popOneLayer()) return;
+        Navigator.of(context).pop();
       },
-      // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
-      // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
-      body: Focus(
-        focusNode: _focus,
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: LayoutBuilder(
-          builder: (context, constraints) => Stack(
-            fit: StackFit.expand,
-            children: [
-              AnimePlaybackSurface(
-                state: _playback,
-                video: _videoLayer(),
-                onRetry: _load,
-              ),
-              Positioned.fill(
-                child: Listener(
-                  onPointerSignal: _onPointerSignal,
-                  // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
-                  // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
-                  // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
-                  // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _onSurfaceTap,
-                    onDoubleTap: _locked ? null : _togglePlay,
-                    onLongPressStart: (_) => _startBoost(),
-                    onLongPressEnd: (_) => _stopBoost(),
-                    onLongPressCancel: _stopBoost,
-                    onScaleStart: (details) =>
-                        _onScaleStart(details, constraints.maxWidth),
-                    onScaleUpdate: (details) => _onScaleUpdate(
-                        details, constraints.maxWidth, constraints.maxHeight),
-                    onScaleEnd: (_) => _onScaleEnd(),
-                  ),
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: Colors.black,
+        endDrawer: _controlPanel(p),
+        // 抽屉会把焦点抢走,收回来时得还给播放页,否则开过一次面板之后快捷键就哑了。
+        onEndDrawerChanged: (opened) {
+          if (!opened && mounted) _focus.requestFocus();
+        },
+        // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
+        // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
+        body: Focus(
+          focusNode: _focus,
+          autofocus: true,
+          onKeyEvent: _onKey,
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimePlaybackSurface(
+                  state: _playback,
+                  video: _videoLayer(),
+                  onRetry: _load,
                 ),
-              ),
-              _centreBadge(),
-              if (!_locked) ...[
-                _chrome(top: true, child: _topBar()),
-                _chrome(top: false, child: _bottomBar()),
-                _quickPanelSlot(),
-              ],
-              Positioned.fill(
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: AnimatedSlide(
-                    offset: _controlsVisible ? Offset.zero : const Offset(.25, 0),
-                    duration: _chromeMotion,
-                    curve: _chromeCurve,
-                    child: AnimatedOpacity(
-                      opacity: _controlsVisible ? 1 : 0,
-                      duration: _chromeMotion,
-                      curve: _chromeCurve,
-                      child: _sideTools(),
+                Positioned.fill(
+                  child: Listener(
+                    onPointerSignal: _onPointerSignal,
+                    // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
+                    // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
+                    // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
+                    // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _onSurfaceTap,
+                      onDoubleTap: _locked ? null : _togglePlay,
+                      onLongPressStart: (_) => _startBoost(),
+                      onLongPressEnd: (_) => _stopBoost(),
+                      onLongPressCancel: _stopBoost,
+                      onScaleStart: (details) =>
+                          _onScaleStart(details, constraints.maxWidth),
+                      onScaleUpdate: (details) => _onScaleUpdate(
+                          details, constraints.maxWidth, constraints.maxHeight),
+                      onScaleEnd: (_) => _onScaleEnd(),
                     ),
                   ),
                 ),
-              ),
-            ],
+                _centreBadge(),
+                if (!_locked) ...[
+                  _chrome(top: true, child: _topBar()),
+                  _chrome(top: false, child: _bottomBar()),
+                  _quickPanelSlot(),
+                ],
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: !_controlsVisible,
+                    child: AnimatedSlide(
+                      offset: _controlsVisible ? Offset.zero : const Offset(.25, 0),
+                      duration: _chromeMotion,
+                      curve: _chromeCurve,
+                      child: AnimatedOpacity(
+                        opacity: _controlsVisible ? 1 : 0,
+                        duration: _chromeMotion,
+                        curve: _chromeCurve,
+                        child: _sideTools(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
