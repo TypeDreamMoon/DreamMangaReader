@@ -89,6 +89,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   late NovelReaderBookData _readerData =
       NovelReaderBookData.empty(widget.libraryKey);
   final Map<String, NovelDocument> _loadedDocuments = {};
+
   /// 已经发过预取请求的章节 id,避免滚动时对同一章反复发请求。
   final Set<String> _warmedChapterIds = {};
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
@@ -1611,180 +1612,177 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       ),
       child: Scaffold(
         backgroundColor: Color(profile.backgroundArgb),
-        body: Focus(
-          focusNode: _focusNode,
-          autofocus: true,
-          onKeyEvent: _onKeyEvent,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              NovelReaderInput(
-                controller: _turnController,
-                blocked: _controlsPaused ||
-                    _selection != null ||
-                    _loading ||
-                    _error != null,
-                dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
-                singleHandNext: _preferences.singleHandNext,
-                onStateChanged: _onInputStateChanged,
-                onDecision: _onTurnDecision,
-                onDiscrete: _requestDiscrete,
-                onToggleControls: _toggleReaderControls,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _documentView(),
-                    if (_showTurnSurface)
-                      NovelPageTurnSurface(
-                        key: const Key('novel-page-turn-surface'),
-                        mode: _preferences.turnMode,
-                        state: _turnState,
-                        settlement: _settlement,
-                        previousFrame: _previousFrame,
-                        currentFrame: _currentFrame!,
-                        nextFrame: _nextFrame,
-                        pageBackColor: _themeColor(_preferences.theme),
-                        onCommitted: (direction) =>
-                            unawaited(_onSurfaceCommitted(direction)),
-                        onSettled: _onSurfaceSettled,
-                      ),
-                    if (_showNativeTurnSurface)
-                      NovelNativePageTurnSurface(
-                        pagination: nativeController!.pagination!,
-                        currentSpreadIndex: nativeController.spreadIndex,
-                        state: _turnState,
-                        settlement: _settlement,
-                        canvasColor: Color(
-                          blendNovelReaderArgb(
-                            profile.backgroundArgb,
-                            profile.foregroundArgb,
-                            .045,
-                          ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            NovelReaderInput(
+              controller: _turnController,
+              blocked: _controlsPaused ||
+                  _selection != null ||
+                  _loading ||
+                  _error != null,
+              dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
+              singleHandNext: _preferences.singleHandNext,
+              // 整页焦点交给 NovelReaderInput 内部那层 Focus:快捷键只对
+              // 「持焦点节点的祖先」生效,焦点留在外面时整页按键全部失效。
+              focusNode: _focusNode,
+              onKeyEvent: _onKeyEvent,
+              onStateChanged: _onInputStateChanged,
+              onDecision: _onTurnDecision,
+              onDiscrete: _requestDiscrete,
+              onToggleControls: _toggleReaderControls,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _documentView(),
+                  if (_showTurnSurface)
+                    NovelPageTurnSurface(
+                      key: const Key('novel-page-turn-surface'),
+                      mode: _preferences.turnMode,
+                      state: _turnState,
+                      settlement: _settlement,
+                      previousFrame: _previousFrame,
+                      currentFrame: _currentFrame!,
+                      nextFrame: _nextFrame,
+                      pageBackColor: _themeColor(_preferences.theme),
+                      onCommitted: (direction) =>
+                          unawaited(_onSurfaceCommitted(direction)),
+                      onSettled: _onSurfaceSettled,
+                    ),
+                  if (_showNativeTurnSurface)
+                    NovelNativePageTurnSurface(
+                      pagination: nativeController!.pagination!,
+                      currentSpreadIndex: nativeController.spreadIndex,
+                      state: _turnState,
+                      settlement: _settlement,
+                      canvasColor: Color(
+                        blendNovelReaderArgb(
+                          profile.backgroundArgb,
+                          profile.foregroundArgb,
+                          .045,
                         ),
-                        pageColor: Color(profile.backgroundArgb),
-                        textColor: Color(profile.foregroundArgb),
-                        previousPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex - 1),
-                        currentPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex),
-                        nextPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex + 1),
-                        onCommitted: (direction) =>
-                            unawaited(_onNativeSurfaceCommitted(direction)),
-                        onSettled: _onSurfaceSettled,
                       ),
-                  ],
-                ),
+                      pageColor: Color(profile.backgroundArgb),
+                      textColor: Color(profile.foregroundArgb),
+                      previousPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex - 1),
+                      currentPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex),
+                      nextPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex + 1),
+                      onCommitted: (direction) =>
+                          unawaited(_onNativeSurfaceCommitted(direction)),
+                      onSettled: _onSurfaceSettled,
+                    ),
+                ],
               ),
-              if (_loading && !_retainFrameWhileLoading)
-                const ColoredBox(
-                  color: Color(0x55000000),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              if (_retainFrameWhileLoading)
-                const SafeArea(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: SizedBox(
-                        key: Key('novel-reader-edge-loading'),
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
-                      ),
+            ),
+            if (_loading && !_retainFrameWhileLoading)
+              const ColoredBox(
+                color: Color(0x55000000),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_retainFrameWhileLoading)
+              const SafeArea(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: SizedBox(
+                      key: Key('novel-reader-edge-loading'),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
                     ),
                   ),
                 ),
-              if (_error != null)
-                ColoredBox(
-                  // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
-                  // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
-                  color: Colors.black.withValues(alpha: 0.86),
-                  child: AppErrorView(
-                    onDark: true,
-                    message: context.l10n.novel_readerLoadFailed('$_error'),
-                    onRetry: _loadChapter,
-                  ),
-                ),
-              NovelReaderStatusOverlay(
-                visible: !_showControls && !_loading && _error == null,
-                chapterTitle: _chapter.title,
-                currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
-                pageCount: _pageMetrics?.pageCount ?? 1,
-                bookProgress: _bookProgress,
-                now: _statusNow,
-                batteryLevel: _batteryLevel,
-                showChapterName: _preferences.showChapterName,
-                showPageNumber: _preferences.showPageNumber,
-                showBookProgress: _preferences.showBookProgress,
-                showTime: _preferences.showTime,
-                showBattery: _preferences.showBattery,
-                foregroundColor: Color(profile.foregroundArgb),
               ),
-              NovelReaderChrome(
-                visible: _showControls,
-                bookTitle: widget.novel.title,
-                chapterTitle: _chapter.title,
-                progress: _progressPreview ?? _bookProgress,
-                previewLabel: _progressLabel(context),
-                canPreviousChapter: _chapterIndex > 0,
-                canNextChapter: _chapterIndex < widget.chapters.length - 1,
-                onBack: () => unawaited(_exitReader()),
-                onBookmark: () => unawaited(_createBookmark()),
-                onMore: () => unawaited(
-                  _openReaderTools(NovelReaderToolsTab.bookmarks),
+            if (_error != null)
+              ColoredBox(
+                // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
+                // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
+                color: Colors.black.withValues(alpha: 0.86),
+                child: AppErrorView(
+                  onDark: true,
+                  message: context.l10n.novel_readerLoadFailed('$_error'),
+                  onRetry: _loadChapter,
                 ),
-                onPreviousChapter: () => unawaited(_jumpChapter(-1)),
-                onNextChapter: () => unawaited(_jumpChapter(1)),
-                onDirectory: () => unawaited(_openDirectory()),
-                onSearch: () => unawaited(_openSearch()),
-                onTheme: () => unawaited(_openTheme()),
-                onSettings: () => unawaited(_openSettings()),
-                onProgressChanged: _onProgressChanged,
-                onProgressChangeEnd: _onProgressChangeEnd,
-                onInteraction: _scheduleControlsHide,
-                backgroundColor: Color(profile.chromeArgb),
-                foregroundColor: Color(profile.chromeForegroundArgb),
               ),
-              if (_selection case final selection?)
-                Positioned.fill(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final rect = selection.rect;
-                      final left = rect == null
-                          ? (constraints.maxWidth - 208) / 2
-                          : rect.left.clamp(8, constraints.maxWidth - 216);
-                      final top = rect == null
-                          ? 72.0
-                          : (rect.top - 56)
-                              .clamp(8, constraints.maxHeight - 56);
-                      return Stack(
-                        children: [
-                          Positioned(
-                            left: left.toDouble(),
-                            top: top.toDouble(),
-                            child: NovelReaderSelectionBar(
-                              selection: selection,
-                              onCopy: () => unawaited(_copySelection()),
-                              onHighlight: () => unawaited(_createHighlight()),
-                              onNote: () =>
-                                  unawaited(_createNoteFromSelection()),
-                              onSearch: () => unawaited(
-                                _openSearch(initialQuery: selection.text),
-                              ),
-                              backgroundColor: Color(profile.chromeArgb),
-                              foregroundColor:
-                                  Color(profile.chromeForegroundArgb),
+            NovelReaderStatusOverlay(
+              visible: !_showControls && !_loading && _error == null,
+              chapterTitle: _chapter.title,
+              currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
+              pageCount: _pageMetrics?.pageCount ?? 1,
+              bookProgress: _bookProgress,
+              now: _statusNow,
+              batteryLevel: _batteryLevel,
+              showChapterName: _preferences.showChapterName,
+              showPageNumber: _preferences.showPageNumber,
+              showBookProgress: _preferences.showBookProgress,
+              showTime: _preferences.showTime,
+              showBattery: _preferences.showBattery,
+              foregroundColor: Color(profile.foregroundArgb),
+            ),
+            NovelReaderChrome(
+              visible: _showControls,
+              bookTitle: widget.novel.title,
+              chapterTitle: _chapter.title,
+              progress: _progressPreview ?? _bookProgress,
+              previewLabel: _progressLabel(context),
+              canPreviousChapter: _chapterIndex > 0,
+              canNextChapter: _chapterIndex < widget.chapters.length - 1,
+              onBack: () => unawaited(_exitReader()),
+              onBookmark: () => unawaited(_createBookmark()),
+              onMore: () => unawaited(
+                _openReaderTools(NovelReaderToolsTab.bookmarks),
+              ),
+              onPreviousChapter: () => unawaited(_jumpChapter(-1)),
+              onNextChapter: () => unawaited(_jumpChapter(1)),
+              onDirectory: () => unawaited(_openDirectory()),
+              onSearch: () => unawaited(_openSearch()),
+              onTheme: () => unawaited(_openTheme()),
+              onSettings: () => unawaited(_openSettings()),
+              onProgressChanged: _onProgressChanged,
+              onProgressChangeEnd: _onProgressChangeEnd,
+              onInteraction: _scheduleControlsHide,
+              backgroundColor: Color(profile.chromeArgb),
+              foregroundColor: Color(profile.chromeForegroundArgb),
+            ),
+            if (_selection case final selection?)
+              Positioned.fill(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final rect = selection.rect;
+                    final left = rect == null
+                        ? (constraints.maxWidth - 208) / 2
+                        : rect.left.clamp(8, constraints.maxWidth - 216);
+                    final top = rect == null
+                        ? 72.0
+                        : (rect.top - 56).clamp(8, constraints.maxHeight - 56);
+                    return Stack(
+                      children: [
+                        Positioned(
+                          left: left.toDouble(),
+                          top: top.toDouble(),
+                          child: NovelReaderSelectionBar(
+                            selection: selection,
+                            onCopy: () => unawaited(_copySelection()),
+                            onHighlight: () => unawaited(_createHighlight()),
+                            onNote: () => unawaited(_createNoteFromSelection()),
+                            onSearch: () => unawaited(
+                              _openSearch(initialQuery: selection.text),
                             ),
+                            backgroundColor: Color(profile.chromeArgb),
+                            foregroundColor:
+                                Color(profile.chromeForegroundArgb),
                           ),
-                        ],
-                      );
-                    },
-                  ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

@@ -18,6 +18,8 @@ class NovelReaderInput extends StatefulWidget {
     required this.onToggleControls,
     required this.child,
     this.dragEnabled = true,
+    this.focusNode,
+    this.onKeyEvent,
   });
 
   final NovelPageTurnController controller;
@@ -29,6 +31,14 @@ class NovelReaderInput extends StatefulWidget {
   final ValueChanged<NovelTurnDirection> onDiscrete;
   final VoidCallback onToggleControls;
   final Widget child;
+
+  /// 整页级焦点节点。快捷键是靠「持焦点的节点 → 祖先」这条链解析的,所以持焦点的
+  /// 节点必须待在本组件的 [Shortcuts] 里面 —— 放在外面(阅读页原来那样)会让方向键 /
+  /// PageUp / PageDown / 空格 / 回车全部落空。
+  final FocusNode? focusNode;
+
+  /// 交给同一个焦点节点处理的额外按键(如 Esc 收起工具栏)。
+  final FocusOnKeyEventCallback? onKeyEvent;
 
   @override
   State<NovelReaderInput> createState() => _NovelReaderInputState();
@@ -194,6 +204,8 @@ class _NovelReaderInputState extends State<NovelReaderInput> {
           ),
         },
         child: Focus(
+          focusNode: widget.focusNode,
+          onKeyEvent: widget.onKeyEvent,
           autofocus: true,
           child: Listener(
             behavior: HitTestBehavior.translucent,

@@ -1075,6 +1075,57 @@ void main() {
     );
   });
 
+  testWidgets('page level keyboard shortcuts reach the mounted reader',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      preferences: const NovelReaderPreferences(
+        turnMode: NovelPageTurnMode.cover,
+        toolbarAutoHideSeconds: 0,
+      ),
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(32, '键盘翻页正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    // 整页快捷键此前挂在 NovelReaderInput 内部,而焦点被阅读页外层的 Focus 抢走,
+    // 于是方向键 / 空格 / 回车对着整页全都没反应。
+    int page() => int.parse(
+          tester.getSemantics(find.byKey(const Key('novel-leaf-right'))).value,
+        );
+    final before = page();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    expect(page(), greaterThan(before));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+    await tester.pumpAndSettle();
+    expect(page(), greaterThan(before + 1));
+
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsOneWidget);
+
+    // Esc 仍然由同一个焦点节点收下,用来退出工具栏。
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
+  });
+
   testWidgets('dragging past the last page still crosses the chapter boundary',
       (tester) async {
     tester.view.devicePixelRatio = 1;
