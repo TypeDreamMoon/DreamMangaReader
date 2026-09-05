@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import '../log/app_log.dart';
 import 'download_task.dart';
 
 class ContentDownloadForegroundSnapshot {
@@ -122,9 +123,20 @@ class AndroidDownloadForegroundBridge {
     if (!enabled) return;
     if (!snapshot.active) {
       if (!_started) return;
-      await channel.invokeMethod<void>('stop');
-      _started = false;
-      _last = null;
+      try {
+        await channel.invokeMethod<void>('stop');
+      } on Object catch (error) {
+        // 不复位的话下一轮活跃会发 update 而不是 start,通知就永远卡在最后
+        // 一帧、再也停不下来 —— 所以停失败照样复位,只把原因记进日志。
+        AppLog.i.err(
+          LogCat.download,
+          '停止下载前台通知失败',
+          detail: '$error',
+        );
+      } finally {
+        _started = false;
+        _last = null;
+      }
       return;
     }
     if (_started && snapshot == _last) return;
