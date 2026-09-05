@@ -74,9 +74,11 @@ class EpubNovelImporter {
 
   Future<EpubNovelImportPreview> previewBytes(List<int> input) async {
     final bytes = Uint8List.fromList(input);
+    String? encryption;
     try {
       final archive = ZipDecoder().decodeBytes(bytes);
       EpubPreflight.validate(archive.files);
+      encryption = _encryptionManifest(archive);
     } catch (error) {
       if (error is FormatException) rethrow;
       throw FormatException('Invalid EPUB archive: $error');
@@ -163,6 +165,11 @@ class EpubNovelImporter {
     if (chapters.isEmpty) {
       throw const FormatException('EPUB has an empty readable spine');
     }
+    // 正文被加密 = 有 DRM,解不开,导进来也只是一堆读不了的章节。
+    if (encryption != null &&
+        chapterResources.values.any(_drmProtectedPaths(encryption).contains)) {
+      throw const LocalNovelException(LocalNovelError.epubDrmProtected);
+    }
 
     final title = (book.title ?? '').trim();
     final authors = book.authors
@@ -239,6 +246,64 @@ class EpubNovelImporter {
       rethrow;
     }
   }
+}
+
+/// EPUB 的加密清单。有它不等于有 DRM —— 字体混淆也写在这里。
+String? _encryptionManifest(Archive archive) {
+  for (final file in archive.files) {
+    if (!file.isFile) continue;
+    if (file.name.replaceAll('\\', '/').toLowerCase() !=
+        'meta-inf/encryption.xml') {
+      continue;
+    }
+    final content = file.content;
+    if (content is List<int>) {
+      return utf8.decode(content, allowMalformed: true);
+    }
+  }
+  return null;
+}
+
+final RegExp _encryptedDataPattern = RegExp(
+  r'<[a-zA-Z0-9_.\-]*:?EncryptedData\b[\s\S]*?'
+  r'</[a-zA-Z0-9_.\-]*:?EncryptedData\s*>',
+  caseSensitive: false,
+);
+final RegExp _algorithmPattern = RegExp(
+  r'Algorithm\s*=\s*["\x27]([^"\x27]+)["\x27]',
+  caseSensitive: false,
+);
+final RegExp _cipherReferencePattern = RegExp(
+  r'<[a-zA-Z0-9_.\-]*:?CipherReference[^>]*?'
+  r'URI\s*=\s*["\x27]([^"\x27]+)["\x27]',
+  caseSensitive: false,
+);
+
+/// 字体混淆用的两个算法。IDPF 和 Adobe 的字体打散不是 DRM,正文照样能读。
+const Set<String> _fontObfuscationAlgorithms = {
+  'http://www.idpf.org/2008/embedding',
+  'http://ns.adobe.com/pdf/enc#rc4sha1',
+};
+
+/// 加密清单里真正被锁住的资源路径(相对 zip 根,已规范化)。
+Set<String> _drmProtectedPaths(String manifest) {
+  final result = <String>{};
+  for (final match in _encryptedDataPattern.allMatches(manifest)) {
+    final block = match.group(0)!;
+    final algorithm = _algorithmPattern.firstMatch(block)?.group(1);
+    if (algorithm != null &&
+        _fontObfuscationAlgorithms.contains(algorithm.trim().toLowerCase())) {
+      continue;
+    }
+    final uri = _cipherReferencePattern.firstMatch(block)?.group(1);
+    if (uri == null || uri.isEmpty) continue;
+    try {
+      result.add(EpubPreflight.normalizeRelativePath(Uri.decodeFull(uri)));
+    } catch (_) {
+      // 路径都解不开的条目,轮不到它来决定这本书能不能读。
+    }
+  }
+  return result;
 }
 
 Future<EpubBook> _readBookCompat(Uint8List bytes) async {

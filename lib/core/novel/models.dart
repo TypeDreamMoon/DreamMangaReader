@@ -34,6 +34,7 @@ enum LocalNovelError {
   epubResourceMissing,
   epubResourcePathInvalid,
   epubResourceEscapesRoot,
+  epubDrmProtected,
   deletePathOutsideRoot,
 }
 

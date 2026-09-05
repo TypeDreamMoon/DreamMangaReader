@@ -814,6 +814,7 @@
   "novel_errorEpubResourceMissing": "The EPUB chapter file is missing",
   "novel_errorEpubResourcePath": "The EPUB resource path is invalid",
   "novel_errorEpubResourceEscape": "The EPUB resource points outside the private folder",
+  "novel_errorEpubDrm": "This EPUB is DRM protected and cannot be imported",
   "novel_errorDeleteOutsideRoot": "Refusing to delete outside the app's novel folder",
   "libraryUnifiedHistory": "History",
   "libraryMangaFavorites": "Manga favorites",

@@ -9,6 +9,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/novel/import/epub_novel_importer.dart';
 import '../../core/novel/import/txt_novel_importer.dart';
 import '../../core/novel/models.dart';
+import 'novel_library_view.dart' show localNovelErrorText;
 
 typedef NovelFilePicker = Future<File?> Function();
 typedef TxtPreviewLoader = Future<TxtNovelImportPreview> Function(
@@ -262,7 +263,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           const Icon(Icons.error_outline_rounded, size: 40),
           const SizedBox(height: 12),
           Text(
-            context.l10n.novel_parseFailed('$_error'),
+            context.l10n.novel_parseFailed(
+              localNovelErrorText(context, _error!),
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -344,7 +347,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(
-              context.l10n.novel_operationFailed('$_error'),
+              context.l10n.novel_operationFailed(
+                localNovelErrorText(context, _error!),
+              ),
               style: TextStyle(color: context.palette.statusFail),
             ),
           ],

@@ -52,6 +52,35 @@ void main() {
     expect(preview.title, isEmpty);
   });
 
+  test('a DRM protected EPUB is refused with an error code', () async {
+    final bytes = epub2Fixture(encryption: _encryptionXml(
+      algorithm: 'http://www.w3.org/2001/04/xmlenc#aes128-cbc',
+      target: 'OEBPS/Text/chapter1.xhtml',
+    ));
+
+    await expectLater(
+      importer.previewBytes(bytes),
+      throwsA(
+        isA<LocalNovelException>().having(
+          (error) => error.error,
+          'error',
+          LocalNovelError.epubDrmProtected,
+        ),
+      ),
+    );
+  });
+
+  test('font obfuscation is not treated as DRM', () async {
+    final bytes = epub2Fixture(encryption: _encryptionXml(
+      algorithm: 'http://www.idpf.org/2008/embedding',
+      target: 'OEBPS/Fonts/book.otf',
+    ));
+
+    final preview = await importer.previewBytes(bytes);
+
+    expect(preview.chapters, hasLength(2));
+  });
+
   test('preview protects hashed source and resource bytes from mutation',
       () async {
     final preview = await importer.previewBytes(epub2Fixture());
@@ -153,10 +182,22 @@ void main() {
   });
 }
 
+
+String _encryptionXml({required String algorithm, required String target}) {
+  return '''<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <enc:EncryptedData xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+    <enc:EncryptionMethod Algorithm="$algorithm" />
+    <enc:CipherData><enc:CipherReference URI="$target" /></enc:CipherData>
+  </enc:EncryptedData>
+</encryption>''';
+}
+
 Uint8List epub2Fixture({
   bool includeSpine = true,
   bool coverMetaUsesHref = false,
   bool includeTitle = true,
+  String? encryption,
 }) {
   final opf = '''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
@@ -189,6 +230,7 @@ Uint8List epub2Fixture({
     'OEBPS/Text/chapter2.xhtml': _xhtml('第二页'),
     'OEBPS/Text/chapter1.xhtml': _xhtml('第一页'),
     'META-INF/container.xml': _container,
+    if (encryption != null) 'META-INF/encryption.xml': encryption,
     'OEBPS/content.opf': opf,
     'OEBPS/toc.ncx': toc,
     'OEBPS/Images/cover.png': _onePixelPng,

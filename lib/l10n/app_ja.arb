@@ -814,6 +814,7 @@
   "novel_errorEpubResourceMissing": "EPUB の章ファイルがありません",
   "novel_errorEpubResourcePath": "EPUB のリソースパスが無効です",
   "novel_errorEpubResourceEscape": "EPUB のリソースが専用フォルダーの外を指しています",
+  "novel_errorEpubDrm": "この EPUB は DRM で保護されているため取り込めません",
   "novel_errorDeleteOutsideRoot": "アプリの小説フォルダー外は削除しません",
   "libraryUnifiedHistory": "履歴",
   "libraryMangaFavorites": "漫画のお気に入り",

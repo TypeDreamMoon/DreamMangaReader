@@ -814,6 +814,7 @@
   "novel_errorEpubResourceMissing": "EPUB 章節資源缺失",
   "novel_errorEpubResourcePath": "EPUB 資源路徑無效",
   "novel_errorEpubResourceEscape": "EPUB 資源越過私有目錄",
+  "novel_errorEpubDrm": "這本 EPUB 有 DRM 保護，無法匯入",
   "novel_errorDeleteOutsideRoot": "拒絕刪除 App 小說目錄之外的路徑",
   "libraryUnifiedHistory": "歷史記錄",
   "libraryMangaFavorites": "漫畫收藏",

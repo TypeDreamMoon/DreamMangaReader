@@ -459,6 +459,7 @@ String localNovelErrorText(BuildContext context, Object error) {
       l10n.novel_errorEpubResourcePath,
     LocalNovelError.epubResourceEscapesRoot =>
       l10n.novel_errorEpubResourceEscape,
+    LocalNovelError.epubDrmProtected => l10n.novel_errorEpubDrm,
     LocalNovelError.deletePathOutsideRoot => l10n.novel_errorDeleteOutsideRoot,
   };
 }
