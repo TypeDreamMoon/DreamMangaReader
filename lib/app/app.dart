@@ -9,7 +9,8 @@ import 'package:path_provider/path_provider.dart';
 import '../l10n/app_localizations.dart';
 import '../core/downloads/download_coordinator.dart';
 import '../core/downloads/android_download_foreground.dart';
-import '../core/downloads/download_policy.dart';
+import '../core/downloads/download_environment_platform.dart';
+import '../core/downloads/download_environment_provider.dart';
 import '../core/downloads/download_task_repository.dart';
 import '../core/library/update_checker.dart';
 import '../core/library/update_tracker.dart';
@@ -57,6 +58,8 @@ class _AppState extends State<App> {
   final NovelDownloadStore _novelDownloads = NovelDownloadStore();
   final AnimeDownloadStore _animeDownloads = AnimeDownloadStore();
   final DownloadSettings _downloadSettings = DownloadSettings();
+  final DownloadEnvironmentProvider _downloadEnvironment =
+      createDownloadEnvironmentProvider(storageRoot: _downloadManagerRoot);
   final AuthStore _auth = AuthStore();
   late final DownloadCoordinator _downloadCoordinator;
   late final bool _ownsDownloadCoordinator;
@@ -73,7 +76,7 @@ class _AppState extends State<App> {
           repository: FileDownloadTaskRepository(
             rootProvider: _downloadManagerRoot,
           ),
-          environment: _initialDownloadEnvironment,
+          environment: _downloadEnvironment.read,
           settings: () => _downloadSettings.policy,
         );
     unawaited(_loadDownloadState());
@@ -167,6 +170,9 @@ class _AppState extends State<App> {
     _downloadCoordinator.addListener(_syncAndroidDownloadForeground);
     _syncAndroidDownloadForeground();
     _downloadSettings.addListener(_reevaluateDownloads);
+    // 网络/电量/空间变了就重新评估策略 —— 在这之前只有启动和改设置会触发。
+    _downloadEnvironment.addListener(_reevaluateDownloads);
+    await _downloadEnvironment.start();
     await _downloadCoordinator.reevaluate();
   }
 
@@ -303,6 +309,8 @@ class _AppState extends State<App> {
     _novelDownloads.dispose();
     _animeDownloads.dispose();
     _downloadSettings.removeListener(_reevaluateDownloads);
+    _downloadEnvironment.removeListener(_reevaluateDownloads);
+    _downloadEnvironment.dispose();
     _downloadCoordinator.removeListener(_syncAndroidDownloadForeground);
     _downloadSettings.dispose();
     if (_ownsDownloadCoordinator) _downloadCoordinator.dispose();
@@ -314,16 +322,4 @@ class _AppState extends State<App> {
 Future<String> _downloadManagerRoot() async {
   final support = await getApplicationSupportDirectory();
   return '${support.path}${Platform.pathSeparator}download-manager';
-}
-
-Future<DownloadEnvironment> _initialDownloadEnvironment() async {
-  return const DownloadEnvironment(
-    connected: true,
-    wifi: true,
-    metered: false,
-    roaming: false,
-    batteryLow: false,
-    storageAvailable: true,
-    freeBytes: 0x3FFFFFFFFFFFFFFF,
-  );
 }

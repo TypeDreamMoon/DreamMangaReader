@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Build
 import android.view.KeyEvent
 import com.dreammoon.dream_manga_reader.downloads.ContentDownloadBridge
+import com.dreammoon.dream_manga_reader.downloads.DownloadEnvironmentBridge
 import com.dreammoon.dream_manga_reader.gallery.GalleryBridge
 import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
@@ -19,6 +20,7 @@ class MainActivity : FlutterActivity() {
     private var platformChannel: MethodChannel? = null
     private var updateBridge: UpdateDownloadBridge? = null
     private var contentDownloadBridge: ContentDownloadBridge? = null
+    private var downloadEnvironmentBridge: DownloadEnvironmentBridge? = null
     private var galleryBridge: GalleryBridge? = null
     private var volumeKeyPaging = false
 
@@ -48,6 +50,7 @@ class MainActivity : FlutterActivity() {
         }
         updateBridge = UpdateDownloadBridge(this).also { it.configure(flutterEngine) }
         contentDownloadBridge = ContentDownloadBridge(this).also { it.configure(flutterEngine) }
+        downloadEnvironmentBridge = DownloadEnvironmentBridge(this).also { it.configure(flutterEngine) }
         galleryBridge = GalleryBridge(this).also { it.configure(flutterEngine) }
     }
 
@@ -88,6 +91,8 @@ class MainActivity : FlutterActivity() {
         updateBridge = null
         contentDownloadBridge?.dispose()
         contentDownloadBridge = null
+        downloadEnvironmentBridge?.dispose()
+        downloadEnvironmentBridge = null
         galleryBridge?.dispose()
         galleryBridge = null
         super.onDestroy()
