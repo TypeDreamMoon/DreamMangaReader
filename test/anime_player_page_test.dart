@@ -614,6 +614,22 @@ void main() {
     expect(find.text('打开播放页'), findsOneWidget);
   });
 
+  // 播放页当栈底时(没有可退的路由)不能去 pop 栈底 —— 那会留下空白一屏。
+  testWidgets('back at the bottom of the stack leaves the route alone',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+  });
+
   // 改倍速不该盖住半个画面:右下角那颗按钮弹的是一张贴着底栏的小卡片,
   // 不是把整块抽屉拉出来。
   testWidgets('the speed button opens a card, not the whole drawer',

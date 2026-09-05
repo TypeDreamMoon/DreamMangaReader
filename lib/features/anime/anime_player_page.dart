@@ -1161,7 +1161,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || _popOneLayer()) return;
-        Navigator.of(context).pop();
+        final navigator = Navigator.of(context);
+        // canPop 为假 = 播放页就是栈底。那种情况下框架本来会把返回键交给系统去
+        // 收掉这个 activity;拦下之后得自己把这一步补上,不然 pop 栈底是空一屏。
+        if (navigator.canPop()) {
+          navigator.pop();
+        } else {
+          unawaited(SystemNavigator.pop());
+        }
       },
       child: Scaffold(
         key: _scaffoldKey,
