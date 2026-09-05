@@ -21,6 +21,36 @@ class NovelIdentity {
   final String key;
 }
 
+/// 本地书出错的原因码。core 层拿不到 BuildContext,也不该把中文写死进异常里 ——
+/// 这里只抛码,交给 UI 翻成读者的语言。
+enum LocalNovelError {
+  indexUnreadable,
+  indexUnknownOrigin,
+  indexMissingChapters,
+  noReadableChapters,
+  unknownChapter,
+  textOffsetInvalid,
+  textOffsetOutOfRange,
+  epubResourceMissing,
+  epubResourcePathInvalid,
+  epubResourceEscapesRoot,
+  deletePathOutsideRoot,
+}
+
+class LocalNovelException implements Exception {
+  const LocalNovelException(this.error, [this.detail]);
+
+  final LocalNovelError error;
+
+  /// 出问题的原始值(路径、章节 id)。只进日志,不进给用户看的文案。
+  final String? detail;
+
+  @override
+  String toString() => detail == null
+      ? 'LocalNovelException(${error.name})'
+      : 'LocalNovelException(${error.name}: $detail)';
+}
+
 class Novel {
   const Novel({
     required this.id,

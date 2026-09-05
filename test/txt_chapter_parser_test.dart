@@ -49,7 +49,8 @@ void main() {
   test('falls back to one chapter when confidence is insufficient', () {
     final result = TxtChapterParser.parse('没有目录的短篇正文。');
 
-    expect(result.chapters.single.title, '正文');
+    // 占位标题留空 —— 展示用的「正文」由 UI 按读者语言回填,不写进索引。
+    expect(result.chapters.single.title, '');
     expect(result.chapters.single.offset, 0);
     expect(result.chapters.single.contentOffset, 0);
     expect(

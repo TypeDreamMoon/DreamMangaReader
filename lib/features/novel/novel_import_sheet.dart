@@ -157,7 +157,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
       if (!mounted || generation != _generation) return;
       setState(() {
         _preview = preview;
-        _title.text = preview.title;
+        // 导入器不写死占位文案(它会进索引),空书名在这里按语言回填。
+        _title.text =
+            preview.title.isEmpty ? context.l10n.novel_unnamed : preview.title;
         _author.text = preview.authors.join('、');
         _loading = false;
       });

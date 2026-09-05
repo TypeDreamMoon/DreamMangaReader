@@ -174,7 +174,8 @@ class EpubNovelImporter {
 
     return EpubNovelImportPreview(
       sha256: sha256.convert(bytes).toString(),
-      title: title.isEmpty ? '未命名 EPUB' : title,
+      // 书名为空就留空:占位文案是给人看的,由 UI 按语言回填,别写死进索引。
+      title: title,
       authors: List.unmodifiable(authors),
       chapters: List.unmodifiable(chapters),
       hasCover: hasCover,

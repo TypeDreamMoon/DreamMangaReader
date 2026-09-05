@@ -37,34 +37,36 @@ class LocalNovelBook {
   static Future<LocalNovelBook> open(
     Directory directory, {
     String untitledTitle = 'Untitled novel',
+    String untitledChapterTitle = 'Untitled chapter',
   }) async {
     final indexFile = File(_join(directory.path, 'index.json'));
     final decoded = jsonDecode(await indexFile.readAsString(encoding: utf8));
     if (decoded is! Map) {
-      throw const FormatException('小说索引格式无效');
+      throw const LocalNovelException(LocalNovelError.indexUnreadable);
     }
     final index = decoded.cast<String, dynamic>();
     final origin = switch (index['origin']) {
       'localTxt' => NovelOrigin.localTxt,
       'localEpub' => NovelOrigin.localEpub,
-      _ => throw const FormatException('小说索引缺少有效格式'),
+      _ => throw const LocalNovelException(LocalNovelError.indexUnknownOrigin),
     };
     final chapterData = <String, Map<String, dynamic>>{};
     final chapters = <NovelChapter>[];
     final rawChapters = index['chapters'];
     if (rawChapters is! List) {
-      throw const FormatException('小说索引缺少章节目录');
+      throw const LocalNovelException(LocalNovelError.indexMissingChapters);
     }
     for (final value in rawChapters) {
       if (value is! Map) continue;
       final data = value.cast<String, dynamic>();
       final id = data['id'] as String?;
       final title = data['title'] as String?;
-      if (id == null || id.isEmpty || title == null || title.isEmpty) continue;
+      if (id == null || id.isEmpty || title == null) continue;
       chapterData[id] = data;
       chapters.add(NovelChapter(
         id: id,
-        title: title,
+        // 空标题是导入侧留的占位(整本只有一章),到这一层才知道读者用哪种语言。
+        title: title.isEmpty ? untitledChapterTitle : title,
         number: (data['number'] as num?)?.toDouble(),
         volumeId: data['volumeId'] as String?,
         volumeTitle: data['volumeTitle'] as String?,
@@ -72,7 +74,7 @@ class LocalNovelBook {
       ));
     }
     if (chapters.isEmpty) {
-      throw const FormatException('小说没有可读章节');
+      throw const LocalNovelException(LocalNovelError.noReadableChapters);
     }
     final title = (index['title'] as String? ?? '').trim();
     return LocalNovelBook._(
@@ -94,13 +96,13 @@ class LocalNovelBook {
   Future<NovelDocument> loadDocument(NovelChapter chapter) async {
     final data = _chapterData[chapter.id];
     if (data == null) {
-      throw ArgumentError.value(chapter.id, 'chapter', '章节不存在');
+      throw LocalNovelException(LocalNovelError.unknownChapter, chapter.id);
     }
     if (origin == NovelOrigin.localTxt) {
       final start = (data['contentOffset'] as num?)?.toInt();
       final end = (data['endOffset'] as num?)?.toInt();
       if (start == null || end == null || start < 0) {
-        throw const FormatException('TXT 章节偏移无效');
+        throw const LocalNovelException(LocalNovelError.textOffsetInvalid);
       }
       // 空章节(标题后面直接是下一条标题)不是坏索引,别把整本书堵死。
       // NovelDocument 不收空正文,退化成只有标题的一页。
@@ -114,7 +116,11 @@ class LocalNovelBook {
       final handle = await file.open();
       try {
         final length = await handle.length();
-        if (end > length) throw const FormatException('TXT 章节超出正文范围');
+        if (end > length) {
+          throw const LocalNovelException(
+            LocalNovelError.textOffsetOutOfRange,
+          );
+        }
         await handle.setPosition(start);
         final bytes = await handle.read(end - start);
         return NovelDocument(
@@ -128,7 +134,7 @@ class LocalNovelBook {
 
     final resource = data['resource'] as String?;
     if (resource == null || resource.isEmpty) {
-      throw const FormatException('EPUB 章节资源缺失');
+      throw const LocalNovelException(LocalNovelError.epubResourceMissing);
     }
     final root = Directory(_join(directory.path, 'resources'));
     final file = await _safeExistingFile(root, resource);
@@ -417,7 +423,13 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.novel_deleteFailed('$error'))),
+        SnackBar(
+          content: Text(
+            context.l10n.novel_deleteFailed(
+              localNovelErrorText(context, error),
+            ),
+          ),
+        ),
       );
     }
   }
@@ -427,6 +439,28 @@ class _NovelLibraryViewState extends State<NovelLibraryView> {
     _search.dispose();
     super.dispose();
   }
+}
+
+/// 把 core 层抛出来的错误码翻成读者的语言。core 认不得 BuildContext,
+/// 文案只能落在这一层;不是本地书的错误按原样显示。
+String localNovelErrorText(BuildContext context, Object error) {
+  if (error is! LocalNovelException) return '$error';
+  final l10n = context.l10n;
+  return switch (error.error) {
+    LocalNovelError.indexUnreadable => l10n.novel_errorIndexUnreadable,
+    LocalNovelError.indexUnknownOrigin => l10n.novel_errorIndexOrigin,
+    LocalNovelError.indexMissingChapters => l10n.novel_errorIndexChapters,
+    LocalNovelError.noReadableChapters => l10n.novel_errorNoChapters,
+    LocalNovelError.unknownChapter => l10n.novel_errorUnknownChapter,
+    LocalNovelError.textOffsetInvalid => l10n.novel_errorTextOffset,
+    LocalNovelError.textOffsetOutOfRange => l10n.novel_errorTextRange,
+    LocalNovelError.epubResourceMissing => l10n.novel_errorEpubResourceMissing,
+    LocalNovelError.epubResourcePathInvalid =>
+      l10n.novel_errorEpubResourcePath,
+    LocalNovelError.epubResourceEscapesRoot =>
+      l10n.novel_errorEpubResourceEscape,
+    LocalNovelError.deletePathOutsideRoot => l10n.novel_errorDeleteOutsideRoot,
+  };
 }
 
 Future<void> openNovelLibraryEntry(
@@ -441,6 +475,7 @@ Future<void> openNovelLibraryEntry(
       final book = await LocalNovelBook.open(
         Directory(path),
         untitledTitle: context.l10n.novel_unnamed,
+        untitledChapterTitle: context.l10n.novel_wholeText,
       );
       if (!context.mounted) return;
       final saved = NovelLibraryScope.read(context).progressFor(entry.key);
@@ -461,7 +496,11 @@ Future<void> openNovelLibraryEntry(
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.novel_openFailed('$error'))),
+        SnackBar(
+          content: Text(
+            context.l10n.novel_openFailed(localNovelErrorText(context, error)),
+          ),
+        ),
       );
     }
     return;
@@ -508,7 +547,10 @@ Future<void> deleteLocalNovelDirectory(
       ? rootPath
       : '$rootPath${Platform.pathSeparator}';
   if (targetResolved == rootPath || !targetResolved.startsWith(prefix)) {
-    throw FileSystemException('拒绝删除 App 小说目录之外的路径', targetPath);
+    throw LocalNovelException(
+      LocalNovelError.deletePathOutsideRoot,
+      targetPath,
+    );
   }
   await Directory(targetResolved).delete(recursive: true);
 }
@@ -516,7 +558,10 @@ Future<void> deleteLocalNovelDirectory(
 Future<File> _safeExistingFile(Directory root, String relativePath) async {
   final normalized = relativePath.replaceAll('\\', '/');
   if (normalized.startsWith('/') || normalized.split('/').contains('..')) {
-    throw FormatException('EPUB 资源路径无效：$relativePath');
+    throw LocalNovelException(
+      LocalNovelError.epubResourcePathInvalid,
+      relativePath,
+    );
   }
   final rootPath = await root.resolveSymbolicLinks();
   final candidate = File(
@@ -526,7 +571,10 @@ Future<File> _safeExistingFile(Directory root, String relativePath) async {
       ? rootPath
       : '$rootPath${Platform.pathSeparator}';
   if (!candidatePath.startsWith(prefix)) {
-    throw FormatException('EPUB 资源越过私有目录：$relativePath');
+    throw LocalNovelException(
+      LocalNovelError.epubResourceEscapesRoot,
+      relativePath,
+    );
   }
   return File(candidatePath);
 }

@@ -341,9 +341,10 @@ class TxtChapterParser {
       normalizedText: normalized,
       metadata: const TxtNovelMetadata(),
       chapters: [
+        // 标题留空 = 「整本就一章」的占位,展示时由 UI 用 l10n 回填。
         TxtParsedChapter(
           id: 'c1',
-          title: '正文',
+          title: '',
           offset: 0,
           contentOffset: 0,
           endOffset: totalBytes,

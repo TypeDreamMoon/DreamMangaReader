@@ -42,6 +42,16 @@ void main() {
     expect(await supportDirectory.exists(), isFalse);
   });
 
+  test('an untitled EPUB keeps an empty title instead of a baked-in label',
+      () async {
+    final preview = await importer.previewBytes(
+      epub2Fixture(includeTitle: false),
+    );
+
+    // 占位书名是给人看的,得按读者语言在 UI 回填,不能写死进索引。
+    expect(preview.title, isEmpty);
+  });
+
   test('preview protects hashed source and resource bytes from mutation',
       () async {
     final preview = await importer.previewBytes(epub2Fixture());
@@ -146,12 +156,13 @@ void main() {
 Uint8List epub2Fixture({
   bool includeSpine = true,
   bool coverMetaUsesHref = false,
+  bool includeTitle = true,
 }) {
   final opf = '''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">book-2</dc:identifier>
-    <dc:title>测试 EPUB 2</dc:title>
+    ${includeTitle ? '<dc:title>测试 EPUB 2</dc:title>' : ''}
     <dc:creator>作者甲</dc:creator>
     <dc:language>zh-CN</dc:language>
     <meta name="cover" content="${coverMetaUsesHref ? 'cover.png' : 'cover-image'}" />
