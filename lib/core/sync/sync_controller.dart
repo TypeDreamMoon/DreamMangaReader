@@ -9,6 +9,7 @@ import '../../app/novel_library_store.dart';
 import '../log/app_log.dart';
 import '../net/iam_auth.dart';
 import '../novel/reader/novel_reader_data_store.dart';
+import '../storage/secret_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import 'hertz_backend.dart';
@@ -30,7 +31,14 @@ class SyncController extends ChangeNotifier {
   // WebDAV
   static const _kUrl = 'sync.webdav.url';
   static const _kUser = 'sync.webdav.user';
-  static const _kPass = 'sync.webdav.pass';
+
+  /// 旧版本把 WebDAV 密码明文存在这个 SharedPreferences 键里(Windows 上就是
+  /// 一个谁都能打开的 JSON 文件)。现在只当**迁移来源**读一次,读到就搬进
+  /// [SecretStore] 并删掉。
+  static const _kLegacyPass = 'sync.webdav.pass';
+
+  /// WebDAV 密码在安全存储里的键。
+  static const _secretPass = 'sync.webdav.password';
   // 通用
   static const _kAuto = 'sync.auto';
   static const _kAutoUpFav =
@@ -93,7 +101,15 @@ class SyncController extends ChangeNotifier {
       : url.trim().isNotEmpty;
 
   SharedPreferences? _prefs;
+  SecretStore _secrets = const FlutterSecretStore();
   final NovelReaderDataStore _readerDataStore = NovelReaderDataStore.instance;
+
+  /// 测试注入用(单例没有构造参数可传);[preferences] 给 null 表示下次现取。
+  @visibleForTesting
+  void debugConfigure({SecretStore? secrets, SharedPreferences? preferences}) {
+    if (secrets != null) _secrets = secrets;
+    _prefs = preferences;
+  }
 
   Future<SharedPreferences> get _p async =>
       _prefs ??= await SharedPreferences.getInstance();
@@ -126,7 +142,14 @@ class SyncController extends ChangeNotifier {
     backendKind = p.getString(_kBackend) ?? 'webdav';
     url = p.getString(_kUrl) ?? '';
     username = p.getString(_kUser) ?? '';
-    password = p.getString(_kPass) ?? '';
+    // 密码走安全存储;旧版本的明文键读到就搬走并删掉(见 [_kLegacyPass])。
+    password = await readMigratingSecret(
+          secrets: _secrets,
+          preferences: p,
+          secureKey: _secretPass,
+          legacyKeys: const [_kLegacyPass],
+        ) ??
+        '';
     await _migrateOffCustomIam(p);
     auto = p.getBool(_kAuto) ?? false;
     // 旧配置只在首次升级时迁移 readerNotes；之后用户可独立关闭它。
@@ -478,9 +501,33 @@ class SyncController extends ChangeNotifier {
     final p = await _p;
     await p.setString(_kUrl, this.url);
     await p.setString(_kUser, this.username);
-    await p.setString(_kPass, this.password);
+    await _savePassword(p, this.password);
     await p.setBool(_kAuto, this.auto);
     notifyListeners();
+  }
+
+  /// 密码落到安全存储,并清掉旧的明文键。
+  ///
+  /// 安全存储偶尔整个不可用(部分 Linux 桌面没有 keyring、个别 Android ROM 的
+  /// keystore 坏了)。那种情况下宁可退回旧的明文键,也不要让用户的配置凭空消失
+  /// ——[readMigratingSecret] 会在安全存储恢复后的下一次启动把它搬走并删掉。
+  Future<void> _savePassword(SharedPreferences p, String value) async {
+    if (value.isEmpty) {
+      await _secrets.delete(_secretPass);
+      await p.remove(_kLegacyPass);
+      return;
+    }
+    try {
+      await writeVerifiedSecret(
+        secrets: _secrets,
+        key: _secretPass,
+        value: value,
+      );
+      await p.remove(_kLegacyPass);
+    } catch (e) {
+      await p.setString(_kLegacyPass, value);
+      AppLog.i.warn(LogCat.sync, 'WebDAV 密码写安全存储失败,暂存本地', detail: '$e');
+    }
   }
 
   /// 一次性迁移:把「Custom 自建 IAM」时代留下的地址存档清掉。
