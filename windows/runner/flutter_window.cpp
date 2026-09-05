@@ -1,5 +1,7 @@
 #include "flutter_window.h"
 
+#include <imm.h>
+
 #include <optional>
 
 #include <flutter/standard_method_codec.h>
@@ -185,25 +187,30 @@ void FlutterWindow::ShowFromTray() {
 
   // 前台锁:调用线程不是当前前台线程时 SetForegroundWindow 会被系统拒掉 ——
   // 窗口显示出来却没被激活,WM_ACTIVATE 不来,子视图也就拿不回焦点。
-  // 先把自己挂到前台线程的输入队列上再抢,是 Win32 上唯一稳的做法。
-  const HWND foreground = GetForegroundWindow();
-  const DWORD foreground_thread =
-      GetWindowThreadProcessId(foreground, nullptr);
-  const DWORD this_thread = GetCurrentThreadId();
-  const bool attached =
-      foreground_thread != 0 && foreground_thread != this_thread &&
-      AttachThreadInput(foreground_thread, this_thread, TRUE) != FALSE;
-  SetForegroundWindow(window);
-  SetActiveWindow(window);
-  if (attached) {
-    AttachThreadInput(foreground_thread, this_thread, FALSE);
+  //
+  // 以前这里把自己挂到前台线程的输入队列上再抢。前台是抢到了,但解挂的那一瞬间两个
+  // 线程的输入状态被拆开,刚随激活建立起来的 IME 输入上下文一起没了 —— 恢复之后
+  // 搜狗/微软拼音一个字也打不出来(issue #25)。
+  // 改用系统前台规则自己开的口子:还原一个自己最小化的窗口属于允许的前台迁移,
+  // 全程不碰任何线程的输入队列。
+  if (SetForegroundWindow(window) == FALSE) {
+    ShowWindow(window, SW_MINIMIZE);
+    ShowWindow(window, SW_RESTORE);
   }
+  SetActiveWindow(window);
 
   // 焦点必须回到 Flutter 视图本身,而不是外层框架窗口:给了框架,键盘输入和指针
   // 状态都留在 Flutter 之外。
   HWND content = FlutterViewWindow();
-  SetFocus(content != nullptr ? content : window);
-  RestoreCursor(content != nullptr ? content : window);
+  HWND target = content != nullptr ? content : window;
+  // SetFocus 对**已经**持有焦点的窗口是空操作,不会再发一次 WM_SETFOCUS,于是也就
+  // 没有 WM_IME_SETCONTEXT(TRUE) —— 输入法仍贴在隐藏期间失效的那个上下文上。先清空
+  // 焦点再设回去,强制走一次真实的焦点迁移。
+  SetFocus(nullptr);
+  SetFocus(target);
+  // 双保险:窗口隐藏 / 前台迁移期间输入上下文可能已被解绑,显式关联回默认上下文。
+  ImmAssociateContextEx(target, nullptr, IACE_DEFAULT);
+  RestoreCursor(target);
 }
 
 HWND FlutterWindow::FlutterViewWindow() const {
