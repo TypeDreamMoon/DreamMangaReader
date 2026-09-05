@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:hls/hls.dart';
 
 import '../../../core/source/models.dart';
@@ -11,6 +12,38 @@ typedef PlaylistFetcher = Future<String> Function(
   Map<String, String> headers,
 );
 typedef TrackRefresher = Future<List<VideoTrack>> Function();
+
+/// [PlaylistFetcher] 的 dio 实现,外加一条属于它自己的生命周期。
+///
+/// 取清单要的是「给个 URL 和一组 headers,还我一段文本」,和共享的 `HttpService`
+/// 那套 HostRequest/HostResponse 契约对不上,所以自带一个 dio。自带就要自己
+/// [close]:一个 dio 背后是一条 HttpClient 连接池,每开一次播放页漏一个,
+/// 看一晚上番就攒下几十条闲着的连接。
+class DioPlaylistClient {
+  DioPlaylistClient();
+
+  final Dio _dio = Dio();
+  bool _closed = false;
+
+  bool get isClosed => _closed;
+
+  Future<String> fetch(Uri uri, Map<String, String> headers) async {
+    final response = await _dio.get<String>(
+      uri.toString(),
+      options: Options(
+        headers: headers,
+        responseType: ResponseType.plain,
+      ),
+    );
+    return response.data ?? '';
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _dio.close(force: true);
+  }
+}
 
 class TrackResolver implements PlaybackTrackProvider {
   TrackResolver({

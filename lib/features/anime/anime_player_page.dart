@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -438,6 +437,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
   /// 和会话一起换掉。注入依赖的测试路径下这两个都是 null。
   MediaKitPlayerAdapter? _nativeAdapter;
   NativeMediaKitBackend? _nativeBackend;
+
+  /// 取 HLS 清单用的那条自带通道。它自己拿着一条连接池,退出播放页要关掉。
+  DioPlaylistClient? _playlist;
   bool _bootstrapped = false;
 
   /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
@@ -488,6 +490,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       unawaited(_nativePlayer?.dispose());
     }
     _source?.dispose();
+    _playlist?.close();
     unawaited(_library?.flushPending());
     super.dispose();
   }
@@ -508,7 +511,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       final cache = HlsCacheController.instance;
       await cache.initialize();
       if (_disposed) return;
-      final dio = Dio();
+      // 自带的取清单通道:开在这儿,dispose 时跟着关掉。
+      final playlist = DioPlaylistClient();
+      _playlist = playlist;
       Future<List<VideoTrack>> loadTracks(String episodeId) async {
         final source = _source ??= buildSource(widget.meta);
         return source.getVideo(widget.animeId, episodeId);
@@ -528,16 +533,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       }
 
       final resolver = TrackResolver(
-        fetchPlaylist: (uri, headers) async {
-          final response = await dio.get<String>(
-            uri.toString(),
-            options: Options(
-              headers: headers,
-              responseType: ResponseType.plain,
-            ),
-          );
-          return response.data ?? '';
-        },
+        fetchPlaylist: playlist.fetch,
         refreshTracks: () => loadTracks(_ep.id),
       );
       final backend = NativeMediaKitBackend(player, messages: _messages!);
