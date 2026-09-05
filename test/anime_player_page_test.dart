@@ -287,6 +287,48 @@ void main() {
     expect(retried, isTrue);
   });
 
+  testWidgets('leaving the player hands the window back out of fullscreen',
+      (tester) async {
+    final fullscreen = _FakeWindowFullscreen()..isOn = true;
+    playerWindowFullscreen = fullscreen;
+    addTearDown(() => playerWindowFullscreen = const PlayerWindowFullscreen());
+    final adapter = _PageFakeAdapter();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async => const [_track],
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+        index: 0,
+        dependencies: dependencies,
+      ),
+    ));
+    await tester.pump();
+    expect(fullscreen.exits, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(fullscreen.exits, 1);
+    expect(fullscreen.isOn, isFalse);
+  });
+
   testWidgets('page delegates opening and readiness to the session controller',
       (tester) async {
     final adapter = _PageFakeAdapter();
@@ -1210,4 +1252,24 @@ class _PageFakeTracks implements PlaybackTrackProvider {
       refreshed.firstOrNull;
   @override
   Future<List<VideoTrack>> refresh() async => const [_track];
+}
+
+class _FakeWindowFullscreen extends PlayerWindowFullscreen {
+  _FakeWindowFullscreen();
+
+  @override
+  bool isOn = false;
+  int exits = 0;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void toggle() => isOn = !isOn;
+
+  @override
+  void exit() {
+    exits++;
+    isOn = false;
+  }
 }

@@ -42,6 +42,28 @@ import 'playback/track_resolver.dart';
 /// 平时关闭(避免刷屏);排查番剧播放问题时置 true 复现即可。
 const bool kAvDiag = false;
 
+/// 播放页对「把窗口切成无边框全屏」的唯一入口。
+///
+/// 本身只是 [WindowFullscreen] 单例的一层转发。单独抽出来是为了能测:那套是
+/// Win32 调用,单测里既没有窗口也没有 `GetActiveWindow`,真身永远报「没在全屏」,
+/// 「退出播放页要把全屏还回去」这条就无从验证。
+class PlayerWindowFullscreen {
+  const PlayerWindowFullscreen();
+
+  /// 仅 Windows 有实现,别的平台隐藏全屏按钮。
+  bool get supported => WindowFullscreen.supported;
+
+  bool get isOn => WindowFullscreen.instance.isFullscreen;
+
+  void toggle() => WindowFullscreen.instance.toggle();
+
+  void exit() => WindowFullscreen.instance.exit();
+}
+
+/// 测试里换成假的即可。
+@visibleForTesting
+PlayerWindowFullscreen playerWindowFullscreen = const PlayerWindowFullscreen();
+
 class AnimePlaybackSurface extends StatelessWidget {
   const AnimePlaybackSurface({
     super.key,
@@ -417,6 +439,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _adjustTimer?.cancel();
     _focus.dispose();
     _exitImmersiveLandscape();
+    // 桌面全屏动的是**操作系统窗口**的样式和位置,是全局状态。播放页是唯一
+    // 会开它的地方,离开就得还回去 —— 否则整个 app 卡在一个没有标题栏、
+    // 也没有任何退出入口的无边框窗口里。
+    if (playerWindowFullscreen.isOn) playerWindowFullscreen.exit();
     // 亮度是「应用级」的,退出播放页要还回去,否则整个 app 都留在这个亮度上。
     if (_brightness != null) {
       unawaited(ScreenBrightnessPlatform.instance
@@ -870,8 +896,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   /// 路由」—— 那个路由里 controls 是 NoVideoControls,键盘监听又留在下面那层,
   /// 进去就没有任何退出的办法。这样切,本页的 chrome 全程都在。
   void _toggleFullscreen() {
-    if (!WindowFullscreen.supported) return;
-    setState(() => WindowFullscreen.instance.toggle());
+    if (!playerWindowFullscreen.supported) return;
+    setState(playerWindowFullscreen.toggle);
     _showControls();
   }
 
@@ -938,7 +964,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       final scaffold = _scaffoldKey.currentState;
       if (scaffold?.isEndDrawerOpen ?? false) {
         scaffold!.closeEndDrawer();
-      } else if (WindowFullscreen.instance.isFullscreen) {
+      } else if (playerWindowFullscreen.isOn) {
         _toggleFullscreen();
       } else {
         Navigator.of(context).maybePop();
@@ -1306,8 +1332,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               // 移动端的播放页本来就是沉浸式横屏、已经占满整屏,再给一个全屏键
               // 只会让人点了没反应 —— 干脆不显示。
               onFullscreen:
-                  WindowFullscreen.supported ? _toggleFullscreen : null,
-              fullscreen: WindowFullscreen.instance.isFullscreen,
+                  playerWindowFullscreen.supported ? _toggleFullscreen : null,
+              fullscreen: playerWindowFullscreen.isOn,
             ),
           ),
         ),
