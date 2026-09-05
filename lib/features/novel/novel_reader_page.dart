@@ -81,6 +81,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     with WidgetsBindingObserver {
   static int _wakeCount = 0;
 
+  /// 正文缓存保留的半径:当前章前后各这么多章。
+  static const int _documentCacheRadius = 2;
+
   late final NovelDocumentController _controller =
       widget.controller ?? NovelNativeDocumentController();
   late final NovelReaderDataStore _readerDataStore =
@@ -250,6 +253,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _warmedChapterIds
       ..clear()
       ..add(_chapter.id);
+    _trimLoadedDocuments();
     _turnController.cancel();
     final retainFrame = retainCurrentFrame && _currentFrame != null;
     if (mounted) {
@@ -408,10 +412,26 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     try {
       final document = await widget.loadDocument(chapter);
       _loadedDocuments[chapter.id] = document;
+      _trimLoadedDocuments();
       return document;
     } finally {
       _inFlightDocuments.remove(chapter.id);
     }
+  }
+
+  /// 正文缓存只留当前章 ±[_documentCacheRadius] 章。长篇一路读下去时,只增不删
+  /// 的缓存等于把整本书都攒在内存里。
+  void _trimLoadedDocuments() {
+    final keep = <String>{};
+    for (var offset = -_documentCacheRadius;
+        offset <= _documentCacheRadius;
+        offset++) {
+      final index = _chapterIndex + offset;
+      if (index >= 0 && index < widget.chapters.length) {
+        keep.add(widget.chapters[index].id);
+      }
+    }
+    _loadedDocuments.removeWhere((id, _) => !keep.contains(id));
   }
 
   void _onSelectionChanged(NovelSelection? selection) {

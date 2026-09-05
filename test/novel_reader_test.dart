@@ -546,6 +546,54 @@ void main() {
     expect(loaded, containsAllInOrder(['c1', 'c2']));
   });
 
+  testWidgets('chapter text cache keeps only the chapters around the reader',
+      (tester) async {
+    final requests = <String>[];
+    final controller = _FakeController();
+    final harness = await _readerHarness(
+      controller,
+      chapters: const [
+        NovelChapter(id: 'c1', title: '第一章'),
+        NovelChapter(id: 'c2', title: '第二章'),
+        NovelChapter(id: 'c3', title: '第三章'),
+        NovelChapter(id: 'c4', title: '第四章'),
+        NovelChapter(id: 'c5', title: '第五章'),
+      ],
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+      loadDocument: (chapter) async {
+        requests.add(chapter.id);
+        return NovelDocument(
+          format: NovelDocumentFormat.html,
+          content: '<p>${chapter.title}</p>',
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    Future<void> jump(String key) async {
+      controller.onCommand!(NovelReaderCommand.toggleControls);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pumpAndSettle();
+    }
+
+    for (var step = 0; step < 3; step++) {
+      await jump('novel-reader-next-chapter');
+    }
+    expect(requests, ['c1', 'c2', 'c3', 'c4']);
+
+    // ±2 之内的章还在缓存里,回头不用重拉。
+    await jump('novel-reader-previous-chapter');
+    await jump('novel-reader-previous-chapter');
+    expect(requests, ['c1', 'c2', 'c3', 'c4']);
+
+    // c1 早在读到 c4 时就被释放了 —— 老实现会一直攒着整本书。
+    await jump('novel-reader-previous-chapter');
+    expect(requests, ['c1', 'c2', 'c3', 'c4', 'c1']);
+  });
+
   testWidgets('a prefetched chapter is reused instead of fetched again',
       (tester) async {
     final requests = <String>[];
