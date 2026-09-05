@@ -177,6 +177,9 @@ class NovelPaginator {
 
     final pages = <NovelPageLayout>[];
     var builder = _PageBuilder(index: 0, contentHeight: contentHeight);
+    // 已经见过的「一片正文最多能装多少字」。探测窗口以它的 1.5 倍为上限，所以每页
+    // 的测量代价正比于这一页装得下的字数，而不是剩余全文的长度。
+    var observedCapacity = 0;
 
     void finishPage() {
       pages.add(builder.build());
@@ -256,14 +259,28 @@ class NovelPaginator {
           finishPage();
         }
         final availableHeight = builder.remainingHeight;
-        var count = _largestFittingCodeUnitCount(
-          source.substring(sourceOffset),
-          prefix: prefix,
-          width: contentWidth,
-          maxHeight: availableHeight,
-          style: textStyle,
-          align: _alignmentFor(block, style),
+        final remaining = source.length - sourceOffset;
+        // 只把「上一页容量 × 1.5」这一小段送去二分，装满了才翻倍重来。老实现把
+        // 剩余全文整段 substring 再从中点起二分 —— 每页都要给半章正文做一次
+        // layout，一章下来就是 O(N²)，20 万字改个字号足够卡出 ANR。
+        var window = math.min(
+          remaining,
+          math.max(_minimumProbeWindow, (observedCapacity * 3) ~/ 2),
         );
+        var count = 0;
+        while (true) {
+          count = _largestFittingCodeUnitCount(
+            source.substring(sourceOffset, sourceOffset + window),
+            prefix: prefix,
+            width: contentWidth,
+            maxHeight: availableHeight,
+            style: textStyle,
+            align: _alignmentFor(block, style),
+          );
+          if (count < window || window == remaining) break;
+          window = math.min(remaining, window * 2);
+        }
+        if (count > observedCapacity) observedCapacity = count;
         if (count == 0) {
           if (builder.fragments.isNotEmpty) {
             finishPage();
@@ -355,6 +372,9 @@ class NovelPaginator {
       layoutFingerprint: fingerprint,
     );
   }
+
+  /// 探测窗口的下限：小段落一次就量完，不用为了几十个字反复翻倍。
+  static const int _minimumProbeWindow = 256;
 
   static TextStyle _textStyle(
     NovelRenderBlock block,

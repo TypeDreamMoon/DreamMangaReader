@@ -23,7 +23,7 @@ void main() {
       ),
       const NovelReaderPreferences(),
     );
-    controller.paginationFor(const Size(420, 720));
+    controller.ensurePagination(const Size(420, 720));
 
     final frame = await tester.runAsync(() => controller.capturePage(0));
     final metrics = await controller.pageMetrics();
@@ -50,7 +50,7 @@ void main() {
       ),
       const NovelReaderPreferences(),
     );
-    controller.paginationFor(const Size(420, 720));
+    controller.ensurePagination(const Size(420, 720));
 
     await tester.runAsync(controller.preloadAroundCurrent);
     expect(controller.pageImageFor(0), isNotNull);
@@ -63,6 +63,66 @@ void main() {
     expect(controller.pageImageFor(1), isNotNull);
     expect(controller.pageImageFor(2), isNotNull);
     expect(controller.cachedPageImageCount, lessThanOrEqualTo(3));
+  });
+
+  testWidgets('defers pagination out of the build phase', (tester) async {
+    final controller = NovelNativeDocumentController();
+    addTearDown(controller.dispose);
+    await controller.loadChapter(
+      'chapter-1',
+      NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(30, '异步分页正文').join()}',
+        ).join('\n'),
+      ),
+      const NovelReaderPreferences(),
+    );
+
+    // build 只读缓存:没有现成结果就先返回 null,别在 LayoutBuilder 里同步排版。
+    expect(controller.paginationFor(const Size(420, 720)), isNull);
+    expect(controller.pagination, isNull);
+
+    var notified = 0;
+    controller.addListener(() => notified++);
+    await tester.pump();
+
+    expect(controller.pagination, isNotNull);
+    expect(notified, greaterThan(0));
+    // 结果落进缓存,下一帧直接命中,不会每帧重排。
+    expect(
+      controller.paginationFor(const Size(420, 720)),
+      same(controller.pagination),
+    );
+  });
+
+  testWidgets('paints the chapter once the deferred pagination lands',
+      (tester) async {
+    final controller = NovelNativeDocumentController();
+    addTearDown(controller.dispose);
+    await controller.loadChapter(
+      'chapter-1',
+      NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          24,
+          (index) => '第${index + 1}段 ${List.filled(24, '排版落地').join()}',
+        ).join('\n'),
+      ),
+      const NovelReaderPreferences(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: NovelNativeDocumentView(controller: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-native-page-view')), findsOneWidget);
   });
 
   testWidgets('scroll mode lays the whole chapter out as one scrollable column',
@@ -81,7 +141,7 @@ void main() {
       const NovelReaderPreferences(turnMode: NovelPageTurnMode.scroll),
     );
 
-    final pagination = controller.paginationFor(const Size(420, 720));
+    final pagination = controller.ensurePagination(const Size(420, 720));
 
     expect(controller.isScrollMode, isTrue);
     // 整章排成一列,而不是切成一屏一页。
@@ -108,7 +168,7 @@ void main() {
       ),
       const NovelReaderPreferences(turnMode: NovelPageTurnMode.scroll),
     );
-    controller.paginationFor(const Size(420, 720));
+    controller.ensurePagination(const Size(420, 720));
 
     final maxExtent = controller.scrollContentHeight - 720;
     controller.reportScroll(maxExtent / 2, maxExtent);

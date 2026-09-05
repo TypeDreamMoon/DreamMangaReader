@@ -121,6 +121,55 @@ void main() {
     expect(result.spreadIndexForPage(pageIndex), pageIndex ~/ 2);
   });
 
+  NovelRenderDocument longChapter(int characters) =>
+      NovelRenderDocumentParser.parse(
+        NovelDocument(
+          format: NovelDocumentFormat.text,
+          content: List.filled(characters, '章').join(),
+        ),
+      );
+
+  test('paginates a 200k-character chapter in bounded time', () {
+    const characters = 200000;
+    NovelPaginator.debugResetCounters();
+    final stopwatch = Stopwatch()..start();
+
+    final result = NovelPaginator.paginate(
+      document: longChapter(characters),
+      viewport: const Size(420, 760),
+      style: style,
+    );
+    stopwatch.stop();
+
+    expect(result.pages.length, greaterThan(50));
+    // 老实现每页都要给「剩余全文」的一半做一次 layout(O(N²)):同样这一章要跑
+    // 四千多万字符、几十秒起步,改个字号就是一次 ANR。
+    expect(
+      NovelPaginator.debugLayoutCharacters,
+      lessThan(characters * 40),
+      reason: '分页测量的字符总数必须与正文长度成正比',
+    );
+    expect(stopwatch.elapsedMilliseconds, lessThan(8000));
+  });
+
+  test('scales pagination measurement linearly with chapter length', () {
+    int measure(int characters) {
+      NovelPaginator.debugResetCounters();
+      NovelPaginator.paginate(
+        document: longChapter(characters),
+        viewport: const Size(420, 760),
+        style: style,
+      );
+      return NovelPaginator.debugLayoutCharacters;
+    }
+
+    final half = measure(100000);
+    final full = measure(200000);
+
+    // 线性:翻倍正文最多翻倍多一点的测量量。二次复杂度会是四倍。
+    expect(full, lessThan(half * 2.6));
+  });
+
   test('disposes every TextPainter it creates while measuring', () {
     NovelPaginator.debugResetCounters();
 

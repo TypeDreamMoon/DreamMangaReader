@@ -126,22 +126,72 @@ class NovelNativeDocumentController extends ChangeNotifier
   @override
   ValueChanged<Set<String>>? onUnresolvedAnnotationsChanged;
 
+  Size? _requestedViewport;
+  double? _requestedDevicePixelRatio;
+  bool _paginationScheduled = false;
+  bool _disposed = false;
+
+  /// build 期间**只读缓存**：命中就返回，没命中就把分页排到这一帧之后再做。
+  ///
+  /// 分页要给整章正文做 `TextPainter.layout()`，20 万字的章节要上百毫秒；原来它被
+  /// 直接写在 `LayoutBuilder.builder` 里同步跑，于是改字号、转屏这些「顺手」的操作
+  /// 都会把主线程钉住到 ANR。现在 build 只拿现成结果，算完再 [notifyListeners]。
   NovelPaginationResult? paginationFor(
     Size viewport, {
     double devicePixelRatio = 1,
   }) {
+    final rasterDpr = devicePixelRatio.clamp(1.0, 2.0).toDouble();
+    if (_isPaginationCurrent(viewport, rasterDpr)) return _pagination;
+    _requestedViewport = viewport;
+    _requestedDevicePixelRatio = rasterDpr;
+    if (_document == null || viewport.width <= 0 || viewport.height <= 0) {
+      return null;
+    }
+    if (!_paginationScheduled) {
+      _paginationScheduled = true;
+      scheduleMicrotask(_runScheduledPagination);
+    }
+    return null;
+  }
+
+  /// 同步跑完一次分页并返回结果。**不要在 build 里调用** —— 它是给测试、以及
+  /// 「必须马上拿到版面」的非绘制路径准备的。
+  NovelPaginationResult? ensurePagination(
+    Size viewport, {
+    double devicePixelRatio = 1,
+  }) {
+    final rasterDpr = devicePixelRatio.clamp(1.0, 2.0).toDouble();
+    if (_isPaginationCurrent(viewport, rasterDpr)) return _pagination;
+    _requestedViewport = viewport;
+    _requestedDevicePixelRatio = rasterDpr;
+    return _paginate(viewport, rasterDpr);
+  }
+
+  bool _isPaginationCurrent(Size viewport, double rasterDpr) {
+    return _pagination != null &&
+        _viewport == viewport &&
+        _styleSignature == _preferenceLayoutSignature(_preferences) &&
+        _rasterDevicePixelRatio == rasterDpr;
+  }
+
+  void _runScheduledPagination() {
+    _paginationScheduled = false;
+    if (_disposed) return;
+    final viewport = _requestedViewport;
+    final rasterDpr = _requestedDevicePixelRatio;
+    if (viewport == null || rasterDpr == null) return;
+    if (_isPaginationCurrent(viewport, rasterDpr)) return;
+    if (_paginate(viewport, rasterDpr) == null) return;
+    if (_disposed) return;
+    notifyListeners();
+  }
+
+  NovelPaginationResult? _paginate(Size viewport, double rasterDpr) {
     final document = _document;
     if (document == null || viewport.width <= 0 || viewport.height <= 0) {
       return null;
     }
     final signature = _preferenceLayoutSignature(_preferences);
-    final rasterDpr = devicePixelRatio.clamp(1.0, 2.0).toDouble();
-    if (_pagination != null &&
-        _viewport == viewport &&
-        _styleSignature == signature &&
-        _rasterDevicePixelRatio == rasterDpr) {
-      return _pagination;
-    }
     final restore = _currentLocator();
     final profile = novelReaderThemeProfile(
       _preferences.theme,
@@ -616,6 +666,7 @@ class NovelNativeDocumentController extends ChangeNotifier
 
   @override
   void dispose() {
+    _disposed = true;
     _clearRasterCache();
     scrollController.dispose();
     super.dispose();
