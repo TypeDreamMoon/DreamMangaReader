@@ -585,7 +585,7 @@ IconData _kindIcon(DownloadContentKind kind) => switch (kind) {
 
 String _statusText(BuildContext context, DownloadTask task) {
   return switch (task.state) {
-    DownloadTaskState.paused => context.l10n.download_pause,
+    DownloadTaskState.paused => _pauseText(context, task.pauseReason),
     DownloadTaskState.failed => _failureText(context, task.failure?.code),
     DownloadTaskState.cancelled => context.l10n.download_failureCancelled,
     DownloadTaskState.resolving ||
@@ -618,5 +618,23 @@ String _failureText(BuildContext context, DownloadFailureCode? code) {
     DownloadFailureCode.unsupportedDrm => l10n.download_failureDrm,
     DownloadFailureCode.cancelled => l10n.download_failureCancelled,
     DownloadFailureCode.unknown || null => l10n.download_failureUnknown,
+  };
+}
+
+/// 暂停原因本来就存在任务上,一律显示「暂停」等于把它扔了 ——
+/// 用户看不出是自己点的、还是在等 Wi-Fi / 等电 / 等空间。
+String _pauseText(BuildContext context, DownloadPauseReason? reason) {
+  final l10n = context.l10n;
+  return switch (reason) {
+    DownloadPauseReason.wifi => l10n.download_pausedWifi,
+    DownloadPauseReason.roaming => l10n.download_pausedRoaming,
+    DownloadPauseReason.battery => l10n.download_pausedBattery,
+    DownloadPauseReason.storage => l10n.download_pausedStorage,
+    DownloadPauseReason.auth => l10n.download_pausedAuth,
+    DownloadPauseReason.sourceRefresh => l10n.download_pausedSourceRefresh,
+    DownloadPauseReason.system => l10n.download_pausedSystem,
+    DownloadPauseReason.externalStorage =>
+      l10n.download_pausedExternalStorage,
+    DownloadPauseReason.user || null => l10n.download_pausedUser,
   };
 }

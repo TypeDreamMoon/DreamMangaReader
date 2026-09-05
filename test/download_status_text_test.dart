@@ -82,6 +82,26 @@ void main() {
     expect(find.text('Sign in again to continue'), findsOneWidget);
   });
 
+  testWidgets('paused tasks say why they are paused', (tester) async {
+    final coordinator = await _coordinatorWith([
+      taskFixture(id: 'wifi', state: DownloadTaskState.paused)
+          .copyWith(pauseReason: DownloadPauseReason.wifi),
+      taskFixture(id: 'battery', state: DownloadTaskState.paused)
+          .copyWith(pauseReason: DownloadPauseReason.battery),
+      taskFixture(id: 'storage', state: DownloadTaskState.paused)
+          .copyWith(pauseReason: DownloadPauseReason.storage),
+      taskFixture(id: 'mine', state: DownloadTaskState.paused)
+          .copyWith(pauseReason: DownloadPauseReason.user),
+    ], tester);
+
+    await _pumpDownloads(tester, coordinator);
+
+    expect(find.text('等待 Wi-Fi'), findsOneWidget);
+    expect(find.text('电量过低已暂停'), findsOneWidget);
+    expect(find.text('存储空间不足已暂停'), findsOneWidget);
+    expect(find.text('已暂停'), findsOneWidget);
+  });
+
   testWidgets('a failure without a detail shows no expander', (tester) async {
     final coordinator = await _coordinatorWith([
       taskFixture(state: DownloadTaskState.failed).copyWith(
