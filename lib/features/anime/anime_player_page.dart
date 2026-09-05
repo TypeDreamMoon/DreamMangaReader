@@ -241,6 +241,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   bool _disposed = false;
   AnimeLibraryStore? _library;
   Duration _lastPosition = Duration.zero;
+
+  /// 会话当前**真正在播**的那一集(下标)。切集期间它落后于 [_i] —— 旧流还没停、
+  /// 新流还没开,这段时间报上来的位置属于旧集,不能算进新集的历史。
+  int? _progressEpisode;
   bool _initialResumePending = true;
   bool _playing = false;
   bool _buffering = false;
@@ -966,6 +970,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       final initialPosition =
           _initialResumePending ? widget.initialPosition : Duration.zero;
       _initialResumePending = false;
+      // 从这一刻起会话播的是这一集,进度回调才重新算数。
+      _progressEpisode = _i;
       await _session!.start(
         tracks,
         pick,
@@ -993,6 +999,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _scaffoldKey.currentState?.closeEndDrawer();
     if (index == _i) return;
     setState(() => _quick = _QuickPanel.none);
+    // 先把旧的一集停下来并解绑它的进度回调:_load 要等一次取轨道的网络往返,
+    // 这段窗口里旧流还在播、还在每秒报位置,不解绑就会拿旧位置去写新集的历史。
+    _progressEpisode = null;
+    _session?.setUserPaused(true);
     await _library?.flushPending();
     if (_disposed) return;
     setState(() => _i = index);
@@ -1001,6 +1011,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   void _recordProgress(Duration position, Duration duration) {
+    // 进度属于**开出这条流的那一集**,不是「当前选中的那一集」。切集时两者会有
+    // 一段不一致(新集还没开起来,旧流还在报位置),对不上就直接丢掉。
+    if (_progressEpisode != _i) return;
     _lastPosition = position;
     final library = _library;
     if (library == null) return;

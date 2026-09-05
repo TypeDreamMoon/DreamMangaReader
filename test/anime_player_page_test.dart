@@ -158,6 +158,75 @@ void main() {
     expect(persisted.single['positionSeconds'], 42);
   });
 
+  testWidgets('progress reported while switching stays off the next episode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final library = AnimeLibraryStore(persistDelay: Duration.zero);
+    await library.load();
+    addTearDown(library.dispose);
+    final adapter = _PageFakeAdapter();
+    // 第二集的取轨道卡住:切集有一段窗口,旧流还在播、还在报位置。
+    final gate = Completer<List<VideoTrack>>();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (episodeId) =>
+          episodeId == 'ep-2' ? gate.future : Future.value(const [_track]),
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimeLibraryScope(
+        store: library,
+        child: AnimePlayerPage(
+          meta: const SourceMeta(
+            id: 'test-anime',
+            name: 'Test Anime',
+            script: '',
+            kind: 'anime',
+          ),
+          animeId: 'anime-1',
+          animeTitle: '测试番剧',
+          episodes: const [
+            Chapter(id: 'ep-1', name: '第一集'),
+            Chapter(id: 'ep-2', name: '第二集'),
+          ],
+          index: 0,
+          dependencies: dependencies,
+        ),
+      ),
+    ));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.positionController.add(const Duration(seconds: 42));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-1');
+
+    await tester.tap(find.byTooltip('下一集'));
+    await tester.pump();
+    await tester.pump();
+
+    // 窗口里的这一发位置是第一集的,写进第二集就等于把新集的历史推到 43 秒。
+    adapter.positionController.add(const Duration(seconds: 43));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-1');
+    expect(library.history.single.positionSeconds, 42);
+
+    gate.complete(const [_track]);
+    await tester.pump();
+    await tester.pump();
+    adapter.positionController.add(const Duration(seconds: 5));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-2');
+    expect(library.history.single.positionSeconds, 5);
+  });
+
   testWidgets('shows transient playback state without replacing the video',
       (tester) async {
     for (final entry in <(PlaybackState, String)>[
