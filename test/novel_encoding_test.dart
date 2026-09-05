@@ -133,6 +133,32 @@ void main() {
     expect(result.confidence, greaterThan(0.5));
   });
 
+  test('a real Big5 sample outranks its GB18030 mis-decoding', () async {
+    // 真实 Big5 字节:'第一章 開始 / 他們在這裡說話...'。GB18030 一样能把它们
+    // 「解码成功」,只是解出来一堆私用区和生僻字 —— 置信度必须能看出差别。
+    const big5Bytes = <int>[
+      0xb2, 0xc4, 0xa4, 0x40, 0xb3, 0xb9, 0x20, 0xb6, 0x7d, 0xa9, 0x6c, 0x0a,
+      0xa5, 0x4c, 0xad, 0xcc, 0xa6, 0x62, 0xb3, 0x6f, 0xb8, 0xcc, 0xbb, 0xa1,
+      0xb8, 0xdc, 0xa1, 0x41, 0xae, 0xc9, 0xb6, 0xa1, 0xb9, 0x4c, 0xb1, 0x6f,
+      0xab, 0xdc, 0xa7, 0xd6, 0xa1, 0x43, 0x0a, 0xb3, 0x6f, 0xad, 0xd3, 0xb0,
+      0xea, 0xae, 0x61, 0xaa, 0xba, 0xa4, 0x48, 0xad, 0xcc, 0xb3, 0xa3, 0xb7,
+      0x7c, 0xa8, 0xd3, 0xac, 0xdd, 0xae, 0xd1, 0xa1, 0x43, 0x0a,
+    ];
+    const big5Text = '\u{7b2c}\u{4e00}\u{7ae0} \u{958b}\u{59cb}\n\u{4ed6}\u{5011}\u{5728}\u{9019}\u{88e1}\u{8aaa}\u{8a71}\u{ff0c}\u{6642}\u{9593}\u{904e}\u{5f97}\u{5f88}\u{5feb}\u{3002}\n\u{9019}\u{500b}\u{570b}\u{5bb6}\u{7684}\u{4eba}\u{5011}\u{90fd}\u{6703}\u{4f86}\u{770b}\u{66f8}\u{3002}\n';
+    const gbMojibake = '\u{6750}\u{e5e6}\u{5f7b} \u{79e8}\u{fe4d}\n\u{e652}\u{e145}\u{e6c8}\u{7842}\u{67d1}\u{5f27}\u{6760}\u{e4c7}\u{e1a0}\u{4e01}\u{7b41}\u{7714}\u{e099}\u{435}\u{e4c9}\n\u{7842}\u{e14c}\u{74e3}\u{7522}\u{e019}\u{e5ee}\u{e145}\u{5e38}\u{7a66}\u{3113}\u{e0f8}\u{e1a8}\u{e4c9}\n';
+    final legacy = FakeLegacyDecoder(values: {
+      'gb18030': gbMojibake,
+      'big5': big5Text,
+    });
+    final decoder = NovelTextDecoder(legacy);
+
+    final result = await decoder.decode(big5Bytes);
+
+    expect(result.encoding, 'big5');
+    expect(result.text, big5Text);
+    expect(result.confidence, greaterThan(0.8));
+  });
+
   test('unsupported forced encoding is rejected', () async {
     final decoder = NovelTextDecoder(FakeLegacyDecoder());
 
