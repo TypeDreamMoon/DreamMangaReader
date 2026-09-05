@@ -72,11 +72,17 @@ class _SearchSource implements NovelSource {
 }
 
 class _PagedSource implements NovelSource {
-  _PagedSource(this.meta, {required this.firstPage, required this.error});
+  _PagedSource(
+    this.meta, {
+    required this.firstPage,
+    this.secondPage,
+    this.error,
+  });
 
   final SourceMeta meta;
   final List<Novel> firstPage;
-  final Object error;
+  final List<Novel>? secondPage;
+  final Object? error;
   int calls = 0;
 
   @override
@@ -106,8 +112,15 @@ class _PagedSource implements NovelSource {
   }) async {
     calls++;
     if (page == 1) return Paged(firstPage, hasNext: true);
-    throw error;
+    final next = secondPage;
+    if (next != null) return Paged(next, hasNext: true);
+    throw error!;
   }
+
+  @override
+  Future<Paged<Novel>> getNovelSearch(String query, int page,
+          {Map<String, Object?>? filters}) =>
+      getNovelDiscovery(page);
 
   @override
   Future<Novel> getNovelDetail(String novelId) {
@@ -116,12 +129,6 @@ class _PagedSource implements NovelSource {
 
   @override
   Future<NovelDocument> getNovelDocument(String novelId, String chapterId) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<Paged<Novel>> getNovelSearch(String query, int page,
-      {Map<String, Object?>? filters}) {
     throw UnimplementedError();
   }
 
@@ -365,6 +372,126 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
     await tester.binding.setSurfaceSize(null);
+    library.dispose();
+    controller.dispose();
+    registeredSources = [];
+  });
+
+  testWidgets('a new page is appended instead of reshuffling the whole list',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    SharedPreferences.setMockInitialValues({});
+    const source = SourceMeta(
+      id: 'a',
+      name: '来源 A',
+      script: '',
+      kind: 'novel',
+    );
+    registeredSources = const [source];
+    final library = LibraryStore();
+    await library.load();
+    library.feedLayout = FeedLayout.list;
+    library.showSourcePicker = true;
+    final controller = SourceController(source);
+    await controller.load();
+    final key = GlobalKey<NovelBrowserState>();
+    final paged = _PagedSource(
+      source,
+      firstPage: [
+        for (var index = 0; index < 30; index++)
+          Novel(id: 'n$index', title: '小说 $index'),
+      ],
+      // 第二页是「完全同名」的最高相关度结果:整表重排会把它顶到第一位。
+      secondPage: const [Novel(id: 'exact', title: '诡秘之主')],
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: NovelBrowser(
+              key: key,
+              sourceCatalog: const [source],
+              sourceBuilder: (_) => paged,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    key.currentState!.runSearch('诡秘之主');
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(FeedView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    expect(paged.calls, greaterThan(1));
+    expect(find.text('诡秘之主'), findsOneWidget);
+
+    await tester.drag(find.byType(FeedView), const Offset(0, 8000));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('小说 '), findsWidgets);
+    expect(find.text('诡秘之主'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.binding.setSurfaceSize(null);
+    library.dispose();
+    controller.dispose();
+    registeredSources = [];
+  });
+
+  testWidgets('same title by a different author stays a separate book',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await ChineseFold.load();
+    const sources = [
+      SourceMeta(id: 'a', name: '来源 A', script: '', kind: 'novel'),
+      SourceMeta(id: 'b', name: '来源 B', script: '', kind: 'novel'),
+    ];
+    registeredSources = [...sources];
+    final library = LibraryStore();
+    await library.load();
+    final controller = SourceController(sources.first);
+    await controller.load();
+
+    NovelSource build(SourceMeta meta) => switch (meta.id) {
+          'a' => _SearchSource(
+              meta,
+              const [Novel(id: 'a1', title: '长夜', authors: ['甲'])],
+            ),
+          _ => _SearchSource(
+              meta,
+              const [Novel(id: 'b1', title: '长夜', authors: ['乙'])],
+            ),
+        };
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: NovelBrowser(sourceBuilder: build, sourceCatalog: sources),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('长夜'), findsNWidgets(2));
+    expect(find.text('2 个来源'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
     library.dispose();
     controller.dispose();
     registeredSources = [];

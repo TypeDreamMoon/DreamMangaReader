@@ -254,6 +254,7 @@ class NovelBrowserState extends State<NovelBrowser> {
               );
         if (!mounted || generation != _loadGeneration) return;
         setState(() {
+          final start = _results.length;
           for (final novel in result.items) {
             _addResult(novel, _meta!);
           }
@@ -261,7 +262,7 @@ class NovelBrowserState extends State<NovelBrowser> {
           _hasNext = result.hasNext && result.items.isNotEmpty;
           _loading = false;
           _error = null;
-          _sortResults();
+          _sortAppended(start);
         });
       } catch (error) {
         if (!mounted || generation != _loadGeneration) return;
@@ -288,6 +289,7 @@ class NovelBrowserState extends State<NovelBrowser> {
           : await cursor.source.getNovelSearch(_query, cursor.page);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        final start = _results.length;
         for (final novel in result.items) {
           _addResult(novel, cursor.meta);
         }
@@ -295,7 +297,7 @@ class NovelBrowserState extends State<NovelBrowser> {
         cursor.hasNext = result.hasNext && result.items.isNotEmpty;
         cursor.failed = false;
         _failedSources.remove(cursor.meta.id);
-        _sortResults();
+        _sortAppended(start);
       });
     } catch (_) {
       if (!mounted || generation != _loadGeneration) return;
@@ -327,7 +329,7 @@ class NovelBrowserState extends State<NovelBrowser> {
   }
 
   void _addResult(Novel novel, SourceMeta meta) {
-    final key = ChineseFold.dedupKey(novel.title);
+    final key = _dedupKey(novel);
     if (key.isEmpty) return;
     final current = _byTitle[key];
     if (current != null) {
@@ -340,12 +342,27 @@ class NovelBrowserState extends State<NovelBrowser> {
     _results.add(result);
   }
 
-  void _sortResults() {
-    if (_originalQuery.isEmpty) return;
-    _results.sort((a, b) => searchRelevance(
-          b.novel.title,
-          _originalQuery,
-        ).compareTo(searchRelevance(a.novel.title, _originalQuery)));
+  /// 去重键 = 标题 + 作者。只看标题的话《长夜》这种大众书名会被并成一条,
+  /// 读者再也翻不到另一位作者的那本。
+  String _dedupKey(Novel novel) {
+    final title = ChineseFold.dedupKey(novel.title);
+    if (title.isEmpty) return '';
+    final author = novel.authors.isEmpty
+        ? ''
+        : ChineseFold.dedupKey(novel.authors.first);
+    return author.isEmpty ? title : '$title\u0000$author';
+  }
+
+  /// 只把这一页新来的排一排,再接在后面。整表重排会让读者正看着的卡片
+  /// 突然换位置 —— 翻一页跳一次,还得把所有 Hero tag 重算一遍。
+  void _sortAppended(int start) {
+    if (_originalQuery.isEmpty || start >= _results.length - 1) return;
+    final appended = _results.sublist(start)
+      ..sort((a, b) => searchRelevance(
+            b.novel.title,
+            _originalQuery,
+          ).compareTo(searchRelevance(a.novel.title, _originalQuery)));
+    _results.replaceRange(start, _results.length, appended);
   }
 
   Future<void> _maybeUseTranslatedQuery(int generation) async {
