@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dream_manga_reader/app/startup_guard.dart';
 import 'package:dream_manga_reader/core/log/app_log.dart';
-import 'package:dream_manga_reader/main.dart';
 
 void main() {
   // AppLog 记完一条会 notifyListeners,途中要问 SchedulerBinding 当前是不是构建阶段。

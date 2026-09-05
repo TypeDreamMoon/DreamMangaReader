@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'app/app.dart';
 import 'app/app_info.dart';
+import 'app/startup_guard.dart';
 import 'core/bili/bili_auth.dart';
 import 'core/library/update_tracker.dart';
 import 'core/log/app_log.dart';
@@ -68,20 +69,4 @@ void main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     SystemFonts.ensureLoaded();
   });
-}
-
-/// 跑一项启动加载,**永不抛错**。
-///
-/// 启动加载全是「拿到就更好、拿不到也能开」的东西:读坏的偏好文件、被占用的安全
-/// 存储、离线时的远程源清单。让它们抛到 `Future.wait` 上,`runApp` 就永远执行不到,
-/// 用户拿到的是一块没有任何提示的黑窗 —— 比任何一项降级都糟。失败只记日志,对应
-/// 模块停在自己的默认值上。
-///
-/// [what] 只进运行日志,不上界面,故不走 l10n。
-Future<void> guardedStartupLoad(String what, Future<void> Function() load) async {
-  try {
-    await load();
-  } catch (e, s) {
-    AppLog.i.err(LogCat.app, '启动加载失败 · $what', detail: '$e\n$s');
-  }
 }

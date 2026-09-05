@@ -27,6 +27,7 @@ import 'library_store.dart';
 import 'novel_library_store.dart';
 import 'novel_download_store.dart';
 import 'source_controller.dart';
+import 'startup_guard.dart';
 import '../core/source/source_repository.dart';
 import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
@@ -82,37 +83,52 @@ class _AppState extends State<App> {
         );
     unawaited(_loadDownloadState());
     _library.closeToTrayVN.addListener(_syncWindowsCloseBehavior);
-    _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
-    _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
+    // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
+    unawaited(guardedStartupLoad('主题', _theme.load));
+    // 读回上次选中的漫画源,否则重启回到默认第一个源
+    unawaited(guardedStartupLoad('当前源', _source.load));
     // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
     // 能补传上次退出前漏掉的变化),再跑启动自动同步(源仓已在 main 里 load 好)。
     // 原生窗口在收到关闭偏好之前会吞掉 WM_CLOSE。读档抛错时也必须同步一次
     // (此时用的是默认值),否则关闭按钮和 Alt+F4 会在整个进程生命周期内失效。
-    final libraryLoad = _library.load().whenComplete(() {
+    //
+    // 每一步都单独兜底(见 [guardedStartupLoad])。这条链既是 `Future.wait` 又接了
+    // 个没有 catchError 的 `.then`:三本书架里坏一本,`.then` 整个不跑 —— 自动上传
+    // 的监听挂不上、启动同步不跑、追更也不查,而且错误没人接。链里三步同理,
+    // 前一步抛了后两步就没了。
+    final libraryLoad =
+        guardedStartupLoad('漫画书架', _library.load).whenComplete(() {
       if (mounted) _syncWindowsCloseBehavior();
     });
     Future.wait([
       libraryLoad,
-      _novelLibrary.load(),
-      _animeLibrary.load(),
+      guardedStartupLoad('小说书架', _novelLibrary.load),
+      guardedStartupLoad('番剧书架', _animeLibrary.load),
     ]).then((_) async {
       if (!mounted) return;
       final sync = SyncController.instance;
-      await sync.attachAutoUpload(
-        _library,
-        _novelLibrary,
-        SourceRepository.instance,
+      await guardedStartupLoad(
+        '自动上传监听',
+        () => sync.attachAutoUpload(
+          _library,
+          _novelLibrary,
+          SourceRepository.instance,
+        ),
       );
       if (!mounted) return;
-      await sync.autoSyncOnStart(
-        _library,
-        _novelLibrary,
-        SourceRepository.instance,
+      await guardedStartupLoad(
+        '启动自动同步',
+        () => sync.autoSyncOnStart(
+          _library,
+          _novelLibrary,
+          SourceRepository.instance,
+        ),
       );
       if (!mounted) return;
-      await _autoCheckUpdates();
+      await guardedStartupLoad('启动追更检查', _autoCheckUpdates);
     });
-    _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+    // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+    unawaited(guardedStartupLoad('源登录态', _auth.load));
   }
 
   /// 启动时的追更检查。三重闸门:设置里开着、距上次扫描已过
