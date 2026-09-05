@@ -8,6 +8,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:dream_manga_reader/features/reader/reader_page.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
+import 'package:dream_manga_reader/ui/ui.dart';
 
 const _onePixelPng =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
@@ -214,6 +215,39 @@ void main() {
     expect(source.calls['c2'], 2);
     expect(loadedChapters, 2);
     expect(find.text('加载下一章失败'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
+
+  /// 回归 E8:首章加载失败的 AppErrorView 原本没接 onRetry —— 只有一句错误文案,
+  /// 用户只能退出阅读器再进一次。
+  testWidgets('the first-chapter error view offers a working retry',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = LibraryStore();
+    await store.load();
+
+    final source = _FakeSource({'c1': _pages(3)}, failing: {'c1'});
+    await tester.pumpWidget(harness(
+      store: store,
+      source: source,
+      chapters: const [Chapter(id: 'c1', name: '第1话')],
+    ));
+    await tester.pumpAndSettle();
+
+    expect(source.calls['c1'], 1);
+    expect(find.byType(AppErrorView), findsOneWidget);
+    expect(tester.widget<AppErrorView>(find.byType(AppErrorView)).onRetry,
+        isNotNull);
+
+    source.failing.remove('c1');
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(source.calls['c1'], 2);
+    expect(find.byType(AppErrorView), findsNothing);
+    expect(find.byType(PageView), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();

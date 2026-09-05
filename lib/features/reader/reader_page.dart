@@ -253,6 +253,13 @@ class _ReaderPageState extends State<ReaderPage> {
     }
   }
 
+  /// 首章加载失败后的「重试」:清掉错误态再拉一次。
+  void _retryInitial() {
+    if (_error == null) return;
+    setState(() => _error = null);
+    _loadInitial();
+  }
+
   void _rebuildFlat() {
     final flat = <_FlatPage>[];
     var offset = 0;
@@ -802,7 +809,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _content() {
     if (_error != null) {
-      return AppErrorView(onDark: true, message: _error!);
+      // 首章加载失败要能就地重试:否则用户只能退出去再进一次。
+      return AppErrorView(
+        onDark: true,
+        message: _error!,
+        onRetry: _retryInitial,
+      );
     }
     if (_flat.isEmpty) {
       return const Center(child: CircularProgressIndicator());
