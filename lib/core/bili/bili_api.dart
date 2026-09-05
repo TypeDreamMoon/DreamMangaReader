@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../source/models.dart';
 import 'bili_auth.dart';
@@ -12,6 +13,10 @@ class BiliApi {
   BiliApi._();
   static final BiliApi instance = BiliApi._();
 
+  /// 测试注入点:换掉 dio 的传输层。生产恒为 null —— 走默认实现(即 App 代理)。
+  @visibleForTesting
+  static HttpClientAdapter? debugAdapter;
+
   String _mixinKey = '';
   int _mixinKeyAtSec = 0;
   String _buvid = ''; // 风控指纹 cookie(buvid3/buvid4),搜索缺它会 -412
@@ -24,7 +29,7 @@ class BiliApi {
 
   Dio _dio() {
     final cookie = _cookieHeader();
-    return Dio(BaseOptions(
+    return _adapted(Dio(BaseOptions(
       headers: {
         'User-Agent': kBiliUa,
         'Referer': 'https://www.bilibili.com/',
@@ -34,7 +39,13 @@ class BiliApi {
       validateStatus: (_) => true,
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 20),
-    ));
+    )));
+  }
+
+  static Dio _adapted(Dio dio) {
+    final adapter = debugAdapter;
+    if (adapter != null) dio.httpClientAdapter = adapter;
+    return dio;
   }
 
   /// 取 buvid3/buvid4 指纹(x/frontend/finger/spi,无需登录),缓存。B站 WBI 搜索接口
@@ -42,7 +53,7 @@ class BiliApi {
   Future<void> _ensureBuvid() async {
     if (_buvid.isNotEmpty) return;
     try {
-      final r = await Dio(BaseOptions(
+      final r = await _adapted(Dio(BaseOptions(
         headers: {
           'User-Agent': kBiliUa,
           'Referer': 'https://www.bilibili.com/',
@@ -50,7 +61,7 @@ class BiliApi {
         validateStatus: (_) => true,
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
-      )).get('https://api.bilibili.com/x/frontend/finger/spi');
+      ))).get('https://api.bilibili.com/x/frontend/finger/spi');
       final d = (r.data as Map?)?['data'] as Map?;
       final b3 = d?['b_3'] as String?;
       final b4 = d?['b_4'] as String?;
@@ -134,7 +145,9 @@ class BiliApi {
     await _ensureBuvid();
     final mk = await _wbiKey();
     final primary = await _searchType(keyword, page, mk);
-    if (primary.isNotEmpty) return primary;
+    // 只有**第一页**空才算专搜被风控软拦。正常翻到末页本来就是空的,那时再回退
+    // 综合搜索,只会把前面几页的番剧块重新发一遍 —— 列表于是永远翻不到底。
+    if (primary.isNotEmpty || page > 1) return primary;
     return _searchAllBangumi(keyword, page, mk);
   }
 
