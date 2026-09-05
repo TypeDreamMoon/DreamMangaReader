@@ -916,6 +916,7 @@
   "anime_episodes": "エピソード",
   "anime_episodesN": "{n} 話",
   "anime_noEpisodes": "エピソードがありません",
+  "anime_downloadAllConfirm": "{n} 話をダウンロードキューに追加します。",
   "animeUnfavorite": "アニメのお気に入りを解除",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

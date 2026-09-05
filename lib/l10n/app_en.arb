@@ -916,6 +916,7 @@
   "anime_episodes": "Episodes",
   "anime_episodesN": "{n} eps",
   "anime_noEpisodes": "No episodes",
+  "anime_downloadAllConfirm": "Queue {n} episodes for download.",
   "animeUnfavorite": "Remove anime favorite",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

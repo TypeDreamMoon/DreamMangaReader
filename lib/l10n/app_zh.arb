@@ -1479,6 +1479,12 @@
       "n": {}
     }
   },
+  "anime_downloadAllConfirm": "将 {n} 集加入下载队列。",
+  "@anime_downloadAllConfirm": {
+    "placeholders": {
+      "n": {}
+    }
+  },
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

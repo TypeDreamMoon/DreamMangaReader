@@ -247,7 +247,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(context.l10n.anime_downloadAllEpisodes),
-        content: Text('将 $pending.length 集加入下载队列。'),
+        content: Text(context.l10n.anime_downloadAllConfirm(pending.length)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),

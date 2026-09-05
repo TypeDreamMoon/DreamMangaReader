@@ -96,6 +96,75 @@ void main() {
     });
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('download-all confirmation spells out the episode count',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final root = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('anime-detail-all-test-'),
+    ))!;
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final library = LibraryStore();
+    await library.load();
+    addTearDown(library.dispose);
+    final downloads = AnimeDownloadStore(
+      rootProvider: () async => root.path,
+      trackProvider: (_, __, ___) async => const [],
+      upstream: _UnusedUpstream(),
+    );
+    await tester.runAsync(downloads.load);
+    addTearDown(downloads.dispose);
+    final coordinator = DownloadCoordinator(
+      repository: RecordingDownloadTaskRepository(),
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+    );
+    await coordinator.load();
+    addTearDown(coordinator.dispose);
+    const meta = SourceMeta(
+      id: 'anime-source',
+      name: '测试源',
+      script: '',
+      kind: 'anime',
+    );
+    const anime = Manga(id: 'show', title: '测试番剧');
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: DownloadCoordinatorScope(
+          coordinator: coordinator,
+          child: AnimeDownloadScope(
+            store: downloads,
+            child: AnimeDetailPage(
+              meta: meta,
+              anime: anime,
+              sourceBuilder: (_) => _FakeAnimeSource(),
+              bangumiLookup: (_) async => null,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('anime-download-all')));
+    await tester.pumpAndSettle();
+
+    // 少了花括号的插值会把「1 集」写成「Instance of 'Chapter'.length 集」。
+    expect(find.text('将 1 集加入下载队列。'), findsOneWidget);
+    expect(find.textContaining('.length'), findsNothing);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 class _FakeAnimeSource implements MangaSource {
