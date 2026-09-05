@@ -135,20 +135,26 @@ final class DownloadCoordinator extends ChangeNotifier {
     _requestPump();
   }
 
-  Future<void> pauseAll() => _serialize(() async {
-        final next = <String, DownloadTask>{};
-        for (final entry in _tasks.entries) {
-          final task = entry.value;
-          next[entry.key] = _canPause(task.state)
-              ? task.copyWith(
-                  state: DownloadTaskState.paused,
-                  pauseReason: DownloadPauseReason.user,
-                  updatedAt: _clock(),
-                )
-              : task;
-        }
-        await _commit(next);
-      });
+  Future<void> pauseAll() {
+    // 与 pause 对齐:先取消在途下载,否则任务标成 paused 但执行器还在写盘。
+    for (final active in _active.values) {
+      active.cancellation.cancel();
+    }
+    return _serialize(() async {
+      final next = <String, DownloadTask>{};
+      for (final entry in _tasks.entries) {
+        final task = entry.value;
+        next[entry.key] = _canPause(task.state)
+            ? task.copyWith(
+                state: DownloadTaskState.paused,
+                pauseReason: DownloadPauseReason.user,
+                updatedAt: _clock(),
+              )
+            : task;
+      }
+      await _commit(next);
+    });
+  }
 
   Future<void> resumeAll() async {
     await _serialize(() async {

@@ -259,6 +259,28 @@ void main() {
     expect(coordinator.tasks.single.pauseReason, isNull);
   });
 
+  test('pauseAll cancels running tasks like pause does', () async {
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture());
+    await executor.waitForStarted(1);
+
+    await coordinator.pauseAll();
+
+    expect(
+      executor.contexts[taskFixture().id]!.cancellation.isCancelled,
+      isTrue,
+    );
+    final paused = coordinator.task(taskFixture().id)!;
+    expect(paused.state, DownloadTaskState.paused);
+    expect(paused.pauseReason, DownloadPauseReason.user);
+
+    executor.completeAll();
+    await coordinator.idle;
+    expect(coordinator.task(taskFixture().id)!.state, DownloadTaskState.paused);
+  });
+
   test('policy pause cancels a running task and keeps its progress', () async {
     var currentEnvironment = unrestrictedEnvironment;
     coordinator.dispose();
