@@ -74,6 +74,49 @@ void main() {
         everyElement(isTrue));
     store.dispose();
   });
+  test('a cancelled chapter leaves no orphan pages behind', () async {
+    final source = _FakeSource(const [
+      PageImage(index: 0, url: _onePixelPng),
+      PageImage(index: 1, url: _onePixelPng),
+      PageImage(index: 2, url: _onePixelPng),
+    ]);
+    final store = DownloadStore(
+      rootProvider: () async => root.path,
+      sourceBuilder: (_) => source,
+      pageFetcher: (_, __) async => throw StateError('network not expected'),
+    );
+    await store.load();
+    final cancellation = DownloadCancellation();
+    final task = ContentDownloadTask.manga(
+      sourceId: 'fake',
+      contentId: 'manga',
+      contentTitle: '漫画',
+      chapterId: 'chapter',
+      chapterTitle: '第一话',
+      now: 1,
+    );
+
+    await expectLater(
+      store.execute(
+        DownloadExecutionContext(
+          cancellation: cancellation,
+          reportProgress: (completed, total) async {
+            if (completed == 1) cancellation.cancel();
+          },
+          checkpoint: () async {},
+        ),
+        task,
+      ),
+      throwsA(isA<DownloadCancelledException>()),
+    );
+
+    expect(store.isDownloaded('fake', 'manga', 'chapter'), isFalse);
+    expect(
+      Directory('${root.path}/fake/manga/chapter').existsSync(),
+      isFalse,
+    );
+    store.dispose();
+  });
 }
 
 class _FakeSource implements MangaSource {
