@@ -16,8 +16,19 @@ final class DownloadCoordinator extends ChangeNotifier {
     required this.settings,
     int Function()? clock,
     Future<void> Function(Duration)? retryDelay,
+    int Function()? progressClock,
   })  : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
-        _retryDelay = retryDelay ?? Future<void>.delayed;
+        _retryDelay = retryDelay ?? Future<void>.delayed,
+        _progressClock =
+            progressClock ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// 进度落盘的最小间隔。进度本身只改内存里的任务表,写盘按这个节流 ——
+  /// 状态迁移([_commit])与 [DownloadExecutionContext.checkpoint] 仍然立即写。
+  static const progressPersistInterval = Duration(seconds: 2);
+
+  /// 进度通知监听者的最小间隔:UI 与 Android 前台通知都挂在 notifyListeners 上,
+  /// 每收到一个字节就刷一次纯属自找卡顿。
+  static const progressNotifyInterval = Duration(milliseconds: 500);
 
   /// 可重试错误码自动重试的次数上限,超过才真正判定为 failed。
   static const maxAutomaticRetries = 3;
@@ -31,12 +42,19 @@ final class DownloadCoordinator extends ChangeNotifier {
   final int Function() _clock;
   final Future<void> Function(Duration) _retryDelay;
 
+  /// 墙上时钟(毫秒),只用来做节流。与 [_clock] 分开:后者是任务的逻辑时间戳,
+  /// 测试里常做成「每取一次 +1」的计数器,拿它算时间间隔会得到荒唐的结果。
+  final int Function() _progressClock;
+
   Map<String, DownloadTask> _tasks = const {};
   final Map<DownloadContentKind, DownloadExecutor> _executors = {};
   final Map<String, _ActiveDownload> _active = {};
   final Map<String, int> _generations = {};
   final Map<String, int> _retryAttempts = {};
   int _pendingRetries = 0;
+  int _lastProgressSaveAt = 0;
+  int _lastProgressNotifyAt = 0;
+  bool _progressDirty = false;
   Future<void> _mutationTail = Future.value();
   Completer<void>? _idleCompleter;
   bool _pumpRequested = false;
@@ -385,7 +403,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   ) {
     return _serializeExecution(() async {
       final current = _currentExecutionTask(id, generation);
-      await _commit({
+      _tasks = Map<String, DownloadTask>.unmodifiable({
         ..._tasks,
         id: current.copyWith(
           completedBytes: completedBytes,
@@ -393,14 +411,37 @@ final class DownloadCoordinator extends ChangeNotifier {
           updatedAt: _clock(),
         ),
       });
+      _progressDirty = true;
+      final now = _progressClock();
+      if (now - _lastProgressSaveAt >= progressPersistInterval.inMilliseconds) {
+        await _persistTasks(now);
+      }
+      if (now - _lastProgressNotifyAt >=
+          progressNotifyInterval.inMilliseconds) {
+        _lastProgressNotifyAt = now;
+        notifyListeners();
+      }
     });
   }
 
+  /// 执行器显式要求「把目前的进度立刻落盘」(例如刚写完一个大分片,
+  /// 此刻崩溃也不想从头再来)。绕过节流写一次,并把攒着的进度刷给 UI。
   Future<void> _checkpoint(String id, int generation) {
     return _serializeExecution(() async {
       _currentExecutionTask(id, generation);
-      await repository.save(tasks);
+      final pending = _progressDirty;
+      await _persistTasks(_progressClock());
+      if (pending) {
+        _lastProgressNotifyAt = _progressClock();
+        notifyListeners();
+      }
     });
+  }
+
+  Future<void> _persistTasks(int now) async {
+    await repository.save(tasks);
+    _progressDirty = false;
+    _lastProgressSaveAt = now;
   }
 
   Future<void> _setVerifying(String id, int generation) {
@@ -580,6 +621,11 @@ final class DownloadCoordinator extends ChangeNotifier {
     final frozen = Map<String, DownloadTask>.unmodifiable(next);
     await repository.save(_ordered(frozen.values));
     _tasks = frozen;
+    // 状态迁移不节流:攒着的进度随这次写盘一起落地,节流窗口重新计时。
+    _progressDirty = false;
+    final now = _progressClock();
+    _lastProgressSaveAt = now;
+    _lastProgressNotifyAt = now;
     notifyListeners();
   }
 

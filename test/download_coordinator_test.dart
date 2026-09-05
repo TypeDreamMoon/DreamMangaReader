@@ -260,6 +260,58 @@ void main() {
     expect(coordinator.tasks.single.pauseReason, isNull);
   });
 
+  test('progress stays in memory between throttled saves', () async {
+    var wall = 0;
+    coordinator.dispose();
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+      progressClock: () => wall,
+    );
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture());
+    await executor.waitForStarted(1);
+    final context = executor.contexts[taskFixture().id]!;
+
+    repository.saved.clear();
+    var notifications = 0;
+    coordinator.addListener(() => notifications++);
+
+    for (var tick = 1; tick <= 10; tick++) {
+      wall = tick * 100;
+      await context.reportProgress(tick, 100);
+    }
+
+    // 1s 内 10 次进度:一次盘都不写,通知也只在 500ms / 1000ms 各发一次。
+    expect(repository.saved, isEmpty);
+    expect(notifications, 2);
+    expect(coordinator.task(taskFixture().id)!.completedBytes, 10);
+
+    wall = 2500;
+    await context.reportProgress(11, 100);
+    expect(repository.saved, hasLength(1));
+    expect(repository.saved.single.single.completedBytes, 11);
+
+    // checkpoint 绕过节流,立刻落盘。
+    wall = 2600;
+    await context.reportProgress(12, 100);
+    expect(repository.saved, hasLength(1));
+    await context.checkpoint();
+    expect(repository.saved, hasLength(2));
+    expect(repository.saved.last.single.completedBytes, 12);
+
+    executor.complete(taskFixture().id);
+    await coordinator.idle;
+    expect(
+      coordinator.task(taskFixture().id)!.state,
+      DownloadTaskState.completed,
+    );
+  });
+
   test('retryable failures back off and give up after three retries',
       () async {
     final delays = <Duration>[];
