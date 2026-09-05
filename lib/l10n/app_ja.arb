@@ -164,6 +164,7 @@
   "reader_orientPortrait": "縦向き",
   "reader_orientLandscape": "横向き",
   "reader_brightness": "明るさ",
+  "reader_nextChapterFailed": "次の話を読み込めませんでした",
   "disc_searchTooltip": "検索",
   "disc_browseSections": "セクションを見る",
   "disc_collapseFilters": "フィルタを閉じる",

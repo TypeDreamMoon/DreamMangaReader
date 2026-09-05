@@ -118,6 +118,8 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _loadingNext = false;
   bool _reachedEnd = false;
   String? _error;
+  // 连读接下一章失败:记住失败态,别每次滑动都重打同一个请求;末尾给显式重试入口。
+  String? _nextError;
   bool _overlay = true;
   bool _showHint = false; // 首次进入的手势提示遮罩
   bool _pageZoomed = false; // 当前页是否放大(放大时禁用点击翻页,避免误翻)
@@ -268,7 +270,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 读到接近末尾时,自动加载并接上下一章。
   Future<void> _maybeLoadNext() async {
-    if (_loadingNext || _reachedEnd || _flat.isEmpty) return;
+    if (_loadingNext || _reachedEnd || _nextError != null || _flat.isEmpty) {
+      return;
+    }
     // 接近末尾的阈值:双页一次跨两页,3 页的余量最少只剩一次翻页就到底,
     // 放宽到 4(= 两对开页)才来得及在读者翻到末尾前接上下一章。
     if (_curFlat < _flat.length - (_dualActive ? 4 : 3)) return;
@@ -289,11 +293,23 @@ class _ReaderPageState extends State<ReaderPage> {
       _rebuildFlat();
       setState(() {});
       _preload();
-    } catch (_) {
-      // 加载失败不致命:下次滚动/翻页再试。
+    } catch (e) {
+      // 失败要留痕:静默吞掉的话,每次滑动都会重打同一个请求,而读者只看到
+      // 内容莫名其妙断在这里。落到错误态 + 末尾的重试入口。
+      AppLog.i.err(LogCat.reader,
+          '接上《${widget.manga.title}》${widget.chapters[nextIndex].name} 失败',
+          detail: '$e');
+      if (mounted) setState(() => _nextError = '$e');
     } finally {
       _loadingNext = false;
     }
+  }
+
+  /// 末尾「重试」:清掉失败态再拉一次下一章。
+  void _retryNext() {
+    if (_nextError == null) return;
+    setState(() => _nextError = null);
+    _maybeLoadNext();
   }
 
   Map<String, String> _headers(PageImage img) =>
@@ -501,6 +517,9 @@ class _ReaderPageState extends State<ReaderPage> {
                 ),
               if (_flat.isNotEmpty) ...[
                 if (_showPageNum && !_overlay) _pageIndicator(),
+                // 连读接不上下一章:只在读到末尾附近时提示(中途翻回去不打扰)。
+                if (_nextError != null && _curFlat >= _flat.length - 3)
+                  _nextChapterErrorBar(landscape),
                 // 横屏:进度条竖排到左侧;竖屏:横排在底部。
                 landscape ? _sideBar() : _bottomBar(),
                 if (_scrubLocal != null) _scrubPreview(),
@@ -723,6 +742,45 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
     );
   }
+
+  /// 「加载下一章失败 · 重试」条:读到末尾接不上下一章时浮在底部。
+  Widget _nextChapterErrorBar(bool landscape) => Positioned(
+        left: 16,
+        right: 16,
+        bottom: landscape ? 22 : 108,
+        child: Center(
+          child: Material(
+            color: Colors.black.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_rounded,
+                      color: Colors.white54, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      context.l10n.reader_nextChapterFailed,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _retryNext,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: Text(context.l10n.retry),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
 
   // 条漫自动滚动 播放/暂停 悬浮按钮。
   Widget _autoScrollFab() => Material(

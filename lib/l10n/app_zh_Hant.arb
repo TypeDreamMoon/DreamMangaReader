@@ -164,6 +164,7 @@
   "reader_orientPortrait": "直向",
   "reader_orientLandscape": "橫向",
   "reader_brightness": "亮度",
+  "reader_nextChapterFailed": "載入下一話失敗",
   "disc_searchTooltip": "搜尋",
   "disc_browseSections": "瀏覽板塊",
   "disc_collapseFilters": "收合篩選",

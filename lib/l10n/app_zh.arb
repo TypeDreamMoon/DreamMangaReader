@@ -254,6 +254,7 @@
   "reader_orientPortrait": "竖屏",
   "reader_orientLandscape": "横屏",
   "reader_brightness": "亮度",
+  "reader_nextChapterFailed": "加载下一章失败",
   "disc_searchTooltip": "搜索",
   "disc_browseSections": "浏览板块",
   "disc_collapseFilters": "收起筛选",

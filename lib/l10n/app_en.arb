@@ -164,6 +164,7 @@
   "reader_orientPortrait": "Portrait",
   "reader_orientLandscape": "Landscape",
   "reader_brightness": "Brightness",
+  "reader_nextChapterFailed": "Could not load the next chapter",
   "disc_searchTooltip": "Search",
   "disc_browseSections": "Browse sections",
   "disc_collapseFilters": "Collapse filters",

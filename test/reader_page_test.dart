@@ -172,6 +172,52 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });
+
+  /// 回归 E7:连读接不上下一章原本被 `catch (_) {}` 吞掉 —— 用户只看到内容
+  /// 莫名断掉,而每次滑动都会重打同一个失败请求。
+  testWidgets('a failed next-chapter load shows a retry instead of silently '
+      'refetching on every page turn', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = LibraryStore();
+    await store.load();
+
+    final source = _FakeSource(
+      {'c1': _pages(3), 'c2': _pages(3)},
+      failing: {'c2'},
+    );
+    var loadedChapters = 0;
+    await tester.pumpWidget(harness(
+      store: store,
+      source: source,
+      chapters: const [
+        Chapter(id: 'c1', name: '第1话'),
+        Chapter(id: 'c2', name: '第2话'),
+      ],
+      onDebugFlat: (chapters, _) => loadedChapters = chapters,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(source.calls['c2'], 1, reason: '首次接续尝试过一次');
+    expect(find.text('加载下一章失败'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+
+    // 再翻几页:失败态已记住,不该再打请求。
+    await tester.tap(find.byType(PageView), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(source.calls['c2'], 1, reason: '失败后不再每次翻页重打');
+
+    // 点重试 → 源恢复正常,下一章接上,提示消失。
+    source.failing.remove('c2');
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(source.calls['c2'], 2);
+    expect(loadedChapters, 2);
+    expect(find.text('加载下一章失败'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
 }
 
 class _FakeSource implements MangaSource {
