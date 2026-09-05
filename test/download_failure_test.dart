@@ -5,10 +5,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/download_fixtures.dart';
 
 void main() {
+  test('failure carries no user facing text of its own', () {
+    final failure = DownloadFailure.fromDetail(
+      DownloadFailureCode.network,
+      'connection reset',
+    );
+
+    // core 层不产文案:只留错误码 + 已脱敏 detail,文案由 UI 按码取 l10n。
+    expect(failure.toJson().keys, isNot(contains('message')));
+    expect(failure.detail, 'connection reset');
+  });
+
   test('failure round trips with a stable code', () {
     const failure = DownloadFailure(
       code: DownloadFailureCode.network,
-      message: '网络连接失败',
       detail: 'connection reset',
       retryCount: 2,
       httpStatus: 503,
@@ -18,7 +28,7 @@ void main() {
   });
 
   test('sanitizes signed URLs from persisted failure detail', () {
-    final failure = DownloadFailure.fromMessage(
+    final failure = DownloadFailure.fromDetail(
       DownloadFailureCode.sourceRefreshRequired,
       'GET https://cdn.test/a.ts?token=secret&expires=123#part returned 403',
     );
@@ -29,7 +39,7 @@ void main() {
   });
 
   test('sanitizes authorization cookies and bearer tokens', () {
-    final failure = DownloadFailure.fromMessage(
+    final failure = DownloadFailure.fromDetail(
       DownloadFailureCode.authenticationRequired,
       'Authorization: Bearer abc.def\nCookie: session=secret',
     );
@@ -42,7 +52,7 @@ void main() {
   test('task round trips a sanitized failure', () {
     final task = taskFixture().copyWith(
       state: DownloadTaskState.failed,
-      failure: DownloadFailure.fromMessage(
+      failure: DownloadFailure.fromDetail(
         DownloadFailureCode.resourceMissing,
         'https://cdn.test/missing.jpg?token=secret returned 404',
         httpStatus: 404,
@@ -58,7 +68,6 @@ void main() {
   test('rejects unknown serialized failure codes', () {
     final json = const DownloadFailure(
       code: DownloadFailureCode.unknown,
-      message: '未知错误',
       detail: 'unknown',
       retryCount: 0,
     ).toJson()

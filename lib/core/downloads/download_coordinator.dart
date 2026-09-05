@@ -487,7 +487,7 @@ final class DownloadCoordinator extends ChangeNotifier {
           ..._tasks,
           id: current.copyWith(
             state: DownloadTaskState.cancelled,
-            failure: DownloadFailure.fromMessage(
+            failure: DownloadFailure.fromDetail(
               DownloadFailureCode.cancelled,
               'cancelled',
             ),
@@ -517,7 +517,7 @@ final class DownloadCoordinator extends ChangeNotifier {
           ..._tasks,
           id: current.copyWith(
             state: DownloadTaskState.failed,
-            failure: DownloadFailure.fromMessage(
+            failure: DownloadFailure.fromDetail(
               code,
               error.toString(),
               retryCount: retryCount,

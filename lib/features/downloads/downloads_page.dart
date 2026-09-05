@@ -4,6 +4,7 @@ import '../../app/download_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/downloads/download_coordinator.dart';
+import '../../core/downloads/download_failure.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
@@ -104,16 +105,28 @@ class _ActiveDownloadsPage extends StatelessWidget {
   }
 }
 
-class _ActiveDownloadTile extends StatelessWidget {
+class _ActiveDownloadTile extends StatefulWidget {
   const _ActiveDownloadTile({required this.task, required this.coordinator});
 
   final DownloadTask task;
   final DownloadCoordinator coordinator;
 
   @override
+  State<_ActiveDownloadTile> createState() => _ActiveDownloadTileState();
+}
+
+class _ActiveDownloadTileState extends State<_ActiveDownloadTile> {
+  bool _detailExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final task = widget.task;
+    final coordinator = widget.coordinator;
     final p = context.palette;
     final determinate = task.totalBytes > 0;
+    final detail = task.state == DownloadTaskState.failed
+        ? (task.failure?.detail.trim() ?? '')
+        : '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: AppCard(
@@ -165,20 +178,82 @@ class _ActiveDownloadTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(2),
             ),
             const SizedBox(height: 6),
-            Text(
-              _statusText(context, task),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: task.state == DownloadTaskState.failed
-                    ? p.statusFail
-                    : p.textMuted,
-                fontSize: 11,
-              ),
+            _StatusLine(
+              text: _statusText(context, task),
+              failed: task.state == DownloadTaskState.failed,
+              // 真实错误只在用户主动展开时露出:平时一行状态,排查时能看全。
+              detail: _detailExpanded ? detail : null,
+              onToggleDetail: detail.isEmpty
+                  ? null
+                  : () => setState(() => _detailExpanded = !_detailExpanded),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({
+    required this.text,
+    required this.failed,
+    required this.detail,
+    required this.onToggleDetail,
+  });
+
+  final String text;
+  final bool failed;
+  final String? detail;
+  final VoidCallback? onToggleDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    final expanded = detail != null;
+    final label = Text(
+      text,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: failed ? p.statusFail : p.textMuted,
+        fontSize: 11,
+      ),
+    );
+    if (onToggleDetail == null) {
+      return Align(alignment: Alignment.centerLeft, child: label);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: onToggleDetail,
+          child: Row(
+            children: [
+              Flexible(child: label),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: context.l10n.download_failureDetail,
+                child: Icon(
+                  expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 16,
+                  color: p.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: SelectableText(
+              detail!,
+              style: TextStyle(color: p.textMuted, fontSize: 10.5),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -511,8 +586,8 @@ IconData _kindIcon(DownloadContentKind kind) => switch (kind) {
 String _statusText(BuildContext context, DownloadTask task) {
   return switch (task.state) {
     DownloadTaskState.paused => context.l10n.download_pause,
-    DownloadTaskState.failed => task.failure?.message ?? context.l10n.retry,
-    DownloadTaskState.cancelled => context.l10n.retry,
+    DownloadTaskState.failed => _failureText(context, task.failure?.code),
+    DownloadTaskState.cancelled => context.l10n.download_failureCancelled,
     DownloadTaskState.resolving ||
     DownloadTaskState.queued ||
     DownloadTaskState.running ||
@@ -523,5 +598,25 @@ String _statusText(BuildContext context, DownloadTask task) {
             )
           : context.l10n.download_active,
     DownloadTaskState.completed => context.l10n.download_completed,
+  };
+}
+
+/// 失败文案按错误码取 l10n —— core 层只记码,四种语言各自成话。
+String _failureText(BuildContext context, DownloadFailureCode? code) {
+  final l10n = context.l10n;
+  return switch (code) {
+    DownloadFailureCode.network => l10n.download_failureNetwork,
+    DownloadFailureCode.authenticationRequired => l10n.download_failureAuth,
+    DownloadFailureCode.sourceRefreshRequired =>
+      l10n.download_failureSourceRefresh,
+    DownloadFailureCode.resourceMissing => l10n.download_failureMissing,
+    DownloadFailureCode.insufficientStorage => l10n.download_failureStorageFull,
+    DownloadFailureCode.storageUnavailable =>
+      l10n.download_failureStorageUnavailable,
+    DownloadFailureCode.unsafePath => l10n.download_failureUnsafePath,
+    DownloadFailureCode.corruptResource => l10n.download_failureCorrupt,
+    DownloadFailureCode.unsupportedDrm => l10n.download_failureDrm,
+    DownloadFailureCode.cancelled => l10n.download_failureCancelled,
+    DownloadFailureCode.unknown || null => l10n.download_failureUnknown,
   };
 }

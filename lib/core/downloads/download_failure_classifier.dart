@@ -31,7 +31,7 @@ int? downloadFailureHttpStatus(Object error) {
 
 /// 分类并生成一条可持久化的失败记录([detail] 已脱敏)。
 DownloadFailure classifyDownloadFailure(Object error, {int retryCount = 0}) {
-  return DownloadFailure.fromMessage(
+  return DownloadFailure.fromDetail(
     classifyDownloadFailureCode(error),
     error.toString(),
     retryCount: retryCount,

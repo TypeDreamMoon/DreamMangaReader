@@ -138,7 +138,6 @@ void main() {
         state: DownloadTaskState.failed,
         failure: const DownloadFailure(
           code: DownloadFailureCode.network,
-          message: '网络错误',
           detail: 'timeout',
           retryCount: 1,
         ),

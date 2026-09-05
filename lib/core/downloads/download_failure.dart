@@ -12,25 +12,27 @@ enum DownloadFailureCode {
   unknown,
 }
 
+/// 一次下载失败的机器可读记录。
+///
+/// **刻意不带面向用户的文案**:core 层拿不到 BuildContext,写死一门语言就等于
+/// 让另外三种语言的用户看中文。UI 按 [code] 映射 l10n,[detail] 是已脱敏的
+/// 原始错误串,只在用户展开时展示。
 final class DownloadFailure {
   const DownloadFailure({
     required this.code,
-    required this.message,
     required this.detail,
     required this.retryCount,
     this.httpStatus,
   });
 
-  factory DownloadFailure.fromMessage(
+  factory DownloadFailure.fromDetail(
     DownloadFailureCode code,
     String detail, {
-    String? message,
     int retryCount = 0,
     int? httpStatus,
   }) {
     return DownloadFailure(
       code: code,
-      message: message ?? _defaultMessage(code),
       detail: sanitizeDownloadFailureDetail(detail),
       retryCount: retryCount,
       httpStatus: httpStatus,
@@ -38,14 +40,12 @@ final class DownloadFailure {
   }
 
   final DownloadFailureCode code;
-  final String message;
   final String detail;
   final int retryCount;
   final int? httpStatus;
 
   Map<String, Object?> toJson() => {
         'code': code.name,
-        'message': message,
         'detail': sanitizeDownloadFailureDetail(detail),
         'retryCount': retryCount,
         if (httpStatus != null) 'httpStatus': httpStatus,
@@ -54,7 +54,6 @@ final class DownloadFailure {
   factory DownloadFailure.fromJson(Map<String, Object?> json) {
     return DownloadFailure(
       code: _failureCode(_string(json, 'code')),
-      message: _string(json, 'message'),
       detail: sanitizeDownloadFailureDetail(_string(json, 'detail')),
       retryCount: _integer(json, 'retryCount'),
       httpStatus:
@@ -67,7 +66,6 @@ final class DownloadFailure {
       identical(this, other) ||
       other is DownloadFailure &&
           code == other.code &&
-          message == other.message &&
           detail == other.detail &&
           retryCount == other.retryCount &&
           httpStatus == other.httpStatus;
@@ -75,7 +73,6 @@ final class DownloadFailure {
   @override
   int get hashCode => Object.hash(
         code,
-        message,
         detail,
         retryCount,
         httpStatus,
@@ -119,20 +116,6 @@ String sanitizeDownloadFailureDetail(String value) {
   );
   return sanitized;
 }
-
-String _defaultMessage(DownloadFailureCode code) => switch (code) {
-      DownloadFailureCode.network => '网络连接失败',
-      DownloadFailureCode.authenticationRequired => '需要重新登录',
-      DownloadFailureCode.sourceRefreshRequired => '等待源刷新',
-      DownloadFailureCode.resourceMissing => '资源不存在',
-      DownloadFailureCode.insufficientStorage => '存储空间不足',
-      DownloadFailureCode.storageUnavailable => '下载目录不可用',
-      DownloadFailureCode.unsafePath => '下载路径不安全',
-      DownloadFailureCode.corruptResource => '下载文件已损坏',
-      DownloadFailureCode.unsupportedDrm => '不支持此 DRM 离线内容',
-      DownloadFailureCode.cancelled => '下载已取消',
-      DownloadFailureCode.unknown => '下载失败',
-    };
 
 DownloadFailureCode _failureCode(String name) {
   for (final code in DownloadFailureCode.values) {
