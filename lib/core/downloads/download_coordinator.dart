@@ -223,12 +223,20 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> _applyPolicy() async {
     final decision = evaluateDownloadPolicy(settings(), await environment());
+    if (!decision.allowed) {
+      // 策略变得不允许时,在途任务也要停:先发取消,执行器抛
+      // DownloadCancelledException 退出,已下载的字节数留在任务上供续传。
+      for (final entry in _active.entries) {
+        if (_tasks[entry.key]?.state != DownloadTaskState.running) continue;
+        entry.value.cancellation.cancel();
+      }
+    }
     await _serialize(() async {
       var changed = false;
       final next = <String, DownloadTask>{};
       for (final entry in _tasks.entries) {
         final task = entry.value;
-        if (!decision.allowed && task.state == DownloadTaskState.queued) {
+        if (!decision.allowed && _policyPausable(task.state)) {
           changed = true;
           next[entry.key] = task.copyWith(
             state: DownloadTaskState.paused,
@@ -538,6 +546,11 @@ List<DownloadTask> _ordered(Iterable<DownloadTask> tasks) {
     });
   return ordered;
 }
+
+/// 策略不允许下载时可被自动暂停的状态:排队中与下载中。
+/// `verifying` 已经写完盘、只差校验,让它跑完比中断更省事。
+bool _policyPausable(DownloadTaskState state) =>
+    state == DownloadTaskState.queued || state == DownloadTaskState.running;
 
 bool _canPause(DownloadTaskState state) => switch (state) {
       DownloadTaskState.resolving ||

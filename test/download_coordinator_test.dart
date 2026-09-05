@@ -259,6 +259,36 @@ void main() {
     expect(coordinator.tasks.single.pauseReason, isNull);
   });
 
+  test('policy pause cancels a running task and keeps its progress', () async {
+    var currentEnvironment = unrestrictedEnvironment;
+    coordinator.dispose();
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => currentEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+    );
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture().copyWith(completedBytes: 30));
+    await executor.waitForStarted(1);
+
+    currentEnvironment = unrestrictedEnvironment.copyWith(wifi: false);
+    await coordinator.reevaluate();
+
+    expect(executor.contexts[taskFixture().id]!.cancellation.isCancelled,
+        isTrue);
+    final paused = coordinator.task(taskFixture().id)!;
+    expect(paused.state, DownloadTaskState.paused);
+    expect(paused.pauseReason, DownloadPauseReason.wifi);
+    expect(paused.completedBytes, 30);
+
+    executor.completeAll();
+    await coordinator.idle;
+    expect(coordinator.task(taskFixture().id)!.state, DownloadTaskState.paused);
+  });
+
   test('removing a running task invalidates late executor callbacks', () async {
     final executor = _ControlledExecutor();
     await coordinator.load();
@@ -279,6 +309,7 @@ final class _ControlledExecutor implements DownloadExecutor {
 
   final Set<String> failingIds;
   final List<String> started = [];
+  final Map<String, DownloadExecutionContext> contexts = {};
   final Map<String, Completer<void>> _releases = {};
   final List<Completer<void>> _waiters = [];
 
@@ -291,6 +322,7 @@ final class _ControlledExecutor implements DownloadExecutor {
     DownloadTask task,
   ) async {
     started.add(task.id);
+    contexts[task.id] = context;
     _releases[task.id] = Completer<void>();
     for (final waiter in _waiters.toList()) {
       if (!waiter.isCompleted) waiter.complete();
