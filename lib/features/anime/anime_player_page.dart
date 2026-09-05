@@ -1036,9 +1036,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
-      final initialPosition =
-          _initialResumePending ? widget.initialPosition : Duration.zero;
-      _initialResumePending = false;
+      // 断点要等这一次 start 真的成功了才算「用掉」。原来在 start 之前就置了
+      // false,于是开流失败之后点重试就从零开始播 —— 断点在第一次失败里丢了。
+      // 已经播过一段再失败的,以播到的位置为准。
+      final initialPosition = _initialResumePending
+          ? (_lastPosition > widget.initialPosition
+              ? _lastPosition
+              : widget.initialPosition)
+          : Duration.zero;
       // 从这一刻起会话播的是这一集,进度回调才重新算数。
       _progressEpisode = _i;
       await _session!.start(
@@ -1047,6 +1052,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
         initialPosition: initialPosition,
       );
       if (_disposed || generation != _loadGeneration) return;
+      _initialResumePending = false;
       if (_rate != 1.0 && _session!.state.selectedTrack != null) {
         await _adapter!.setRate(_rate);
       }

@@ -287,6 +287,59 @@ void main() {
     expect(retried, isTrue);
   });
 
+  // 开流失败点重试,要接着断点播,不是从头播。
+  testWidgets('a failed first open keeps the resume point for the retry',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    var calls = 0;
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async {
+        if (calls++ == 0) throw StateError('fixture resolve failure');
+        return const [_track];
+      },
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+        index: 0,
+        initialPosition: const Duration(seconds: 83),
+        dependencies: dependencies,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('播放失败'), findsOneWidget);
+    expect(adapter.openStarts, isEmpty);
+
+    // 直接调回调而不是点它:失败框上的重试键被上面那层全屏手势挡着,点不到
+    // (另一个问题,不在这条的范围里)。这里要验的是重试走的那条 _load。
+    final retry = tester.widget<FilledButton>(
+      find.ancestor(of: find.text('重试'), matching: find.byType(FilledButton)),
+    );
+    retry.onPressed!();
+    await tester.pump();
+    await tester.pump();
+    expect(adapter.openStarts, [const Duration(seconds: 83)]);
+  });
+
   testWidgets('leaving the player hands the window back out of fullscreen',
       (tester) async {
     final fullscreen = _FakeWindowFullscreen()..isOn = true;
