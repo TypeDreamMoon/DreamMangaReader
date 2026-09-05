@@ -1090,6 +1090,71 @@ void main() {
     expect(find.textContaining('第二集'), findsWidgets);
   });
 
+  // 后端在换流/重开时可能再报一次 completed。那道闸原来在 _load 第一行就松了,
+  // 于是「下一集还没开起来」的那段窗口里,第二发 completed 又跳一集。
+  testWidgets('a second completed during the switch does not skip an episode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final adapter = _PageFakeAdapter();
+    final loaded = <String>[];
+    final gate = Completer<List<VideoTrack>>();
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [
+          Chapter(id: 'ep-1', name: '第一集'),
+          Chapter(id: 'ep-2', name: '第二集'),
+          Chapter(id: 'ep-3', name: '第三集'),
+        ],
+        index: 0,
+        dependencies: AnimePlayerDependencies(
+          player: adapter,
+          tracks: _PageFakeTracks(),
+          loadTracks: (episodeId) {
+            loaded.add(episodeId);
+            return episodeId == 'ep-2'
+                ? gate.future
+                : Future.value(const [_track]);
+          },
+          videoBuilder: (_) => const ColoredBox(color: Colors.black),
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(loaded, ['ep-1']);
+
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+
+    // 第二集还卡在取轨道上,这时候再来一发 completed。
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+
+    gate.complete(const [_track]);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+    expect(find.textContaining('第二集'), findsWidgets);
+  });
+
   testWidgets('single loop reopens the current episode', (tester) async {
     SharedPreferences.setMockInitialValues(const {});
     final adapter = _PageFakeAdapter();

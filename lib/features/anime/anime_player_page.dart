@@ -1019,7 +1019,6 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
-    _autoAdvanced = false;
     if (mounted) {
       setState(() {
         _playback = PlaybackState(phase: PlaybackPhase.resolving);
@@ -1053,6 +1052,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       );
       if (_disposed || generation != _loadGeneration) return;
       _initialResumePending = false;
+      // 连播闸到这儿才松开。开在 _load 的第一行就等于没开:取轨道要等一次网络
+      // 往返,那段时间旧流还能再报一次 completed,一口气跳过两集。
+      _autoAdvanced = false;
       if (_rate != 1.0 && _session!.state.selectedTrack != null) {
         await _adapter!.setRate(_rate);
       }
