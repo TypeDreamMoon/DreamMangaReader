@@ -1246,17 +1246,29 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     _history.clear();
+    // 作品级共享进度是历史的另一半(详情页的续读点和章节勾都读它)。只清 _history
+    // 会让「清空历史」之后详情页照旧打勾、照旧「继续阅读」—— 记录明明已经没了。
+    _workProgress.clear();
     // 用户明确要清空:删键(而非用残片覆盖),之后这段就没什么可保护的了。
     _historyLoadFailed = false;
+    _workProgressLoadFailed = false;
     await _prefs?.remove(_kHistory);
+    await _prefs?.remove(_kWorkProgress);
     notifyListeners();
   }
 
   void removeHistory(String sourceId, String mangaId) {
-    if (_history.remove('$sourceId:$mangaId') != null) {
-      _persistHistoryNow();
-      notifyListeners();
+    final removed = _history.remove('$sourceId:$mangaId');
+    if (removed == null) return;
+    // 同一部作品在别的源还有记录 → 它确实还在读,共享进度留着;
+    // 最后一条也删了才连带清掉,详情页才不会继续打勾/续读。
+    final workKey = _workKeyFor(removed.title);
+    if (workKey.isNotEmpty &&
+        !_history.values.any((h) => _workKeyFor(h.title) == workKey)) {
+      _workProgress.remove(workKey);
     }
+    _persistHistoryNow();
+    notifyListeners();
   }
 
   // ---- 作品级共享进度(跨源同名) ----

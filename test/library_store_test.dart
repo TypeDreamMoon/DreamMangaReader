@@ -186,4 +186,88 @@ void main() {
       expect(await _onDisk(_kHistory), contains('m1'));
     });
   });
+
+  group('删历史连带清作品进度', () {
+    test('removeHistory 只清该作品的共享进度', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      store.markProgress(
+        sourceId: 'src',
+        mangaId: 'm1',
+        title: '好书',
+        chapterId: 'ch-3',
+        chapterName: '第 3 话',
+        page: 1,
+        total: 10,
+        nowMs: 5,
+      );
+      store.markProgress(
+        sourceId: 'src',
+        mangaId: 'm2',
+        title: '另一本',
+        chapterId: 'ch-7',
+        chapterName: '第 7 话',
+        page: 1,
+        total: 10,
+        nowMs: 6,
+      );
+      expect(store.workProgressFor('好书'), isNotNull);
+
+      store.removeHistory('src', 'm1');
+
+      expect(store.workProgressFor('好书'), isNull,
+          reason: '记录都删了,详情页不该还打着勾、还能「继续阅读」');
+      expect(store.readChaptersFor('好书'), isEmpty);
+      expect(store.workProgressFor('另一本'), isNotNull, reason: '别的作品不受影响');
+    });
+
+    test('同作品还有别的源在读时保留共享进度', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      for (final src in ['a', 'b']) {
+        store.markProgress(
+          sourceId: src,
+          mangaId: 'm1',
+          title: '好书',
+          chapterId: 'ch-3',
+          chapterName: '第 3 话',
+          page: 1,
+          total: 10,
+          nowMs: 5,
+        );
+      }
+
+      store.removeHistory('a', 'm1');
+
+      expect(store.workProgressFor('好书'), isNotNull,
+          reason: '另一个源的记录还在,这部书确实还在读');
+    });
+
+    test('clearHistory 一并清空共享进度', () async {
+      SharedPreferences.setMockInitialValues(const {});
+      final store = await _loaded();
+      addTearDown(store.dispose);
+
+      store.markProgress(
+        sourceId: 'src',
+        mangaId: 'm1',
+        title: '好书',
+        chapterId: 'ch-3',
+        chapterName: '第 3 话',
+        page: 1,
+        total: 10,
+        nowMs: 5,
+      );
+
+      await store.clearHistory();
+
+      expect(store.history, isEmpty);
+      expect(store.workProgressFor('好书'), isNull);
+      expect(await _onDisk(_kWorkProgress), anyOf(isNull, '{}'));
+    });
+  });
 }
