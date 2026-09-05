@@ -137,6 +137,23 @@ class NovelPaginationResult {
 class NovelPaginator {
   NovelPaginator._();
 
+  /// 排版期间创建过、以及已经 `dispose()` 掉的 [TextPainter] 计数。
+  ///
+  /// `TextPainter` 持有 engine 侧的 `Paragraph`,不 dispose 就是原生内存泄漏 ——
+  /// 排版一章会造上千个探测用的 painter,所以这里用一对计数器把「创建 = 释放」
+  /// 变成可断言的事实(见 test/novel_paginator_test.dart)。
+  static int debugCreatedTextPainters = 0;
+  static int debugDisposedTextPainters = 0;
+
+  /// 排版期间送进 `TextPainter.layout()` 的字符总数。分页复杂度的直接度量。
+  static int debugLayoutCharacters = 0;
+
+  static void debugResetCounters() {
+    debugCreatedTextPainters = 0;
+    debugDisposedTextPainters = 0;
+    debugLayoutCharacters = 0;
+  }
+
   static NovelPaginationResult paginate({
     required NovelRenderDocument document,
     required Size viewport,
@@ -263,6 +280,8 @@ class NovelPaginator {
           contentWidth,
           _alignmentFor(block, style),
         );
+        final fragmentHeight = painter.height;
+        _disposeLayout(painter);
         builder.add(NovelPageFragment(
           blockId: block.id,
           blockKind: block.kind,
@@ -275,7 +294,7 @@ class NovelPaginator {
             style.pagePadding.top + builder.y,
           ),
           width: contentWidth,
-          height: painter.height,
+          height: fragmentHeight,
           textStyle: textStyle,
           textAlign: _alignmentFor(block, style),
           headingLevel: block.headingLevel,
@@ -407,7 +426,9 @@ class NovelPaginator {
         width,
         align,
       );
-      if (painter.height <= maxHeight + .01) {
+      final fits = painter.height <= maxHeight + .01;
+      _disposeLayout(painter);
+      if (fits) {
         best = middle;
         low = middle + 1;
       } else {
@@ -428,12 +449,19 @@ class NovelPaginator {
     double width,
     TextAlign align,
   ) {
+    debugCreatedTextPainters++;
+    debugLayoutCharacters += text.length;
     return TextPainter(
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.ltr,
       textAlign: align,
       textScaler: TextScaler.noScaling,
     )..layout(maxWidth: width);
+  }
+
+  static void _disposeLayout(TextPainter painter) {
+    debugDisposedTextPainters++;
+    painter.dispose();
   }
 
   static int _firstCodePointLength(String source, int offset) {

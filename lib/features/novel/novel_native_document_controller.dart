@@ -538,6 +538,9 @@ class NovelNativeDocumentController extends ChangeNotifier
       );
     }
 
+    // 一次栅格化用一只临时缓存,画完立刻释放 —— 这些 TextPainter 只服务这一帧。
+    final textCache = NovelPageTextCache();
+
     void paintLeaf(
       Rect rect,
       NovelPageLayout page,
@@ -559,6 +562,7 @@ class NovelNativeDocumentController extends ChangeNotifier
         textColor: textColor,
         showPageNumber: _preferences.showPageNumber,
         innerEdge: innerEdge,
+        textCache: textCache,
       ).paint(canvas, rect.size);
       canvas.restore();
     }
@@ -585,6 +589,7 @@ class NovelNativeDocumentController extends ChangeNotifier
       );
     } finally {
       picture.dispose();
+      textCache.dispose();
     }
   }
 

@@ -100,6 +100,72 @@ void main() {
     expect(semantics.value, '1');
   });
 
+  test('page text cache releases its painters on dispose', () {
+    final pagination = layout(const Size(420, 760));
+    final page = pagination.pages.first;
+    final cache = NovelPageTextCache();
+    final painters = [
+      for (final fragment in page.fragments)
+        cache.painterFor(
+          page: page,
+          fragment: fragment,
+          color: const Color(0xff25231f),
+        ),
+    ];
+
+    expect(painters, isNotEmpty);
+    // 同一页同一色再取一次必须命中缓存，否则就是「每帧重建」的老毛病。
+    expect(
+      cache.painterFor(
+        page: page,
+        fragment: page.fragments.first,
+        color: const Color(0xff25231f),
+      ),
+      same(painters.first),
+    );
+    expect(cache.length, painters.length);
+
+    cache.dispose();
+
+    expect(cache.length, 0);
+    for (final painter in painters) {
+      expect(painter.debugDisposed, isTrue);
+    }
+  });
+
+  test('page text cache drops the previous page instead of accumulating', () {
+    final pagination = layout(const Size(420, 760));
+    final cache = NovelPageTextCache();
+    addTearDown(cache.dispose);
+    final first = pagination.pages.first;
+    final stale = cache.painterFor(
+      page: first,
+      fragment: first.fragments.first,
+      color: const Color(0xff25231f),
+    );
+
+    final second = pagination.pages[1];
+    cache.painterFor(
+      page: second,
+      fragment: second.fragments.first,
+      color: const Color(0xff25231f),
+    );
+
+    expect(stale.debugDisposed, isTrue);
+    expect(cache.length, 1);
+  });
+
+  testWidgets('releases page painters when the leaf leaves the tree',
+      (tester) async {
+    const size = Size(420, 760);
+    await pumpReader(tester, size, layout(size));
+    expect(find.byType(NovelNativePageCanvas), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    expect(find.byType(NovelNativePageCanvas), findsNothing);
+  });
+
   testWidgets('uses the selected canvas and page colors without a black layer',
       (tester) async {
     const size = Size(420, 760);

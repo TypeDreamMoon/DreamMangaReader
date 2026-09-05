@@ -121,6 +121,24 @@ void main() {
     expect(result.spreadIndexForPage(pageIndex), pageIndex ~/ 2);
   });
 
+  test('disposes every TextPainter it creates while measuring', () {
+    NovelPaginator.debugResetCounters();
+
+    NovelPaginator.paginate(
+      document: document,
+      viewport: const Size(420, 760),
+      style: style,
+    );
+
+    // TextPainter 背后是 engine 侧的 Paragraph：排版一章会造上千个探测用的
+    // painter，漏掉任何一个都是原生内存泄漏。
+    expect(NovelPaginator.debugCreatedTextPainters, greaterThan(0));
+    expect(
+      NovelPaginator.debugDisposedTextPainters,
+      NovelPaginator.debugCreatedTextPainters,
+    );
+  });
+
   test('produces deterministic page boundaries for the same layout', () {
     NovelPaginationResult paginate() => NovelPaginator.paginate(
           document: document,

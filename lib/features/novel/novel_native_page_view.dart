@@ -122,14 +122,12 @@ class NovelNativePageView extends StatelessWidget {
             child: ColoredBox(
               key: const Key('novel-page-paper-color'),
               color: pageColor,
-              child: CustomPaint(
-                painter: NovelNativePagePainter(
-                  page: page,
-                  pageColor: pageColor,
-                  textColor: textColor,
-                  showPageNumber: showPageNumbers,
-                  innerEdge: innerEdge,
-                ),
+              child: NovelNativePageCanvas(
+                page: page,
+                pageColor: pageColor,
+                textColor: textColor,
+                showPageNumber: showPageNumbers,
+                innerEdge: innerEdge,
               ),
             ),
           ),
@@ -266,14 +264,12 @@ class _NovelNativeScrollViewState extends State<NovelNativeScrollView> {
                       child: SizedBox(
                         width: leaf.width,
                         height: slice.height,
-                        child: CustomPaint(
-                          painter: NovelNativePagePainter(
-                            page: slice.page,
-                            pageColor: widget.pageColor,
-                            textColor: widget.textColor,
-                            showPageNumber: false,
-                            innerEdge: null,
-                          ),
+                        child: NovelNativePageCanvas(
+                          page: slice.page,
+                          pageColor: widget.pageColor,
+                          textColor: widget.textColor,
+                          showPageNumber: false,
+                          innerEdge: null,
                         ),
                       ),
                     ),
@@ -287,8 +283,14 @@ class _NovelNativeScrollViewState extends State<NovelNativeScrollView> {
   }
 }
 
-class NovelNativePagePainter extends CustomPainter {
-  const NovelNativePagePainter({
+/// 一页正文的画布。
+///
+/// [TextPainter] 缓存挂在 State 上：翻页、列表回收或页面离开视图时随 State 一起
+/// `dispose()`。此前 painter 每帧给每个 fragment 新建一个 TextPainter 又从不释放，
+/// 而 TextPainter 背后是 engine 侧的 Paragraph —— 滚一章就是几千个句柄的原生泄漏。
+class NovelNativePageCanvas extends StatefulWidget {
+  const NovelNativePageCanvas({
+    super.key,
     required this.page,
     required this.pageColor,
     required this.textColor,
@@ -301,6 +303,103 @@ class NovelNativePagePainter extends CustomPainter {
   final Color textColor;
   final bool showPageNumber;
   final Alignment? innerEdge;
+
+  @override
+  State<NovelNativePageCanvas> createState() => _NovelNativePageCanvasState();
+}
+
+class _NovelNativePageCanvasState extends State<NovelNativePageCanvas> {
+  final NovelPageTextCache _textCache = NovelPageTextCache();
+
+  @override
+  void dispose() {
+    _textCache.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: NovelNativePagePainter(
+        page: widget.page,
+        pageColor: widget.pageColor,
+        textColor: widget.textColor,
+        showPageNumber: widget.showPageNumber,
+        innerEdge: widget.innerEdge,
+        textCache: _textCache,
+      ),
+    );
+  }
+}
+
+/// 页内 [TextPainter] 的生命周期容器。
+///
+/// 一个缓存只服务一页：换页或换文字色就整批释放重建，所以既不会无限增长，也不会
+/// 把上一页的 Paragraph 留在内存里。
+class NovelPageTextCache {
+  final Map<NovelPageFragment, TextPainter> _painters = Map.identity();
+  NovelPageLayout? _page;
+  Color? _color;
+
+  int get length => _painters.length;
+
+  TextPainter painterFor({
+    required NovelPageLayout page,
+    required NovelPageFragment fragment,
+    required Color color,
+  }) {
+    if (!identical(_page, page) || _color != color) {
+      _releaseAll();
+      _page = page;
+      _color = color;
+    }
+    return _painters[fragment] ??= novelFragmentTextPainter(fragment, color);
+  }
+
+  void dispose() {
+    _releaseAll();
+    _page = null;
+    _color = null;
+  }
+
+  void _releaseAll() {
+    for (final painter in _painters.values) {
+      painter.dispose();
+    }
+    _painters.clear();
+  }
+}
+
+TextPainter novelFragmentTextPainter(NovelPageFragment fragment, Color color) {
+  return TextPainter(
+    text: TextSpan(
+      text: fragment.displayText,
+      style: fragment.textStyle.copyWith(color: color),
+    ),
+    textAlign: fragment.textAlign,
+    textDirection: TextDirection.ltr,
+    textScaler: TextScaler.noScaling,
+  )..layout(maxWidth: fragment.width);
+}
+
+class NovelNativePagePainter extends CustomPainter {
+  const NovelNativePagePainter({
+    required this.page,
+    required this.pageColor,
+    required this.textColor,
+    required this.showPageNumber,
+    required this.innerEdge,
+    this.textCache,
+  });
+
+  final NovelPageLayout page;
+  final Color pageColor;
+  final Color textColor;
+  final bool showPageNumber;
+  final Alignment? innerEdge;
+
+  /// 由 [NovelNativePageCanvas] 提供的页级缓存；为空时 painter 自建自释放。
+  final NovelPageTextCache? textCache;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -322,16 +421,16 @@ class NovelNativePagePainter extends CustomPainter {
   }
 
   void _paintText(Canvas canvas, NovelPageFragment fragment) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: fragment.displayText,
-        style: fragment.textStyle.copyWith(color: textColor),
-      ),
-      textAlign: fragment.textAlign,
-      textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
-    )..layout(maxWidth: fragment.width);
+    final cache = textCache;
+    if (cache != null) {
+      cache
+          .painterFor(page: page, fragment: fragment, color: textColor)
+          .paint(canvas, fragment.offset);
+      return;
+    }
+    final painter = novelFragmentTextPainter(fragment, textColor);
     painter.paint(canvas, fragment.offset);
+    painter.dispose();
   }
 
   void _paintImagePlaceholder(Canvas canvas, NovelPageFragment fragment) {
@@ -364,6 +463,7 @@ class NovelNativePagePainter extends CustomPainter {
         rect.center.dy - painter.height / 2,
       ),
     );
+    painter.dispose();
   }
 
   void _paintSeparator(Canvas canvas, NovelPageFragment fragment) {
@@ -404,6 +504,7 @@ class NovelNativePagePainter extends CustomPainter {
       Offset(
           (size.width - painter.width) / 2, size.height - painter.height - 9),
     );
+    painter.dispose();
   }
 
   @override
