@@ -36,6 +36,9 @@ class ScriptSource implements MangaSource, NovelSource {
     'collectionContinuation': 1,
   };
 
+  /// 构造即 eval 脚本:语法错、缺 `__source.meta`、meta 字段类型不对都会在这里抛。
+  /// 此时 [engine] 已经建好但还没有人持有它 —— 所以**构造失败要就地回收引擎**,
+  /// 否则每打开一次坏源就漏一个 QuickJS 运行时(源列表页逐个探测时尤其明显)。
   ScriptSource({
     required JsEngine engine,
     required HttpService http,
@@ -44,20 +47,25 @@ class ScriptSource implements MangaSource, NovelSource {
   })  : _js = engine,
         _http = http,
         _webHttp = webHttp {
-    _html = HtmlHost(_js); // 注入 host.html.*(供源脚本解析 HTML)
-    LzHost(_js); // 注入 host.lz.*(lz-string 解包,部分源的压缩页表用)
-    CryptoHost(_js); // 注入 host.crypto.*(md5/AES/HMAC,API 型源用)
-    _js.evalSync(scriptCode);
-    final meta = jsonDecode(_js.evalSync('JSON.stringify(__source.meta)'))
-        as Map<String, dynamic>;
-    id = meta['id'] as String;
-    name = meta['name'] as String;
-    lang = (meta['lang'] as String?) ?? 'zh-Hans';
-    baseUrl = (meta['baseUrl'] as String?) ?? '';
-    version = (meta['version'] as num?)?.toInt() ?? 1;
-    nsfw = (meta['nsfw'] as bool?) ?? false;
-    _filters = _parseFilters();
-    _sections = _parseSections();
+    try {
+      _html = HtmlHost(_js); // 注入 host.html.*(供源脚本解析 HTML)
+      LzHost(_js); // 注入 host.lz.*(lz-string 解包,部分源的压缩页表用)
+      CryptoHost(_js); // 注入 host.crypto.*(md5/AES/HMAC,API 型源用)
+      _js.evalSync(scriptCode);
+      final meta = jsonDecode(_js.evalSync('JSON.stringify(__source.meta)'))
+          as Map<String, dynamic>;
+      id = meta['id'] as String;
+      name = meta['name'] as String;
+      lang = (meta['lang'] as String?) ?? 'zh-Hans';
+      baseUrl = (meta['baseUrl'] as String?) ?? '';
+      version = (meta['version'] as num?)?.toInt() ?? 1;
+      nsfw = (meta['nsfw'] as bool?) ?? false;
+      _filters = _parseFilters();
+      _sections = _parseSections();
+    } catch (_) {
+      _js.dispose();
+      rethrow;
+    }
   }
 
   /// 只解析脚本的 `__source.meta`(不建传输、不联网),用于「添加本地单文件源」时读取

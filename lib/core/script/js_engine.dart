@@ -9,9 +9,11 @@ class JsEngine {
   JsEngine() : _rt = getJavascriptRuntime();
 
   final JavascriptRuntime _rt;
+  bool _disposed = false;
 
   /// 同步求值,返回字符串结果;JS 抛错时抛 [JsEngineException]。
   String evalSync(String code) {
+    if (_disposed) throw StateError('JsEngine 已释放');
     final r = _rt.evaluate(code);
     if (r.isError) {
       throw JsEngineException(r.stringResult);
@@ -26,7 +28,13 @@ class JsEngine {
           String channel, dynamic Function(dynamic message) handler) =>
       _rt.onMessage(channel, handler);
 
-  void dispose() => _rt.dispose();
+  /// 幂等:构造失败时由 [ScriptSource] 就地回收,调用方若再兜一次 dispose
+  /// 不该二次释放原生运行时。
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _rt.dispose();
+  }
 }
 
 class JsEngineException implements Exception {
