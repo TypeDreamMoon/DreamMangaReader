@@ -44,6 +44,14 @@ class AppProxy {
   static String? _override;
   static String? _resolved; // 当前生效的 host:port(null=直连)
   static ProxySource _sourceCode = ProxySource.directNoProxy; // 来源码(UI 映射 l10n)
+  static int _generation = 0;
+
+  /// 代理配置的版本号,每次 [refresh] 递增。
+  ///
+  /// [HttpOverrides.global] 只在 `HttpClient()` **构造那一刻**被查询,之后换全局
+  /// 覆盖不会追溯到已经建好的 client。持有长命 client 的地方(图片缓存)据此判断
+  /// 「自己手里这个是旧代理下建的」并重建。
+  static int get generation => _generation;
 
   /// 当前生效代理("host:port",null=直连)。
   static String? get current => _resolved;
@@ -86,6 +94,7 @@ class AppProxy {
   static Future<void> refresh() async {
     _resolved = await _resolve();
     HttpOverrides.global = _AppHttpOverrides(_resolved);
+    _generation++;
   }
 
   static Future<String?> _resolve() async {
