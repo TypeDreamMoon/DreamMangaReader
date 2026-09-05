@@ -46,9 +46,19 @@ class _MixedCursor {
   bool errored = false; // 最近一次拉取是「抛错」(而非成功返回空页)—— 区分失败与真没结果
 }
 
-/// 「混合(全部源)」占位源。
+/// 「混合(全部源)」占位源。展示名不放这里:界面上一律走
+/// `disc_mixedAllSources`,免得中文字面量漏进英文/日文界面。
 const _mixedMetaId = '__all__';
-const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '混合 · 全部源', script: '');
+const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '', script: '');
+
+/// 内容类型 → 展示名。与书架的 `shelfKindLabel` 同一套口径:名字归 l10n,
+/// 枚举只留图标和可用性。
+String contentKindLabel(BuildContext context, ContentKind kind) =>
+    switch (kind) {
+      ContentKind.manga => context.l10n.content_manga,
+      ContentKind.anime => context.l10n.content_anime,
+      ContentKind.novel => context.l10n.content_novel,
+    };
 
 /// 发现:按当前源的筛选维度(地区/剧情/受众/进度/排序)浏览,分页无限加载。
 /// 源未声明筛选时,退化为纯分页浏览。**混合模式**:并发查全部启用源、合并结果。
@@ -557,7 +567,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         trailing: _sourceTrailing(),
         tabs: [
           for (final k in ContentKind.values)
-            AppUnderlineTab(value: k, label: k.label),
+            AppUnderlineTab(value: k, label: contentKindLabel(context, k)),
         ],
       );
 
@@ -580,7 +590,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     if (!LibraryScope.of(context).showSourcePicker) return null;
     final (SourceSelection? selection, VoidCallback onTap) = switch (_kind) {
       ContentKind.manga => (
-          SourceSelection(mixed: _mixed, sourceName: _meta?.name),
+          SourceSelection(mixed: _mixed, sourceName: _mixed ? null : _meta?.name),
           _pickSource
         ),
       ContentKind.anime => (
@@ -622,7 +632,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           children: [
             Icon(kind.icon, size: 56, color: p.textMuted),
             const SizedBox(height: 16),
-            Text(context.l10n.disc_comingSoonKind(kind.label),
+            Text(context.l10n.disc_comingSoonKind(contentKindLabel(context, kind)),
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 16,
@@ -685,10 +695,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           style: TextStyle(color: p.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            hintText: context.l10n.disc_searchHint(_kind == ContentKind.anime
-                ? '番剧'
-                : _kind == ContentKind.novel
-                    ? '小说'
+            // 番剧/小说档搜的是「那一类」,漫画档搜的是「当前源」。
+            hintText: context.l10n.disc_searchHint(
+                _kind != ContentKind.manga
+                    ? contentKindLabel(context, _kind)
                     : (_mixed
                         ? context.l10n.disc_mixedAllSources
                         : (_meta?.name ?? ''))),
