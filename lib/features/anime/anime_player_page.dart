@@ -242,7 +242,8 @@ class AnimePlayerPage extends StatefulWidget {
   State<AnimePlayerPage> createState() => _AnimePlayerPageState();
 }
 
-class _AnimePlayerPageState extends State<AnimePlayerPage> {
+class _AnimePlayerPageState extends State<AnimePlayerPage>
+    with WidgetsBindingObserver {
   late int _i = widget.index;
   List<VideoTrack> _tracks = const [];
   VideoTrack? _current;
@@ -351,8 +352,21 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _enterImmersiveLandscape();
     unawaited(_loadPlaybackPreferences());
+  }
+
+  /// 进后台就把攒着的进度落盘:安卓随时可能在后台把进程收走,再回来时
+  /// 节流没写出去的那几秒就永远没了。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final backgrounded = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+    if (!backgrounded) return;
+    final library = _library;
+    if (library != null) unawaited(library.flushPending());
   }
 
   Future<void> _loadPlaybackPreferences() async {
@@ -443,6 +457,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _loadGeneration++;
     _controlsTimer?.cancel();
     _adjustTimer?.cancel();
