@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_native_document_controller.dart';
 import 'package:flutter/material.dart';
@@ -63,6 +66,83 @@ void main() {
     expect(controller.pageImageFor(1), isNotNull);
     expect(controller.pageImageFor(2), isNotNull);
     expect(controller.cachedPageImageCount, lessThanOrEqualTo(3));
+  });
+
+  Future<Directory> fontSandbox() async {
+    final directory = await Directory.systemTemp.createTemp('novel-native-font');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    return directory;
+  }
+
+  NovelDocument shortChapter() => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          12,
+          (index) => '第${index + 1}段 ${List.filled(20, '字体正文').join()}',
+        ).join('\n'),
+      );
+
+  // 这两条走真实文件 IO(字体入库 / 解析),必须用 test() —— testWidgets 的
+  // 假异步时钟不会推进真正的 IO Future。
+  test('lays an imported font out under its registered family', () async {
+    final support = await fontSandbox();
+    final store = NovelFontStore(applicationSupportDirectory: () async =>
+        Directory('${support.path}${Platform.pathSeparator}support'));
+    final imported = await store.importFont(
+      await File('${support.path}${Platform.pathSeparator}Reader.ttf')
+          .writeAsBytes(_minimalTtf()),
+    );
+    final registeredFamilies = <String>[];
+    final controller = NovelNativeDocumentController(
+      fontRegistry: NovelFontRegistry(
+        store: store,
+        registerFace: (family, bytes) async => registeredFamilies.add(family),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.loadChapter(
+      'chapter-1',
+      shortChapter(),
+      NovelReaderPreferences(fontFamily: imported.id),
+    );
+    final pagination = controller.ensurePagination(const Size(420, 720));
+
+    expect(registeredFamilies, [imported.id]);
+    expect(
+      pagination!.pages.first.fragments.first.textStyle.fontFamily,
+      imported.id,
+    );
+    expect((await controller.pageMetrics()).fontLoadFailed, isFalse);
+  });
+
+  test('reports an unusable imported font so the reader can fall back',
+      () async {
+    final support = await fontSandbox();
+    final controller = NovelNativeDocumentController(
+      fontRegistry: NovelFontRegistry(
+        store: NovelFontStore(
+          applicationSupportDirectory: () async => support,
+        ),
+        registerFace: (family, bytes) async {},
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.loadChapter(
+      'chapter-1',
+      shortChapter(),
+      NovelReaderPreferences(
+        fontFamily: '${NovelFontIds.importedPrefix}${'b' * 64}',
+      ),
+    );
+    final pagination = controller.ensurePagination(const Size(420, 720));
+
+    // 排版退回内置字体,同时把失败报上去 —— 老实现两件事都不做。
+    expect(pagination!.pages.first.fragments.first.textStyle.fontFamily, isNull);
+    expect((await controller.pageMetrics()).fontLoadFailed, isTrue);
   });
 
   testWidgets('a theme change retires cached page frames without repaginating',
@@ -257,4 +337,43 @@ void main() {
     controller.reportScroll(restored!, maxExtent);
     expect((await controller.captureLocator()).blockId, anchor.blockId);
   });
+}
+
+/// 结构上合法、但没有轮廓数据的最小 TTF：只用来走通导入与注册路径。
+List<int> _minimalTtf() {
+  const tags = <String>[
+    'OS/2',
+    'cmap',
+    'glyf',
+    'head',
+    'hhea',
+    'hmtx',
+    'loca',
+    'maxp',
+    'name',
+    'post',
+  ];
+  final directoryEnd = 12 + tags.length * 16;
+  final bytes = <int>[
+    0x00, 0x01, 0x00, 0x00,
+    0x00, tags.length,
+    0x00, 0x00,
+    0x00, 0x00,
+    0x00, 0x00,
+  ];
+  var offset = directoryEnd;
+  for (final tag in tags) {
+    bytes.addAll(tag.codeUnits);
+    bytes.addAll([0, 0, 0, 0]);
+    bytes.addAll([
+      (offset >> 24) & 0xff,
+      (offset >> 16) & 0xff,
+      (offset >> 8) & 0xff,
+      offset & 0xff,
+    ]);
+    bytes.addAll([0, 0, 0, 16]);
+    offset += 16;
+  }
+  bytes.addAll(List<int>.filled(tags.length * 16, 0));
+  return bytes;
 }

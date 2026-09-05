@@ -18,6 +18,12 @@ import 'novel_native_page_view.dart';
 
 class NovelNativeDocumentController extends ChangeNotifier
     implements NovelDocumentController {
+  NovelNativeDocumentController({NovelFontRegistry? fontRegistry})
+      : _fontRegistry = fontRegistry ?? NovelFontRegistry.instance;
+
+  final NovelFontRegistry _fontRegistry;
+  bool _fontLoadFailed = false;
+
   String _chapterId = '';
   NovelRenderDocument? _document;
   NovelReaderPreferences _preferences = const NovelReaderPreferences();
@@ -205,7 +211,7 @@ class NovelNativeDocumentController extends ChangeNotifier
       document: document,
       viewport: layoutViewport,
       style: NovelPageStyle(
-        fontFamily: _flutterFontFamily(_preferences.fontFamily),
+        fontFamily: _fontRegistry.familyFor(_preferences.fontFamily),
         fontSize: _preferences.fontSize,
         lineHeight: _preferences.lineHeight,
         paragraphSpacing: _preferences.paragraphSpacing,
@@ -297,6 +303,7 @@ class NovelNativeDocumentController extends ChangeNotifier
     _document = NovelRenderDocumentParser.parse(document);
     _locator = NovelLocator(chapterId: chapterId);
     _spreadIndex = 0;
+    await _registerSelectedFont();
     _invalidateLayout();
     notifyListeners();
   }
@@ -306,15 +313,22 @@ class NovelNativeDocumentController extends ChangeNotifier
     return _currentLocator() ?? NovelLocator(chapterId: _chapterId);
   }
 
+  Future<void> _registerSelectedFont() async {
+    final requested = _preferences.fontFamily;
+    await _fontRegistry.register(requested);
+    _fontLoadFailed = _fontRegistry.failed(requested);
+  }
+
   @override
   Future<NovelPageMetrics> pageMetrics() async {
     final pagination = _pagination;
     if (pagination == null) {
-      return const NovelPageMetrics(
+      return NovelPageMetrics(
         pageCount: 1,
         currentPageIndex: 0,
-        viewport: NovelViewport(width: 0, height: 0),
+        viewport: const NovelViewport(width: 0, height: 0),
         layoutFingerprint: '',
+        fontLoadFailed: _fontLoadFailed,
       );
     }
     return NovelPageMetrics(
@@ -326,6 +340,7 @@ class NovelNativeDocumentController extends ChangeNotifier
       ),
       layoutFingerprint: _rasterFingerprint(pagination),
       visibleTextLength: _visibleTextLength(pagination),
+      fontLoadFailed: _fontLoadFailed,
     );
   }
 
@@ -429,7 +444,16 @@ class NovelNativeDocumentController extends ChangeNotifier
   Future<void> applyPreferences(NovelReaderPreferences preferences) async {
     _locator = _currentLocator();
     final previousLayout = _preferenceLayoutSignature(_preferences);
+    final previousFamily = _fontRegistry.familyFor(_preferences.fontFamily);
     _preferences = preferences;
+    // 导入字体要先真正注册进引擎才能拿来排版 —— 而且必须在这里等它,阅读页紧接着
+    // 就要读 pageMetrics().fontLoadFailed 决定是不是回退。
+    await _registerSelectedFont();
+    if (_fontRegistry.familyFor(preferences.fontFamily) != previousFamily) {
+      _invalidateLayout();
+      notifyListeners();
+      return;
+    }
     if (_preferenceLayoutSignature(preferences) == previousLayout) {
       // 只改了颜色 / 背景 / 亮度:断行没变,重排整章纯属浪费,丢掉页帧重画即可。
       _clearRasterCache();
@@ -787,12 +811,6 @@ String _preferencePaintSignature(NovelReaderPreferences value) => [
       value.brightness.toStringAsFixed(3),
       value.showPageNumber,
     ].join('|');
-
-String? _flutterFontFamily(String id) => switch (normalizeNovelFontId(id)) {
-      NovelFontIds.notoSerifSc => 'DMRNotoSerifSC',
-      NovelFontIds.lxgwWenKai => 'DMRLXGWWenKai',
-      _ => null,
-    };
 
 extension<T> on Iterable<T> {
   T? get firstOrNull {

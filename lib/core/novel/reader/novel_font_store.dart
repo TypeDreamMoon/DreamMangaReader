@@ -261,6 +261,91 @@ class NovelFontStore {
   }
 }
 
+/// 把一份字体文件交给引擎注册成 [family]。
+typedef NovelFontFaceRegistrar = Future<void> Function(
+  String family,
+  Uint8List bytes,
+);
+
+/// 阅读器字体的引擎注册表。
+///
+/// 原生渲染器原本只认 pubspec 里声明过的两个内置 family，导入字体的
+/// `imported:<sha256>` 走到排版这一步直接变成 `null`：选了完全没效果，而且连
+/// 「加载失败」都不会报。这里按字体 id 注册一次 [FontLoader]（family 就用 id
+/// 本身），注册失败的 id 记下来，让阅读页能提示并回退。
+class NovelFontRegistry {
+  NovelFontRegistry({
+    NovelFontStore? store,
+    NovelFontFaceRegistrar? registerFace,
+  })  : _store = store ?? NovelFontStore(),
+        _registerFace = registerFace ?? _loadFontFaceIntoEngine;
+
+  /// 进程级共享：同一份字体在整个 app 内只注册一次。
+  static final NovelFontRegistry instance = NovelFontRegistry();
+
+  final NovelFontStore _store;
+  final NovelFontFaceRegistrar _registerFace;
+  final Map<String, String?> _families = {};
+  final Map<String, Future<String?>> _jobs = {};
+
+  /// 可以直接拿去排版的 family；还没注册或注册失败时返回 null。
+  String? familyFor(String fontId) {
+    final id = normalizeNovelFontId(fontId);
+    if (!id.startsWith(NovelFontIds.importedPrefix)) return _builtinFamily(id);
+    return _families[id];
+  }
+
+  /// 这个字体 id 是否已经尝试过并且失败了。
+  bool failed(String fontId) {
+    final id = normalizeNovelFontId(fontId);
+    if (!id.startsWith(NovelFontIds.importedPrefix)) return false;
+    return _families.containsKey(id) && _families[id] == null;
+  }
+
+  /// 注册（或复用已注册的）字体，返回可用的 family；失败返回 null。
+  Future<String?> register(String fontId) {
+    final id = normalizeNovelFontId(fontId);
+    if (!id.startsWith(NovelFontIds.importedPrefix)) {
+      return Future.value(_builtinFamily(id));
+    }
+    if (_families.containsKey(id)) return Future.value(_families[id]);
+    final pending = _jobs[id];
+    if (pending != null) return pending;
+    final job = _registerImported(id);
+    _jobs[id] = job;
+    return job;
+  }
+
+  Future<String?> _registerImported(String id) async {
+    try {
+      final record = await _store.resolveFont(id);
+      if (record == null) return _remember(id, null);
+      final bytes = await record.file.readAsBytes();
+      await _registerFace(id, bytes);
+      return _remember(id, id);
+    } catch (_) {
+      return _remember(id, null);
+    }
+  }
+
+  String? _remember(String id, String? family) {
+    _families[id] = family;
+    _jobs.remove(id);
+    return family;
+  }
+
+  static String? _builtinFamily(String id) => switch (id) {
+        NovelFontIds.notoSerifSc => 'DMRNotoSerifSC',
+        NovelFontIds.lxgwWenKai => 'DMRLXGWWenKai',
+        _ => null,
+      };
+}
+
+Future<void> _loadFontFaceIntoEngine(String family, Uint8List bytes) {
+  return (FontLoader(family)..addFont(Future.value(ByteData.sublistView(bytes))))
+      .load();
+}
+
 Future<List<int>> _loadBundledFont(String assetPath) async {
   final data = await rootBundle.load(assetPath);
   return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
