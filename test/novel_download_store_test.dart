@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -98,7 +99,7 @@ void main() {
         cacheFactory: (root) => NovelDocumentCache(root: root, dio: Dio()),
       );
 
-  test('downloaded source metadata preserves a shared auth key', () {
+  test('a download record stores the source id, never its script', () {
     const sourceWithSharedAuth = SourceMeta(
       id: 'xiaojie_novel',
       name: '晓桀小说',
@@ -107,6 +108,7 @@ void main() {
       needsLogin: true,
       authKey: 'xiaojie_github',
     );
+    registeredSources = const [sourceWithSharedAuth];
     final record = DownloadedNovelChapter(
       source: sourceWithSharedAuth,
       novel: novel,
@@ -117,10 +119,38 @@ void main() {
       completedAt: 100,
     );
 
-    final restored = DownloadedNovelChapter.fromJson(record.toJson());
+    final json = record.toJson();
+    final restored = DownloadedNovelChapter.fromJson(json);
 
+    expect(json['source'], {'id': 'xiaojie_novel', 'name': '晓桀小说'});
+    expect(jsonEncode(json), isNot(contains('source code')));
+    expect(restored.source.script, 'source code');
     expect(restored.source.authKey, 'xiaojie_github');
     expect(restored.source.credentialKey, 'xiaojie_github');
+  });
+
+  test('a legacy record keeps working after its source is uninstalled', () {
+    registeredSources = const [];
+
+    final restored = DownloadedNovelChapter.fromJson({
+      'source': {
+        'id': 'gone_novel',
+        'name': '已卸载源',
+        'script': 'a very long legacy script body',
+        'kind': 'novel',
+        'authKey': 'legacy_key',
+      },
+      'novel': {'id': 'novel', 'title': '测试小说'},
+      'chapter': {'id': 'chapter', 'title': '第一章'},
+      'directory': 'chapter-directory',
+      'resourceCount': 0,
+      'byteCount': 12,
+      'completedAt': 100,
+    });
+
+    expect(restored.source.name, '已卸载源');
+    expect(restored.source.authKey, 'legacy_key');
+    expect(jsonEncode(restored.toJson()), isNot(contains('legacy script')));
   });
 
   setUp(() async {
@@ -264,6 +294,36 @@ void main() {
     expect(queued.disposed, isTrue);
     expect(second.disposed, isTrue);
     store.dispose();
+  });
+
+  test('a batch of chapters is written to disk far fewer times than once each',
+      () async {
+    final store = makeStore();
+    await store.load();
+    final chapters = [
+      for (var index = 1; index <= 5; index++)
+        NovelChapter(id: 'chapter-$index', title: '第 $index 章'),
+    ];
+
+    for (final item in chapters) {
+      store.enqueue(meta, novel, item);
+    }
+    await store.idle;
+
+    expect(store.persistCount, lessThan(chapters.length));
+    for (final item in chapters) {
+      expect(store.isDownloaded('source', 'novel', item.id), isTrue);
+    }
+    store.dispose();
+
+    // 节流不能吃掉记录:重开一次,五章都还在索引里。
+    source = _FakeNovelSource();
+    final restored = makeStore();
+    await restored.load();
+    for (final item in chapters) {
+      expect(restored.isDownloaded('source', 'novel', item.id), isTrue);
+    }
+    restored.dispose();
   });
 
   test('active downloads expose their novel and chapter metadata', () async {

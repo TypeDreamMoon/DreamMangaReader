@@ -136,6 +136,10 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
 
   static const _indexKey = 'novel.downloads.v1';
 
+  /// 章节索引落盘节流:敲到这么多章、或者离上次写盘超过这么久,才真写。
+  static const Duration _persistInterval = Duration(seconds: 2);
+  static const int _persistBatch = 8;
+
   final NovelDownloadRootProvider _rootProvider;
   final NovelSourceBuilder _sourceBuilder;
   final NovelDocumentCacheFactory _cacheFactory;
@@ -149,8 +153,16 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   NovelDocumentCache? _cache;
   _NovelDownloadJob? _activeJob;
   Completer<void>? _idleCompleter;
+  Timer? _persistTimer;
+  DateTime? _persistedAt;
+  int _pendingPersists = 0;
+  int _persistCount = 0;
   bool _running = false;
   bool _disposed = false;
+
+  /// 实际写盘次数。只给测试用 —— 断言节流真的把逐章写盘按下去了。
+  @visibleForTesting
+  int get persistCount => _persistCount;
 
   List<DownloadedNovelChapter> get downloads {
     final result = _completed.values.toList(growable: false)
@@ -289,7 +301,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     _completed
       ..clear()
       ..addAll(loaded);
-    if (repairIndex) await _persist();
+    if (repairIndex) await _flush();
     _notify();
   }
 
@@ -348,7 +360,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     String chapterId,
   ) async {
     await _deleteChapter(sourceId, novelId, chapterId);
-    await _persist();
+    await _flush();
     _notify();
   }
 
@@ -372,7 +384,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     for (final identity in identities) {
       await _deleteChapter(identity.$1, identity.$2, identity.$3);
     }
-    await _persist();
+    await _flush();
     _notify();
   }
 
@@ -404,6 +416,10 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       _activeJob = null;
       _running = false;
       if (_queue.isEmpty || _disposed) {
+        // 队列停下来 = “完成”,此时把攒着的章节立刻落盘。
+        try {
+          await _flushPending();
+        } catch (_) {}
         final completer = _idleCompleter;
         _idleCompleter = null;
         if (completer != null && !completer.isCompleted) completer.complete();
@@ -477,7 +493,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       );
       _completed[job.key] = record;
       try {
-        await _persist();
+        await _persistSoon();
       } catch (_) {
         _completed.remove(job.key);
         await _deleteDirectory(cached.directory);
@@ -517,9 +533,42 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     if (await directory.exists()) await directory.delete(recursive: true);
   }
 
+  /// 每下完一章就重写一遍整份索引,一本书几百章就是几百次全量
+  /// 序列化 + 写盘。攒到 [_persistBatch] 章、或距上次写盘 [_persistInterval]
+  /// 以上再写;中间掉电最多丢几条索引,缓存目录还在,重进来重下就好。
+  Future<void> _persistSoon() async {
+    _pendingPersists++;
+    final last = _persistedAt;
+    if (_pendingPersists >= _persistBatch ||
+        last == null ||
+        DateTime.now().difference(last) >= _persistInterval) {
+      await _flush();
+      return;
+    }
+    _persistTimer ??= Timer(_persistInterval, () {
+      _persistTimer = null;
+      // 定时写失败就等下一次:不能因为写盘出错把已下好的章节从内存抹掉。
+      unawaited(_flush().catchError((Object _) {}));
+    });
+  }
+
+  Future<void> _flushPending() async {
+    if (_pendingPersists == 0) return;
+    await _flush();
+  }
+
+  Future<void> _flush() async {
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    _pendingPersists = 0;
+    _persistedAt = DateTime.now();
+    await _persist();
+  }
+
   Future<void> _persist() async {
     final prefs = _prefs;
     if (prefs == null) return;
+    _persistCount++;
     final stored = await prefs.setString(
       _indexKey,
       jsonEncode(_completed.values.map((value) => value.toJson()).toList()),
@@ -555,6 +604,12 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   @override
   void dispose() {
     _disposed = true;
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    if (_pendingPersists > 0) {
+      _pendingPersists = 0;
+      unawaited(_persist().catchError((Object _) {}));
+    }
     _queue.clear();
     _progress.clear();
     super.dispose();
@@ -600,29 +655,32 @@ Map<String, dynamic> _requiredMap(Map<String, dynamic> json, String key) {
   return value.cast<String, dynamic>();
 }
 
+/// 只存 id 和显示名。源脚本动辄上百 KB,以前每条下载记录都塞一份,
+/// 一本书几百章就把 SharedPreferences 撑爆了 —— 脚本从源仓库现取。
+/// 名字留着是为了源被卸载后离线列表里还能写出一个人读得懂的标题。
 Map<String, Object?> _sourceToJson(SourceMeta source) => {
       'id': source.id,
       'name': source.name,
-      'script': source.script,
-      'kind': source.kind,
-      'experimental': source.experimental,
-      'useWebView': source.useWebView,
-      'imageReferer': source.imageReferer,
-      'needsLogin': source.needsLogin,
-      'authKey': source.authKey,
     };
 
-SourceMeta _sourceFromJson(Map<String, dynamic> json) => SourceMeta(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      script: json['script'] as String,
-      kind: json['kind'] as String? ?? 'novel',
-      experimental: json['experimental'] as bool? ?? false,
-      useWebView: json['useWebView'] as bool? ?? false,
-      imageReferer: json['imageReferer'] as String?,
-      needsLogin: json['needsLogin'] as bool? ?? false,
-      authKey: json['authKey'] as String?,
-    );
+SourceMeta _sourceFromJson(Map<String, dynamic> json) {
+  final id = json['id'] as String;
+  for (final source in registeredSources) {
+    if (source.id == id) return source;
+  }
+  // 旧格式把整份 meta 写进了 JSON;源已不在注册表里时兜底。
+  return SourceMeta(
+    id: id,
+    name: json['name'] as String? ?? id,
+    script: json['script'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'novel',
+    experimental: json['experimental'] as bool? ?? false,
+    useWebView: json['useWebView'] as bool? ?? false,
+    imageReferer: json['imageReferer'] as String?,
+    needsLogin: json['needsLogin'] as bool? ?? false,
+    authKey: json['authKey'] as String?,
+  );
+}
 
 Map<String, Object?> _novelToJson(Novel novel) => {
       'id': novel.id,
