@@ -130,7 +130,8 @@ class _AppState extends State<App> {
       anime: _animeLibrary,
     );
     if (targets.isEmpty) return;
-    await LibraryUpdateChecker(tracker: tracker).sweep(targets, now: now);
+    // 全局那一个扫描器:书架上手点「检查更新」用的也是它,两边互斥。
+    await LibraryUpdateChecker.instance.sweep(targets, now: now);
   }
 
   Future<void> _loadDownloadState() async {

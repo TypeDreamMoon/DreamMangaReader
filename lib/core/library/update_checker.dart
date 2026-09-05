@@ -61,6 +61,14 @@ class LibraryUpdateChecker {
     this.concurrency = 3,
   }) : _fetch = fetcher ?? fetchChapterCount;
 
+  /// 全局唯一的扫描器。启动时的自动扫描和书架上的「检查更新」**必须**共用它:
+  /// [_running] 是实例字段,各建各的就等于没有互斥 —— 两轮扫描会同时压向同一批源,
+  /// 还会对同一本书重复 recordCheck。
+  ///
+  /// 可写只为测试替身;正式代码一律直接用它,不要再 new 一个。
+  static LibraryUpdateChecker instance =
+      LibraryUpdateChecker(tracker: LibraryUpdateTracker.instance);
+
   final LibraryUpdateTracker tracker;
   final ChapterCountFetcher _fetch;
 

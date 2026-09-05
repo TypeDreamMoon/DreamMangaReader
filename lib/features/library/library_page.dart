@@ -50,8 +50,10 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 追更账本(角标数据源)。它是全局单例、不在 InheritedNotifier 里,
   /// 所以手动订阅:检查完 / 消角标都要让书架重画。
   final _updates = LibraryUpdateTracker.instance;
-  late final LibraryUpdateChecker _checker =
-      LibraryUpdateChecker(tracker: _updates);
+
+  /// 扫描器取全局那一个 —— 启动自动扫描也用它,两边才互斥得起来
+  /// (自己 new 一个的话 `running` 各算各的,手点会和启动扫描撞在一起)。
+  LibraryUpdateChecker get _checker => LibraryUpdateChecker.instance;
 
   /// 非 null = 正在检查,值为 (已完成, 总数),驱动标题栏上的进度。
   (int, int)? _sweepProgress;
