@@ -22,6 +22,9 @@ class _AboutPageState extends State<AboutPage> {
   int _sealTaps = 0;
 
   void _onSealTap() {
+    // release 包里这条隐藏入口不存在:[debugToolsAvailable] 是编译期常量,
+    // 整段连同 DebugPage 一起被摇掉。
+    if (!debugToolsAvailable) return;
     _sealTaps++;
     if (_sealTaps >= 5) {
       _sealTaps = 0;

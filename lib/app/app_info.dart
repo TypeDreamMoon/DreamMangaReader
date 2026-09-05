@@ -1,3 +1,14 @@
+import 'package:flutter/foundation.dart' show kDebugMode, kProfileMode;
+
+/// 调试工具(关于页印章连点 5 次 → 调试页 → Cloudflare 过盾页)在当前构建里是否
+/// 可达。
+///
+/// 那几页会联网跑任意注册源的脚本、把抓到的整页 HTML 写进应用目录,还能开 WebView
+/// 去过 Cloudflare 挑战 —— 开发工具,不该在正式包里靠连点 5 下印章就进得来。
+/// 是**编译期常量**:release 下入口连同整棵调试页一起被摇掉。用户反馈问题有
+/// 「设置 › 运行日志」,那条留着。
+const bool debugToolsAvailable = kDebugMode || kProfileMode;
+
 /// App 元信息(关于页 / 调试页共用)。
 ///
 /// [version] = 用户可见的发布版本(含预发布后缀,与 git tag 对齐);

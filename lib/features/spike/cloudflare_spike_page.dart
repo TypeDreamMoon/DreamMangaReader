@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../app/app_info.dart';
 import '../../app/theme/app_colors.dart';
 import '../../ui/ui.dart';
 
@@ -19,6 +20,8 @@ const String _kUserAgent =
 
 /// P0 关键门槛:证明在 Android + Windows 上都能
 /// 「WebView 过挑战 → 取 cf_clearance → 交给普通 HTTP 客户端复用」。
+/// 只在调试构建里可达:入口挂在同样被 [debugToolsAvailable] 门控的调试页上,
+/// 这里再自查一次,防止哪天被别处直接 push 进来。
 class CloudflareSpikePage extends StatefulWidget {
   const CloudflareSpikePage({super.key});
 
@@ -43,6 +46,8 @@ class _CloudflareSpikePageState extends State<CloudflareSpikePage> {
   @override
   void initState() {
     super.initState();
+    // release 里这页不该被推进来;真被推进来也绝不去初始化 WebView / 摸 Cookie。
+    if (!debugToolsAvailable) return;
     _init();
   }
 
@@ -210,6 +215,7 @@ class _CloudflareSpikePageState extends State<CloudflareSpikePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!debugToolsAvailable) return const SizedBox.shrink();
     final p = context.palette;
     return Scaffold(
       appBar: AppBar(

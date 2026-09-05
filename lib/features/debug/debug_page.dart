@@ -20,6 +20,7 @@ import '../../ui/ui.dart';
 import '../spike/cloudflare_spike_page.dart';
 
 /// 调试工具:环境信息 + 各环节自检 + 抓取探针。产品页面不含这些,统一收在这里。
+/// 入口受 [debugToolsAvailable] 门控,release 里不可达。
 class DebugPage extends StatefulWidget {
   const DebugPage({super.key});
 
@@ -80,48 +81,56 @@ class _DebugPageState extends State<DebugPage> {
   }
 
   void _runJs() {
+    // dispose 必须在 finally 里:evalSync 抛了(自检本来就是在找这种情况)就跳过
+    // 释放,QuickJS 运行时留在原生堆上,反复点几次自检就是几份泄漏。
+    final js = JsEngine();
     try {
-      final js = JsEngine();
       final v1 = js.evalSync('1 + 2');
       final v2 = js.evalSync(
         '(function(){const d={t:"墨染之约",c:[1,2,3]};'
         'return JSON.stringify({n:d.c.length,len:d.t.length});})()',
       );
-      js.dispose();
       setState(() => _jsTest = '✓ QuickJS OK\n1 + 2 = $v1\nJSON/Unicode = $v2');
     } catch (e) {
       setState(() => _jsTest = '✗ $e');
+    } finally {
+      js.dispose();
     }
   }
 
   Future<void> _runScript() async {
+    final engine = JsEngine();
     try {
-      final engine = JsEngine();
       final src = ScriptSource(
         engine: engine,
         http: _FakeHtmlHttp(),
         scriptCode: _demoHtmlSource,
       );
       final page = await src.getDiscovery(1);
-      engine.dispose();
       setState(() => _scriptTest =
           '✓ 脚本源(JS prepare/handle + host.html)OK\n'
           '解析出 ${page.items.length} 部:'
           '${page.items.map((m) => m.title).join('、')}');
     } catch (e) {
       setState(() => _scriptTest = '✗ $e');
+    } finally {
+      engine.dispose();
     }
   }
 
   Future<void> _runLive(SourceMeta meta) async {
     setState(() => _liveTest = '运行中…(联网)');
+    // buildSource 每次都新建一个脚本源,里面带一个 QuickJS 运行时。用完不 dispose,
+    // 一次自检漏一份;这页上按钮就是拿来反复点的。
+    final src = buildSource(meta);
     try {
-      final src = buildSource(meta);
       final page = await src.getDiscovery(1);
       setState(() => _liveTest = '✓ ${meta.name}.getDiscovery → ${page.items.length} 部\n'
           '${page.items.take(6).map((m) => m.title).join('、')}');
     } catch (e) {
       setState(() => _liveTest = '✗ ${meta.name}:$e');
+    } finally {
+      src.dispose();
     }
   }
 
@@ -225,8 +234,8 @@ class _DebugPageState extends State<DebugPage> {
       return;
     }
     setState(() => _pagesResult = '运行中…(联网 + 解码)');
+    final src = buildSource(registeredSources.first);
     try {
-      final src = buildSource(registeredSources.first);
       final pages = await src.getPages(
           _pMangaCtrl.text.trim(), _pChapterCtrl.text.trim());
       final sb = StringBuffer()..writeln('✓ 解出 ${pages.length} 页');
@@ -236,6 +245,8 @@ class _DebugPageState extends State<DebugPage> {
       setState(() => _pagesResult = sb.toString());
     } catch (e) {
       setState(() => _pagesResult = '✗ $e');
+    } finally {
+      src.dispose();
     }
   }
 
@@ -279,6 +290,7 @@ class _DebugPageState extends State<DebugPage> {
     _probeJsCtrl.dispose();
     _pMangaCtrl.dispose();
     _pChapterCtrl.dispose();
+    _hello.dispose();
     super.dispose();
   }
 
