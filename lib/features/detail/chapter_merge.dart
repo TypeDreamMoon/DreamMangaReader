@@ -100,13 +100,19 @@ List<MergedChapter> _insertExtras(
       (number: extras[i].number!, row: -1, extra: i),
   ]..sort((left, right) => left.number.compareTo(right.number));
 
+  // 当前源一话都没解析出话数时,没有任何锚点可挂:整串补充话按话数升序排到**表最前**。
+  // 不能走 settle —— 它的兜底值是 rows.length-1(那是给「锚在某有号章之后、后面
+  // 只剩无号章」用的),会把补充话甩到表尾,正好和本函数文档说的「排到最前」相反。
+  final anchorable = rows.any((r) => r.number != null);
+
   final after = <int, List<MergedChapter>>{}; // 行下标 → 跟在它后面的补充话
   var anchor = -1; // -1 = 还没遇到当前源的行 → 插到表最前
   for (final m in marks) {
     if (m.extra < 0) {
       if (m.row > anchor) anchor = m.row;
     } else {
-      (after[settle[anchor + 1]] ??= []).add(extras[m.extra]);
+      (after[anchorable ? settle[anchor + 1] : -1] ??= [])
+          .add(extras[m.extra]);
     }
   }
 
