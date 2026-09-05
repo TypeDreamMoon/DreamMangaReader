@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -11,6 +12,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/core/source/source_registry.dart';
 import 'package:dream_manga_reader/features/novel/novel_detail_page.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
+import 'package:dream_manga_reader/ui/ui.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,11 +23,24 @@ class _FakeNovelSource implements NovelSource {
     required this.meta,
     required this.novel,
     required this.chapters,
+    this.detailGate,
+    this.pages,
+    this.failAfterPage,
   });
 
   final SourceMeta meta;
   final Novel novel;
   final List<NovelChapter> chapters;
+
+  /// 卡住详情请求,用来验证目录不等详情。
+  final Future<void>? detailGate;
+
+  /// 分页目录:每个元素是一页。给了它就忽略 [chapters]。
+  final List<List<NovelChapter>>? pages;
+
+  /// 拉到这一页(1 起)就抛错。
+  final int? failAfterPage;
+  int chapterCalls = 0;
 
   @override
   String get id => meta.id;
@@ -45,7 +60,15 @@ class _FakeNovelSource implements NovelSource {
   @override
   Future<Paged<NovelChapter>> getNovelChapters(String novelId,
       {int? page}) async {
-    return Paged(chapters);
+    chapterCalls++;
+    final index = (page ?? 1) - 1;
+    if (failAfterPage != null && (page ?? 1) >= failAfterPage!) {
+      throw Exception('目录第 ${page ?? 1} 页超时');
+    }
+    final all = pages;
+    if (all == null) return Paged(chapters);
+    if (index >= all.length) return const Paged([]);
+    return Paged(all[index], hasNext: index + 1 < all.length);
   }
 
   @override
@@ -54,7 +77,11 @@ class _FakeNovelSource implements NovelSource {
       Paged([novel]);
 
   @override
-  Future<Novel> getNovelDetail(String novelId) async => novel;
+  Future<Novel> getNovelDetail(String novelId) async {
+    final gate = detailGate;
+    if (gate != null) await gate;
+    return novel;
+  }
 
   @override
   Future<NovelDocument> getNovelDocument(
@@ -75,6 +102,20 @@ class _FakeNovelSource implements NovelSource {
   Future<Paged<Novel>> getNovelSection(String sectionId, int page) async =>
       Paged([novel]);
 }
+
+
+class _FailingDetailSource extends _FakeNovelSource {
+  _FailingDetailSource({
+    required super.meta,
+    required super.novel,
+    required super.chapters,
+  });
+
+  @override
+  Future<Novel> getNovelDetail(String novelId) async =>
+      throw Exception('详情超时');
+}
+
 
 void main() {
   late Directory temp;
@@ -130,13 +171,14 @@ void main() {
     if (await temp.exists()) await temp.delete(recursive: true);
   });
 
-  Widget harness({Object? heroTag}) {
+  Widget harness({Object? heroTag, _FakeNovelSource? sourceAOverride}) {
     NovelSource build(SourceMeta meta) => switch (meta.id) {
-          'a' => _FakeNovelSource(
-              meta: meta,
-              novel: detailedNovelA,
-              chapters: chaptersA,
-            ),
+          'a' => sourceAOverride ??
+              _FakeNovelSource(
+                meta: meta,
+                novel: detailedNovelA,
+                chapters: chaptersA,
+              ),
           'b' => _FakeNovelSource(
               meta: meta,
               novel: novelB,
@@ -316,5 +358,75 @@ void main() {
     expect(find.text('B1'), findsOneWidget);
     expect(find.text('A1'), findsNothing);
     expect(find.text('A2'), findsNothing);
+  });
+
+
+  testWidgets('the directory renders page by page without waiting for detail',
+      (tester) async {
+    final detailGate = Completer<void>();
+    final source = _FakeNovelSource(
+      meta: sourceA,
+      novel: novelA,
+      chapters: const [],
+      detailGate: detailGate.future,
+      pages: const [
+        [NovelChapter(id: 'p1', title: '第一页章节')],
+        [NovelChapter(id: 'p2', title: '第二页章节')],
+      ],
+    );
+
+    await tester.pumpWidget(harness(sourceAOverride: source));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    // 详情还卡着,目录已经在了。
+    expect(find.text('第一页章节'), findsOneWidget);
+    expect(find.text('第二页章节'), findsOneWidget);
+
+    detailGate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('第一页章节'), findsOneWidget);
+  });
+
+  testWidgets('a failed detail no longer throws away the chapter list',
+      (tester) async {
+    final source = _FailingDetailSource(
+      meta: sourceA,
+      novel: novelA,
+      chapters: const [NovelChapter(id: 'a1', title: 'A1')],
+    );
+
+    await tester.pumpWidget(harness(sourceAOverride: source));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A1'), findsOneWidget);
+    expect(find.byType(AppErrorView), findsNothing);
+  });
+
+  testWidgets('a failed directory page shows its own error and retry',
+      (tester) async {
+    final source = _FakeNovelSource(
+      meta: sourceA,
+      novel: novelA,
+      chapters: const [],
+      pages: const [
+        [NovelChapter(id: 'p1', title: '第一页章节')],
+        [NovelChapter(id: 'p2', title: '第二页章节')],
+      ],
+      failAfterPage: 2,
+    );
+
+    await tester.pumpWidget(harness(sourceAOverride: source));
+    await tester.pumpAndSettle();
+
+    expect(find.text('第一页章节'), findsOneWidget);
+    expect(find.byKey(const Key('novel-directory-retry')), findsOneWidget);
+    expect(source.chapterCalls, 2);
+
+    await tester.tap(find.byKey(const Key('novel-directory-retry')));
+    await tester.pumpAndSettle();
+    // 重试从失败的那一页接着拉,不从头再来。
+    expect(source.chapterCalls, 3);
   });
 }

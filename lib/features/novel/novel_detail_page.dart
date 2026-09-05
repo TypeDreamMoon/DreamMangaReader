@@ -67,9 +67,16 @@ class _NovelDetailPageState extends State<NovelDetailPage>
   NovelSource? _source;
   List<NovelChapter> _chapters = const [];
   Object? _error;
+  Object? _chaptersError;
   bool _loading = true;
+  bool _chaptersLoading = true;
   bool _descriptionExpanded = false;
   int _loadGeneration = 0;
+  int _chaptersNextPage = 1;
+  String _chaptersNovelId = '';
+
+  /// 目录分页的上限。真有源翻到第 500 页还说 hasNext,那多半是源坏了。
+  static const int _maxChapterPages = 500;
 
   String get _libraryKey => NovelIdentity.remote(_meta.id, _novel.id).key;
 
@@ -90,7 +97,11 @@ class _NovelDetailPageState extends State<NovelDetailPage>
         _novel = seed;
         _chapters = const [];
         _error = null;
+        _chaptersError = null;
         _loading = true;
+        _chaptersLoading = true;
+        _chaptersNextPage = 1;
+        _chaptersNovelId = seed.id;
         _descriptionExpanded = false;
       });
       resetCoverTint(); // 换源 = 换封面,旧主题色不能留着
@@ -106,16 +117,15 @@ class _NovelDetailPageState extends State<NovelDetailPage>
         return;
       }
       _source = source;
-      final values = await Future.wait<Object>([
-        source.getNovelDetail(seed.id),
-        _loadAllChapters(source, seed.id),
-      ]);
+      // 详情和目录各走各的:目录以前要把最多 500 页全拉完才渲染一次,几百章的书
+      // 要白等十几秒;和详情捆在一个 Future.wait 里,详情一失败目录也跟着没了。
+      unawaited(_loadChapters(source, seed.id, generation));
+      final detail = await source.getNovelDetail(seed.id);
       if (!mounted || generation != _loadGeneration || _source != source) {
         return;
       }
       setState(() {
-        _novel = values[0] as Novel;
-        _chapters = values[1] as List<NovelChapter>;
+        _novel = detail;
         _loading = false;
       });
       // 详情可能给了更好的封面(列表页往往只有缩略图)→ 用它重算一次。
@@ -131,17 +141,48 @@ class _NovelDetailPageState extends State<NovelDetailPage>
     }
   }
 
-  Future<List<NovelChapter>> _loadAllChapters(
+  /// 目录边拉边显示:每翻到一页就往列表上追加一次,读者不用等到最后一页。
+  Future<void> _loadChapters(
     NovelSource source,
     String novelId,
+    int generation,
   ) async {
-    final chapters = <NovelChapter>[];
-    for (var page = 1; page <= 500; page++) {
-      final result = await source.getNovelChapters(novelId, page: page);
-      chapters.addAll(result.items);
-      if (!result.hasNext || result.items.isEmpty) break;
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      _chaptersLoading = true;
+      _chaptersError = null;
+    });
+    final collected = <NovelChapter>[..._chapters];
+    try {
+      for (var page = _chaptersNextPage; page <= _maxChapterPages; page++) {
+        final result = await source.getNovelChapters(novelId, page: page);
+        if (!mounted || generation != _loadGeneration || _source != source) {
+          return;
+        }
+        collected.addAll(result.items);
+        _chaptersNextPage = page + 1;
+        setState(() => _chapters = List.unmodifiable(collected));
+        if (!result.hasNext || result.items.isEmpty) break;
+      }
+      if (!mounted || generation != _loadGeneration || _source != source) {
+        return;
+      }
+      setState(() => _chaptersLoading = false);
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration || _source != source) {
+        return;
+      }
+      setState(() {
+        _chaptersError = error;
+        _chaptersLoading = false;
+      });
     }
-    return List.unmodifiable(chapters);
+  }
+
+  void _retryChapters() {
+    final source = _source;
+    if (source == null || _chaptersLoading) return;
+    unawaited(_loadChapters(source, _chaptersNovelId, _loadGeneration));
   }
 
   Future<void> _changeSource() async {
@@ -361,7 +402,9 @@ class _NovelDetailPageState extends State<NovelDetailPage>
           ),
         ),
       ),
-      body: _error != null
+      // 详情挂了但目录还在,就照常渲染 —— 用列表页带来的书名封面顶着,
+      // 总比把已经拿到的几百章一起丢掉强。
+      body: _error != null && _chapters.isEmpty && !_chaptersLoading
           ? AppErrorView(
               title: context.l10n.novel_loadFailed('$_error'),
               message: '${_meta.name} · ${_novel.title}',
@@ -517,16 +560,31 @@ class _NovelDetailPageState extends State<NovelDetailPage>
             ],
           ),
         ),
-        if (_loading)
+        if (_chapters.isEmpty && _chaptersLoading)
           const Expanded(child: Center(child: CircularProgressIndicator()))
         else if (_chapters.isEmpty)
-          Expanded(child: EmptyState(title: context.l10n.novel_noChapters))
-        else
+          Expanded(
+            child: EmptyState(
+              title: _chaptersError != null
+                  ? context.l10n.novel_loadFailed('$_chaptersError')
+                  : context.l10n.novel_noChapters,
+              action: _chaptersError == null
+                  ? null
+                  : TextButton.icon(
+                      key: const Key('novel-directory-retry'),
+                      onPressed: _retryChapters,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: Text(context.l10n.retry),
+                    ),
+            ),
+          )
+        else ...[
           Expanded(
             child: ScrollablePositionedList.builder(
+              // 键里不放章节数:目录是边拉边显示的,每来一页都换键会把
+              // 列表重建一次、滚动位置弹回顶部。
               key: ValueKey(
-                'novel-directory-${_meta.id}-${_novel.id}-'
-                '${_chapters.length}-$activeIndex',
+                'novel-directory-${_meta.id}-${_novel.id}-$activeIndex',
               ),
               initialScrollIndex: activeIndex < 0 ? 0 : activeIndex,
               initialAlignment: activeIndex < 0 ? 0 : .18,
@@ -539,6 +597,36 @@ class _NovelDetailPageState extends State<NovelDetailPage>
               ),
             ),
           ),
+          if (_chaptersLoading)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (_chaptersError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      context.l10n.novel_loadFailed('$_chaptersError'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.textMuted, fontSize: 11.5),
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('novel-directory-retry'),
+                    onPressed: _retryChapters,
+                    child: Text(context.l10n.retry),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ],
     );
     if (height == null) return content;
