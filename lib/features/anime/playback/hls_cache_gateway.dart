@@ -695,7 +695,9 @@ class HlsCacheGateway implements HlsSessionGateway {
       throw HlsUpstreamStatusException(upstream.statusCode);
     }
     var upstreamStream = upstream.stream;
-    var upstreamContentLength = upstream.contentLength;
+    // 用上游**声明**的长度当尺子(Content-Length,或 206 的 Content-Range)——
+    // 拿实际收到的字节数当预期长度,完整性检查就成了自证。
+    var upstreamContentLength = upstream.declaredLength;
     final requestedUpstreamRange = upstreamStart != null;
     if (requestedUpstreamRange && upstream.statusCode == HttpStatus.ok) {
       final fullLength = upstream.contentLength;
@@ -762,18 +764,25 @@ class HlsCacheGateway implements HlsSessionGateway {
     }
 
     HlsCacheLease? committed;
+    var written = 0;
     try {
       await for (final chunk in upstreamStream) {
         writer?.sink.add(chunk);
         _startedResponses.add(request.response);
         request.response.add(chunk);
         await request.response.flush();
+        written += chunk.length;
       }
-      if (writer != null) {
+      // 走到这儿说明上游流是**正常结束**的(异常会被下面的 catch 接走并丢弃写入)。
+      // 长度已知就交给 commit 核对;长度未知(chunked)时唯一还能查的是「至少收到了
+      // 东西」—— 空分片一旦入缓存,之后每次命中都是这半截,还永远淘汰不到。
+      if (writer != null && (upstreamContentLength != null || written > 0)) {
         committed = await writer.commit(
           contentType: upstream.contentType,
           expectedLength: upstreamContentLength,
         );
+      } else {
+        await writer?.abort();
       }
       await request.response.close();
     } catch (_) {
@@ -876,7 +885,7 @@ class HlsCacheGateway implements HlsSessionGateway {
           rangeLength: resource.rangeLength,
         );
         var stream = upstream.stream;
-        var length = upstream.contentLength;
+        var length = upstream.declaredLength;
         final start = resource.rangeStart;
         // 上游忽略 Range 直接回整个文件(私有源常见)→ 本地切,别把整段当成这一片存下来。
         if (start != null && upstream.statusCode == HttpStatus.ok) {
@@ -898,9 +907,14 @@ class HlsCacheGateway implements HlsSessionGateway {
         } finally {
           await sink.close();
         }
+        // 上游没声明长度时不能拿 written 顶上 —— 那等于宣布「收到多少就是多少」,
+        // 截断的分片照样落盘。能查的只剩「正常结束且不是空的」。
+        if (length == null && written == 0) {
+          throw const HttpException('HLS 分片为空');
+        }
         return CacheDownloadResult(
           contentType: upstream.contentType,
-          expectedLength: length ?? written,
+          expectedLength: length,
         );
       },
     );

@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_store.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_session.dart';
+import 'package:dream_manga_reader/features/anime/playback/hls_stream_response.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hls/hls.dart';
@@ -554,6 +555,57 @@ broken.ts
     session.notifySeek();
   });
 
+  // 上游没有 Content-Length(chunked)时,老实现拿「收到多少」当「本该多少」——
+  // 完整性检查自证成立,截断的分片照样进缓存,之后每次命中都放这半截。
+  test('a truncated segment never reaches the cache', () async {
+    final fake = _ScriptedUpstream(
+      segmentChunks: const [
+        [1, 2, 3, 4]
+      ],
+      // 206 没给 Content-Length,但 Content-Range 写着这一段应该有 10 字节。
+      segmentHeaders: {
+        HttpHeaders.contentRangeHeader: const ['bytes 0-9/10'],
+      },
+      segmentStatus: HttpStatus.partialContent,
+    );
+    final probe = await _openScripted(fake);
+
+    await _getIgnoringErrors(probe.segment);
+    expect(fake.segmentRequests, 1);
+    await _getIgnoringErrors(probe.segment);
+
+    expect(fake.segmentRequests, 2, reason: '半截分片不该被当成缓存命中');
+    expect(
+      probe.directory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+  });
+
+  test('a segment whose upstream stream fails midway is discarded', () async {
+    final fake = _ScriptedUpstream(
+      segmentChunks: const [
+        [1, 2, 3, 4]
+      ],
+      failAfterChunks: true,
+    );
+    final probe = await _openScripted(fake);
+
+    await _getIgnoringErrors(probe.segment);
+    await _getIgnoringErrors(probe.segment);
+
+    expect(fake.segmentRequests, 2, reason: '异常结束的分片不该入缓存');
+    expect(
+      probe.directory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+  });
+
   // 两次 open 撞在一起时,老实现两边都看到 `_server == null` 各绑一个端口,后绑的
   // 覆盖前一个 —— 前一个再也没人关得掉,整个进程期间白占着一个回环端口。
   test('concurrent opens share one loopback server that close() releases',
@@ -984,5 +1036,105 @@ class _IndexBreakingStore extends HlsCacheStore {
       ).create();
     }
     return lease;
+  }
+}
+
+/// 截断的响应会让客户端自己也报错(连接在 Content-Length 之前就断了)——
+/// 这些用例关心的是缓存里留下了什么,不是这一次请求好不好看。
+Future<void> _getIgnoringErrors(Uri uri) async {
+  try {
+    await _get(uri);
+  } on Object {
+    // 半截响应,预期之中。
+  }
+}
+
+/// 起一个只回放脚本上游的网关,返回它那唯一一片的本地地址和缓存目录。
+Future<({Uri segment, Directory directory})> _openScripted(
+  _ScriptedUpstream upstream,
+) async {
+  final directory = await Directory.systemTemp.createTemp('dmr-hls-scripted-');
+  addTearDown(() async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+  });
+  final gateway = HlsCacheGateway(
+    cache: HlsCacheStore(directory: directory, limitBytes: 1024 * 1024),
+    upstream: upstream,
+  );
+  addTearDown(gateway.close);
+  final session = await gateway.open(
+    const VideoTrack(url: 'https://media.example.test/media.m3u8', hls: true),
+    authScope: 'public',
+  );
+  final media =
+      HlsParser.parse((await _get(session.localUri)).text) as HlsMediaPlaylist;
+  return (segment: media.segments.single.uri, directory: directory);
+}
+
+/// 按脚本回放的上游:清单走 get、分片走 stream,可以精确摆出「chunked 少给了几个
+/// 字节」和「流到一半炸了」这两种收尾 —— 真实 HTTP 服务器摆不稳这个时序。
+class _ScriptedUpstream
+    implements HlsUpstreamClient, HlsStreamingUpstreamClient {
+  _ScriptedUpstream({
+    required this.segmentChunks,
+    this.segmentHeaders = const {},
+    this.segmentStatus = HttpStatus.ok,
+    this.failAfterChunks = false,
+  });
+
+  static const _playlist = '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+one.ts
+#EXT-X-ENDLIST
+''';
+
+  final List<List<int>> segmentChunks;
+  final Map<String, List<String>> segmentHeaders;
+  final int segmentStatus;
+  final bool failAfterChunks;
+  int segmentRequests = 0;
+
+  @override
+  Future<HlsUpstreamResponse> get(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    if (!uri.path.endsWith('.m3u8')) throw StateError('unexpected get: $uri');
+    return HlsUpstreamResponse(
+      statusCode: HttpStatus.ok,
+      bytes: utf8.encode(_playlist),
+      headers: const {
+        HttpHeaders.contentTypeHeader: ['application/vnd.apple.mpegurl'],
+      },
+    );
+  }
+
+  @override
+  Future<HlsStreamResponse> stream(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    segmentRequests++;
+    return HlsStreamResponse(
+      statusCode: segmentStatus,
+      stream: _body(),
+      headers: segmentHeaders,
+      cancel: () async {},
+    );
+  }
+
+  Stream<List<int>> _body() async* {
+    for (final chunk in segmentChunks) {
+      yield chunk;
+    }
+    if (failAfterChunks) {
+      throw const SocketException('upstream vanished mid-segment');
+    }
   }
 }
