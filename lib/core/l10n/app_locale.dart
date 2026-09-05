@@ -1,4 +1,4 @@
-import 'dart:ui' show Locale;
+import 'dart:ui' show Locale, PlatformDispatcher;
 
 /// App 支持的界面语言。**本机设置**(不随云同步),存 [code] 到 SharedPreferences。
 enum AppLocale {
@@ -27,10 +27,25 @@ enum AppLocale {
   /// 持久化用的稳定串:`zh_Hans` / `ja`。
   String get code => script == null ? lang : '${lang}_$script';
 
-  /// 从持久化串还原;未知/空 → 简体中文(源语言,默认)。
+  /// 从持久化串还原。**没存过(null / 空 / 认不出的旧值)就跟随系统** ——
+  /// 硬回落简体中文的话,日本或英语用户第一次打开看到的是一整屏中文,而且
+  /// [fromLocale] 会一次都不被调用。手动选过的以选择为准。
   static AppLocale fromCode(String? c) {
     for (final v in values) {
       if (v.code == c) return v;
+    }
+    return systemDefault();
+  }
+
+  /// 跟随系统:按系统的语言优先级逐个匹配,一个都对不上时回落简体中文(源语言)。
+  ///
+  /// [locales] 只为测试注入;为空时读 [PlatformDispatcher.instance.locales]
+  /// (用户在系统里排好序的偏好列表,不止一条)。
+  static AppLocale systemDefault([List<Locale>? locales]) {
+    final list = locales ?? PlatformDispatcher.instance.locales;
+    for (final l in list) {
+      final match = fromLocale(l);
+      if (match != null) return match;
     }
     return zhHans;
   }

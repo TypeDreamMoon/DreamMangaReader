@@ -269,7 +269,9 @@ class LibraryStore extends ChangeNotifier {
   final ValueNotifier<double> uiScaleVN = ValueNotifier(1.0);
   final ValueNotifier<String> uiFontVN = ValueNotifier('');
   // 界面语言:VN 广播 → 驱动 MaterialApp.locale 重建(本机设置,不进 exportData/同步)。
-  final ValueNotifier<AppLocale> uiLocaleVN = ValueNotifier(AppLocale.zhHans);
+  // 读档前就跟随系统,否则日语/英语用户会先看到一帧简体中文再跳过去。
+  final ValueNotifier<AppLocale> uiLocaleVN =
+      ValueNotifier(AppLocale.systemDefault());
   final ValueNotifier<bool> closeToTrayVN = ValueNotifier(true);
   String _bgImage = ''; // 全局背景图路径(空=无)
   double _bgBlur = 12; // 背景模糊(0~40)
