@@ -55,6 +55,12 @@ class SyncController extends ChangeNotifier {
   static const _kCategories = 'sync.categories';
   static const _kReaderNotesMigrated = 'sync.readerNotesMigrationV1';
 
+  /// 墓碑表(JSON:组名 → {条目键 → 删除时刻})。
+  static const _kTombstones = 'sync.tombstones';
+
+  /// 上次推上去时各组还在的条目键(JSON:组名 → [键])。和当前状态求差 = 这轮的删除。
+  static const _kSyncedKeys = 'sync.syncedKeys';
+
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
 
@@ -550,6 +556,114 @@ class SyncController extends ChangeNotifier {
     await p.remove(_kHPreset);
   }
 
+  // ------------------------------------------------------------ 墓碑 ------
+  //
+  // 本地各 store 不记「谁被删了」,所以删除只能靠差分推出来:把上次推上去时
+  // 各类还在的条目键存一份,下次同步比一比,少掉的就是这轮删掉的。没有这一步,
+  // 合并的并集会把删掉的条目从对端原样并回来 —— 用户在手机上取消的收藏,
+  // 下次同步又冒出来,永远删不干净。
+
+  Map<SyncTombstoneGroup, Map<String, int>> _decodeTombstones(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final group in SyncTombstoneGroup.values)
+          if (decoded[group.name] != null)
+            group: SyncData.tombstonesOf(decoded[group.name]),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Map<SyncTombstoneGroup, Set<String>> _decodeKeys(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final group in SyncTombstoneGroup.values)
+          if (decoded[group.name] is List)
+            group: {
+              for (final k in decoded[group.name] as List) k.toString(),
+            },
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// 按 [snapshot] 里带的类别更新墓碑与「上次还在的键」,返回这次要一起推上去的墓碑。
+  ///
+  /// 只处理 snapshot 真的带了的组:只同步收藏的那一次,不能把没带的历史当成清空了。
+  Future<Map<SyncTombstoneGroup, Map<String, int>>> _refreshTombstones(
+    Map<String, dynamic> snapshot,
+  ) async {
+    final p = await _p;
+    final stored = _decodeTombstones(p.getString(_kTombstones));
+    final lastKeys = _decodeKeys(p.getString(_kSyncedKeys));
+    final live = SyncData.liveKeys(snapshot);
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final out = <SyncTombstoneGroup, Map<String, int>>{};
+    for (final group in SyncTombstoneGroup.values) {
+      final current = live[group];
+      if (current == null) {
+        // 这次没带这一类:墓碑与基线都原样留着,等带上它的那次同步再算。
+        final kept = SyncData.pruneTombstones(
+          stored[group] ?? const {},
+          now: now,
+        );
+        if (kept.isNotEmpty) out[group] = kept;
+        continue;
+      }
+      final marks = SyncData.updateTombstones(
+        previous: stored[group] ?? const {},
+        lastKeys: lastKeys[group] ?? const {},
+        currentKeys: current,
+        now: now,
+      );
+      if (marks.isNotEmpty) out[group] = marks;
+    }
+
+    await p.setString(_kTombstones, jsonEncode({
+      for (final e in out.entries) e.key.name: e.value,
+    }));
+    await p.setString(_kSyncedKeys, jsonEncode({
+      for (final group in SyncTombstoneGroup.values)
+        group.name: [...?(live[group] ?? lastKeys[group])],
+    }));
+    return out;
+  }
+
+  /// 打一份本地快照并附上墓碑(所有推送路径共用)。
+  Future<Map<String, dynamic>> _snapshot(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo, {
+    required Set<SyncCategory> categories,
+    Map<String, dynamic>? readerNotes,
+  }) async {
+    final bare = SyncData.build(
+      lib,
+      novels,
+      repo,
+      categories: categories,
+      readerNotes: readerNotes,
+    );
+    final tombstones = await _refreshTombstones(bare);
+    return SyncData.build(
+      lib,
+      novels,
+      repo,
+      categories: categories,
+      readerNotes: readerNotes,
+      tombstones: tombstones,
+    );
+  }
+
   SyncBackend _backend() => isHertz
       ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
       : WebDavBackend(baseUrl: url, username: username, password: password);
@@ -581,7 +695,7 @@ class SyncController extends ChangeNotifier {
       final readerNotes = sel.contains(SyncCategory.readerNotes)
           ? await _readerDataStore.exportPortableData()
           : null;
-      final local = SyncData.build(
+      final local = await _snapshot(
         lib,
         novels,
         repo,
@@ -687,7 +801,7 @@ class SyncController extends ChangeNotifier {
       final readerNotes = cats.contains(SyncCategory.readerNotes)
           ? await _readerDataStore.exportPortableData()
           : null;
-      final local = SyncData.build(
+      final local = await _snapshot(
         lib,
         novels,
         repo,

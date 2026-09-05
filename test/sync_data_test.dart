@@ -172,4 +172,226 @@ void main() {
         (SyncData.overlay(base, over)['sourceRepo'] as Map)['repoUrl'], 'a');
     // over 无 sourceRepo → 保留 base 的
   });
+
+  // 并集合并对新增是对的,对删除是灾难:在一台设备上取消收藏,下次同步另一台
+  // 又把它并回来,用户永远删不掉。墓碑让「删除」本身也变成一条能同步的记录。
+  group('墓碑', () {
+    // 测试用的时间戳很小,不给 nowMs 的话墓碑一律「早于 30 天前」被当场清掉。
+    Map<String, dynamic> mergeAt(
+      Map<String, dynamic> local,
+      Map<String, dynamic> remote,
+    ) =>
+        SyncData.merge(local, remote, nowMs: 1000);
+
+    test('删掉的收藏不会被对端并回来', () {
+      final local = blob(200, {
+        'favorites': <Map<String, dynamic>>[],
+        'favoritesDeleted': {'x:1': 150},
+      });
+      final remote = blob(100, {
+        'favorites': [fav('x', '1', 10)]
+      });
+
+      final lib = mergeAt(local, remote)['library'] as Map;
+      expect(lib['favorites'], isEmpty);
+      expect((lib['favoritesDeleted'] as Map)['x:1'], 150);
+    });
+
+    test('删完又加回来的比墓碑新 → 留下', () {
+      final local = blob(200, {
+        'favorites': [fav('x', '1', 300)], // 300 > 墓碑 150
+        'favoritesDeleted': {'x:1': 150},
+      });
+      final remote = blob(100, {'favorites': <Map<String, dynamic>>[]});
+
+      final favs =
+          ((mergeAt(local, remote)['library'] as Map)['favorites'])
+              as List;
+      expect(favs.single['a'], 300);
+    });
+
+    test('墓碑取两端更晚的那次删除', () {
+      final local = blob(200, {
+        'favorites': [fav('x', '1', 180)],
+        'favoritesDeleted': {'x:1': 100},
+      });
+      final remote = blob(100, {
+        'favorites': <Map<String, dynamic>>[],
+        'favoritesDeleted': {'x:1': 190}, // 更晚 → 压过 addedAt 180
+      });
+
+      final lib = mergeAt(local, remote)['library'] as Map;
+      expect(lib['favorites'], isEmpty);
+      expect((lib['favoritesDeleted'] as Map)['x:1'], 190);
+    });
+
+    test('清掉的历史不会被并回来', () {
+      final local = blob(200, {
+        'history': <String, dynamic>{},
+        'historyDeleted': {'x:2': 150},
+      });
+      final remote = blob(100, {
+        'history': {
+          'x:2': {'u': 20},
+          'x:3': {'u': 30},
+        }
+      });
+
+      final history =
+          (mergeAt(local, remote)['library'] as Map)['history'] as Map;
+      expect(history.containsKey('x:2'), isFalse);
+      expect(history.containsKey('x:3'), isTrue, reason: '没被删的照常并过来');
+    });
+
+    test('重新启用的源不会被对端并回禁用列表', () {
+      final local = blob(200, {
+        'disabledSourcesManga': <String>[],
+        'disabledSourcesMangaDeleted': {'m1': 150},
+      });
+      final remote = blob(100, {
+        'disabledSourcesManga': ['m1', 'm2']
+      });
+
+      final lib = mergeAt(local, remote)['library'] as Map;
+      expect(lib['disabledSourcesManga'], ['m2']);
+    });
+
+    test('源开关不再整份 LWW:两端各自禁用的都保留', () {
+      final local = blob(200, {
+        'disabledSourcesManga': ['m1']
+      });
+      final remote = blob(100, {
+        'disabledSourcesManga': ['m2']
+      });
+
+      final lib = mergeAt(local, remote)['library'] as Map;
+      expect(lib['disabledSourcesManga'], ['m1', 'm2']);
+    });
+
+    test('小说收藏 / 历史同样吃墓碑', () {
+      final local = {
+        'v': 2,
+        'syncedAt': 200,
+        'library': {'v': 2},
+        'novels': {
+          'schema': 1,
+          'favorites': <Map<String, dynamic>>[],
+          'favoritesDeleted': {'n1': 150},
+          'history': <String, dynamic>{},
+          'historyDeleted': {'n2': 150},
+        },
+      };
+      final remote = {
+        'v': 2,
+        'syncedAt': 100,
+        'library': {'v': 2},
+        'novels': {
+          'schema': 1,
+          'favorites': [
+            {'key': 'n1', 'addedAt': 10, 'favorite': true}
+          ],
+          'history': {
+            'n2': {'updatedAt': 10}
+          },
+        },
+      };
+
+      final novels = mergeAt(local, remote)['novels'] as Map;
+      expect(novels['favorites'], isEmpty);
+      expect(novels['history'], isEmpty);
+    });
+
+    test('过了保留期的墓碑被清掉,不无限长大', () {
+      final stale = DateTime.now()
+          .subtract(SyncData.tombstoneRetention + const Duration(days: 1))
+          .millisecondsSinceEpoch;
+      final local = blob(200, {
+        'favorites': <Map<String, dynamic>>[],
+        'favoritesDeleted': {'x:1': stale},
+      });
+      final remote = blob(100, {'favorites': <Map<String, dynamic>>[]});
+
+      final lib = SyncData.merge(local, remote)['library'] as Map;
+      expect(lib.containsKey('favoritesDeleted'), isFalse);
+    });
+
+    test('旧 schema(v1、没有墓碑键)照常按并集合并', () {
+      final local = blob(200, {
+        'favorites': [fav('x', '1', 10)]
+      });
+      final remote = blob(100, {
+        'favorites': [fav('y', '2', 20)]
+      });
+
+      final merged = mergeAt(local, remote);
+      expect((merged['library'] as Map)['favorites'], hasLength(2));
+      expect(merged['v'], SyncData.schemaVersion);
+    });
+
+    test('overlay 不会把对端记下的删除盖掉', () {
+      final base = blob(1, {
+        'favorites': <Map<String, dynamic>>[],
+        'favoritesDeleted': {'x:1': 100},
+      });
+      final over = blob(2, {
+        'favorites': [fav('y', '2', 2)],
+        'favoritesDeleted': {'y:9': 200},
+      });
+
+      final lib = SyncData.overlay(base, over)['library'] as Map;
+      expect((lib['favoritesDeleted'] as Map)['x:1'], 100);
+      expect((lib['favoritesDeleted'] as Map)['y:9'], 200);
+    });
+
+    test('墓碑不会被当成一条设置写回 LibraryStore', () {
+      for (final group in SyncTombstoneGroup.values) {
+        if (group.section != 'library') continue;
+        expect(SyncData.isSettingsKey(group.tombstoneKey), isFalse,
+            reason: group.tombstoneKey);
+        expect(SyncData.settingsCatOf(group.tombstoneKey), isNull);
+      }
+    });
+  });
+
+  group('墓碑差分', () {
+    test('上次在、现在没了 → 记一笔删除', () {
+      final marks = SyncData.updateTombstones(
+        previous: const {},
+        lastKeys: {'a', 'b'},
+        currentKeys: {'a'},
+        now: 1000,
+      );
+      expect(marks, {'b': 1000});
+    });
+
+    test('又加回来 → 撤销墓碑', () {
+      final marks = SyncData.updateTombstones(
+        previous: const {'b': 500},
+        lastKeys: {'a'},
+        currentKeys: {'a', 'b'},
+        now: 1000,
+      );
+      expect(marks, isEmpty);
+    });
+
+    test('已有的删除时刻不被后来的差分往后推', () {
+      final marks = SyncData.updateTombstones(
+        previous: const {'b': 500},
+        lastKeys: {'a', 'b'},
+        currentKeys: {'a'},
+        now: 1000,
+      );
+      expect(marks, {'b': 500});
+    });
+
+    test('liveKeys 只报 blob 真的带了的类别', () {
+      final onlyFavorites = blob(1, {
+        'favorites': [fav('x', '1', 1)]
+      });
+      final keys = SyncData.liveKeys(onlyFavorites);
+      expect(keys[SyncTombstoneGroup.favorites], {'x:1'});
+      // 没带历史 → 不能当成「历史被清空了」。
+      expect(keys.containsKey(SyncTombstoneGroup.history), isFalse);
+    });
+  });
 }
