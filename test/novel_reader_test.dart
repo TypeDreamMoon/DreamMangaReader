@@ -37,7 +37,7 @@ class _FakeController implements NovelDocumentController {
 
   NovelLocator locator;
   final bool supportsPageFrames;
-  final int pageCount;
+  int pageCount;
   final bool turnsWithinDocument;
   int visiblePageIndex = 0;
   final List<int> shownPages = [];
@@ -544,6 +544,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(loaded, containsAllInOrder(['c1', 'c2']));
+  });
+
+  testWidgets('a viewport change repaginates and keeps the reading position',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1000, 1600);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final controller = _FakeController(supportsPageFrames: true, pageCount: 4);
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    String pageStatus() => tester
+        .widget<Text>(find.byKey(const Key('novel-status-page')))
+        .data!;
+    expect(pageStatus(), '1/4');
+
+    // 旋转:版面变了,分页数跟着变。
+    controller.pageCount = 7;
+    controller.locator = const NovelLocator(chapterId: 'c1', fraction: .5);
+    tester.view.physicalSize = const Size(1600, 1000);
+    await tester.pump();
+    // 去抖窗口 + 重排。
+    for (var attempt = 0; attempt < 24; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(pageStatus(), '1/7');
+    expect(controller.lastRestored?.fraction, .5);
   });
 
   testWidgets('chapter text cache keeps only the chapters around the reader',

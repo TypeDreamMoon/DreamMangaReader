@@ -113,6 +113,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   int _settingsGeneration = 0;
   Timer? _controlsTimer;
   Timer? _statusTimer;
+  Timer? _metricsDebounce;
   bool _showControls = false;
   bool _controlsPaused = false;
   bool _loading = true;
@@ -216,6 +217,36 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       _statusNow = now;
       _batteryLevel = batteryLevel;
     });
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 旋转 / 改窗口大小 = 版面全变了,页帧和页码都得跟着重排。拖窗口会连报几十次
+    // 尺寸变化,所以去抖到停手之后再排一次。
+    _metricsDebounce?.cancel();
+    _metricsDebounce = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_relayoutAfterViewportChange()),
+    );
+  }
+
+  Future<void> _relayoutAfterViewportChange() async {
+    if (!mounted || _loading || _error != null) return;
+    NovelLocator? locator;
+    try {
+      locator = await _controller.captureLocator();
+    } catch (_) {
+      locator = null;
+    }
+    if (!mounted) return;
+    if (locator != null && locator.chapterId == _chapter.id) {
+      try {
+        // 版面换了,但读到哪里不该变:重排前后都拿同一个 locator 定位。
+        await _controller.restoreLocator(locator);
+      } catch (_) {}
+      if (!mounted) return;
+    }
+    _refreshPageFramesAfterLayout();
   }
 
   @override
@@ -654,8 +685,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final current = _currentFrame;
     final metrics = _pageMetrics;
     if (current == null || metrics == null) return;
+    // 旋转/改窗口之后版面换了一套:手上这张页帧的页码属于旧版面,拿它去和新的
+    // pageCount 比会错判边界,该以新版面的当前页为准。
+    final baseIndex = current.key.layoutFingerprint == metrics.layoutFingerprint
+        ? current.key.pageIndex
+        : metrics.currentPageIndex;
     final targetIndex =
-        current.key.pageIndex + (direction == NovelTurnDirection.next ? 1 : -1);
+        baseIndex + (direction == NovelTurnDirection.next ? 1 : -1);
     if (targetIndex < 0 || targetIndex >= metrics.pageCount) {
       _turnController.cancel();
       if (mounted) {
@@ -1853,6 +1889,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _settingsGeneration++;
     _controlsTimer?.cancel();
     _statusTimer?.cancel();
+    _metricsDebounce?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;
     _controller.onSelectionChanged = null;
