@@ -8,12 +8,14 @@ import 'package:dream_manga_reader/core/platform/reader_keys.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_page_turn_physics.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_data_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_theme.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_search_index.dart';
 import 'package:dream_manga_reader/features/novel/novel_document_view.dart';
+import 'package:dream_manga_reader/features/novel/novel_native_document_controller.dart';
 import 'package:dream_manga_reader/features/novel/novel_native_page_view.dart';
 import 'package:dream_manga_reader/features/novel/novel_native_page_turn_surface.dart';
 import 'package:dream_manga_reader/features/novel/novel_reader_input.dart';
@@ -166,6 +168,57 @@ class _FakeController implements NovelDocumentController {
     lastRestored = value;
     locator = value;
   }
+}
+
+/// 原生分页器在 widget 测试里没法真正光栅化(toByteData 依赖真实事件循环),
+/// 这个替身只保留「原生控制器」这个身份和分页数据,让阅读页走原生那条分支。
+class _StubNativeController extends NovelNativeDocumentController {
+  int spread = 0;
+  final List<int> shownPages = [];
+
+  static const int _pages = 3;
+
+  @override
+  Future<void> loadChapter(
+    String chapterId,
+    NovelDocument document,
+    NovelReaderPreferences preferences,
+  ) async {}
+
+  @override
+  Future<NovelPageMetrics> pageMetrics() async => NovelPageMetrics(
+        pageCount: _pages,
+        currentPageIndex: spread,
+        viewport: const NovelViewport(width: 800, height: 600),
+        layoutFingerprint: 'test-layout',
+        visibleTextLength: 100,
+      );
+
+  @override
+  Future<NovelPageFrame?> capturePage(int pageIndex) async {
+    if (pageIndex < 0 || pageIndex >= _pages) return null;
+    return _testPageFrame(chapterId: 'c1', pageIndex: pageIndex);
+  }
+
+  @override
+  bool canTurn(NovelTurnDirection direction) =>
+      direction == NovelTurnDirection.next ? spread < _pages - 1 : spread > 0;
+
+  @override
+  Future<void> showPage(int pageIndex) async {
+    spread = pageIndex;
+    shownPages.add(pageIndex);
+  }
+
+  @override
+  Future<NovelLocator> captureLocator() async =>
+      NovelLocator(chapterId: 'c1', fraction: spread / (_pages - 1));
+
+  @override
+  Future<void> restoreLocator(NovelLocator locator) async {}
+
+  @override
+  Future<void> applyPreferences(NovelReaderPreferences preferences) async {}
 }
 
 class _MemoryNovelReaderDataStore extends NovelReaderDataStore {
@@ -561,9 +614,8 @@ void main() {
     await tester.pumpWidget(harness.widget);
     await tester.pumpAndSettle();
 
-    String pageStatus() => tester
-        .widget<Text>(find.byKey(const Key('novel-status-page')))
-        .data!;
+    String pageStatus() =>
+        tester.widget<Text>(find.byKey(const Key('novel-status-page'))).data!;
     expect(pageStatus(), '1/4');
 
     // 旋转:版面变了,分页数跟着变。
@@ -1384,6 +1436,35 @@ void main() {
     expect(find.byKey(const Key('novel-reader-bottom-bar')), findsNothing);
   });
 
+  testWidgets('a turn after memory pressure recaptures its target frame',
+      (tester) async {
+    final controller = _StubNativeController();
+    addTearDown(controller.dispose);
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(
+        turnMode: NovelPageTurnMode.cover,
+        toolbarAutoHideSeconds: 0,
+      ),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    // 内存告警把相邻页帧清空。之后拖拽翻页时目标帧缺席,老实现只设 settlement:
+    // 翻页层没有目标帧就不启动收尾动画,状态机永远回不到 idle。
+    tester.binding.handleMemoryPressure();
+    await tester.pump();
+
+    final gesture = await tester.startGesture(const Offset(700, 300));
+    await gesture.moveTo(const Offset(300, 305));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(controller.shownPages, contains(1));
+  });
+
   testWidgets('dragging past the last page still crosses the chapter boundary',
       (tester) async {
     tester.view.devicePixelRatio = 1;
@@ -1459,9 +1540,11 @@ void main() {
     await tester.drag(scrollView, const Offset(0, -600));
     await tester.pumpAndSettle();
 
-    final position = tester.state<ScrollableState>(
-      find.descendant(of: scrollView, matching: find.byType(Scrollable)),
-    ).position;
+    final position = tester
+        .state<ScrollableState>(
+          find.descendant(of: scrollView, matching: find.byType(Scrollable)),
+        )
+        .position;
     expect(position.pixels, greaterThan(0));
     expect(
       harness.store.progressFor('remote:s:n1')?.fraction ?? 0,

@@ -597,19 +597,28 @@ class _NovelReaderPageState extends State<NovelReaderPage>
         if (decision.commit) unawaited(_legacyTurn(decision.direction));
         return;
       }
-      setState(() {
-        _turnState = _turnController.state;
-        _settlement = decision;
-      });
-      return;
     }
     setState(() {
       _turnState = _turnController.state;
       _settlement = decision;
     });
-    if (decision.commit && _targetFrame(decision.direction) == null) {
+    // 目标页帧缺席时先补拍:NovelPageTurnSurface 没有目标帧就不会启动收尾动画,
+    // 状态机会一直卡在 settling(内存告警清掉相邻帧之后最容易踩到)。
+    if (decision.commit &&
+        _usesFrameTurnSurface &&
+        _targetFrame(decision.direction) == null) {
       unawaited(_prepareMissingTarget(decision.direction));
     }
+  }
+
+  /// 由 [NovelPageTurnSurface] 合成页帧来收尾的翻页模式:仿真翻页有自己的原生
+  /// 翻页层,滚动模式压根没有翻页动画。
+  bool get _usesFrameTurnSurface {
+    if (_controller is NovelNativeDocumentController) {
+      return _preferences.turnMode != NovelPageTurnMode.curl &&
+          _preferences.turnMode != NovelPageTurnMode.scroll;
+    }
+    return true;
   }
 
   void _requestDiscrete(NovelTurnDirection direction) {
