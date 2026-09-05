@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
+import 'package:dream_manga_reader/core/platform/reader_keys.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
@@ -195,6 +197,7 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   int initialIndex = 0,
   bool resumeFromHistory = false,
   NovelLocator? savedProgress,
+  LibraryStore? libraryStore,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
@@ -203,7 +206,7 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
     store.saveProgress('remote:s:n1', savedProgress);
   }
   await store.flushPending();
-  final widget = MaterialApp(
+  final page = MaterialApp(
     // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
     theme: buildTheme(AppThemeVariant.light),
     locale: const Locale('zh'),
@@ -232,6 +235,9 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
       ),
     ),
   );
+  final widget = libraryStore == null
+      ? page
+      : LibraryScope(store: libraryStore, child: page);
   return (widget: widget, store: store);
 }
 
@@ -1073,6 +1079,49 @@ void main() {
       harness.store.progressFor('remote:s:n1')?.fraction ?? 0,
       greaterThan(0),
     );
+  });
+
+  testWidgets('novel reader takes volume keys only when the switch is on',
+      (tester) async {
+    const channel = MethodChannel('dream_manga_reader/reader_keys');
+    final activations = <bool>[];
+    ReaderKeys.debugReset();
+    ReaderKeys.debugSupportedOverride = true;
+    addTearDown(ReaderKeys.debugReset);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'setVolumeKeyPaging') {
+        activations.add(call.arguments as bool);
+      }
+      return null;
+    });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+
+    final library = LibraryStore();
+    addTearDown(library.dispose);
+    await library.load();
+
+    final off = await _readerHarness(_FakeController(), libraryStore: library);
+    addTearDown(off.store.dispose);
+    await tester.pumpWidget(off.widget);
+    await tester.pumpAndSettle();
+    expect(activations, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    library.volumeKeyPaging = true;
+    final on = await _readerHarness(_FakeController(), libraryStore: library);
+    addTearDown(on.store.dispose);
+    await tester.pumpWidget(on.widget);
+    await tester.pumpAndSettle();
+    expect(activations, [true]);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    expect(activations, [true, false]);
   });
 
   testWidgets('page level keyboard shortcuts reach the mounted reader',

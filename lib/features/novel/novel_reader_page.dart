@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
@@ -126,6 +127,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   int _pageGeneration = 0;
   DateTime _statusNow = DateTime.now();
   int? _batteryLevel;
+  Object? _volumeKeyToken;
 
   NovelChapter get _chapter => widget.chapters[_chapterIndex];
 
@@ -162,8 +164,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
     _setWakeLock(_preferences.keepScreenOn);
     _startStatusUpdates();
-    if (Platform.isAndroid) {
-      ReaderKeys.setHandler((direction) {
+    // 音量键翻页是全局开关(和漫画阅读器同一个),老实现无条件抢走音量键。
+    // 这里不注册依赖(阅读器不该因为库变更重建),小说页也可能挂在没有
+    // LibraryScope 的树上(测试/独立入口),所以取不到就当没开。
+    final library =
+        context.getInheritedWidgetOfExactType<LibraryScope>()?.notifier;
+    if (library?.volumeKeyPaging ?? false) {
+      _volumeKeyToken = ReaderKeys.setHandler((direction) {
         if (!mounted) return;
         _requestDiscrete(
           direction > 0 ? NovelTurnDirection.next : NovelTurnDirection.previous,
@@ -1812,9 +1819,12 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final readerFlush = _readerDataStore.flushPending();
     unawaited(_library.flushPending());
     unawaited(readerFlush);
-    if (Platform.isAndroid) {
+    final volumeKeyToken = _volumeKeyToken;
+    if (volumeKeyToken != null) {
+      // 只注销自己那一个:栈式回调会把音量键还给底下的阅读器,而不是全局清空。
+      _volumeKeyToken = null;
       unawaited(ReaderKeys.setActive(false));
-      ReaderKeys.clearHandler();
+      ReaderKeys.clearHandler(volumeKeyToken);
     }
     _setWakeLock(false);
     _focusNode.dispose();
