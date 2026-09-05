@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'download_executor.dart';
 import 'download_failure.dart';
+import 'download_failure_classifier.dart';
 import 'download_policy.dart';
 import 'download_task.dart';
 import 'download_task_repository.dart';
@@ -14,17 +15,28 @@ final class DownloadCoordinator extends ChangeNotifier {
     required this.environment,
     required this.settings,
     int Function()? clock,
-  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
+    Future<void> Function(Duration)? retryDelay,
+  })  : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
+        _retryDelay = retryDelay ?? Future<void>.delayed;
+
+  /// 可重试错误码自动重试的次数上限,超过才真正判定为 failed。
+  static const maxAutomaticRetries = 3;
+
+  /// 退避基数:第 n 次重试等 `1s * 4^(n-1)` —— 1s / 4s / 16s。
+  static const retryBackoffBase = Duration(seconds: 1);
 
   final DownloadTaskRepository repository;
   final Future<DownloadEnvironment> Function() environment;
   final DownloadPolicySettings Function() settings;
   final int Function() _clock;
+  final Future<void> Function(Duration) _retryDelay;
 
   Map<String, DownloadTask> _tasks = const {};
   final Map<DownloadContentKind, DownloadExecutor> _executors = {};
   final Map<String, _ActiveDownload> _active = {};
   final Map<String, int> _generations = {};
+  final Map<String, int> _retryAttempts = {};
+  int _pendingRetries = 0;
   Future<void> _mutationTail = Future.value();
   Completer<void>? _idleCompleter;
   bool _pumpRequested = false;
@@ -36,9 +48,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   DownloadTask? task(String id) => _tasks[id];
 
   Future<void> get idle {
-    if (_active.isEmpty && !_pumpRequested && !_pumpRunning) {
-      return Future.value();
-    }
+    if (_settled) return Future.value();
     return (_idleCompleter ??= Completer<void>()).future;
   }
 
@@ -118,6 +128,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> resume(String id) async {
+    _retryAttempts.remove(id);
     await _serialize(() async {
       final current = _requiredTask(id);
       if (current.state != DownloadTaskState.paused) {
@@ -177,6 +188,7 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> retry(String id) async {
     _generations[id] = (_generations[id] ?? 0) + 1;
+    _retryAttempts.remove(id);
     await _serialize(() async {
       final current = _requiredTask(id);
       if (current.state != DownloadTaskState.failed &&
@@ -207,6 +219,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   Future<void> remove(String id) async {
     _active[id]?.cancellation.cancel();
     _generations[id] = (_generations[id] ?? 0) + 1;
+    _retryAttempts.remove(id);
     await _serialize(() async {
       if (!_tasks.containsKey(id)) return;
       final next = {..._tasks}..remove(id);
@@ -404,6 +417,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _setCompleted(String id, int generation) {
+    _retryAttempts.remove(id);
     return _serializeExecution(() async {
       final current = _currentExecutionTask(
         id,
@@ -446,6 +460,15 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _setFailed(String id, int generation, Object error) async {
+    final code = classifyDownloadFailureCode(error);
+    final attempts = _retryAttempts[id] ?? 0;
+    final retrying = code.isRetryable && attempts < maxAutomaticRetries;
+    final retryCount = retrying ? attempts + 1 : attempts;
+    if (retrying) {
+      _retryAttempts[id] = retryCount;
+    } else {
+      _retryAttempts.remove(id);
+    }
     try {
       await _serializeExecution(() async {
         final current = _currentExecutionTask(id, generation);
@@ -454,8 +477,10 @@ final class DownloadCoordinator extends ChangeNotifier {
           id: current.copyWith(
             state: DownloadTaskState.failed,
             failure: DownloadFailure.fromMessage(
-              DownloadFailureCode.unknown,
+              code,
               error.toString(),
+              retryCount: retryCount,
+              httpStatus: downloadFailureHttpStatus(error),
             ),
             updatedAt: _clock(),
           ),
@@ -463,6 +488,46 @@ final class DownloadCoordinator extends ChangeNotifier {
       });
     } on DownloadCancelledException {
       // A newer task generation owns this identifier.
+      _retryAttempts.remove(id);
+      return;
+    }
+    if (retrying) _scheduleAutomaticRetry(id, generation, retryCount);
+  }
+
+  /// 可重试的失败:任务先停在 failed(带 retryCount,UI 能看出在重试),
+  /// 退避到点后自己回到队列;期间用户手动 retry / remove 会顶掉这一代任务。
+  void _scheduleAutomaticRetry(String id, int generation, int attempt) {
+    if (_disposed) return;
+    _pendingRetries++;
+    unawaited(_runAutomaticRetry(id, generation, attempt));
+  }
+
+  Future<void> _runAutomaticRetry(
+    String id,
+    int generation,
+    int attempt,
+  ) async {
+    try {
+      await _retryDelay(retryBackoffFor(attempt));
+      if (_disposed || (_generations[id] ?? 0) != generation) return;
+      await _serializeExecution(() async {
+        final current = _tasks[id];
+        if (current == null || current.state != DownloadTaskState.failed) {
+          return;
+        }
+        await _commit({
+          ..._tasks,
+          id: current.copyWith(
+            state: DownloadTaskState.queued,
+            clearPauseReason: true,
+            updatedAt: _clock(),
+          ),
+        });
+      });
+    } finally {
+      _pendingRetries--;
+      _requestPump();
+      _completeIdleIfSettled();
     }
   }
 
@@ -497,8 +562,15 @@ final class DownloadCoordinator extends ChangeNotifier {
     return current;
   }
 
+  /// 没有在途任务、没有待跑的调度、也没有排队等退避的自动重试。
+  bool get _settled =>
+      _active.isEmpty &&
+      !_pumpRequested &&
+      !_pumpRunning &&
+      _pendingRetries == 0;
+
   void _completeIdleIfSettled() {
-    if (_active.isNotEmpty || _pumpRequested || _pumpRunning) return;
+    if (!_settled) return;
     final completer = _idleCompleter;
     _idleCompleter = null;
     if (completer != null && !completer.isCompleted) completer.complete();
@@ -553,6 +625,12 @@ final class _ActiveDownload {
 
   final int generation;
   final DownloadCancellation cancellation;
+}
+
+/// 第 [attempt] 次自动重试的退避时长:1s、4s、16s……
+Duration retryBackoffFor(int attempt) {
+  final steps = attempt < 1 ? 0 : attempt - 1;
+  return DownloadCoordinator.retryBackoffBase * (1 << (2 * steps));
 }
 
 List<DownloadTask> _ordered(Iterable<DownloadTask> tasks) {

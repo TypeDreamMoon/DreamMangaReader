@@ -260,6 +260,79 @@ void main() {
     expect(coordinator.tasks.single.pauseReason, isNull);
   });
 
+  test('retryable failures back off and give up after three retries',
+      () async {
+    final delays = <Duration>[];
+    coordinator.dispose();
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+      retryDelay: (duration) async => delays.add(duration),
+    );
+    final executor = _ControlledExecutor(
+      failingIds: {taskFixture().id},
+      errors: {taskFixture().id: const SocketException('connection reset')},
+    );
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture());
+    await coordinator.idle;
+
+    expect(delays, const [
+      Duration(seconds: 1),
+      Duration(seconds: 4),
+      Duration(seconds: 16),
+    ]);
+    expect(executor.started, hasLength(4));
+    final failed = coordinator.task(taskFixture().id)!;
+    expect(failed.state, DownloadTaskState.failed);
+    expect(failed.failure!.code, DownloadFailureCode.network);
+    expect(failed.failure!.retryCount, 3);
+
+    // 手动重试重新发一份重试预算。
+    delays.clear();
+    executor.started.clear();
+    await coordinator.retry(taskFixture().id);
+    await coordinator.idle;
+    expect(delays, hasLength(3));
+    expect(executor.started, hasLength(4));
+  });
+
+  test('non retryable failures stop at the first attempt', () async {
+    final delays = <Duration>[];
+    coordinator.dispose();
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+      retryDelay: (duration) async => delays.add(duration),
+    );
+    final executor = _ControlledExecutor(
+      failingIds: {taskFixture().id},
+      errors: {
+        taskFixture().id: const FileSystemException(
+          'write failed',
+          '/pages/0.img',
+          OSError('No space left on device', 28),
+        ),
+      },
+    );
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture());
+    await coordinator.idle;
+
+    expect(delays, isEmpty);
+    expect(executor.started, hasLength(1));
+    final failed = coordinator.task(taskFixture().id)!;
+    expect(failed.state, DownloadTaskState.failed);
+    expect(failed.failure!.code, DownloadFailureCode.insufficientStorage);
+    expect(failed.failure!.retryCount, 0);
+  });
+
   test('in-flight executor results after dispose are dropped silently',
       () async {
     final executor = _ControlledExecutor();
@@ -351,9 +424,10 @@ void main() {
 }
 
 final class _ControlledExecutor implements DownloadExecutor {
-  _ControlledExecutor({this.failingIds = const {}});
+  _ControlledExecutor({this.failingIds = const {}, this.errors = const {}});
 
   final Set<String> failingIds;
+  final Map<String, Object> errors;
   final List<String> started = [];
   final Map<String, DownloadExecutionContext> contexts = {};
   final Map<String, Completer<void>> _releases = {};
@@ -373,7 +447,9 @@ final class _ControlledExecutor implements DownloadExecutor {
     for (final waiter in _waiters.toList()) {
       if (!waiter.isCompleted) waiter.complete();
     }
-    if (failingIds.contains(task.id)) throw StateError('failed ${task.id}');
+    if (failingIds.contains(task.id)) {
+      throw errors[task.id] ?? StateError('failed ${task.id}');
+    }
     await _releases[task.id]!.future;
     context.cancellation.throwIfCancelled();
     await context.reportProgress(100, 100);

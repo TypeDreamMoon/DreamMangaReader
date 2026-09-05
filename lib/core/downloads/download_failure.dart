@@ -82,6 +82,17 @@ final class DownloadFailure {
       );
 }
 
+extension DownloadFailureCodeRetry on DownloadFailureCode {
+  /// 值得自动重试的错误码:只包含「等一会儿可能就好了」的暂时性故障。
+  /// 认证、资源不存在、磁盘满这类要用户介入,重试只是白跑三趟。
+  bool get isRetryable => switch (this) {
+        DownloadFailureCode.network ||
+        DownloadFailureCode.sourceRefreshRequired =>
+          true,
+        _ => false,
+      };
+}
+
 String sanitizeDownloadFailureDetail(String value) {
   var sanitized = value.replaceAllMapped(
     RegExp(r'https?://[^\s]+', caseSensitive: false),
