@@ -97,8 +97,9 @@ class _FlatPage {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  late final PageController _ctrl =
-      PageController(initialPage: widget.initialPage);
+  // 在 initState 里、读完模式/双页设置**之后**建:双页时 PageView 的槽位是
+  // `flat ~/ 2`,initialPage 若直接塞扁平页号,续读第 21 页会落到第 41/42 页。
+  late final PageController _ctrl;
   final ItemScrollController _itemCtrl = ItemScrollController();
   final ItemPositionsListener _itemPos = ItemPositionsListener.create();
   final ScrollOffsetController _webOffsetCtrl = ScrollOffsetController();
@@ -169,6 +170,8 @@ class _ReaderPageState extends State<ReaderPage> {
     _dtZoom = s.doubleTapZoom;
     _showPageNum = s.showPageNumber;
     _brightness = s.brightness;
+    // 模式/双页已定,才知道扁平页号对应哪个 PageView 槽位。
+    _ctrl = PageController(initialPage: _pageForFlat(_curFlat));
     _loadInitial();
     if (s.keepScreenOn) {
       _wakeOn = true;
@@ -235,6 +238,9 @@ class _ReaderPageState extends State<ReaderPage> {
         _curFlat = _curFlat.clamp(0, _flat.length - 1);
         if (showHint) _showHint = true;
       });
+      // 首帧后把翻页控制器对到当前页:_curFlat 可能被 clamp(续读页号超出本章),
+      // 且首次 attach 的 itemCount 到这时才确定。
+      _resyncPaged();
       _saveProgress();
       _maybeAutoDetect(); // 首次打开:高瘦条漫图自动切滚动模式
       _preload();
