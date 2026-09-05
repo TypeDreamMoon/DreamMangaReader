@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dream_manga_reader/core/downloads/download_coordinator.dart';
 import 'package:dream_manga_reader/core/downloads/download_executor.dart';
@@ -259,6 +260,29 @@ void main() {
     expect(coordinator.tasks.single.pauseReason, isNull);
   });
 
+  test('in-flight executor results after dispose are dropped silently',
+      () async {
+    final executor = _ControlledExecutor();
+    await coordinator.load();
+    coordinator.registerExecutor(executor);
+    await coordinator.enqueue(taskFixture(id: 'failing'));
+    await coordinator.enqueue(taskFixture(id: 'succeeding'));
+    await executor.waitForStarted(2);
+
+    coordinator.dispose();
+    executor.failLate('failing', const SocketException('connection reset'));
+    executor.complete('succeeding');
+    await pumpEventQueue();
+
+    // 重新装一个,tearDown 才有活对象可 dispose。
+    coordinator = DownloadCoordinator(
+      repository: repository,
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+      clock: () => now++,
+    );
+  });
+
   test('pauseAll cancels running tasks like pause does', () async {
     final executor = _ControlledExecutor();
     await coordinator.load();
@@ -362,6 +386,11 @@ final class _ControlledExecutor implements DownloadExecutor {
       await waiter.future;
       _waiters.remove(waiter);
     }
+  }
+
+  void failLate(String id, Object error) {
+    final release = _releases[id];
+    if (release != null && !release.isCompleted) release.completeError(error);
   }
 
   void complete(String id) {

@@ -370,7 +370,7 @@ final class DownloadCoordinator extends ChangeNotifier {
     int completedBytes,
     int totalBytes,
   ) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(id, generation);
       await _commit({
         ..._tasks,
@@ -384,14 +384,14 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _checkpoint(String id, int generation) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       _currentExecutionTask(id, generation);
       await repository.save(tasks);
     });
   }
 
   Future<void> _setVerifying(String id, int generation) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(id, generation);
       await _commit({
         ..._tasks,
@@ -404,7 +404,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _setCompleted(String id, int generation) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(
         id,
         generation,
@@ -426,7 +426,7 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> _setCancelledIfRunning(String id, int generation) async {
     try {
-      await _serialize(() async {
+      await _serializeExecution(() async {
         final current = _currentExecutionTask(id, generation);
         await _commit({
           ..._tasks,
@@ -447,7 +447,7 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> _setFailed(String id, int generation, Object error) async {
     try {
-      await _serialize(() async {
+      await _serializeExecution(() async {
         final current = _currentExecutionTask(id, generation);
         await _commit({
           ..._tasks,
@@ -463,6 +463,20 @@ final class DownloadCoordinator extends ChangeNotifier {
       });
     } on DownloadCancelledException {
       // A newer task generation owns this identifier.
+    }
+  }
+
+  /// 执行期(executor 回调与收尾)专用的串行写入。
+  ///
+  /// [_serialize] 在 dispose 之后以 StateError 完成 —— 那是给外部调用方的信号,
+  /// 但在途任务的收尾没有人 await,抛出去就成了未捕获的异步异常。协调器已经
+  /// 销毁时这些写入本就无处可去,静默丢弃即可。
+  Future<void> _serializeExecution(Future<void> Function() action) async {
+    if (_disposed) return;
+    try {
+      await _serialize(action);
+    } on StateError {
+      if (!_disposed) rethrow;
     }
   }
 
