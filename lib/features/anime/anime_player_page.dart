@@ -357,13 +357,15 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
     unawaited(_loadPlaybackPreferences());
   }
 
-  /// 进后台就把攒着的进度落盘:安卓随时可能在后台把进程收走,再回来时
-  /// 节流没写出去的那几秒就永远没了。
+  /// 进后台要做两件事:把攒着的进度落盘(安卓随时可能在后台把进程收走),
+  /// 以及告诉会话层「接下来缓冲不动是正常的」——否则卡顿检测会把一条好端端的
+  /// 会话拆了重建。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final backgrounded = state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached;
+    _session?.notifyBackgrounded(backgrounded);
     if (!backgrounded) return;
     final library = _library;
     if (library != null) unawaited(library.flushPending());

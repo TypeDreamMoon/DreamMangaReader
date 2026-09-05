@@ -130,6 +130,7 @@ class PlaybackSessionController {
   bool _startedPlaying = false;
   bool _userPaused = false;
   bool _resumeAfterSeek = false;
+  bool _backgrounded = false;
   bool _disposed = false;
 
   Duration get _recoveryPosition => _pendingSeekTarget ?? _confirmedPosition;
@@ -341,7 +342,14 @@ class PlaybackSessionController {
       duration: _duration,
       selectedTrack: _selected,
     ));
+    _armStallTimer();
+  }
+
+  /// 缓冲迟迟不结束就判为卡死,重建解码器。后台期间不上这道闸 —— 见
+  /// [notifyBackgrounded]。
+  void _armStallTimer() {
     _stallTimer?.cancel();
+    if (_backgrounded) return;
     final generation = _generation;
     final coldStart = !_startedPlaying && _pendingSeekTarget == null;
     _stallTimer = Timer(coldStart ? coldStartStallThreshold : stallThreshold,
@@ -351,6 +359,24 @@ class PlaybackSessionController {
         unawaited(_recover(StateError(messages.bufferTimeout), generation));
       }
     });
+  }
+
+  /// 应用进了 / 出了后台。
+  ///
+  /// 后台里系统会把解码停掉,缓冲自然不再往前 —— 那不是卡顿。武装着的 stall
+  /// 定时器一到点就会把一条好端端的会话拆了重建,回到前台反而要从头缓冲一次。
+  /// 所以后台期间收掉定时器,回前台还卡在缓冲里就重新上闸,真死流照样救得回来。
+  void notifyBackgrounded(bool backgrounded) {
+    if (_disposed || _backgrounded == backgrounded) return;
+    _backgrounded = backgrounded;
+    if (backgrounded) {
+      _cancelTimers();
+      return;
+    }
+    if (_state.phase == PlaybackPhase.buffering &&
+        (!_userPaused || _pendingSeekTarget != null)) {
+      _armStallTimer();
+    }
   }
 
   void _onPosition(Duration position) {
