@@ -114,6 +114,13 @@ class SourceRepository {
   Future<void> load() async {
     try {
       await _resolve();
+    } catch (e) {
+      // `_resolve` 内部已按路径分别兜底,这里兜的是**兜底路径自己抛**的情况:
+      // 缓存里少一个脚本、prefs 打不开、磁盘满……旧代码只有 finally,
+      // 一个 PathNotFoundException 就能从 load() 逃出去把启动带崩。
+      registeredSources = const <SourceMeta>[];
+      localIds = <String>{};
+      status = '加载失败:$e';
     } finally {
       debugPrint('[sources] $status · ${registeredSources.length} 个');
       final n = registeredSources.length;
@@ -195,29 +202,75 @@ class SourceRepository {
         hidden;
   }
 
+  /// 拉整套仓库。**先把清单和全部脚本下到暂存目录,全部成功后再原子替换缓存**——
+  /// 旧代码先写 index.json 再逐个下脚本,某个脚本 404 就在缓存里留下一份
+  /// 「清单指向不存在的脚本」的坏缓存,此后每次离线启动都从缓存里抛出来。
   Future<List<SourceMeta>> _loadFromUrl(String base) async {
     final dio = Dio();
     final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
     final idxText = await _fetch(dio, '$root/index.json');
     final cache = await _cacheDir();
-    await File('${cache.path}/index.json').writeAsString(idxText);
-    final metas = <SourceMeta>[];
-    for (final e in _entries(idxText)) {
-      final scriptFile = e['script'] as String;
-      final scriptText = await _fetch(dio, '$root/$scriptFile');
-      await File('${cache.path}/$scriptFile').writeAsString(scriptText);
-      metas.add(SourceMeta.fromJson(e, script: scriptText));
+    final staging = Directory('${cache.path}.staging');
+    if (await staging.exists()) await staging.delete(recursive: true);
+    await staging.create(recursive: true);
+    try {
+      await File('${staging.path}/index.json').writeAsString(idxText);
+      final metas = <SourceMeta>[];
+      for (final e in _entries(idxText)) {
+        final scriptFile = _scriptNameOf(e);
+        if (scriptFile == null) continue;
+        final scriptText = await _fetch(dio, '$root/$scriptFile');
+        final f = File('${staging.path}/$scriptFile');
+        await f.parent.create(recursive: true);
+        await f.writeAsString(scriptText);
+        metas.add(SourceMeta.fromJson(e, script: scriptText));
+      }
+      // 全下完了才动缓存:中途任何一步抛出,旧缓存原封不动。
+      if (await cache.exists()) await cache.delete(recursive: true);
+      await staging.rename(cache.path);
+      return metas;
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
     }
-    return metas;
   }
 
+  /// 清单条目里的脚本文件名。缺失、非字符串、或试图跳出目录(`../`、绝对路径)
+  /// 的条目一律跳过 —— 清单来自远程仓库,不能让它决定往哪写文件。
+  static String? _scriptNameOf(Map<String, dynamic> e) {
+    final raw = e['script'];
+    if (raw is! String || raw.isEmpty) return null;
+    final parts = raw.split(RegExp(r'[/\\]'));
+    if (parts.any((p) => p == '..') || raw.startsWith('/') || raw.contains(':')) {
+      return null;
+    }
+    return raw;
+  }
+
+  /// 从一个目录(缓存 / 用户指定的本地目录)读一套源。
+  /// **少了某个脚本就跳过那一条**,不是让整套源都读不出来。
   Future<List<SourceMeta>> _loadFromDir(Directory dir) async {
     final idxText = await File('${dir.path}/index.json').readAsString();
     final metas = <SourceMeta>[];
+    var skipped = 0;
     for (final e in _entries(idxText)) {
-      final scriptFile = e['script'] as String;
-      final script = await File('${dir.path}/$scriptFile').readAsString();
-      metas.add(SourceMeta.fromJson(e, script: script));
+      final scriptFile = _scriptNameOf(e);
+      if (scriptFile == null) {
+        skipped++;
+        continue;
+      }
+      final f = File('${dir.path}/$scriptFile');
+      if (!await f.exists()) {
+        skipped++; // 缓存半残 / 用户删了个脚本:跳过这一条,别拖垮其余的源
+        continue;
+      }
+      try {
+        metas.add(SourceMeta.fromJson(e, script: await f.readAsString()));
+      } catch (_) {
+        skipped++; // 条目本身畸形(缺 id 等)
+      }
+    }
+    if (skipped > 0) {
+      AppLog.i.warn(LogCat.source, '跳过 $skipped 个读不出来的源 · ${dir.path}');
     }
     return metas;
   }
@@ -260,9 +313,17 @@ class SourceRepository {
     return r.data!;
   }
 
+  /// 清单里的源条目。清单来自远程仓库 / 用户目录,结构不对时给空表而不是抛 ——
+  /// 抛出来会顺着 `_loadFromCache` 一路逃到 `load()` 外面。
   List<Map<String, dynamic>> _entries(String jsonText) {
-    final m = jsonDecode(jsonText) as Map<String, dynamic>;
-    return (m['sources'] as List).cast<Map<String, dynamic>>();
+    final decoded = jsonDecode(jsonText);
+    if (decoded is! Map) return const [];
+    final list = decoded['sources'];
+    if (list is! List) return const [];
+    return [
+      for (final e in list)
+        if (e is Map) e.cast<String, dynamic>(),
+    ];
   }
 
   // ---- 本地单文件源(用户手动加的单个 .js,不需要整套仓库/清单) ----
