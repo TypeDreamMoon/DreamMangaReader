@@ -463,16 +463,21 @@ class HlsCacheGateway implements HlsSessionGateway {
       },
     );
 
-    // 每个分片记住紧随其后的几片。真正预取几片由 [_schedulePrefetch] 按缓冲健康度决定 ——
-    // 缓冲还没起来时只读 1 片,别让预读跟正在播的那一片抢带宽(那正是「像是要等全部分片
-    // 下完才开播」的由来:预读把上行队列占满,前台分片一直排在后面直到卡顿超时)。
+    // 每个分片只记住「整条顺序表 + 自己在表里的下标」,窗口由 [_schedulePrefetch]
+    // 现算。原来是给每片各存一份「其后所有 id」的副本 —— 一集上千片就是上千份
+    // 逐渐变短的列表,O(n²) 的内存和拷贝全花在永远不会用到的尾巴上。
+    // 真正预取几片由 [_schedulePrefetch] 按缓冲健康度决定 —— 缓冲还没起来时只读 1 片,
+    // 别让预读跟正在播的那一片抢带宽(那正是「像是要等全部分片下完才开播」的由来:
+    // 预读把上行队列占满,前台分片一直排在后面直到卡顿超时)。
+    final order = isLive
+        ? const <String>[]
+        : List<String>.unmodifiable(
+            segmentResources.map((resource) => resource.id),
+          );
     for (var index = 0; index < segmentResources.length; index++) {
-      segmentResources[index].prefetchIds = isLive
-          ? const []
-          : segmentResources
-              .skip(index + 1)
-              .map((resource) => resource.id)
-              .toList();
+      segmentResources[index]
+        ..prefetchOrder = order
+        ..prefetchIndex = isLive ? -1 : index;
     }
 
     return result.text;
@@ -736,13 +741,16 @@ class HlsCacheGateway implements HlsSessionGateway {
   }
 
   void _schedulePrefetch(_SessionData session, _Resource resource) {
-    if (resource.prefetchIds.isEmpty || session.closing) return;
+    if (session.closing || resource.prefetchIndex < 0) return;
+    final order = resource.prefetchOrder;
+    final start = resource.prefetchIndex + 1;
+    if (start >= order.length) return;
     // 缓冲领先播放头不足 15s 就只预读 1 片,把上行整个留给正在播的那一片;领先够了
     // 才往前铺。整批替换而不是追加:播放位置一动,上一批预读就作废了。
     final depth = session.bufferHealthy ? _maxPrefetchDepth : 1;
     session.prefetchQueue
       ..clear()
-      ..addAll(resource.prefetchIds.take(depth));
+      ..addAll(order.getRange(start, min(order.length, start + depth)));
     if (session.prefetchRunning) return;
     session.prefetchRunning = true;
     session.prefetch = _drainPrefetch(session, session.prefetchGeneration);
@@ -1088,7 +1096,12 @@ class _Resource {
   final int? rangeStart;
   final int? rangeLength;
   final bool live;
-  List<String> prefetchIds = const [];
+
+  /// 本片所在清单的分片顺序表(整条清单共用同一份),配合 [prefetchIndex] 现算预读窗口。
+  List<String> prefetchOrder = const [];
+
+  /// 本片在 [prefetchOrder] 里的下标;-1 = 不参与预读(直播/非分片资源)。
+  int prefetchIndex = -1;
 }
 
 class _SessionData {

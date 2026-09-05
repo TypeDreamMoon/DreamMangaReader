@@ -520,6 +520,43 @@ b.m4s
     session.notifySeek();
   });
 
+  // 预读窗口按「当前片的下标 + 深度」现算,而不是给每片各存一份「其后所有 id」。
+  // 窗口边界(最多 30 片、清单末尾自动收口)必须和原来一致。
+  test('the prefetch window follows the playing segment and stops at the end',
+      () async {
+    const count = 35;
+    final playlist = StringBuffer('#EXTM3U\n#EXT-X-TARGETDURATION:4\n'
+        '#EXT-X-PLAYLIST-TYPE:VOD\n');
+    for (var index = 0; index < count; index++) {
+      playlist.write('#EXTINF:4,\n$index.ts\n');
+      upstream.addBytes('/$index.ts', [index]);
+    }
+    playlist.write('#EXT-X-ENDLIST\n');
+    upstream.addText('/window.m3u8', playlist.toString());
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('window.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    session.reportBuffer(const Duration(seconds: 20));
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    await _get(media.segments.first.uri);
+
+    // 播第 0 片 → 窗口是第 1..30 片,第 31 片起要等播放位置往前挪。
+    await _waitUntil('预读到 /30.ts', () => upstream.requestCount('/30.ts') == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(upstream.requestCount('/31.ts'), 0);
+
+    // 清单最后一片没有后继:窗口收口成空,不越界也不空转。
+    await _get(media.segments.last.uri);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(upstream.requestCount('/${count - 1}.ts'), 1);
+  });
+
   // 缓冲从健康掉下来 = 上行不够用了。整批预读必须当场作废,把带宽还给正在播的
   // 那一片,否则「像是要等全部分片下完才开播」就会回来。
   test('a buffer falling below the threshold cancels the deep prefetch batch',
