@@ -74,12 +74,23 @@ class _SmoothScrollState extends State<SmoothScroll> {
     if (e is! PointerScrollEvent) return;
     if (SmoothScroll._yielding) return; // 指针在横向条上:滚轮让给它
     if (!LibraryStore.scrollAnimationsEnabled) return;
-    if (!_c.hasClients) return;
+    // resolver 只会回调**第一个**注册者,其余全被丢弃。盖层永远第一个注册,所以
+    // 「先无条件抢注、进了回调才发现自己不可滚」等于把这一格滚轮吃掉:外层内容还
+    // 没满一屏时,指针停在里层可滚区域上滚,谁都不动。不可滚就不抢,把事件让给
+    // 里层。
+    if (!_canScroll) return;
     // 用 resolver 注册:盖层在栈顶最先派发 → 最先注册 → resolver 只调用我们,
     // 系统默认滚轮被跳过(不会双重滚动)。
     GestureBinding.instance.pointerSignalResolver.register(e, (ev) {
       _handle(ev as PointerScrollEvent);
     });
+  }
+
+  /// 本层此刻真的能滚吗。多个 position 挂在同一个 controller 上时 [_c.position]
+  /// 会断言,一律当作不能滚(让给里层比抢过来崩掉强)。
+  bool get _canScroll {
+    if (!_c.hasClients || _c.positions.length != 1) return false;
+    return _c.position.maxScrollExtent > 0;
   }
 
   void _handle(PointerScrollEvent e) {
