@@ -64,7 +64,7 @@ class DownloadedNovelChapter {
     );
   }
 
-  DownloadedNovelChapter withCache(CachedNovelDocument cached) {
+  DownloadedNovelChapter withCache(CachedNovelChapterStat cached) {
     return DownloadedNovelChapter(
       source: source,
       novel: novel,
@@ -265,7 +265,9 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
               final record = DownloadedNovelChapter.fromJson(
                 value.cast<String, dynamic>(),
               );
-              final cached = await cache.read(
+              // 只体检,不读正文:一本书几百章,启动时逐章 readAsString
+              // 会把整个书架卡在启动画面上。
+              final cached = await cache.stat(
                 record.sourceId,
                 record.novelId,
                 record.chapterId,
@@ -524,7 +526,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     String novelId,
     String chapterId,
   ) async {
-    final cached = await _requireCache().read(sourceId, novelId, chapterId);
+    final cached = await _requireCache().stat(sourceId, novelId, chapterId);
     if (cached != null) await _deleteDirectory(cached.directory);
   }
 

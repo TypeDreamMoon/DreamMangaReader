@@ -326,6 +326,27 @@ void main() {
     restored.dispose();
   });
 
+  test('startup keeps chapters without reading a single body', () async {
+    final store = makeStore();
+    await store.load();
+    store.enqueue(meta, novel, chapter);
+    await store.idle;
+    final cached = await store.localDocument('source', 'novel', 'chapter');
+    store.dispose();
+
+    // 正文换成非法 UTF-8:启动只 stat 的话记录还在,逐章解码的话会被判坏。
+    final document = File(cached!.documentPath);
+    final length = await document.length();
+    await document.writeAsBytes(List<int>.filled(length, 0xff), flush: true);
+
+    source = _FakeNovelSource();
+    final restored = makeStore();
+    await restored.load();
+
+    expect(restored.isDownloaded('source', 'novel', 'chapter'), isTrue);
+    restored.dispose();
+  });
+
   test('active downloads expose their novel and chapter metadata', () async {
     final started = Completer<void>();
     final release = Completer<void>();

@@ -24,6 +24,23 @@ class CachedNovelDocument {
   final int byteCount;
 }
 
+/// 一章离线缓存的体检结果:目录、正文文件路径、资源数和总字节数。
+/// 只查 manifest 和文件大小,不碰正文 —— 启动时几百章逐个 readAsString
+/// 会把主 isolate 卡住,而这里要的信息全在 metadata.json 和文件长度里。
+class CachedNovelChapterStat {
+  const CachedNovelChapterStat({
+    required this.directory,
+    required this.documentPath,
+    required this.resourceCount,
+    required this.byteCount,
+  });
+
+  final String directory;
+  final String documentPath;
+  final int resourceCount;
+  final int byteCount;
+}
+
 class NovelDocumentCache {
   NovelDocumentCache({required this.root, required Dio dio}) : _dio = dio;
 
@@ -140,6 +157,26 @@ class NovelDocumentCache {
     String novelId,
     String chapterId,
   ) async {
+    final stat = await this.stat(sourceId, novelId, chapterId);
+    if (stat == null) return null;
+    try {
+      return CachedNovelDocument(
+        directory: stat.directory,
+        documentPath: stat.documentPath,
+        html: await File(stat.documentPath).readAsString(),
+        resourceCount: stat.resourceCount,
+        byteCount: stat.byteCount,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<CachedNovelChapterStat?> stat(
+    String sourceId,
+    String novelId,
+    String chapterId,
+  ) async {
     final directory = _chapterDirectory(sourceId, novelId, chapterId);
     try {
       final metadataFile = File(_join(directory.path, 'metadata.json'));
@@ -180,10 +217,9 @@ class NovelDocumentCache {
           decoded['byteCount'] != documentBytes + resourceBytes) {
         return null;
       }
-      return CachedNovelDocument(
+      return CachedNovelChapterStat(
         directory: directory.path,
         documentPath: documentFile.path,
-        html: await documentFile.readAsString(),
         resourceCount: resources.length,
         byteCount: documentBytes + resourceBytes,
       );

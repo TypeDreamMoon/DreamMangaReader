@@ -140,6 +140,33 @@ void main() {
     expect(saved.html, isNot(contains('https://cdn.example.test')));
   });
 
+  test('stat validates a chapter without decoding its body', () async {
+    final cache = NovelDocumentCache(root: temp.path, dio: Dio());
+    final saved = await cache.save(
+      'source',
+      'novel',
+      'chapter',
+      NovelDocument(
+        format: NovelDocumentFormat.html,
+        content: '<p>正文</p>',
+      ),
+    );
+    // 长度不变、内容不再是合法 UTF-8:只看大小的体检通过,真读正文会炸。
+    final document = File(saved.documentPath);
+    final length = await document.length();
+    await document.writeAsBytes(
+      List<int>.filled(length, 0xff),
+      flush: true,
+    );
+
+    final stat = await cache.stat('source', 'novel', 'chapter');
+
+    expect(stat, isNotNull);
+    expect(stat!.resourceCount, 0);
+    expect(stat.byteCount, saved.byteCount);
+    expect(await cache.read('source', 'novel', 'chapter'), isNull);
+  });
+
   test('untrusted identity components cannot escape the cache root', () async {
     final cache = NovelDocumentCache(root: temp.path, dio: Dio());
     final document = NovelDocument(
