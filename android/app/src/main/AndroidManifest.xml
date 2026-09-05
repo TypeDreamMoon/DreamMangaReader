@@ -16,9 +16,14 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- allowBackup 不写就是 true:系统会把整个 SharedPreferences 目录传进 Google
+         云备份,也允许 `adb backup` 拉走。里面存着 WebDAV 同步的账号密码、翻译 LLM
+         的 API Key、各源的登录 token —— 一份能在另一台设备上原样还原的明文副本。
+         书架/进度本来就有云同步,不靠系统备份,直接关掉。 -->
     <application
         android:label="Dream Manga Reader"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher">
         <activity
