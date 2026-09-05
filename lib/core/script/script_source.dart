@@ -85,6 +85,13 @@ class ScriptValues {
   static String _desc(Object? v) => v == null ? 'null' : '${v.runtimeType} $v';
 }
 
+/// 一次连续请求收集到的条目,外加脚本对「还有下一页」的表态(没表态 = null)。
+class _Collected {
+  const _Collected(this.items, this.hasNext);
+  final List<Object?> items;
+  final bool? hasNext;
+}
+
 /// 用一段 JS 脚本(实现 `prepare*/handle*` 契约)+ 宿主编排,落地一个 [MangaSource]。
 ///
 /// 核心思想:**宿主拥有全部 I/O**。
@@ -287,15 +294,19 @@ class ScriptSource implements MangaSource, NovelSource {
     }
   }
 
-  Future<List<Object?>> _runCollection(
+  /// [itemsKey] 是信封里装条目的字段名(默认 `items`);目录用 `chapters`,
+  /// 两者都认。[Collected.hasNext] 是脚本对「还有下一页」的表态,没表态即 null。
+  Future<_Collected> _runCollection(
     String prepareFn,
     List<Object?> prepareArgs,
-    String handleFn,
-  ) async {
+    String handleFn, {
+    String itemsKey = 'items',
+  }) async {
     _injectSourceContext();
     var request = _prepareRequest(prepareFn, prepareArgs);
     final items = <Object?>[];
     final seenRequests = <String>{};
+    bool? hasNext;
 
     for (var completed = 0;
         completed < maxSourceContinuationRequests;
@@ -320,16 +331,22 @@ class ScriptSource implements MangaSource, NovelSource {
       }
       if (output is List) {
         items.addAll(output);
-        return items;
+        return _Collected(items, hasNext);
       }
-      if (output is! Map || output['items'] is! List) {
-        throw const FormatException('源连续请求必须返回数组或 {items, next}');
+      if (output is! Map) {
+        throw FormatException('源连续请求必须返回数组或 {$itemsKey, next}');
       }
-
       final envelope = output.cast<String, dynamic>();
-      items.addAll(envelope['items'] as List);
+      final list = envelope[itemsKey] ?? envelope['items'];
+      if (list is! List) {
+        throw FormatException('源连续请求必须返回数组或 {$itemsKey, next}');
+      }
+      items.addAll(list);
+      // 目录分页:脚本可在信封里表态「还有下一页」,由调用方用 page: n 逐页拉。
+      final flag = envelope['hasNext'];
+      if (flag is bool) hasNext = flag;
       final next = envelope['next'];
-      if (next == null) return items;
+      if (next == null) return _Collected(items, hasNext);
       if (next is! Map || next['url'] is! String) {
         throw const FormatException('源连续请求的 next 不是有效请求描述');
       }
@@ -451,29 +468,33 @@ class ScriptSource implements MangaSource, NovelSource {
 
   @override
   Future<Paged<Chapter>> getChapters(String mangaId, {int? page}) async {
-    final values = await _runCollection(
+    // `handleChapterList` 可以只返回数组(绝大多数源),也可以返回
+    // `{chapters, hasNext}` 表态「目录还有下一页」—— 后者才让 `page` 参数真正
+    // 可达,长篇不再被第一页截断。
+    final collected = await _runCollection(
       'prepareChapterList',
       [mangaId, page ?? 1],
       'handleChapterList',
+      itemsKey: 'chapters',
     );
     final seen = <String>{};
     final chapters = <Chapter>[];
-    for (final value in values) {
+    for (final value in collected.items) {
       final chapter = _toChapter(_asMap(value, 'chapter'));
       if (seen.add(chapter.id)) chapters.add(chapter);
     }
-    return Paged(chapters);
+    return Paged(chapters, hasNext: collected.hasNext ?? false);
   }
 
   @override
   Future<List<PageImage>> getPages(String mangaId, String chapterId) async {
-    final values = await _runCollection(
+    final collected = await _runCollection(
       'prepareChapter',
       [mangaId, chapterId],
       'handleChapter',
     );
     final pagesByIndex = <int, PageImage>{};
-    for (final value in values) {
+    for (final value in collected.items) {
       final map = _asMap(value, 'page');
       final page = PageImage(
         index: ScriptValues.requireInt(map, 'index'),

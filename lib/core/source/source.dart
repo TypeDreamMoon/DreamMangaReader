@@ -1,5 +1,41 @@
 import 'models.dart';
 
+/// 拉一本书的目录最多翻这么多页。绝大多数源一页就把目录给全(`hasNext == false`),
+/// 这个上限只防某个源的 hasNext 恒为真时把详情页 / 更新扫描卡死在一本书上。
+const int maxChapterListPages = 30;
+
+/// 逐页拉全一本书的目录(升序保持源给的顺序)。
+///
+/// 详情页和更新扫描必须用同一套走法:两处对同一本书拉出的话数不一致,更新扫描会把
+/// 「详情页多出来的那些话」当成新话反复提醒。
+///
+/// 停止条件:源表态没有下一页 / 某页为空 / 某页全是已见过的话(源其实忽略了 `page`
+/// 参数,一直回同一页)/ 到 [maxChapterListPages] 上限。
+Future<List<Chapter>> fetchAllChapters(
+  MangaSource source,
+  String mangaId,
+) async {
+  var page = await source.getChapters(mangaId);
+  final seen = <String>{};
+  final chapters = <Chapter>[];
+  for (final c in page.items) {
+    if (seen.add(c.id)) chapters.add(c);
+  }
+  for (var n = 2; page.hasNext && n <= maxChapterListPages; n++) {
+    page = await source.getChapters(mangaId, page: n);
+    if (page.items.isEmpty) break;
+    var added = 0;
+    for (final c in page.items) {
+      if (seen.add(c.id)) {
+        chapters.add(c);
+        added++;
+      }
+    }
+    if (added == 0) break;
+  }
+  return chapters;
+}
+
 /// 宿主注入给源的能力集合。源**只能**通过它接触外界(网络/解析/存储),
 /// 自身没有环境权限——这是沙箱脚本源的安全基础。P0 先定接口。
 abstract class HostApi {
@@ -78,6 +114,9 @@ abstract class MangaSource {
   Future<Paged<Manga>> getSearch(String query, int page,
       {Map<String, Object?>? filters});
   Future<Manga> getMangaDetail(String mangaId);
+
+  /// 一页目录。源若把目录分页了,就在返回值里把 [Paged.hasNext] 置真,调用方
+  /// 用 `page: n` 逐页拉全(上限 [maxChapterListPages] 兜底)。
   Future<Paged<Chapter>> getChapters(String mangaId, {int? page});
   Future<List<PageImage>> getPages(String mangaId, String chapterId);
 

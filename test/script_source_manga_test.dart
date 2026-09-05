@@ -122,6 +122,68 @@ void main() {
       source.dispose();
     });
   });
+
+  /// 回归 E12:`getChapters` 无条件返回 `Paged(hasNext: false)`,于是
+  /// `prepareChapterList(mangaId, page)` 的 page 参数全链路不可达 —— 分页的源
+  /// 只能拿到第一页目录,长篇被截断。
+  group('chapter list pagination', () {
+    ScriptSource sourceWith(Map<String, String> handlers) => ScriptSource(
+          engine: _FakeEngine(handlers: handlers),
+          http: _EchoHttp(),
+          scriptCode: 'var __source = {};',
+        );
+
+    test('a bare array still means "no more pages"', () async {
+      final source = sourceWith({
+        'handleChapterList': '[{"id":"c1","name":"第1话"}]',
+      });
+      final page = await source.getChapters('m');
+      expect(page.items.single.id, 'c1');
+      expect(page.hasNext, isFalse);
+      source.dispose();
+    });
+
+    test('{chapters, hasNext} propagates the flag', () async {
+      final source = sourceWith({
+        'handleChapterList':
+            '{"chapters":[{"id":"c1","name":"第1话"}],"hasNext":true}',
+      });
+      final page = await source.getChapters('m');
+      expect(page.items.single.id, 'c1');
+      expect(page.hasNext, isTrue, reason: '脚本表态还有下一页,必须透传');
+      source.dispose();
+    });
+
+    test('{chapters, hasNext:false} ends the walk', () async {
+      final source = sourceWith({
+        'handleChapterList':
+            '{"chapters":[{"id":"c1","name":"第1话"}],"hasNext":false}',
+      });
+      expect((await source.getChapters('m')).hasNext, isFalse);
+      source.dispose();
+    });
+
+    test('the existing {items, next} continuation envelope still works',
+        () async {
+      final source = sourceWith({
+        'handleChapterList': '{"items":[{"id":"c1","name":"第1话"}]}',
+      });
+      final page = await source.getChapters('m');
+      expect(page.items.single.id, 'c1');
+      expect(page.hasNext, isFalse);
+      source.dispose();
+    });
+
+    test('a malformed envelope names the expected key', () async {
+      final source = sourceWith({'handleChapterList': '{"nope":1}'});
+      await expectLater(
+        source.getChapters('m'),
+        throwsA(isA<FormatException>()
+            .having((e) => e.message, 'message', contains('chapters'))),
+      );
+      source.dispose();
+    });
+  });
 }
 
 /// 不碰原生 QuickJS 的假引擎:按 `__source.<fn>` 的函数名回放事先写好的 JSON,

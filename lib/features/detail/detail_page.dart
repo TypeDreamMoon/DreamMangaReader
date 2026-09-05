@@ -596,13 +596,14 @@ class _DetailPageState extends State<DetailPage>
   Future<void> _load() async {
     final sw = Stopwatch()..start();
     try {
-      final page = await _source.getChapters(widget.manga.id);
+      // 目录分页:源用 hasNext 表态时逐页拉全,否则长篇会被第一页截断。
+      final chapters = await fetchAllChapters(_source, widget.manga.id);
       if (mounted) {
-        setState(() => _current = ChapterSource(
-            widget.meta, _source, widget.manga.id, page.items));
+        setState(() => _current =
+            ChapterSource(widget.meta, _source, widget.manga.id, chapters));
       }
       AppLog.i.info(LogCat.manga,
-          '加载章节《${widget.manga.title}》· ${page.items.length} 话 · ${sw.elapsedMilliseconds}ms',
+          '加载章节《${widget.manga.title}》· ${chapters.length} 话 · ${sw.elapsedMilliseconds}ms',
           detail: '源:${widget.meta.name} · id=${widget.manga.id}');
     } catch (e) {
       if (mounted) setState(() => _error = '$e');

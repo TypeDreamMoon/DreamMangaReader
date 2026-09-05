@@ -155,25 +155,17 @@ class LibraryUpdateChecker {
   }
 }
 
-/// 单页最多翻这么多次。绝大多数源一页就把目录给全了(`hasNext == false`),
-/// 这个上限只是防某个源的 hasNext 永远为 true 时把扫描卡死在一本书上。
-const _maxChapterPages = 30;
-
 /// 默认实现:建源 → 走完目录分页 → 数话数。源用完必须 dispose。
+///
+/// 走法与详情页共用 [fetchAllChapters]:两处对同一本书拉出的话数必须一致,
+/// 否则更新扫描会把「详情页多出来的那些话」当成新话反复提醒。
 Future<int?> fetchChapterCount(UpdateTarget target) async {
   final meta = sourceMetaById(target.sourceId);
   if (meta == null) return null; // 源已被删除/停用
   MangaSource? src;
   try {
     src = buildSource(meta);
-    var result = await src.getChapters(target.itemId);
-    var total = result.items.length;
-    for (var page = 2; result.hasNext && page <= _maxChapterPages; page++) {
-      result = await src.getChapters(target.itemId, page: page);
-      if (result.items.isEmpty) break;
-      total += result.items.length;
-    }
-    return total;
+    return (await fetchAllChapters(src, target.itemId)).length;
   } finally {
     src?.dispose();
   }
