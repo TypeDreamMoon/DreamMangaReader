@@ -16,6 +16,7 @@ class ProxySettingsPage extends StatefulWidget {
 class _ProxySettingsPageState extends State<ProxySettingsPage> {
   late int _mode; // 0 不使用 · 1 系统 · 2 自定义
   late final TextEditingController _ctrl;
+  late final TextEditingController _noProxyCtrl;
   String _result = '';
   bool _ok = false;
   bool _testing = false;
@@ -27,28 +28,56 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
     _mode = ov == null ? 1 : (ov == 'DIRECT' ? 0 : 2);
     _ctrl = TextEditingController(
         text: _mode == 2 ? ov : (AppProxy.current ?? '127.0.0.1:7890'));
+    _noProxyCtrl = TextEditingController(text: AppProxy.noProxy);
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _noProxyCtrl.dispose();
     super.dispose();
   }
 
-  Future<String?> _effectiveProxy() async {
+  /// 解析错误码 → 当前语言文案。核心层只给码,文案在这里。
+  String _parseErrorText(AppLocalizations l10n, ProxyParseError e) =>
+      switch (e) {
+        ProxyParseError.empty => l10n.proxy_errEmpty,
+        ProxyParseError.malformed => l10n.proxy_errInvalid,
+        ProxyParseError.badPort => l10n.proxy_errPort,
+        ProxyParseError.socksUnsupported => l10n.proxy_errSocks,
+      };
+
+  /// 自定义模式下把输入框解析成端点;不合法就把原因写进结果卡片并返回 null。
+  ProxyParseResult? _parseCustom() {
+    final r = AppProxy.parse(_ctrl.text);
+    if (r.ok) return r;
+    setState(() {
+      _ok = false;
+      _testing = false;
+      _result = _parseErrorText(context.l10n, r.error!);
+    });
+    return null;
+  }
+
+  Future<ProxyEndpoint?> _effectiveProxy() async {
     if (_mode == 0) return null; // 直连
-    if (_mode == 2) return _ctrl.text.trim();
+    if (_mode == 2) return _parseCustom()?.endpoint;
     return (await AppProxy.detectAuto()).$1; // 系统
   }
 
   Future<void> _test() async {
     final l10n = context.l10n;
+    // 自定义模式:地址不合法就别浪费 12 秒去连一个解析不出来的东西。
+    if (_mode == 2 && _parseCustom() == null) return;
     setState(() {
       _testing = true;
       _result = l10n.proxy_testing;
     });
     final p = await _effectiveProxy();
-    final r = await AppProxy.test(p);
+    final r = await AppProxy.test(
+      p,
+      bypass: AppProxy.parseNoProxy(_noProxyCtrl.text),
+    );
     if (!mounted) return;
     setState(() {
       _ok = r.ok;
@@ -77,8 +106,11 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
       };
 
   Future<void> _save() async {
+    // 存之前先校验:以前什么都收,`socks5://…` 或 `user:pass@host` 存下去后会被
+    // 当成主机名硬连,用户只看到「所有源都连不上」,没人猜得到是这里写错了。
+    if (_mode == 2 && _parseCustom() == null) return;
     final v = _mode == 0 ? 'DIRECT' : (_mode == 1 ? null : _ctrl.text.trim());
-    await AppProxy.setOverride(v);
+    await AppProxy.setOverride(v, noProxy: _noProxyCtrl.text);
     if (!mounted) return;
     showAppNotify(
         context, context.l10n.proxy_savedToast(AppProxy.current ?? context.l10n.proxy_direct),
@@ -132,6 +164,39 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
                 hint: context.l10n.proxy_customHint,
                 prefixIcon:
                     Icon(Icons.link_rounded, size: 18, color: p.textMuted),
+              ),
+            ),
+          ],
+          // 直连名单:内网站点 / 本地服务不该被推去绕代理(挂了代理连不上局域网
+          // 是很常见的报障)。强制直连模式下没有意义,不展示。
+          if (_mode != 0) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                context.l10n.proxy_noProxyLabel,
+                style: TextStyle(
+                    color: p.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: AppTextField(
+                controller: _noProxyCtrl,
+                hint: context.l10n.proxy_noProxyHint,
+                prefixIcon: Icon(Icons.alt_route_rounded,
+                    size: 18, color: p.textMuted),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                context.l10n.proxy_noProxySub,
+                style: TextStyle(color: p.textMuted, fontSize: 11.5),
               ),
             ),
           ],

@@ -39,6 +39,86 @@ void main() {
     HttpOverrides.global = null;
   });
 
+  group('parse', () {
+    test('裸 host:port 按 HTTP 代理处理', () {
+      final e = AppProxy.parse('127.0.0.1:7890').endpoint!;
+      expect(e.scheme, ProxyScheme.http);
+      expect(e.host, '127.0.0.1');
+      expect(e.port, 7890);
+      expect(e.hasCredentials, isFalse);
+      expect(e.directive, 'PROXY 127.0.0.1:7890');
+    });
+
+    test('带 scheme 和尾斜杠也认', () {
+      final e = AppProxy.parse('  http://proxy.corp:3128/  ').endpoint!;
+      expect(e.hostPort, 'proxy.corp:3128');
+    });
+
+    test('user:pass@host 拆成凭据,不再被当主机名', () {
+      final e = AppProxy.parse('http://alice:s3cret@proxy.corp:8080').endpoint!;
+      expect(e.host, 'proxy.corp');
+      expect(e.port, 8080);
+      expect(e.username, 'alice');
+      expect(e.password, 's3cret');
+      // dart:io 从 PROXY 指令里的 userinfo 抢先发 Basic 认证(明文转发和
+      // https 的 CONNECT 隧道都发)。
+      expect(e.directive, 'PROXY alice:s3cret@proxy.corp:8080');
+      // 展示/日志用的串不带密码。
+      expect(e.hostPort, 'proxy.corp:8080');
+    });
+
+    test('百分号编码的账密会解码', () {
+      final e = AppProxy.parse('http://a%40b:p%3Aw@h:1080').endpoint!;
+      expect(e.username, 'a@b');
+      expect(e.password, 'p:w');
+    });
+
+    test('socks 明确拒绝,而不是当 HTTP 代理连过去', () {
+      for (final raw in ['socks5://127.0.0.1:1080', 'socks4://h:9', 'socks5h://h:9']) {
+        final r = AppProxy.parse(raw);
+        expect(r.ok, isFalse, reason: raw);
+        expect(r.error, ProxyParseError.socksUnsupported, reason: raw);
+      }
+    });
+
+    test('空串和垃圾串各有各的错误码', () {
+      expect(AppProxy.parse('   ').error, ProxyParseError.empty);
+      expect(AppProxy.parse('ftp://h:21').error, ProxyParseError.malformed);
+      expect(AppProxy.parse('http://:8080').error, ProxyParseError.malformed);
+      expect(AppProxy.parse('http://h:99999').error, ProxyParseError.badPort);
+    });
+
+    test('缺端口时按 URL 默认端口', () {
+      expect(AppProxy.parse('proxy.corp').endpoint!.port, 80);
+      expect(AppProxy.parse('https://proxy.corp').endpoint!.port, 443);
+    });
+  });
+
+  group('no_proxy', () {
+    test('本机地址永远直连', () {
+      for (final h in ['localhost', '127.0.0.1', '::1', 'nas.local']) {
+        expect(AppProxy.shouldBypass(h, const []), isTrue, reason: h);
+      }
+    });
+
+    test('名单支持精确、子域和通配', () {
+      final list = AppProxy.parseNoProxy('example.com, .corp.com ,10.0.0.5');
+      expect(AppProxy.shouldBypass('example.com', list), isTrue);
+      expect(AppProxy.shouldBypass('api.corp.com', list), isTrue);
+      expect(AppProxy.shouldBypass('corp.com', list), isTrue);
+      expect(AppProxy.shouldBypass('10.0.0.5', list), isTrue);
+      expect(AppProxy.shouldBypass('notexample.com', list), isFalse);
+      expect(AppProxy.shouldBypass('google.com', list), isFalse);
+      expect(AppProxy.shouldBypass('google.com', AppProxy.parseNoProxy('*')),
+          isTrue);
+    });
+
+    test('大小写不敏感', () {
+      final list = AppProxy.parseNoProxy('CORP.com');
+      expect(AppProxy.shouldBypass('api.corp.COM', list), isTrue);
+    });
+  });
+
   group('proxy generation', () {
     test('每次 refresh 递增,让长命 client 知道自己过期了', () async {
       final before = AppProxy.generation;
@@ -47,6 +127,28 @@ void main() {
       final middle = AppProxy.generation;
       await AppProxy.setOverride('127.0.0.1:7890');
       expect(AppProxy.generation, greaterThan(middle));
+    });
+
+    test('手动代理落到 endpoint,current 只给 host:port', () async {
+      await AppProxy.setOverride('http://bob:pw@127.0.0.1:7890');
+      expect(AppProxy.current, '127.0.0.1:7890');
+      expect(AppProxy.endpoint!.username, 'bob');
+      expect(AppProxy.endpoint!.directive, 'PROXY bob:pw@127.0.0.1:7890');
+    });
+
+    test('存下来的非法代理当直连,不把乱码塞进 findProxy', () async {
+      // dart:io 的 findProxy 收到解析不了的字符串会直接抛 HttpException,
+      // 每个请求都炸——宁可退回直连。
+      await AppProxy.setOverride('socks5://127.0.0.1:1080');
+      expect(AppProxy.endpoint, isNull);
+      expect(AppProxy.current, isNull);
+    });
+
+    test('直连名单跟着覆盖一起持久化', () async {
+      await AppProxy.setOverride('127.0.0.1:7890', noProxy: '.corp.com');
+      expect(AppProxy.noProxy, '.corp.com');
+      expect(AppProxy.shouldBypass('api.corp.com'), isTrue);
+      expect(AppProxy.shouldBypass('google.com'), isFalse);
     });
   });
 

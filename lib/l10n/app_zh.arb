@@ -882,6 +882,13 @@
       "error": {}
     }
   },
+  "proxy_errEmpty": "请先填写代理地址",
+  "proxy_errInvalid": "代理地址无效。写成 host:port,例如 127.0.0.1:7890;要带账号则 用户名:密码@host:port",
+  "proxy_errPort": "端口不对,应在 1–65535 之间",
+  "proxy_errSocks": "暂不支持 SOCKS 代理,请填 HTTP / HTTPS 代理",
+  "proxy_noProxyLabel": "不走代理的地址",
+  "proxy_noProxySub": "名单里的主机直连。逗号分隔;`.corp.com` 连子域一起匹配;`*` 全部直连。",
+  "proxy_noProxyHint": "localhost, .corp.com, 192.168.1.10",
   "fontpick_countN": "{n} 个",
   "@fontpick_countN": {
     "placeholders": {
