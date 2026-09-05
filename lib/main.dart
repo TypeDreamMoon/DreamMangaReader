@@ -37,21 +37,26 @@ void main() async {
   // 可能的网络),串行 await 只是让它们排队等对方。并发跑,首帧提前到最慢的那个
   // 完成时,而不是所有耗时之和。**唯一的真依赖是代理 → 源清单**:源仓可能配的是
   // 远程 URL,不先注入代理,被墙的源会直接握手失败。
-  final sourcesReady = AppProxy.init()
+  //
+  // 每一项都各自兜底(见 [guardedStartupLoad]):`Future.wait` 是「有一个抛就整体
+  // 抛」,裸着放进去等于把 runApp 押在六项 I/O 全部成功上 —— 一份读坏的
+  // SharedPreferences、一个被占用的安全存储,就够换来一块永久黑窗。
+  final sourcesReady = guardedStartupLoad('网络代理', AppProxy.init)
       // 引擎不内置源:启动时从外部清单加载源脚本(仓库 URL / 本地目录 / 缓存;
-      // 未配置则为空)。
-      .then((_) => SourceRepository.instance.load());
+      // 未配置则为空)。代理没起来也照样试:被墙的源会失败,能直连的仍可用。
+      .then((_) =>
+          guardedStartupLoad('源清单', SourceRepository.instance.load));
   await Future.wait([
     sourcesReady,
     // 繁→简折叠字表(OpenCC 资源)读进内存,供发现页多源同名去重折繁简变体。
-    ChineseFold.load(),
+    guardedStartupLoad('繁简折叠字表', ChineseFold.load),
     // B站账号态(扫码登录后的 Cookie,安全存储)读回;不进云同步。
-    BiliAuth.instance.load(),
+    guardedStartupLoad('B站账号态', BiliAuth.instance.load),
     // 云同步配置(WebDAV 地址/账密/自动开关)读回。首帧后 App.initState 里的
     // 自动同步会用到它,所以必须在 runApp 前就位 —— 只是不必单独排队。
-    SyncController.instance.load(),
+    guardedStartupLoad('云同步配置', SyncController.instance.load),
     // 追更账本读回(书架封面上的「N 话新」角标)。首帧书架就要用,不能推到帧后。
-    LibraryUpdateTracker.instance.load(),
+    guardedStartupLoad('追更账本', LibraryUpdateTracker.instance.load),
   ]);
 
   runApp(const App());
@@ -63,4 +68,20 @@ void main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     SystemFonts.ensureLoaded();
   });
+}
+
+/// 跑一项启动加载,**永不抛错**。
+///
+/// 启动加载全是「拿到就更好、拿不到也能开」的东西:读坏的偏好文件、被占用的安全
+/// 存储、离线时的远程源清单。让它们抛到 `Future.wait` 上,`runApp` 就永远执行不到,
+/// 用户拿到的是一块没有任何提示的黑窗 —— 比任何一项降级都糟。失败只记日志,对应
+/// 模块停在自己的默认值上。
+///
+/// [what] 只进运行日志,不上界面,故不走 l10n。
+Future<void> guardedStartupLoad(String what, Future<void> Function() load) async {
+  try {
+    await load();
+  } catch (e, s) {
+    AppLog.i.err(LogCat.app, '启动加载失败 · $what', detail: '$e\n$s');
+  }
 }
