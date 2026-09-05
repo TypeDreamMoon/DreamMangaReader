@@ -18,20 +18,6 @@ class StubLegacyDecoder implements LegacyCharsetDecoder {
   Future<String> decode(String encoding, Uint8List bytes) async => text;
 }
 
-class ControlledNovelTextDecoder extends NovelTextDecoder {
-  final called = Completer<void>();
-  final release = Completer<DecodedNovelText>();
-
-  @override
-  Future<DecodedNovelText> decode(
-    List<int> input, {
-    String? forcedEncoding,
-  }) {
-    called.complete();
-    return release.future;
-  }
-}
-
 void main() {
   late Directory sandbox;
   late Directory supportDirectory;
@@ -64,7 +50,10 @@ void main() {
     expect(preview.title, '梦书');
     expect(preview.authors, ['作者甲']);
     expect(preview.chapters.single.title, '第一章 开始');
-    expect(preview.normalizedText, isNot(contains('\r')));
+    // 正文落在临时文件里,不跟着 preview 在 isolate 之间拷来拷去。
+    final normalized = File(preview.normalizedTextPath);
+    expect(await normalized.exists(), isTrue);
+    expect(await normalized.readAsString(), isNot(contains('\r')));
     expect(await supportDirectory.exists(), isFalse);
   });
 
@@ -73,9 +62,7 @@ void main() {
     await source.writeAsBytes([0x81]);
     final importer = TxtNovelImporter(
       applicationSupportDirectory: () async => supportDirectory,
-      decoder: NovelTextDecoder(
-        const StubLegacyDecoder('旧书\n\n第一章 开始\n正文。'),
-      ),
+      legacyDecoder: const StubLegacyDecoder('旧书\n\n第一章 开始\n正文。'),
     );
 
     final preview = await importer.preview(
@@ -87,34 +74,35 @@ void main() {
     expect(preview.title, '旧书');
   });
 
-  test('preview yields after decoding before parsing a large TXT', () async {
+  test('a large TXT is read, decoded and split off the main isolate',
+      () async {
     final source = File('${sandbox.path}${Platform.pathSeparator}large.txt');
-    await source.writeAsBytes([0x61]);
-    final decoder = ControlledNovelTextDecoder();
+    await source.writeAsString(
+      List.generate(
+        5000,
+        (index) => '第${index + 1}章 测试\n正文。',
+        growable: false,
+      ).join('\n\n'),
+    );
     final importer = TxtNovelImporter(
       applicationSupportDirectory: () async => supportDirectory,
-      decoder: decoder,
     );
-    var completed = false;
-    final previewFuture = importer.preview(source).whenComplete(() {
-      completed = true;
-    });
-
-    await decoder.called.future;
-    final text = List.generate(
-      50000,
-      (index) => '第${index + 1}章 测试\n正文。',
-      growable: false,
-    ).join('\n\n');
-    decoder.release.complete(
-      DecodedNovelText(text: text, encoding: 'utf-8', confidence: 1),
+    // 主 isolate 在等 preview 的这段时间里必须还能跑事件循环。
+    var ticks = 0;
+    final ticker = Timer.periodic(
+      const Duration(milliseconds: 1),
+      (_) => ticks++,
     );
 
-    await Future<void>.delayed(Duration.zero);
+    final preview = await importer.preview(source);
+    ticker.cancel();
 
-    expect(completed, isFalse);
-    final preview = await previewFuture;
-    expect(preview.chapters, hasLength(50000));
+    expect(preview.chapters, hasLength(5000));
+    expect(ticks, greaterThan(0));
+    expect(
+      await File(preview.normalizedTextPath).readAsString(),
+      contains('第5000章 测试'),
+    );
   });
 
   test('importPreview atomically installs normalized text and index JSON',
@@ -133,6 +121,8 @@ void main() {
       applicationSupportDirectory: () async => supportDirectory,
     );
     final preview = await importer.preview(source);
+    final normalizedText =
+        await File(preview.normalizedTextPath).readAsString();
 
     final installed = await importer.importPreview(preview);
 
@@ -147,7 +137,9 @@ void main() {
     final indexFile = File(
       '${installed.path}${Platform.pathSeparator}index.json',
     );
-    expect(await content.readAsString(), preview.normalizedText);
+    expect(await content.readAsString(), normalizedText);
+    // 装进书库之后临时正文就该消失,别在系统临时目录里留一整本书。
+    expect(await File(preview.normalizedTextPath).exists(), isFalse);
     final index =
         jsonDecode(await indexFile.readAsString()) as Map<String, dynamic>;
     expect(index['schema'], 1);
@@ -159,7 +151,7 @@ void main() {
     expect(chapters.length, 2);
     expect((chapters.first as Map<String, dynamic>)['volumeTitle'], '第一卷 起点');
     expect((chapters.last as Map<String, dynamic>)['endOffset'],
-        utf8.encode(preview.normalizedText).length);
+        utf8.encode(normalizedText).length);
 
     final novels = installed.parent.parent;
     expect(

@@ -153,7 +153,7 @@ TxtNovelImportPreview _txtPreview({required String encoding}) {
         .map((chapter) => NovelChapter(id: chapter.id, title: chapter.title))
         .toList(growable: false),
     encoding: encoding,
-    normalizedText: parsed.normalizedText,
-    parsed: parsed,
+    normalizedTextPath: 'normalized.txt',
+    outline: parsed.outline,
   );
 }

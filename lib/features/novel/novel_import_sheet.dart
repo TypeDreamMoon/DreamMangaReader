@@ -190,8 +190,8 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           authors: authors,
           chapters: txt.chapters,
           encoding: txt.encoding,
-          normalizedText: txt.normalizedText,
-          parsed: txt.parsed,
+          normalizedTextPath: txt.normalizedTextPath,
+          outline: txt.outline,
         );
         directory = await widget.services.importTxt(edited);
         origin = NovelOrigin.localTxt;

@@ -44,6 +44,20 @@ class TxtParsedVolume {
   final List<TxtParsedChapter> chapters;
 }
 
+/// 目录视图:切章结果里除正文以外的部分。导入预览只需要它,整本书的正文
+/// 落在文件里,不跟着结果在 isolate 之间拷来拷去。
+class TxtNovelOutline {
+  const TxtNovelOutline({
+    required this.metadata,
+    required this.chapters,
+    required this.volumes,
+  });
+
+  final TxtNovelMetadata metadata;
+  final List<TxtParsedChapter> chapters;
+  final List<TxtParsedVolume> volumes;
+}
+
 class TxtChapterParseResult {
   const TxtChapterParseResult({
     required this.normalizedText,
@@ -56,6 +70,12 @@ class TxtChapterParseResult {
   final TxtNovelMetadata metadata;
   final List<TxtParsedChapter> chapters;
   final List<TxtParsedVolume> volumes;
+
+  TxtNovelOutline get outline => TxtNovelOutline(
+        metadata: metadata,
+        chapters: chapters,
+        volumes: volumes,
+      );
 }
 
 class TxtChapterParser {
