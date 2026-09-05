@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -251,6 +253,112 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
+  });
+
+  /// 回归 E10:滚轮同时被阅读器的 Listener(翻页)和页面 InteractiveViewer
+  /// (缩放)吃掉 —— 滚一下既翻页又把当前页缩小。现在普通滚轮只翻页,
+  /// 缩放留给 Ctrl+滚轮。
+  group('mouse wheel', () {
+    Future<PageController> openReader(WidgetTester tester, LibraryStore store,
+        {int initialPage = 0}) async {
+      // 首次进入的手势提示是一层 opaque 的 Positioned.fill,会把指针挡在外面。
+      store.readerGestureHintSeen = true;
+      await tester.pumpWidget(harness(
+        store: store,
+        source: _FakeSource({'c1': _pages(20)}),
+        chapters: const [Chapter(id: 'c1', name: '第1话')],
+        initialPage: initialPage,
+      ));
+      await tester.pumpAndSettle();
+      return tester.widget<PageView>(find.byType(PageView)).controller!;
+    }
+
+    Future<void> wheel(WidgetTester tester, double dy) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      await tester
+          .sendEventToBinding(pointer.hover(tester.getCenter(find.byType(PageView))));
+      await tester.sendEventToBinding(pointer.scroll(Offset(0, dy)));
+      await tester.pumpAndSettle();
+    }
+
+    double currentScale(WidgetTester tester) => tester
+        .widget<InteractiveViewer>(find.byType(InteractiveViewer).first)
+        .transformationController!
+        .value
+        .getMaxScaleOnAxis();
+
+    testWidgets('scrolling down turns to the next page', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LibraryStore();
+      await store.load();
+
+      final controller = await openReader(tester, store);
+      expect(controller.page, 0);
+
+      await wheel(tester, 40);
+
+      expect(controller.page, 1);
+      expect(currentScale(tester), 1.0);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+    });
+
+    testWidgets('scrolling up turns back a page', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LibraryStore();
+      await store.load();
+
+      final controller = await openReader(tester, store, initialPage: 5);
+      expect(controller.page, 5);
+
+      await wheel(tester, -40);
+
+      expect(controller.page, 4);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+    });
+
+    /// 核心回归:InteractiveViewer 在自己的 Listener 里直接吃滚轮,阅读器的
+    /// Listener 也吃 —— 一次滚轮既翻页又缩放。翻页本身会顺带复位缩放,把症状
+    /// 盖住,所以在**翻不动**的位置(首页往回滚)才看得见留下的放大。
+    testWidgets('a plain wheel never zooms the page', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LibraryStore();
+      await store.load();
+
+      final controller = await openReader(tester, store);
+      expect(controller.page, 0);
+      expect(currentScale(tester), 1.0);
+
+      await wheel(tester, -40); // 首页往回滚:翻不动,只剩缩放会留痕
+
+      expect(controller.page, 0);
+      expect(currentScale(tester), 1.0, reason: '普通滚轮不该缩放当前页');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+    });
+
+    testWidgets('ctrl + wheel zooms and does not turn the page',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LibraryStore();
+      await store.load();
+
+      final controller = await openReader(tester, store, initialPage: 5);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await wheel(tester, -40);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+
+      expect(currentScale(tester), greaterThan(1.0), reason: 'Ctrl+滚轮应当放大');
+      expect(controller.page, 5, reason: 'Ctrl+滚轮不该翻页');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.dispose();
+    });
   });
 }
 

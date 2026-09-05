@@ -713,15 +713,24 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   DateTime _lastWheel = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 滚轮翻页。**经 [PointerSignalResolver] 仲裁**:同一次滚轮只该做一件事,
+  /// 内层若已认领(Ctrl+滚轮的缩放视图、嵌套 Scrollable),这里就不再翻页。
   void _onWheel(PointerSignalEvent event) {
     // 条漫 / 竖翻:纵向 Scrollable 自己吃滚轮,别再 _turn(否则和原生滚动打架)。
     if (_mode == ReaderMode.webtoon || _mode == ReaderMode.vertical) return;
-    if (event is PointerScrollEvent) {
-      final now = DateTime.now();
-      if (now.difference(_lastWheel).inMilliseconds < 120) return; // 防一滚翻多页
-      _lastWheel = now;
-      _turn(event.scrollDelta.dy > 0 ? 1 : -1);
-    }
+    if (event is! PointerScrollEvent || event.scrollDelta.dy == 0) return;
+    // Ctrl+滚轮是缩放,交给 _ZoomableView。
+    if (HardwareKeyboard.instance.isControlPressed) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, _handleWheel);
+  }
+
+  void _handleWheel(PointerEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final now = DateTime.now();
+    if (now.difference(_lastWheel).inMilliseconds < 120) return; // 防一滚翻多页
+    _lastWheel = now;
+    _turn(event.scrollDelta.dy > 0 ? 1 : -1);
   }
 
   // 常驻小页码(控制条收起时显示)。
@@ -2186,6 +2195,13 @@ class _ZoomableViewState extends State<_ZoomableView> {
   Offset _tapPos = Offset.zero;
   bool _zoomed = false;
 
+  // 滚轮缩放拦不住:InteractiveViewer 在**自己的** Listener 里直接改矩阵,不走
+  // PointerSignalResolver,所以一次滚轮既缩放又翻页。但它改矩阵**之前**会先发
+  // 一次 onInteractionStart,而指针信号触发的那次 pointerCount == 0(真手势 ≥1)。
+  // 据此在缩放前拍下矩阵,普通滚轮就在同一次事件派发内还原(尚未成帧,无闪烁),
+  // 把滚轮交回外层翻页;只有 Ctrl+滚轮才让缩放留下。双指捏合不走这条路,始终可用。
+  Matrix4? _beforeSignal;
+
   @override
   void initState() {
     super.initState();
@@ -2240,17 +2256,42 @@ class _ZoomableViewState extends State<_ZoomableView> {
     }
   }
 
+  void _onInteractionStart(ScaleStartDetails d) {
+    // pointerCount == 0 → 这次「交互」是指针信号(滚轮),不是手势。
+    _beforeSignal = d.pointerCount == 0 ? _tc.value.clone() : null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    final before = _beforeSignal;
+    _beforeSignal = null;
+    // 只管真鼠标滚轮;触控板的两指滚动在 InteractiveViewer 里是平移,别动它。
+    if (event is! PointerScrollEvent ||
+        event.kind != PointerDeviceKind.mouse) {
+      return;
+    }
+    if (HardwareKeyboard.instance.isControlPressed) {
+      // Ctrl+滚轮 = 缩放:向仲裁器认领,外层不再翻页 / 滚动。
+      GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+      return;
+    }
+    if (before != null) _tc.value = before; // 普通滚轮不缩放,还给外层翻页
+  }
+
   @override
   Widget build(BuildContext context) {
-    final viewer = InteractiveViewer(
-      transformationController: _tc,
-      constrained: widget.constrained,
-      minScale: widget.constrained ? 0.8 : 0.5,
-      maxScale: 5,
-      // 适配模式常开平移(默认零边距把平移夹在图片边缘 → 纵/横向滚动、无漂移);
-      // fitScreen 未放大不吃横拖 → PageView 能滑动翻页。
-      panEnabled: widget.panAlways || _zoomed,
-      child: widget.child,
+    final viewer = Listener(
+      onPointerSignal: _onPointerSignal,
+      child: InteractiveViewer(
+        transformationController: _tc,
+        constrained: widget.constrained,
+        minScale: widget.constrained ? 0.8 : 0.5,
+        maxScale: 5,
+        onInteractionStart: _onInteractionStart,
+        // 适配模式常开平移(默认零边距把平移夹在图片边缘 → 纵/横向滚动、无漂移);
+        // fitScreen 未放大不吃横拖 → PageView 能滑动翻页。
+        panEnabled: widget.panAlways || _zoomed,
+        child: widget.child,
+      ),
     );
     if (!widget.doubleTap) return viewer;
     if (!widget.centerBandOnly) {
