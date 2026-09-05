@@ -188,10 +188,20 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
   NovelSearchIndex? searchIndex,
   NovelSearchDocumentLoader? loadCachedDocument,
   bool useDefaultDocumentView = false,
+  List<NovelChapter> chapters = const [
+    NovelChapter(id: 'c1', title: '第一章'),
+    NovelChapter(id: 'c2', title: '第二章'),
+  ],
+  int initialIndex = 0,
+  bool resumeFromHistory = false,
+  NovelLocator? savedProgress,
 }) async {
   final store = NovelLibraryStore();
   await store.load();
   store.setPreferences(preferences);
+  if (savedProgress != null) {
+    store.saveProgress('remote:s:n1', savedProgress);
+  }
   await store.flushPending();
   final widget = MaterialApp(
     // 小说界面走 palette(AppTokens 主题扩展),裸 MaterialApp 取不到。
@@ -203,12 +213,10 @@ Future<({Widget widget, NovelLibraryStore store})> _readerHarness(
       store: store,
       child: NovelReaderPage(
         novel: const Novel(id: 'n1', title: '测试小说'),
-        chapters: const [
-          NovelChapter(id: 'c1', title: '第一章'),
-          NovelChapter(id: 'c2', title: '第二章'),
-        ],
-        initialIndex: 0,
+        chapters: chapters,
+        initialIndex: initialIndex,
         libraryKey: 'remote:s:n1',
+        resumeFromHistory: resumeFromHistory,
         controller: controller,
         documentViewBuilder: useDefaultDocumentView
             ? null
@@ -263,6 +271,78 @@ class _ImmediateNovelFontStore extends NovelFontStore {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('directory entry opens the tapped chapter, not saved progress',
+      (tester) async {
+    final controller = _FakeController(
+      locator: const NovelLocator(chapterId: 'c1'),
+    );
+    final harness = await _readerHarness(
+      controller,
+      chapters: const [
+        NovelChapter(id: 'c1', title: '第一章'),
+        NovelChapter(id: 'c2', title: '第二章'),
+        NovelChapter(id: 'c3', title: '第三章'),
+      ],
+      initialIndex: 0,
+      savedProgress: const NovelLocator(chapterId: 'c3', fraction: .8),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(controller.loadedChapterId, 'c1');
+    expect(controller.lastRestored, isNull);
+    expect(find.text('第一章'), findsWidgets);
+  });
+
+  testWidgets('resume entry still opens the chapter saved in history',
+      (tester) async {
+    final controller = _FakeController(
+      locator: const NovelLocator(chapterId: 'c1'),
+    );
+    final harness = await _readerHarness(
+      controller,
+      chapters: const [
+        NovelChapter(id: 'c1', title: '第一章'),
+        NovelChapter(id: 'c2', title: '第二章'),
+        NovelChapter(id: 'c3', title: '第三章'),
+      ],
+      initialIndex: 0,
+      resumeFromHistory: true,
+      savedProgress: const NovelLocator(chapterId: 'c3', fraction: .8),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(controller.loadedChapterId, 'c3');
+    expect(controller.lastRestored?.chapterId, 'c3');
+    expect(controller.lastRestored?.fraction, .8);
+  });
+
+  testWidgets('tapping the chapter already in history keeps its fraction',
+      (tester) async {
+    final controller = _FakeController(
+      locator: const NovelLocator(chapterId: 'c2'),
+    );
+    final harness = await _readerHarness(
+      controller,
+      chapters: const [
+        NovelChapter(id: 'c1', title: '第一章'),
+        NovelChapter(id: 'c2', title: '第二章'),
+        NovelChapter(id: 'c3', title: '第三章'),
+      ],
+      initialIndex: 1,
+      savedProgress: const NovelLocator(chapterId: 'c2', fraction: .4),
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    expect(controller.loadedChapterId, 'c2');
+    expect(controller.lastRestored?.fraction, .4);
   });
 
   testWidgets('selection highlight and toolbar bookmark persist reader data',

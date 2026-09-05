@@ -231,7 +231,7 @@ class _NovelDetailPageState extends State<NovelDetailPage>
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  void _openChapter(int index) {
+  void _openChapter(int index, {bool resume = false}) {
     final source = _source;
     if (source == null) return;
     final meta = _meta;
@@ -265,6 +265,7 @@ class _NovelDetailPageState extends State<NovelDetailPage>
         chapters: chapters,
         initialIndex: index,
         libraryKey: NovelIdentity.remote(meta.id, novel.id).key,
+        resumeFromHistory: resume,
         loadCachedDocument: loadCached,
         loadDocument: (chapter) async {
           final cached = await loadCached(chapter);
@@ -490,7 +491,8 @@ class _NovelDetailPageState extends State<NovelDetailPage>
       onAccent: coverPalette?.onPrimary ?? p.onAccent,
       resumed: resumed,
       resumeLabel: resumed ? _chapters[startIndex].title : '',
-      onPrimary: canRead ? () => _openChapter(startIndex) : null,
+      // 「继续阅读」按钮:交给阅读器按保存的进度接着读。
+      onPrimary: canRead ? () => _openChapter(startIndex, resume: true) : null,
       actions: [
         AppIconButton(
           icon:

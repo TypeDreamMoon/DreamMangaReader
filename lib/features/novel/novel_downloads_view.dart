@@ -279,6 +279,8 @@ class _OfflineNovelPage extends StatelessWidget {
         chapters: chapters,
         initialIndex: index,
         libraryKey: NovelIdentity.remote(group.source.id, group.novel.id).key,
+        // 下载列表点的是某一具体章节:按点的那章开,别被历史进度带走。
+        resumeFromHistory: false,
         loadCachedDocument: loadCached,
         loadDocument: (chapter) async {
           final cached = await loadCached(chapter);

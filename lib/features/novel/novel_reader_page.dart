@@ -53,12 +53,18 @@ class NovelReaderPage extends StatefulWidget {
     this.readerDataStore,
     this.searchIndex,
     this.loadCachedDocument,
+    this.resumeFromHistory = false,
   }) : assert(initialIndex >= 0 && initialIndex < chapters.length);
 
   final Novel novel;
   final List<NovelChapter> chapters;
   final int initialIndex;
   final String libraryKey;
+
+  /// 「继续阅读」类入口(书架/历史点书、详情页继续按钮)传 true:开哪一章由
+  /// 保存的进度说了算。目录/下载列表点某一章传 false —— 那是明确的跳转指令,
+  /// 不能被历史进度覆盖成别的章(点第 5 章却开了第 30 章)。
+  final bool resumeFromHistory;
   final NovelDocumentLoader loadDocument;
   final NovelDocumentController? controller;
   final NovelDocumentViewBuilder? documentViewBuilder;
@@ -132,8 +138,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
         (chapter) => chapter.id == saved.chapterId,
       );
       if (index >= 0) {
-        _chapterIndex = index;
-        _chapterFraction = saved.fraction;
+        if (widget.resumeFromHistory) {
+          _chapterIndex = index;
+          _chapterFraction = saved.fraction;
+        } else if (index == widget.initialIndex) {
+          // 点的正好是上次读的那一章:章还是这一章,章内位置照旧接着读。
+          _chapterFraction = saved.fraction;
+        }
       }
     }
     _controller.onCommand = _onCommand;

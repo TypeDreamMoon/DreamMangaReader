@@ -490,6 +490,7 @@ Future<void> openNovelLibraryEntry(
           chapters: book.chapters,
           initialIndex: initialIndex < 0 ? 0 : initialIndex,
           libraryKey: entry.key,
+          resumeFromHistory: true,
           loadDocument: book.loadDocument,
           loadCachedDocument: (chapter) async => book.loadDocument(chapter),
         ),
