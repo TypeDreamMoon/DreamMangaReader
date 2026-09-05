@@ -42,6 +42,7 @@ class UpdateService {
     UpdateSource preferredSource = UpdateSource.gitee,
   }) async {
     AppLog.i.info(LogCat.update, '检查更新…${includeBeta ? '(含测试版)' : ''}');
+    unawaited(sweepStaleUpdateCache());
     try {
       final candidate = await UpdateResolver(
         gitee: GiteeReleaseClient(),
@@ -69,6 +70,19 @@ class UpdateService {
     } on UpdateResolutionException catch (error) {
       AppLog.i.err(LogCat.update, '检查更新失败', detail: '$error');
       return UpdateCheckResult(UpdateCheckState.failed, error: error);
+    }
+  }
+
+  /// 清掉更新缓存里放了一周还没人管的残留(断网留下的半包与分片)。
+  /// 挂在检查更新上:启动后的自动检查和设置页的手动检查都会顺手跑一次。
+  /// best-effort——清不掉(文件被占用/目录不在)不影响检查本身。
+  static Future<void> sweepStaleUpdateCache() async {
+    try {
+      await UpdateCacheCleaner.sweepStale(
+        await UpdateDownloader.defaultCacheDirectory(),
+      );
+    } catch (_) {
+      // 缓存清理失败没有用户可见后果,下次检查更新再来。
     }
   }
 

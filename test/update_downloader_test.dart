@@ -332,4 +332,102 @@ void main() {
     expect(middle.existsSync(), isTrue);
     expect(newest.existsSync(), isTrue);
   });
+
+  test('cancelling a download discards this run half package', () async {
+    final cancelToken = CancelToken();
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        cancelToken.cancel();
+        return ResponseBody.fromBytes(
+          [1, 2, 3],
+          200,
+          headers: {
+            Headers.contentLengthHeader: ['3'],
+          },
+        );
+      });
+
+    await expectLater(
+      UpdateDownloader(dio: dio, cacheDirectory: temp).download(
+        _asset(),
+        cancelToken: cancelToken,
+      ),
+      throwsA(anything),
+    );
+
+    expect(
+      File('${temp.path}${Platform.pathSeparator}$_cacheName.download')
+          .existsSync(),
+      isFalse,
+    );
+  });
+
+  test('cancelling a chunked download discards verified parts too', () async {
+    final asset = _chunkedAsset();
+    final part = File(
+      '${temp.path}${Platform.pathSeparator}'
+      '${asset.parts.first.sha256}-package.bin.part001',
+    )..writeAsBytesSync([1, 2]);
+    final half = File(
+      '${temp.path}${Platform.pathSeparator}'
+      '${asset.parts.last.sha256}-package.bin.part002.download',
+    )..writeAsBytesSync([9]);
+    final cancelToken = CancelToken();
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        cancelToken.cancel();
+        return ResponseBody.fromBytes(const [3], 200);
+      });
+
+    await expectLater(
+      UpdateDownloader(dio: dio, cacheDirectory: temp).download(
+        asset,
+        cancelToken: cancelToken,
+      ),
+      throwsA(anything),
+    );
+
+    expect(part.existsSync(), isFalse);
+    expect(half.existsSync(), isFalse);
+  });
+
+  test('a network failure keeps the partial file for a later resume', () async {
+    final partial = File(
+      '${temp.path}${Platform.pathSeparator}$_cacheName.download',
+    )..writeAsBytesSync([1, 2]);
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        return ResponseBody.fromBytes(const [], 503);
+      });
+
+    await expectLater(
+      UpdateDownloader(dio: dio, cacheDirectory: temp).download(_asset()),
+      throwsA(isA<UpdateDownloadException>()),
+    );
+
+    expect(partial.existsSync(), isTrue);
+    expect(partial.readAsBytesSync(), [1, 2]);
+  });
+
+  test('stale sweep drops week-old leftovers and keeps fresh ones', () async {
+    final stalePartial =
+        File('${temp.path}${Platform.pathSeparator}abc-package.apk.download')
+          ..writeAsBytesSync([1]);
+    final stalePart =
+        File('${temp.path}${Platform.pathSeparator}abc-package.apk.part001')
+          ..writeAsBytesSync([2]);
+    final fresh =
+        File('${temp.path}${Platform.pathSeparator}def-package.apk.download')
+          ..writeAsBytesSync([3]);
+    final now = DateTime.now();
+    stalePartial.setLastModifiedSync(now.subtract(const Duration(days: 9)));
+    stalePart.setLastModifiedSync(now.subtract(const Duration(days: 8)));
+    fresh.setLastModifiedSync(now.subtract(const Duration(days: 2)));
+
+    await UpdateCacheCleaner.sweepStale(temp, now: now);
+
+    expect(stalePartial.existsSync(), isFalse);
+    expect(stalePart.existsSync(), isFalse);
+    expect(fresh.existsSync(), isTrue);
+  });
 }

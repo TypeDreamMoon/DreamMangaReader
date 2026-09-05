@@ -80,6 +80,39 @@ class UpdateDownloader {
     Set<String> activePaths = const {},
   }) async {
     final cache = await _resolveCacheDirectory();
+    try {
+      return await _download(
+        asset,
+        cache: cache,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
+        activePaths: activePaths,
+      );
+    } catch (error) {
+      // 用户主动取消 = 这次更新不要了:半包(`.download`)、拼装中的临时文件和已
+      // 下好的分片都得跟着走,否则它们只会躺在缓存目录里——`cleanup` 只在成功的
+      // 末尾跑,而且刻意跳过 `.download`,谁也不会来收。
+      //
+      // 网络断了则相反:临时文件是续传的本钱,留着(设计文档明确要求),由启动时
+      // 的 [UpdateCacheCleaner.sweepStale] 兜底清掉长期没人管的残留。
+      if (_isCancellation(error, cancelToken)) {
+        await UpdateCacheCleaner.discardAsset(cache, asset);
+      }
+      rethrow;
+    }
+  }
+
+  static bool _isCancellation(Object error, CancelToken? cancelToken) =>
+      (error is DioException && error.type == DioExceptionType.cancel) ||
+      cancelToken?.isCancelled == true;
+
+  Future<File> _download(
+    ResolvedUpdateAsset asset, {
+    required Directory cache,
+    required void Function(double progress)? onProgress,
+    required CancelToken? cancelToken,
+    required Set<String> activePaths,
+  }) async {
     await cache.create(recursive: true);
     final cacheName = '${asset.sha256.toLowerCase()}-${asset.fileName}';
     final finalFile = File('${cache.path}${Platform.pathSeparator}$cacheName');
@@ -298,9 +331,12 @@ class UpdateDownloader {
     return _completePartial(partialFile, finalFile, onProgress);
   }
 
-  Future<Directory> _resolveCacheDirectory() async {
-    final configured = cacheDirectory;
-    if (configured != null) return configured;
+  Future<Directory> _resolveCacheDirectory() async =>
+      cacheDirectory ?? await defaultCacheDirectory();
+
+  /// 更新包缓存目录(未注入 [cacheDirectory] 时的默认位置)。
+  /// 公开给启动时的残留清理用,免得清理方自己再拼一遍路径。
+  static Future<Directory> defaultCacheDirectory() async {
     final temp = await getTemporaryDirectory();
     return Directory(
       '${temp.path}${Platform.pathSeparator}dream_manga_reader_updates',
@@ -355,6 +391,58 @@ class UpdateCacheCleaner {
       } on FileSystemException {
         // A running installer may still hold the package; retry next update.
       }
+    }
+  }
+
+  /// 丢弃一次被取消的下载留下的全部中间产物:半包 `.download`、拼装中的
+  /// `.assembling`,以及本资产已下好的分片(分片本身校验过,但任务作废了,
+  /// 留着就是几百 MB 没人认领的垃圾)。已完整校验的成品包不动。
+  static Future<void> discardAsset(
+    Directory cacheDirectory,
+    ResolvedUpdateAsset asset,
+  ) async {
+    if (!await cacheDirectory.exists()) return;
+    final base = '${cacheDirectory.path}${Platform.pathSeparator}';
+    final name = '${asset.sha256.toLowerCase()}-${asset.fileName}';
+    final victims = <String>[
+      '$base$name.download',
+      '$base$name.assembling',
+      for (final part in asset.parts) ...[
+        '$base${part.sha256.toLowerCase()}-${part.fileName}',
+        '$base${part.sha256.toLowerCase()}-${part.fileName}.download',
+      ],
+    ];
+    for (final path in victims) {
+      await _deleteQuietly(File(path));
+    }
+  }
+
+  /// 启动时清理:删掉 [maxAge] 之前就没再动过的残留。断网留下的 `.download`
+  /// 和分片是续传的本钱,不能立刻删;但用户如果再也不回来重试,它们会一直占着
+  /// 磁盘——这里给它们一个保质期。成品包由 [cleanup] 的「留最新两个」管。
+  static Future<void> sweepStale(
+    Directory cacheDirectory, {
+    Duration maxAge = const Duration(days: 7),
+    DateTime? now,
+  }) async {
+    if (!await cacheDirectory.exists()) return;
+    final cutoff = (now ?? DateTime.now()).subtract(maxAge);
+    await for (final entity in cacheDirectory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      try {
+        if ((await entity.stat()).modified.isAfter(cutoff)) continue;
+      } on FileSystemException {
+        continue;
+      }
+      await _deleteQuietly(entity);
+    }
+  }
+
+  static Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      // 安装器/杀软可能正占着文件;下一轮清理再来。
     }
   }
 
