@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 代理来源(设置页展示;文案由 UI 按语言映射)。
@@ -190,7 +191,11 @@ class AppProxy {
   /// 重新解析并注入 [HttpOverrides.global]。
   static Future<void> refresh() async {
     _resolved = await _resolve();
-    _bypass = _bypassList(_noProxy, includeEnvironment: _override == null);
+    _bypass = [
+      ..._bypassList(_noProxy, includeEnvironment: _override == null),
+      // 系统代理自带的排除名单(Android 的 ProxyInfo / http.nonProxyHosts)。
+      if (_sourceCode == ProxySource.systemProxy) ..._detectedBypass,
+    ];
     HttpOverrides.global = _AppHttpOverrides(_resolved, _bypass);
     _generation++;
   }
@@ -266,9 +271,10 @@ class AppProxy {
     ));
   }
 
-  /// 自动检测:环境变量 → Windows 系统代理。返回 (端点 或 null, 来源码)。
-  /// 供"使用系统代理"选项 + 测试连接复用。
+  /// 自动检测:环境变量 → 系统代理(Windows 读注册表 / Android 走原生桥)。
+  /// 返回 (端点 或 null, 来源码)。供"使用系统代理"选项 + 测试连接复用。
   static Future<(ProxyEndpoint?, ProxySource)> detectAuto() async {
+    _detectedBypass = const [];
     final env = Platform.environment;
     final e = env['HTTPS_PROXY'] ??
         env['https_proxy'] ??
@@ -287,7 +293,57 @@ class AppProxy {
         if (parsed != null) return (parsed, ProxySource.systemProxy);
       }
     }
+    if (Platform.isAndroid) {
+      // Android 进程里没有 HTTP_PROXY 之类的环境变量,系统代理只能问原生要;
+      // 之前这段被 `Platform.isWindows` 包着,于是设置页照样给「使用系统代理」
+      // 这个选项,选了却永远直连。
+      final (sys, exclusions) = await readAndroidSystemProxy();
+      final parsed = sys == null ? null : parse(sys).endpoint;
+      if (parsed != null) {
+        _detectedBypass = exclusions;
+        return (parsed, ProxySource.systemProxy);
+      }
+    }
     return (null, ProxySource.directNoProxy);
+  }
+
+  static const _androidProxyChannel =
+      MethodChannel('dream_manga_reader/system_proxy');
+
+  /// 系统自带的直连名单(Android `ProxyInfo.exclusionList` / `http.nonProxyHosts`)。
+  static List<String> _detectedBypass = const [];
+
+  /// 系统代理自带的直连名单(自动模式下并进用户名单)。
+  static List<String> get detectedBypass => _detectedBypass;
+
+  /// 问原生要 Android 系统代理,返回 (`host:port` 或 null, 排除名单)。
+  /// 测试可直接调它(桩掉 MethodChannel)。
+  static Future<(String?, List<String>)> readAndroidSystemProxy() async {
+    try {
+      final raw = await _androidProxyChannel
+          .invokeMapMethod<String, Object?>('getSystemProxy');
+      return androidSystemProxyFrom(raw);
+    } catch (_) {
+      // 老版本 APK / 桥没注册(MissingPluginException)→ 当作没有系统代理。
+      return (null, const <String>[]);
+    }
+  }
+
+  /// 把原生回来的 `{host, port, exclusions}` 规整成 (`host:port`, 排除名单)。
+  static (String?, List<String>) androidSystemProxyFrom(
+    Map<String, Object?>? raw,
+  ) {
+    if (raw == null) return (null, const <String>[]);
+    final host = (raw['host'] as String?)?.trim() ?? '';
+    final port = raw['port'];
+    if (host.isEmpty || port is! int || port <= 0 || port > 65535) {
+      return (null, const <String>[]);
+    }
+    final exclusions = <String>[
+      for (final e in (raw['exclusions'] as List?) ?? const [])
+        if ('$e'.trim().isNotEmpty) '$e'.trim(),
+    ];
+    return ('$host:$port', exclusions);
   }
 
   /// 该主机是否绕过代理(no_proxy 名单 + 本机地址)。

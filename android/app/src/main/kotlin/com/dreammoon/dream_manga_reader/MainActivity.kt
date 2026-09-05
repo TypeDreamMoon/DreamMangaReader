@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import com.dreammoon.dream_manga_reader.downloads.ContentDownloadBridge
 import com.dreammoon.dream_manga_reader.downloads.DownloadEnvironmentBridge
 import com.dreammoon.dream_manga_reader.gallery.GalleryBridge
+import com.dreammoon.dream_manga_reader.net.SystemProxyBridge
 import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,6 +23,7 @@ class MainActivity : FlutterActivity() {
     private var contentDownloadBridge: ContentDownloadBridge? = null
     private var downloadEnvironmentBridge: DownloadEnvironmentBridge? = null
     private var galleryBridge: GalleryBridge? = null
+    private var systemProxyBridge: SystemProxyBridge? = null
     private var volumeKeyPaging = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -52,6 +54,7 @@ class MainActivity : FlutterActivity() {
         contentDownloadBridge = ContentDownloadBridge(this).also { it.configure(flutterEngine) }
         downloadEnvironmentBridge = DownloadEnvironmentBridge(this).also { it.configure(flutterEngine) }
         galleryBridge = GalleryBridge(this).also { it.configure(flutterEngine) }
+        systemProxyBridge = SystemProxyBridge(this).also { it.configure(flutterEngine) }
     }
 
     override fun onResume() {
@@ -95,6 +98,8 @@ class MainActivity : FlutterActivity() {
         downloadEnvironmentBridge = null
         galleryBridge?.dispose()
         galleryBridge = null
+        systemProxyBridge?.dispose()
+        systemProxyBridge = null
         super.onDestroy()
     }
 

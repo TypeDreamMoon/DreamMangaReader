@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dream_manga_reader/core/net/app_proxy.dart';
 import 'package:dream_manga_reader/core/net/image_cache.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -116,6 +117,74 @@ void main() {
     test('大小写不敏感', () {
       final list = AppProxy.parseNoProxy('CORP.com');
       expect(AppProxy.shouldBypass('api.corp.COM', list), isTrue);
+    });
+  });
+
+  group('android system proxy', () {
+    const channel = MethodChannel('dream_manga_reader/system_proxy');
+
+    void stub(Object? Function() reply) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'getSystemProxy');
+        return reply();
+      });
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('原生返回的 host/port/排除名单规整成端点', () async {
+      stub(() => <String, Object?>{
+            'host': '192.168.1.2',
+            'port': 8888,
+            'exclusions': ['localhost', ' .corp.com ', ''],
+          });
+
+      final (proxy, exclusions) = await AppProxy.readAndroidSystemProxy();
+      expect(proxy, '192.168.1.2:8888');
+      expect(exclusions, ['localhost', '.corp.com']);
+      expect(AppProxy.parse(proxy!).endpoint!.port, 8888);
+    });
+
+    test('没有系统代理 / 字段不完整时当直连', () {
+      expect(AppProxy.androidSystemProxyFrom(null).$1, isNull);
+      expect(AppProxy.androidSystemProxyFrom(const {'port': 8080}).$1, isNull);
+      expect(
+        AppProxy.androidSystemProxyFrom(const {'host': 'h', 'port': 0}).$1,
+        isNull,
+      );
+      expect(
+        AppProxy.androidSystemProxyFrom(const {'host': '  ', 'port': 8080}).$1,
+        isNull,
+      );
+    });
+
+    test('桥没注册(老 APK)不抛,退回直连', () async {
+      // 不 stub → MissingPluginException。
+      final (proxy, exclusions) = await AppProxy.readAndroidSystemProxy();
+      expect(proxy, isNull);
+      expect(exclusions, isEmpty);
+    });
+
+    test('原生侧确实注册了同名 channel', () {
+      final bridge = File(
+        'android/app/src/main/kotlin/com/dreammoon/dream_manga_reader/'
+        'net/SystemProxyBridge.kt',
+      ).readAsStringSync();
+      expect(bridge, contains('"dream_manga_reader/system_proxy"'));
+      expect(bridge, contains('"getSystemProxy"'));
+      expect(bridge, contains('defaultProxy'));
+      expect(bridge, contains('http.proxyHost'));
+
+      final activity = File(
+        'android/app/src/main/kotlin/com/dreammoon/dream_manga_reader/'
+        'MainActivity.kt',
+      ).readAsStringSync();
+      expect(activity, contains('SystemProxyBridge(this)'));
+      expect(activity, contains('systemProxyBridge?.dispose()'));
     });
   });
 
