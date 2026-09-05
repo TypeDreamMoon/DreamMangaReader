@@ -329,12 +329,8 @@ void main() {
     expect(find.text('播放失败'), findsOneWidget);
     expect(adapter.openStarts, isEmpty);
 
-    // 直接调回调而不是点它:失败框上的重试键被上面那层全屏手势挡着,点不到
-    // (另一个问题,不在这条的范围里)。这里要验的是重试走的那条 _load。
-    final retry = tester.widget<FilledButton>(
-      find.ancestor(of: find.text('重试'), matching: find.byType(FilledButton)),
-    );
-    retry.onPressed!();
+    // 真的点下去:失败态下那层全屏手势要让开,否则这颗键点不着。
+    await tester.tap(find.text('重试'));
     await tester.pump();
     await tester.pump();
     expect(adapter.openStarts, [const Duration(seconds: 83)]);

@@ -1194,24 +1194,31 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
                   onRetry: _load,
                 ),
                 Positioned.fill(
-                  child: Listener(
-                    onPointerSignal: _onPointerSignal,
-                    // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
-                    // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
-                    // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
-                    // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _onSurfaceTap,
-                      onDoubleTap: _locked ? null : _togglePlay,
-                      onLongPressStart: (_) => _startBoost(),
-                      onLongPressEnd: (_) => _stopBoost(),
-                      onLongPressCancel: _stopBoost,
-                      onScaleStart: (details) =>
-                          _onScaleStart(details, constraints.maxWidth),
-                      onScaleUpdate: (details) => _onScaleUpdate(
-                          details, constraints.maxWidth, constraints.maxHeight),
-                      onScaleEnd: (_) => _onScaleEnd(),
+                  // 播放失败时整层让开:它是 opaque 的,盖住的正是失败框中间
+                  // 那颗「重试」—— 手势层在上、按钮在下,怎么点都点不着,开流
+                  // 失败于是成了死路。没有画面可以定位 / 调音量的时候,这一层
+                  // 本来也没有什么要做的。
+                  child: IgnorePointer(
+                    ignoring: _playback.phase == PlaybackPhase.failed,
+                    child: Listener(
+                      onPointerSignal: _onPointerSignal,
+                      // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
+                      // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
+                      // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
+                      // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _onSurfaceTap,
+                        onDoubleTap: _locked ? null : _togglePlay,
+                        onLongPressStart: (_) => _startBoost(),
+                        onLongPressEnd: (_) => _stopBoost(),
+                        onLongPressCancel: _stopBoost,
+                        onScaleStart: (details) =>
+                            _onScaleStart(details, constraints.maxWidth),
+                        onScaleUpdate: (details) => _onScaleUpdate(details,
+                            constraints.maxWidth, constraints.maxHeight),
+                        onScaleEnd: (_) => _onScaleEnd(),
+                      ),
                     ),
                   ),
                 ),
