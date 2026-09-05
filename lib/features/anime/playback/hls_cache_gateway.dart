@@ -300,8 +300,10 @@ class HlsCacheGateway implements HlsSessionGateway {
       localUri: _localUri(id, root.id),
       onClose: ({required bool discardCache}) =>
           _closeSession(id, discardCache: discardCache),
-      onBuffer: (buffer) {
-        final healthy = buffer >= const Duration(seconds: 15);
+      onBuffer: (lead) {
+        // [lead] = 缓冲末端**领先播放头**多少,不是缓冲末端的绝对位置 —— 后者随播放
+        // 一直变大,判出来的「健康」开播十几秒后就永真,刹车等于没装。
+        final healthy = lead >= const Duration(seconds: 15);
         // 缓冲从健康掉下来 = 上行不够用了。作废这一批预读,把带宽还给正在播的
         // 那一片;下一片播出去时 _schedulePrefetch 会按新的水位重新排。
         if (data.bufferHealthy && !healthy) data.prefetchGeneration++;
@@ -735,7 +737,7 @@ class HlsCacheGateway implements HlsSessionGateway {
 
   void _schedulePrefetch(_SessionData session, _Resource resource) {
     if (resource.prefetchIds.isEmpty || session.closing) return;
-    // 缓冲还没起来(<15s)就只预读 1 片,把上行整个留给正在播的那一片;起来了
+    // 缓冲领先播放头不足 15s 就只预读 1 片,把上行整个留给正在播的那一片;领先够了
     // 才往前铺。整批替换而不是追加:播放位置一动,上一批预读就作废了。
     final depth = session.bufferHealthy ? _maxPrefetchDepth : 1;
     session.prefetchQueue

@@ -520,6 +520,73 @@ b.m4s
     session.notifySeek();
   });
 
+  // 缓冲从健康掉下来 = 上行不够用了。整批预读必须当场作废,把带宽还给正在播的
+  // 那一片,否则「像是要等全部分片下完才开播」就会回来。
+  test('a buffer falling below the threshold cancels the deep prefetch batch',
+      () async {
+    upstream.addText('/brake.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+0.ts
+#EXTINF:4,
+1.ts
+#EXTINF:4,
+2.ts
+#EXTINF:4,
+3.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/0.ts', [0]);
+    upstream.addBytes('/2.ts', [2]);
+    upstream.addBytes('/3.ts', [3]);
+    final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
+    upstream.addChunked(
+      '/1.ts',
+      [
+        [1],
+        [1]
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await gate.future; // 预读停在半路,方便中途降级
+      },
+    );
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('brake.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    // 领先 20 秒:整批预读。
+    session.reportBuffer(const Duration(seconds: 20));
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    await _get(media.segments.first.uri);
+    await _waitUntil('预读 /1.ts', () => upstream.requestCount('/1.ts') == 1);
+
+    // 领先量跌到 2 秒 —— 这一批预读作废,剩下的分片不该再被拉起。
+    session.reportBuffer(const Duration(seconds: 2));
+    gate.complete();
+    await _waitUntil(
+      '/1.ts 落盘',
+      () => temp
+              .listSync()
+              .whereType<File>()
+              .where((file) => file.path.endsWith('.bin'))
+              .length >=
+          2,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(upstream.requestCount('/2.ts'), 0);
+    expect(upstream.requestCount('/3.ts'), 0);
+  });
+
   test('live playlists bypass disk cache and forward prefetch', () async {
     upstream.addText('/live.m3u8', '''#EXTM3U
 #EXT-X-TARGETDURATION:4

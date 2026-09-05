@@ -329,7 +329,15 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     });
   }
 
-  void _onBuffer(Duration buffer) => _session?.reportBuffer(buffer);
+  /// media_kit 报的 buffer 是缓冲末端的**绝对位置**,而网关要的是「缓冲还领先播放头
+  /// 多少」。直接把绝对位置递过去,开播十五秒后这个数就永远够大,预取刹车再也踩不下去 ——
+  /// 上行被整批预读占满,正在播的那一片一直排在后面,表现就是分片频繁超时。
+  void _onBuffer(Duration buffer) {
+    final session = _session;
+    if (session == null) return;
+    final lead = buffer - _position;
+    session.reportBuffer(lead.isNegative ? Duration.zero : lead);
+  }
 
   void _onPosition(Duration position) {
     if (_position - position > _timelineResetTolerance) return;

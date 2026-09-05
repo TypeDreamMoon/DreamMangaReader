@@ -122,12 +122,13 @@ class _FakeSession {
         discarded = discardCache;
         closes++;
       },
-      onBuffer: (_) {},
+      onBuffer: buffers.add,
       onSeek: () => seekNotifications++,
     );
   }
 
   late final HlsSession value;
+  final buffers = <Duration>[];
   int seekNotifications = 0;
   int closes = 0;
   bool discarded = false;
@@ -268,6 +269,31 @@ void main() {
 
     expect(gateway.sessions.single.seekNotifications, 1);
     expect(backend.seeks, [const Duration(minutes: 6)]);
+    await adapter.dispose();
+  });
+
+  test('reports how far the buffer leads the playhead, not the buffer end',
+      () async {
+    final backend = _FakeBackend();
+    final gateway = _FakeGateway();
+    final adapter = MediaKitPlayerAdapter(
+      backend: backend,
+      gateway: gateway,
+      authScope: 'source:test',
+    );
+    await adapter.open(_hls);
+
+    // 播到 5 分钟、缓冲末端 5 分 04 秒 = 只领先 4 秒。递绝对位置的话网关会读成
+    // 「领先 5 分钟」,预取刹车从此再也不生效。
+    backend.positionController.add(const Duration(minutes: 5));
+    backend.bufferController.add(const Duration(minutes: 5, seconds: 4));
+    // 刚跳过去、缓冲末端还落在播放头后面 —— 领先量收敛到 0,不往下发负数。
+    backend.bufferController.add(const Duration(minutes: 4));
+
+    expect(
+      gateway.sessions.single.buffers,
+      [const Duration(seconds: 4), Duration.zero],
+    );
     await adapter.dispose();
   });
 
