@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/l10n/app_locale.dart';
+import '../core/log/app_log.dart';
 import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
 import '../core/translate/translator.dart'
@@ -319,7 +320,22 @@ class LibraryStore extends ChangeNotifier {
   Timer? _notifyTimer;
   bool _disposed = false;
 
+  // 某段存档这次没读成(JSON 损坏)。内存里只剩残片,再写回去就等于把磁盘上
+  // 那份**还完整**的记录抹掉 —— 所以本进程内一律拒绝覆盖,只留备份等用户恢复。
+  bool _favoritesLoadFailed = false;
+  bool _historyLoadFailed = false;
+  bool _workProgressLoadFailed = false;
+
   bool get loaded => _loaded;
+
+  /// 收藏这次是不是加载失败了(失败时拒绝落盘,见 [_persistFavorites])。
+  bool get favoritesLoadFailed => _favoritesLoadFailed;
+
+  /// 阅读历史这次是不是加载失败了(失败时拒绝落盘,见 [_persistHistoryNow])。
+  bool get historyLoadFailed => _historyLoadFailed;
+
+  /// 作品级共享进度这次是不是加载失败了。
+  bool get workProgressLoadFailed => _workProgressLoadFailed;
   ReaderMode get readerMode => _readerMode;
   int get gridColumns => _gridColumns; // 0 = 自适应
   int get preload => _preload;
@@ -629,21 +645,76 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = _prefs = await SharedPreferences.getInstance();
-    try {
-      final favRaw = prefs.getString(_kFavorites);
-      if (favRaw != null) {
-        for (final j in (jsonDecode(favRaw) as List)) {
-          final e = FavoriteEntry.fromJson((j as Map).cast<String, dynamic>());
-          _favorites[e.key] = e;
+    // 收藏 / 历史 / 偏好各读各的:一段的 JSON 烂了不能把后面几段一起吞掉
+    // ——那会让书架和历史双双停在默认值,随后被防抖落盘用空表覆盖,永久丢失。
+    _favoritesLoadFailed = !_readSection(prefs, _kFavorites, (raw) {
+      for (final j in (jsonDecode(raw) as List)) {
+        final e = FavoriteEntry.fromJson((j as Map).cast<String, dynamic>());
+        _favorites[e.key] = e;
+      }
+    });
+    _historyLoadFailed = !_readSection(prefs, _kHistory, (raw) {
+      (jsonDecode(raw) as Map).forEach((k, v) {
+        _history[k as String] =
+            ReadState.fromJson((v as Map).cast<String, dynamic>());
+      });
+    });
+    _workProgressLoadFailed = !_readSection(prefs, _kWorkProgress, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('workProgress 不是对象');
+      m.forEach((k, v) {
+        if (v is Map) {
+          _workProgress[k as String] =
+              WorkProgress.fromJson(v.cast<String, dynamic>());
         }
-      }
-      final hRaw = prefs.getString(_kHistory);
-      if (hRaw != null) {
-        (jsonDecode(hRaw) as Map).forEach((k, v) {
-          _history[k as String] =
-              ReadState.fromJson((v as Map).cast<String, dynamic>());
-        });
-      }
+      });
+    });
+    _readSection(prefs, _kBangumiBindings, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('bangumiBindings 不是对象');
+      m.forEach((k, v) {
+        final id = (v as num?)?.toInt();
+        if (id != null) _bangumiBindings[k as String] = id;
+      });
+    });
+    _readSection(prefs, _kMangaModes, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('mangaModes 不是对象');
+      m.forEach((k, v) {
+        if (v is String) _mangaModes[k as String] = v;
+      });
+    });
+    await _loadPreferences(prefs);
+    _loaded = true;
+    notifyListeners();
+  }
+
+  /// 读一段独立存档。解析失败:把**原文**备份到 `<key>.corrupt.<时间戳>`、记一条
+  /// 错误日志,并返回 false —— 调用方据此把该段标成 loadFailed,本进程内不再落盘。
+  ///
+  /// 解析到一半才炸时内存里留的是残片(比清空好:界面至少还能用),但正因为是残片,
+  /// **绝不能**写回磁盘。
+  bool _readSection(
+      SharedPreferences prefs, String key, void Function(String raw) parse) {
+    final raw = prefs.getString(key);
+    if (raw == null || raw.isEmpty) return true;
+    try {
+      parse(raw);
+      return true;
+    } catch (e) {
+      final backup = '$key.corrupt.${DateTime.now().millisecondsSinceEpoch}';
+      // 备份先于一切:哪怕后面的日志/UI 出问题,原始数据也已经落在另一个键上。
+      unawaited(prefs.setString(backup, raw));
+      AppLog.i.err(LogCat.app, '书库存档「$key」损坏,已备份并停止写入该段',
+          detail: '备份键:$backup\n$e');
+      return false;
+    }
+  }
+
+  /// 偏好设置(纯标量,与收藏/历史互不相干)。整段包一个 try:某个键的值类型被
+  /// 外部改坏时退回默认值,但不影响已经读好的收藏与历史。
+  Future<void> _loadPreferences(SharedPreferences prefs) async {
+    try {
       final mode = prefs.getString(_kReaderMode);
       _readerMode = switch (mode) {
         'webtoon' => ReaderMode.webtoon,
@@ -715,30 +786,6 @@ class LibraryStore extends ChangeNotifier {
           orElse: () => FeedLayout.masonry);
       _autoScrollSpeed =
           (prefs.getDouble(_kAutoScrollSpeed) ?? 40).clamp(10, 200);
-      // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
-      final bgmRaw = prefs.getString(_kBangumiBindings);
-      if (bgmRaw != null) {
-        try {
-          final m = jsonDecode(bgmRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              final id = (v as num?)?.toInt();
-              if (id != null) _bangumiBindings[k as String] = id;
-            });
-          }
-        } catch (_) {}
-      }
-      final mmRaw = prefs.getString(_kMangaModes);
-      if (mmRaw != null) {
-        try {
-          final m = jsonDecode(mmRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              if (v is String) _mangaModes[k as String] = v;
-            });
-          }
-        } catch (_) {}
-      }
       _disabledSources
           .addAll(prefs.getStringList(_kDisabledSources) ?? const []);
       final sh = prefs.getStringList(_kSearchHistory);
@@ -753,25 +800,10 @@ class LibraryStore extends ChangeNotifier {
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
       _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
-      final wpRaw = prefs.getString(_kWorkProgress);
-      if (wpRaw != null) {
-        try {
-          final m = jsonDecode(wpRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              if (v is Map) {
-                _workProgress[k as String] =
-                    WorkProgress.fromJson(v.cast<String, dynamic>());
-              }
-            });
-          }
-        } catch (_) {}
-      }
-    } catch (_) {
-      // 损坏的存档不致命:当作空的继续。
+    } catch (e) {
+      // 偏好损坏不致命:该读到的已经生效,剩下的留默认值继续。
+      AppLog.i.warn(LogCat.app, '书库偏好读取中断,余下项用默认值', detail: '$e');
     }
-    _loaded = true;
-    notifyListeners();
   }
 
   set readerMode(ReaderMode v) {
@@ -1214,6 +1246,8 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     _history.clear();
+    // 用户明确要清空:删键(而非用残片覆盖),之后这段就没什么可保护的了。
+    _historyLoadFailed = false;
     await _prefs?.remove(_kHistory);
     notifyListeners();
   }
@@ -1282,8 +1316,13 @@ class LibraryStore extends ChangeNotifier {
     if (changed) _persistWorkProgress();
   }
 
-  void _persistWorkProgress() => _prefs?.setString(_kWorkProgress,
-      jsonEncode({for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+  void _persistWorkProgress() {
+    if (_workProgressLoadFailed) return; // 残片不覆盖磁盘(见 _readSection)
+    _prefs?.setString(
+        _kWorkProgress,
+        jsonEncode(
+            {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+  }
 
   /// 退出前(如 Windows 自更新的 exit(0))把还在防抖队列里的进度**立刻并等待**落盘,
   /// 避免硬退出丢掉最近的阅读进度 / 共享进度。
@@ -1291,10 +1330,15 @@ class LibraryStore extends ChangeNotifier {
     _persistHistoryTimer?.cancel();
     final p = _prefs;
     if (p == null) return;
-    await p.setString(_kHistory,
-        jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
-    await p.setString(_kWorkProgress, jsonEncode(
-        {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+    // 加载失败的那段依然不写:退出时的「兜底落盘」正是最容易把残片刻进磁盘的地方。
+    if (!_historyLoadFailed) {
+      await p.setString(_kHistory,
+          jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    }
+    if (!_workProgressLoadFailed) {
+      await p.setString(_kWorkProgress, jsonEncode(
+          {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+    }
   }
 
   // ---- 备份 / 恢复 ----
@@ -1371,7 +1415,9 @@ class LibraryStore extends ChangeNotifier {
     bool replaceFavorites = true,
     bool replaceHistory = true,
   }) async {
+    // 恢复备份是用户的明确指令,且整段替换 —— 加载失败的那段到此为止,可以再写盘了。
     if (replaceFavorites) {
+      _favoritesLoadFailed = false;
       _favorites.clear();
       for (final f in (j['favorites'] as List? ?? const [])) {
         final e = FavoriteEntry.fromJson((f as Map).cast<String, dynamic>());
@@ -1379,6 +1425,7 @@ class LibraryStore extends ChangeNotifier {
       }
     }
     if (replaceHistory) {
+      _historyLoadFailed = false;
       _history.clear();
       ((j['history'] as Map?) ?? const {}).forEach((k, v) {
         _history[k as String] =
@@ -1387,6 +1434,7 @@ class LibraryStore extends ChangeNotifier {
     }
     // 作品级共享进度随「历史/进度」类别走。只有 j 里带了才动(旧备份没有 → 不误清)。
     if (replaceHistory && j.containsKey('workProgress')) {
+      _workProgressLoadFailed = false;
       _workProgress.clear();
       ((j['workProgress'] as Map?) ?? const {}).forEach((k, v) {
         if (v is Map) {
@@ -1568,6 +1616,7 @@ class LibraryStore extends ChangeNotifier {
   }
 
   void _persistFavorites() {
+    if (_favoritesLoadFailed) return; // 残片不覆盖磁盘(见 _readSection)
     _prefs?.setString(_kFavorites,
         jsonEncode([for (final e in _favorites.values) e.toJson()]));
   }
@@ -1580,8 +1629,12 @@ class LibraryStore extends ChangeNotifier {
   }
 
   void _persistHistoryNow() {
-    _prefs?.setString(_kHistory,
-        jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    if (!_historyLoadFailed) {
+      _prefs?.setString(
+          _kHistory,
+          jsonEncode(
+              {for (final e in _history.entries) e.key: e.value.toJson()}));
+    }
     // 共享进度的续读点(同章翻页只改内存)也跟着这班防抖车落盘:让磁盘态和内存态
     // 保持一致,云同步「变化后自动上传」的持久化基线才对得上,不会重启后误传旧态。
     _persistWorkProgress();
