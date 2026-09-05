@@ -91,6 +91,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       NovelReaderBookData.empty(widget.libraryKey);
   final Map<String, NovelDocument> _loadedDocuments = {};
 
+  /// 在途的正文请求:同一章同时只允许一个,预取和换章共用同一个 future。
+  final Map<String, Future<NovelDocument>> _inFlightDocuments = {};
+
   /// 已经发过预取请求的章节 id,避免滚动时对同一章反复发请求。
   final Set<String> _warmedChapterIds = {};
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
@@ -266,7 +269,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
     final chapter = _chapter;
     try {
-      final document = await widget.loadDocument(chapter);
+      final document = await _documentFor(chapter);
       // 只比 chapter.id 挡不住 A→B→A:回到 A 时第一次 A 的请求还在路上,它一落地
       // 就会再 loadChapter + restoreLocator 一遍,把刚定位好的位置冲掉。
       if (!mounted ||
@@ -274,7 +277,6 @@ class _NovelReaderPageState extends State<NovelReaderPage>
           chapter.id != _chapter.id) {
         return false;
       }
-      _loadedDocuments[chapter.id] = document;
       await _controller.loadChapter(chapter.id, document, _preferences);
       await _applyChapterAnnotations();
       final locator = restore ?? _library.progressFor(widget.libraryKey);
@@ -380,16 +382,36 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       if (index < 0 || index >= widget.chapters.length) return;
       // 滚动模式一秒能报好几十次位置,没有这道闸就是对着同一章反复发请求。
       if (!_warmedChapterIds.add(widget.chapters[index].id)) return;
+      // 老实现 .then((_) {}) 把结果丢了 —— 预取白跑一趟,翻过去还得再拉一次。
       unawaited(
-        widget
-            .loadDocument(widget.chapters[index])
-            .then<void>((_) {})
-            .catchError((_) {}),
+        _documentFor(widget.chapters[index])
+            .then<void>((_) {}, onError: (Object _) {}),
       );
     }
 
     if (previous) warm(_chapterIndex - 1);
     if (next) warm(_chapterIndex + 1);
+  }
+
+  /// 取章节正文:命中缓存直接给,同一章在途只发一次请求,结果留给后面复用。
+  Future<NovelDocument> _documentFor(NovelChapter chapter) {
+    final cached = _loadedDocuments[chapter.id];
+    if (cached != null) return Future.value(cached);
+    final pending = _inFlightDocuments[chapter.id];
+    if (pending != null) return pending;
+    final request = _fetchDocument(chapter);
+    _inFlightDocuments[chapter.id] = request;
+    return request;
+  }
+
+  Future<NovelDocument> _fetchDocument(NovelChapter chapter) async {
+    try {
+      final document = await widget.loadDocument(chapter);
+      _loadedDocuments[chapter.id] = document;
+      return document;
+    } finally {
+      _inFlightDocuments.remove(chapter.id);
+    }
   }
 
   void _onSelectionChanged(NovelSelection? selection) {

@@ -546,6 +546,82 @@ void main() {
     expect(loaded, containsAllInOrder(['c1', 'c2']));
   });
 
+  testWidgets('a prefetched chapter is reused instead of fetched again',
+      (tester) async {
+    final requests = <String>[];
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+      turnsWithinDocument: false,
+    );
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+      loadDocument: (chapter) async {
+        requests.add(chapter.id);
+        return NovelDocument(
+          format: NovelDocumentFormat.html,
+          content: '<p>${chapter.title}</p>',
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+    // 章尾:c2 已经被预取过一次。
+    expect(requests, ['c1', 'c2']);
+
+    controller.onCommand!(NovelReaderCommand.toggleControls);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('novel-reader-next-chapter')));
+    await tester.pumpAndSettle();
+
+    // 老实现把预取结果丢了,翻过去还要再拉一次 c2。
+    expect(requests, ['c1', 'c2']);
+    expect(controller.loadedChapterId, 'c2');
+  });
+
+  testWidgets('concurrent requests for one chapter share a single fetch',
+      (tester) async {
+    final requests = <String>[];
+    final gate = Completer<NovelDocument>();
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 1,
+      turnsWithinDocument: false,
+    );
+    final harness = await _readerHarness(
+      controller,
+      preferences: const NovelReaderPreferences(toolbarAutoHideSeconds: 0),
+      loadDocument: (chapter) {
+        requests.add(chapter.id);
+        if (chapter.id == 'c2') return gate.future;
+        return Future.value(
+          NovelDocument(
+            format: NovelDocumentFormat.html,
+            content: '<p>${chapter.title}</p>',
+          ),
+        );
+      },
+    );
+    addTearDown(harness.store.dispose);
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+    expect(requests, ['c1', 'c2']);
+
+    // 预取还在路上就翻过去:复用同一个请求,不再发第二次。
+    await tester.tapAt(const Offset(760, 300));
+    await tester.pump();
+    expect(requests, ['c1', 'c2']);
+
+    gate.complete(
+      NovelDocument(format: NovelDocumentFormat.html, content: '<p>第二章</p>'),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, ['c1', 'c2']);
+    expect(controller.loadedChapterId, 'c2');
+  });
+
   testWidgets('chapter loading keeps the cached edge page visible',
       (tester) async {
     final nextChapter = Completer<NovelDocument>();
@@ -1118,19 +1194,14 @@ void main() {
       await settle();
     }
 
-    // c1(第一次,还在路上)→ c2 → c1(第二次)。
+    // c1(第一次,还在路上)→ c2 → c1(第二次,复用同一个在途请求)。
     await pickChapter('第二章');
     await pickChapter('第一章');
-    expect(gates, hasLength(3));
+    expect(gates, hasLength(2));
 
+    // 这一下同时唤醒两次 c1 加载:老的那次必须被代际挡掉,只留最新的一次。
     gates[0].complete(
-      NovelDocument(format: NovelDocumentFormat.text, content: '过期的第一章'),
-    );
-    await settle();
-    expect(controller.loadedChapterIds, isEmpty);
-
-    gates[2].complete(
-      NovelDocument(format: NovelDocumentFormat.text, content: '最新的第一章'),
+      NovelDocument(format: NovelDocumentFormat.text, content: '第一章正文'),
     );
     await settle();
     expect(controller.loadedChapterIds, ['c1']);
