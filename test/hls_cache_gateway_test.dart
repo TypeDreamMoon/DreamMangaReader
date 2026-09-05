@@ -554,6 +554,59 @@ broken.ts
     session.notifySeek();
   });
 
+  // 正文已经发出去之后再想写错误头,dart:io 直接抛 StateError;它是从 unawaited 的
+  // 请求处理里逃出来的,没人接,一路打穿宿主 zone。
+  test('an error raised after the body started closes the connection quietly',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('dmr-hls-late-error-test-');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final store = _IndexBreakingStore(
+      directory: directory,
+      limitBytes: 1024 * 1024,
+    );
+    final escaped = <Object>[];
+    final local = HlsCacheGateway(
+      cache: store,
+      upstream: DioHlsUpstreamClient(Dio(),
+          policy: const HlsUpstreamPolicy(allowLoopback: true)),
+      allowLoopbackUpstream: true,
+      onRequestError: (error, _) => escaped.add(error),
+    );
+    addTearDown(local.close);
+
+    upstream.addText('/late.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+late.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/late.ts', const [1, 2, 3, 4]);
+    final session = await local.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('late.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    expect((await _get(media.segments.single.uri)).bytes, [1, 2, 3, 4]);
+
+    // 命中缓存:正文发完、租约归还时索引落盘才失败 —— 错误炸在响应已经开始之后。
+    store.breakIndexOnNextLookup = true;
+    final second = await _get(media.segments.single.uri);
+    expect(second.bytes, [1, 2, 3, 4]);
+
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(escaped, isEmpty);
+    // 网关还站着,同一个会话继续能服务。
+    expect((await _get(session.localUri)).status, HttpStatus.ok);
+  });
+
   // 预读窗口按「当前片的下标 + 深度」现算,而不是给每片各存一份「其后所有 id」。
   // 窗口边界(最多 30 片、清单末尾自动收口)必须和原来一致。
   test('the prefetch window follows the playing segment and stops at the end',
@@ -868,4 +921,24 @@ $foreign/foreign.ts
     expect(same.authorization, 'Bearer origin-only');
     expect(cross.authorization, isNull);
   });
+}
+
+/// 租约交出去之后再让索引落盘失败:占住 index.json.tmp 的位置,`release()` 里那次
+/// `_persist` 必然抛 —— 而这一炸发生在响应正文已经发完之后,正是要覆盖的时序。
+class _IndexBreakingStore extends HlsCacheStore {
+  _IndexBreakingStore({required super.directory, required super.limitBytes});
+
+  bool breakIndexOnNextLookup = false;
+
+  @override
+  Future<HlsCacheLease?> lookup(HlsCacheRequest request) async {
+    final lease = await super.lookup(request);
+    if (breakIndexOnNextLookup && lease != null) {
+      breakIndexOnNextLookup = false;
+      await Directory(
+        '${directory.path}${Platform.pathSeparator}index.json.tmp',
+      ).create();
+    }
+    return lease;
+  }
 }

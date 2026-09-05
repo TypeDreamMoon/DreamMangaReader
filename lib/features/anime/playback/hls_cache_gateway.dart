@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:hls/hls.dart';
 
+import '../../../core/log/app_log.dart';
 import '../../../core/source/models.dart';
 import 'hls_cache_store.dart';
 import 'hls_media_rewriter.dart';
@@ -271,8 +272,10 @@ class HlsCacheGateway implements HlsSessionGateway {
     required HlsCacheStore cache,
     required HlsUpstreamClient upstream,
     this.allowLoopbackUpstream = false,
+    void Function(Object error, StackTrace stackTrace)? onRequestError,
   })  : _cache = cache,
         _upstream = upstream,
+        _onRequestError = onRequestError ?? _logRequestError,
         _policy = HlsUpstreamPolicy(allowLoopback: allowLoopbackUpstream);
 
   /// 一次预读最多跑在播放位置前面多少片。
@@ -287,9 +290,13 @@ class HlsCacheGateway implements HlsSessionGateway {
   final HlsUpstreamClient _upstream;
   final bool allowLoopbackUpstream;
   final HlsUpstreamPolicy _policy;
+  final void Function(Object error, StackTrace stackTrace) _onRequestError;
   final Random _random = Random.secure();
   final Map<String, _SessionData> _sessions = {};
   final Set<Future<void>> _activeRequests = {};
+
+  /// 已经开始往外写正文的响应。状态码和头这时已经发出去了,改不动。
+  final Set<HttpResponse> _startedResponses = Set.identity();
   HttpServer? _server;
   StreamSubscription<HttpRequest>? _subscription;
 
@@ -336,7 +343,11 @@ class HlsCacheGateway implements HlsSessionGateway {
 
   void _acceptRequest(HttpRequest request) {
     late final Future<void> operation;
-    operation = _handleRequest(request).whenComplete(() {
+    // 逃出 [_handleRequest] 的异常没人接:unawaited 的它就是一条会打穿宿主 zone 的
+    // 未捕获异步错误(播放到一半弹个 StateError 出来)。这里兜住并记一笔;连接的收尾
+    // 由 [_respondError] 负责。兜完再进 _activeRequests,免得 close() 被它绊倒。
+    operation =
+        _handleRequest(request).catchError(_onRequestError).whenComplete(() {
       _activeRequests.remove(operation);
     });
     _activeRequests.add(operation);
@@ -379,6 +390,8 @@ class HlsCacheGateway implements HlsSessionGateway {
       );
     } catch (_) {
       await _respondError(request, HttpStatus.badGateway, 'hls-gateway-error');
+    } finally {
+      _startedResponses.remove(request.response);
     }
   }
 
@@ -428,6 +441,7 @@ class HlsCacheGateway implements HlsSessionGateway {
       charset: 'utf-8',
     );
     request.response.contentLength = body.length;
+    _startedResponses.add(request.response);
     request.response.add(body);
     await request.response.close();
   }
@@ -614,6 +628,7 @@ class HlsCacheGateway implements HlsSessionGateway {
         _contentTypeOrBinary(lease.contentType);
     request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     request.response.contentLength = end - start + 1;
+    _startedResponses.add(request.response);
     await request.response.addStream(lease.file.openRead(start, end + 1));
     await request.response.close();
   }
@@ -731,6 +746,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     try {
       await for (final chunk in upstreamStream) {
         writer?.sink.add(chunk);
+        _startedResponses.add(request.response);
         request.response.add(chunk);
         await request.response.flush();
       }
@@ -1091,6 +1107,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = _contentTypeOrBinary(contentType);
     request.response.contentLength = bytes.length;
+    _startedResponses.add(request.response);
     request.response.add(bytes);
     await request.response.close();
   }
@@ -1103,15 +1120,45 @@ class HlsCacheGateway implements HlsSessionGateway {
     }
   }
 
+  /// 写错误响应。
+  ///
+  /// 响应一旦开始发正文,状态码和头就已经出去了 —— 再赋值 dart:io 直接抛 StateError,
+  /// 而这里跑在 [_handleRequest] 的 catch 分支上,抛出去就是一条没人接的异步异常,
+  /// 连接还半开着。已经开始的只能就地关掉,播放器按传输中断处理、自己重试那一片。
   Future<void> _respondError(
     HttpRequest request,
     int status,
     String message,
   ) async {
-    request.response.statusCode = status;
-    request.response.headers.contentType = ContentType.text;
-    request.response.write(message);
-    await request.response.close();
+    final response = request.response;
+    if (!_startedResponses.contains(response)) {
+      try {
+        response.statusCode = status;
+        response.headers.contentType = ContentType.text;
+        response.write(message);
+        await response.close();
+        return;
+      } on Object {
+        // 播放器可能已经先走了 —— 落到下面统一收尾。
+      }
+    }
+    try {
+      await response.close();
+    } on Object {
+      // 连接已经没了,没什么可关的。
+    }
+  }
+}
+
+void _logRequestError(Object error, StackTrace stackTrace) {
+  try {
+    AppLog.i.warn(
+      LogCat.network,
+      'HLS 网关请求异常: ${error.runtimeType}',
+      detail: '$error',
+    );
+  } on Object {
+    // 没有 Flutter binding 的宿主(纯 dart 测试)记不了日志 —— 别让记日志本身再炸一次。
   }
 }
 
