@@ -340,6 +340,40 @@ b.m4s
     expect(upstream.requestCount('/retry.m3u8'), 2);
   });
 
+  // 一律 502 会把「票据过期」「这一段没了」「源站抽风」压成同一句网络错误,
+  // 上层再也分不出该重登、该换源还是该重试。
+  test('passes upstream status codes through instead of a blanket 502',
+      () async {
+    upstream.addText('/status.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+missing.ts
+#EXTINF:4,
+broken.ts
+#EXT-X-ENDLIST
+''');
+    // missing.ts 压根没注册 → 上游 404;broken.ts 每次都 500(含预读那几次)。
+    upstream.addBytes('/broken.ts', const [9], failuresBeforeSuccess: 99);
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('status.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+
+    final missing = await _get(media.segments.first.uri);
+    expect(missing.status, HttpStatus.notFound);
+    expect(missing.text, contains('upstream-http-404'));
+
+    final broken = await _get(media.segments[1].uri);
+    expect(broken.status, HttpStatus.internalServerError);
+    expect(broken.text, contains('upstream-http-500'));
+  });
+
   test('dio upstream exposes a chunk before the response completes', () async {
     final releaseTail = Completer<void>();
     addTearDown(() {

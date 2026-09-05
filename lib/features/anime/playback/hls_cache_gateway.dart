@@ -245,6 +245,20 @@ Map<String, String> scopeHlsCredentialHeaders(
   };
 }
 
+/// 上游明确回了一个非 2xx 状态码。
+///
+/// 播放器要靠状态码区分「票据过期该重新登录」(401/403)、「这一段没了」(404/416)
+/// 和「源站抽风、等会儿再试」(5xx);网关把它们一律拍成 502,等于把这层信息全抹掉,
+/// 上层只能统一报一句「网络错误」。
+class HlsUpstreamStatusException implements Exception {
+  const HlsUpstreamStatusException(this.statusCode);
+
+  final int statusCode;
+
+  @override
+  String toString() => 'HlsUpstreamStatusException($statusCode)';
+}
+
 abstract interface class HlsSessionGateway {
   Future<HlsSession> open(
     VideoTrack track, {
@@ -357,9 +371,32 @@ class HlsCacheGateway implements HlsSessionGateway {
         HttpStatus.notImplemented,
         'unsupported-hls-encryption',
       );
+    } on HlsUpstreamStatusException catch (error) {
+      await _respondError(
+        request,
+        _passthroughStatus(error.statusCode),
+        'upstream-http-${error.statusCode}',
+      );
     } catch (_) {
       await _respondError(request, HttpStatus.badGateway, 'hls-gateway-error');
     }
+  }
+
+  /// 能原样透传给播放器的上游状态码。其余(含 3xx/2xx 这类不该走到这儿的)一律 502 ——
+  /// 那说明是网关自己没看懂,不是上游在表态。
+  static const Set<int> _transparentStatuses = {
+    HttpStatus.unauthorized,
+    HttpStatus.forbidden,
+    HttpStatus.notFound,
+    HttpStatus.gone,
+    HttpStatus.requestedRangeNotSatisfiable,
+    HttpStatus.tooManyRequests,
+  };
+
+  int _passthroughStatus(int status) {
+    if (_transparentStatuses.contains(status)) return status;
+    if (status >= 500 && status <= 599) return status;
+    return HttpStatus.badGateway;
   }
 
   Future<void> _servePlaylist(
@@ -621,7 +658,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     );
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       await upstream.cancel();
-      throw HttpException('上游 HTTP ${upstream.statusCode}');
+      throw HlsUpstreamStatusException(upstream.statusCode);
     }
     var upstreamStream = upstream.stream;
     var upstreamContentLength = upstream.contentLength;
@@ -884,13 +921,13 @@ class HlsCacheGateway implements HlsSessionGateway {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return response;
         }
-        lastError = HttpException('上游 HTTP ${response.statusCode}');
+        lastError = HlsUpstreamStatusException(response.statusCode);
         if (response.statusCode < 500) break;
       } catch (error) {
         lastError = error;
       }
     }
-    throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+    throw _upstreamFailure(lastError);
   }
 
   Future<HlsStreamResponse> _fetchStream(
@@ -920,15 +957,22 @@ class HlsCacheGateway implements HlsSessionGateway {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return response;
         }
-        lastError = HttpException('上游 HTTP ${response.statusCode}');
+        lastError = HlsUpstreamStatusException(response.statusCode);
         await response.cancel();
         if (response.statusCode < 500) break;
       } catch (error) {
         lastError = error;
       }
     }
-    throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+    throw _upstreamFailure(lastError);
   }
+
+  /// 上游明确表了态就把状态码带上去(由 [_handleRequest] 透传给播放器);
+  /// 连不上/超时这类没有状态码的,才退回笼统的 502。
+  Object _upstreamFailure(Object? lastError) => lastError
+          is HlsUpstreamStatusException
+      ? lastError
+      : StateError('HLS 上游请求失败: ${lastError.runtimeType}');
 
   Future<HlsStreamResponse> _streamFromBytes(
     HlsUpstreamClient client,
