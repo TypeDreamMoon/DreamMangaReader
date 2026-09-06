@@ -1816,7 +1816,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
               visible: !_showControls && !_loading && _error == null,
               chapterTitle: _chapter.title,
               currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
-              pageCount: _pageMetrics?.pageCount ?? 1,
+              // 滚动模式没有分页,分页模式在排版回来前也没有 —— 两种情况都交给
+              // 状态栏改显示章内百分比,而不是拿 1/1 充数。
+              pageCount: _pageMetrics?.pageCount,
+              chapterProgress: _chapterFraction,
               bookProgress: _bookProgress,
               now: _statusNow,
               batteryLevel: _batteryLevel,

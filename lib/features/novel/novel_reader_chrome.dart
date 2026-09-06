@@ -361,6 +361,7 @@ class NovelReaderStatusOverlay extends StatelessWidget {
     required this.chapterTitle,
     required this.currentPage,
     required this.pageCount,
+    required this.chapterProgress,
     required this.bookProgress,
     required this.now,
     required this.batteryLevel,
@@ -375,7 +376,13 @@ class NovelReaderStatusOverlay extends StatelessWidget {
   final bool visible;
   final String chapterTitle;
   final int currentPage;
-  final int pageCount;
+
+  /// 本章总页数；没有分页概念（滚动模式）或者还没排出来时为 null。
+  final int? pageCount;
+
+  /// 章内已读比例，[pageCount] 为 null 时顶替页码显示。
+  final double chapterProgress;
+
   final double bookProgress;
   final DateTime now;
   final int? batteryLevel;
@@ -428,8 +435,7 @@ class NovelReaderStatusOverlay extends StatelessWidget {
                   if (showPageNumber)
                     _statusText(
                       const Key('novel-status-page'),
-                      '${currentPage.clamp(1, pageCount < 1 ? 1 : pageCount)}/'
-                      '${pageCount < 1 ? 1 : pageCount}',
+                      _pageLabel(),
                     ),
                   if (showBookProgress)
                     _statusText(
@@ -453,6 +459,17 @@ class NovelReaderStatusOverlay extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// 页码。滚动模式下根本没有分页（[pageCount] 为 null），老实现把缺省值
+  /// 当成真值用，于是读者开了「显示页码」永远只能看到 1/1。没有页数时改成
+  /// 章内可视进度百分比 —— 同样回答「我读到哪了」，而且不会擒造不存在的页码。
+  String _pageLabel() {
+    final total = pageCount;
+    if (total == null || total < 1) {
+      return '${(chapterProgress.clamp(0, 1) * 100).round()}%';
+    }
+    return '${currentPage.clamp(1, total)}/$total';
   }
 
   /// 状态栏的钟表。

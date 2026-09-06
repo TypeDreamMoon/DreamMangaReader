@@ -1550,6 +1550,18 @@ void main() {
       harness.store.progressFor('remote:s:n1')?.fraction ?? 0,
       greaterThan(0),
     );
+
+    // 滚动模式下页码一直是 1/1（阅读页把 metrics 置空，状态栏拿缺省值
+    // 充数）。现在改成章内可视百分比，并且要真的跟着滚动走。
+    final pageLabel = tester.widget<Text>(
+      find.byKey(const Key('novel-status-page')),
+    );
+    expect(pageLabel.data, isNot('1/1'));
+    expect(pageLabel.data, endsWith('%'));
+    expect(
+      int.parse(pageLabel.data!.substring(0, pageLabel.data!.length - 1)),
+      greaterThan(0),
+    );
   });
 
   test('reader HTML shell sanitizes HTML and escapes plain text', () {
