@@ -13,7 +13,7 @@ enum AppNotifyKind { info, success, warn, error }
 /// - 挂在 Navigator 的 Overlay 顶层 → 浮在页面 / 底部弹层之上,从顶部滑入。
 /// - 背景走 [GlassSurface](身后页面被模糊),圆角跟随全局 `context.radius`。
 /// - 填充色按主题自动推导(Dark/OLED 深玻璃、Light 亮玻璃),点按可提前关闭。
-/// - 同一时刻只保留一个:再次调用会替换掉上一个(常用于「检查中… → 结果」)。
+/// - 同一 Overlay 里同一时刻只保留一个:再次调用会替换掉上一个(常用于「检查中… → 结果」)。
 void showAppNotify(
   BuildContext context,
   String message, {
@@ -22,12 +22,12 @@ void showAppNotify(
   Duration duration = const Duration(milliseconds: 2200),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
-  if (overlay == null) return;
+  if (overlay == null || !overlay.mounted) return;
 
-  // 先关掉上一个(幂等,安全):新通知立刻顶替,不叠加。
-  _active?.remove();
+  // 先关掉**这个 Overlay 里**上一个(幂等,安全):新通知立刻顶替,不叠加。
+  _activeByOverlay[overlay]?.remove();
 
-  final handle = _NotifyHandle();
+  final handle = _NotifyHandle(overlay);
   handle.entry = OverlayEntry(
     builder: (ctx) => _AppNotifyHost(
       message: message,
@@ -37,22 +37,44 @@ void showAppNotify(
       onGone: handle.remove,
     ),
   );
-  _active = handle;
-  overlay.insert(handle.entry!);
+  _activeByOverlay[overlay] = handle;
+  handle.insert();
 }
 
-_NotifyHandle? _active;
+/// 「当前通知」按 Overlay 归属,不是一个进程级单例。
+///
+/// 单例的两个毛病:一是另一个 Overlay(多窗口、嵌套 Navigator、测试里换了一棵树)
+/// 弹通知时会把**别人**那条还在显示的通知顺手撤掉;二是这棵树整个销毁之后,单例仍
+/// 攥着旧 entry,下一次弹通知先去 `remove()` 一个所属 Overlay 早已不在的 entry。
+///
+/// 用 Expando 挂在 OverlayState 上:各 Overlay 各记各的,Overlay 一走这条记录跟着回收。
+final Expando<_NotifyHandle> _activeByOverlay = Expando('appNotifyActive');
 
 /// 单个通知的移除句柄:把「移除」做成幂等,避免动画收尾与被顶替时重复 remove。
 class _NotifyHandle {
+  _NotifyHandle(this.overlay);
+
+  /// 这条通知挂在哪个 Overlay 上——只能从这里摘,也只有它还活着时才摘得动。
+  final OverlayState overlay;
   OverlayEntry? entry;
+  bool _inserted = false;
   bool _removed = false;
+
+  void insert() {
+    overlay.insert(entry!);
+    _inserted = true;
+  }
+
   void remove() {
     if (_removed) return;
     _removed = true;
-    entry?.remove();
+    final e = entry;
     entry = null;
-    if (identical(_active, this)) _active = null;
+    // Overlay 可能先一步销毁(整棵树被换掉),entry 早已不在任何树里,再摘一次没有意义。
+    if (e != null && _inserted && overlay.mounted) e.remove();
+    if (identical(_activeByOverlay[overlay], this)) {
+      _activeByOverlay[overlay] = null;
+    }
   }
 }
 
