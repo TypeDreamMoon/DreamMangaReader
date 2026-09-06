@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_info.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/l10n/app_strings.dart';
 import '../common/app_logo.dart';
 
 /// 启动动画:朱印「梦」印章 + 应用名依次浮现,随后整层淡出露出 [child](其在身后已预热)。
@@ -41,6 +42,8 @@ class _SplashGateState extends State<SplashGate>
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
+    // 「梦漫」是品牌名,跟着 logo 走、不翻译;后半句是说明文字,交给 l10n。
+    final subtitle = '${AppInfo.cnName} · ${context.l10n.splash_tagline}';
     return Stack(
       children: [
         widget.child,
@@ -88,7 +91,7 @@ class _SplashGateState extends State<SplashGate>
                                           fontWeight: FontWeight.w900,
                                           letterSpacing: 0.5)),
                                   const SizedBox(height: 4),
-                                  Text('${AppInfo.cnName} · 漫画阅读器',
+                                  Text(subtitle,
                                       style: TextStyle(
                                           color: p.textMuted, fontSize: 12.5)),
                                 ],

@@ -840,6 +840,10 @@
   "about_hl9": "普通 / 日漫 / 竖翻 / 滚动 四种阅读模式 · 缩放适配 · 色彩滤镜",
   "about_hl10": "每漫画模式记忆 + 高瘦条漫自动识别 · 条漫自动滚动 · 保存/分享页",
   "about_hl11": "OLED / Dark / Light 三套主题",
+  "splash_tagline": "漫画阅读器",
+  "@splash_tagline": {
+    "description": "启动页品牌名后面那句说明,前面的「梦漫」是品牌名不翻译"
+  },
   "proxy_srcForcedDirect": "强制直连",
   "proxy_srcManual": "手动设置",
   "proxy_srcEnvVar": "环境变量",

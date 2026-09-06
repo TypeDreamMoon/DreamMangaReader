@@ -465,6 +465,7 @@
   "about_hl9": "普通 / 日漫 / 豎翻 / 捲動 四種閱讀模式 · 縮放適配 · 色彩濾鏡",
   "about_hl10": "每漫畫模式記憶 + 高瘦條漫自動辨識 · 條漫自動捲動 · 儲存/分享頁",
   "about_hl11": "OLED / Dark / Light 三套主題",
+  "splash_tagline": "漫畫閱讀器",
   "proxy_srcForcedDirect": "強制直連",
   "proxy_srcManual": "手動設定",
   "proxy_srcEnvVar": "環境變數",

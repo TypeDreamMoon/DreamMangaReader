@@ -465,6 +465,7 @@
   "about_hl9": "標準 / 日本漫画 / 縦めくり / スクロール の4読書モード · ズーム調整 · カラーフィルタ",
   "about_hl10": "作品ごとのモード記憶 + 縦長作品の自動判定 · 自動スクロール · ページの保存/共有",
   "about_hl11": "OLED / Dark / Light の3テーマ",
+  "splash_tagline": "マンガリーダー",
   "proxy_srcForcedDirect": "強制直接接続",
   "proxy_srcManual": "手動設定",
   "proxy_srcEnvVar": "環境変数",

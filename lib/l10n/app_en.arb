@@ -465,6 +465,7 @@
   "about_hl9": "Normal / manga / vertical / webtoon reading modes · zoom fit · color filters",
   "about_hl10": "Per-manga mode memory + tall-webtoon auto-detect · auto-scroll · save/share page",
   "about_hl11": "OLED / Dark / Light themes",
+  "splash_tagline": "Manga Reader",
   "proxy_srcForcedDirect": "Forced direct",
   "proxy_srcManual": "Manual",
   "proxy_srcEnvVar": "Env var",
