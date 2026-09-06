@@ -558,6 +558,7 @@
   "update_noNotes": "更新内容はありません。",
   "update_noCompatibleAsset": "この端末に対応する自動更新パッケージがありません。リリースページから手動でダウンロードしてください。",
   "update_primary": "今すぐ更新",
+  "update_skipVersion": "このバージョンをスキップ",
   "update_background": "バックグラウンドでダウンロード",
   "update_backgroundHint": "ダウンロードはシステム通知で続行されます。",
   "update_retrying": "接続が中断されました。再試行中 {attempt} / 3",

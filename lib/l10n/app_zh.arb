@@ -1005,6 +1005,7 @@
   "update_noNotes": "暂无更新说明。",
   "update_noCompatibleAsset": "没有适用于当前设备的自动更新包，可前往发布页手动下载。",
   "update_primary": "一键更新",
+  "update_skipVersion": "跳过此版本",
   "update_background": "后台下载",
   "update_backgroundHint": "下载将在系统通知中继续",
   "update_retrying": "连接中断，正在重试 {attempt} / 3",

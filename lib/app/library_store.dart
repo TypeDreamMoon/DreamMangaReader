@@ -205,6 +205,8 @@ class LibraryStore extends ChangeNotifier {
   static const _kAutoCheckUpdate = 'lib.autoCheckUpdate'; // 启动自动检查更新
   static const _kUpdateIncludeBeta = 'lib.updateIncludeBeta'; // 检查更新含测试版
   static const _kUpdateSource = 'lib.updateSource'; // 首选更新源(另一源始终自动回退)
+  static const _kUpdatePromptAt = 'lib.updatePromptAt'; // 上次自动弹更新框的时刻
+  static const _kUpdateSkipVersion = 'lib.updateSkipVersion'; // 用户跳过的版本号
   static const _kUiScale = 'lib.uiScale'; // 桌面:界面文字缩放
   static const _kUiFont = 'lib.uiFont'; // 桌面:字体族(空=跟随回退栈)
   static const _kUiLocale = 'lib.uiLocale'; // 界面语言(本机设置,不随云同步)
@@ -290,6 +292,8 @@ class LibraryStore extends ChangeNotifier {
   bool _autoCheckUpdate = true; // 启动时自动检查更新
   bool _updateIncludeBeta = false; // 检查更新是否含测试版(-beta/-rc)
   UpdateSource _updateSource = UpdateSource.gitee; // 国内默认 Gitee，GitHub 自动备用
+  int _updatePromptAt = 0; // 上次自动弹更新框的 epoch ms(0=从没弹过)
+  String _updateSkipVersion = ''; // 用户点过「跳过此版本」的版本号
   double _detailTintStrength = 0.55; // 详情页封面色融合强度(0=纯底色/黑,1=纯封面色)
   bool _readerGestures = true; // 阅读器左右点击翻页
   bool _readerGestureHintSeen = false; // 首次进入阅读器的手势提示是否已展示
@@ -379,6 +383,38 @@ class LibraryStore extends ChangeNotifier {
   bool get autoCheckUpdate => _autoCheckUpdate;
   bool get updateIncludeBeta => _updateIncludeBeta;
   UpdateSource get updateSource => _updateSource;
+
+  /// 自动更新提示的最小间隔。手动「检查更新」不受它约束。
+  static const updatePromptInterval = Duration(hours: 24);
+
+  String get updateSkipVersion => _updateSkipVersion;
+
+  /// 距上次自动弹更新框是否已超过 [updatePromptInterval]。
+  /// 参照 `LibraryUpdateTracker.sweepDue`:闸门只看时间,与是哪个版本无关,
+  /// 这样连网检查本身也能省掉。
+  bool updatePromptDue([int? nowMs]) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return now - _updatePromptAt >= updatePromptInterval.inMilliseconds;
+  }
+
+  /// 用户对这个版本点过「跳过此版本」。
+  bool isUpdateVersionSkipped(String version) =>
+      version.isNotEmpty && version == _updateSkipVersion;
+
+  /// 记下「刚弹过」,开始新的 24h 冷却。
+  void markUpdatePrompted([int? nowMs]) {
+    _updatePromptAt = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    _prefs?.setInt(_kUpdatePromptAt, _updatePromptAt);
+  }
+
+  /// 跳过某个版本:之后自动检查再发现同一个版本就不弹了(更高的版本照弹)。
+  void skipUpdateVersion(String version) {
+    if (version == _updateSkipVersion) return;
+    _updateSkipVersion = version;
+    _prefs?.setString(_kUpdateSkipVersion, version);
+    notifyListeners();
+  }
+
   double get detailTintStrength => _detailTintStrength;
   bool get readerGestures => _readerGestures;
   bool get readerGestureHintSeen => _readerGestureHintSeen;
@@ -790,6 +826,8 @@ class LibraryStore extends ChangeNotifier {
       if (savedUpdateSource != _updateSource.name) {
         await prefs.setString(_kUpdateSource, _updateSource.name);
       }
+      _updatePromptAt = prefs.getInt(_kUpdatePromptAt) ?? 0;
+      _updateSkipVersion = prefs.getString(_kUpdateSkipVersion) ?? '';
       _detailTintStrength =
           (prefs.getDouble(_kDetailTintStrength) ?? 0.55).clamp(0, 1);
       _readerGestures = prefs.getBool(_kReaderGestures) ?? true;

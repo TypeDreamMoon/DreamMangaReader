@@ -44,10 +44,13 @@ class _HomeShellState extends State<HomeShell>
     _updateTimer = Timer(const Duration(seconds: 3), _maybeCheckUpdate);
   }
 
+  /// 启动后的自动检查。三道闸门,免得每次开 App 都被拦一次:
+  /// 设置里关掉 → 不查;距上次弹框不足 24h → 连网都不查;用户跳过的版本 → 不弹。
+  /// 设置页的「检查更新」是手动动作,不走这里,也就不受闸门约束。
   Future<void> _maybeCheckUpdate() async {
     if (!mounted) return;
     final lib = LibraryScope.read(context);
-    if (!lib.autoCheckUpdate) return;
+    if (!lib.autoCheckUpdate || !lib.updatePromptDue()) return;
     final result = await UpdateService.check(
       includeBeta: lib.updateIncludeBeta,
       preferredSource: lib.updateSource,
@@ -56,7 +59,13 @@ class _HomeShellState extends State<HomeShell>
     if (result.state == UpdateCheckState.updateAvailable &&
         candidate != null &&
         mounted) {
-      await showUpdateDialog(context, candidate);
+      if (lib.isUpdateVersionSkipped(candidate.version)) return;
+      lib.markUpdatePrompted();
+      await showUpdateDialog(
+        context,
+        candidate,
+        onSkipVersion: lib.skipUpdateVersion,
+      );
     }
   }
 

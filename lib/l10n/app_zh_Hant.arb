@@ -558,6 +558,7 @@
   "update_noNotes": "暫無更新說明。",
   "update_noCompatibleAsset": "沒有適用於目前裝置的自動更新套件，可前往發佈頁面手動下載。",
   "update_primary": "一鍵更新",
+  "update_skipVersion": "略過此版本",
   "update_background": "背景下載",
   "update_backgroundHint": "下載將在系統通知中繼續",
   "update_retrying": "連線中斷，正在重試 {attempt} / 3",
