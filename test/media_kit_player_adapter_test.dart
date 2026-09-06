@@ -280,6 +280,7 @@ void main() {
       backend: backend,
       gateway: gateway,
       authScope: 'source:test',
+      messages: _messages,
     );
     await adapter.open(_hls);
 
