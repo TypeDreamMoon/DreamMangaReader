@@ -1635,6 +1635,8 @@
     }
   },
   "shelf_markAllSeen": "全部标为已看",
+  "shelf_markAllSeenDone": "追更角标已清空",
+  "shelf_menuMore": "更多",
   "set_autoCheckUpdates": "启动时检查追更",
   "set_autoCheckUpdatesSub": "收藏出现新章节时在封面标出;最多每 6 小时查一次",
   "@shelf_sourceGone": {

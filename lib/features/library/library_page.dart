@@ -465,6 +465,7 @@ class _LibraryPageState extends State<LibraryPage> {
           onPressed: () => pushRoute(context, MaterialPageRoute<void>(builder: (_) => const HistoryPage())),
           icon: const Icon(Icons.history_rounded),
         ),
+        _shelfMenu(),
         const SizedBox(width: 8),
       ],
     );
@@ -568,6 +569,36 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       ),
     );
+  }
+
+  /// 书架溢出菜单。
+  ///
+  /// 「全部标为已看」原来只有账本里的方法和四种语言的译名,界面上没有任何入口 ——
+  /// 攒了一屏角标的人只能一本本点开详情页消。菜单项只在真有未读更新时可点:
+  /// 没有角标时按下去什么都不会发生,灰着比骗一下手指诚实。
+  Widget _shelfMenu() {
+    final hasPending = _updates.pendingWorks > 0;
+    return PopupMenuButton<_ShelfMenuAction>(
+      key: const Key('shelf-menu'),
+      tooltip: context.l10n.shelf_menuMore,
+      icon: const Icon(Icons.more_vert_rounded),
+      onSelected: (action) => switch (action) {
+        _ShelfMenuAction.markAllSeen => _markAllSeen(),
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<_ShelfMenuAction>(
+          key: const Key('shelf-mark-all-seen'),
+          value: _ShelfMenuAction.markAllSeen,
+          enabled: hasPending,
+          child: Text(context.l10n.shelf_markAllSeen),
+        ),
+      ],
+    );
+  }
+
+  void _markAllSeen() {
+    _updates.markAllSeen();
+    _snack(context.l10n.shelf_markAllSeenDone);
   }
 
   PreferredSizeWidget _kindTabs(List<ShelfItem> all) {
@@ -939,6 +970,9 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
 }
+
+/// 书架溢出菜单里的动作。
+enum _ShelfMenuAction { markAllSeen }
 
 /// 秒 → `h:mm:ss` / `mm:ss`(番剧续播进度)。
 String formatShelfClock(int totalSeconds) {

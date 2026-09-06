@@ -912,6 +912,8 @@
   "shelf_updateFound": "{works, plural, =1{1 title} other{{works} titles}} updated · {chapters, plural, =1{1 chapter} other{{chapters} chapters}}",
   "shelf_updateFailed": "{n, plural, =1{1 title failed} other{{n} titles failed}}",
   "shelf_markAllSeen": "Mark all as seen",
+  "shelf_markAllSeenDone": "Update badges cleared",
+  "shelf_menuMore": "More",
   "set_autoCheckUpdates": "Check for updates on launch",
   "set_autoCheckUpdatesSub": "Flag new chapters on favorite covers; at most once every 6 hours",
   "animeFavorite": "Favorite anime",
