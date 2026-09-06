@@ -29,7 +29,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _FakeController implements NovelDocumentController {
+class _FakeController implements NovelDocumentController,
+    NovelPaginationSignals {
   _FakeController({
     this.locator = const NovelLocator(chapterId: 'c1'),
     this.supportsPageFrames = false,
@@ -56,6 +57,16 @@ class _FakeController implements NovelDocumentController {
   final List<NovelAnnotation> appliedAnnotations = [];
   final List<NovelLocator> searchHighlights = [];
   int clearSelectionCalls = 0;
+
+  /// 非 null 且未完成 = 「排版还在跑」。
+  Completer<void>? paginationGate;
+
+  @override
+  bool get hasPagination => paginationGate?.isCompleted ?? true;
+
+  @override
+  Future<void> get paginationReady =>
+      paginationGate?.future ?? Future<void>.value();
 
   @override
   ValueChanged<NovelReaderCommand>? onCommand;
@@ -129,7 +140,7 @@ class _FakeController implements NovelDocumentController {
         pageCount: supportsPageFrames ? pageCount : 1,
         currentPageIndex: visiblePageIndex,
         viewport: const NovelViewport(width: 1000, height: 1600),
-        layoutFingerprint: 'test-layout',
+        layoutFingerprint: hasPagination ? 'test-layout' : '',
         visibleTextLength: visibleTextLength,
         fontLoadFailed: fontLoadFailed,
       );
@@ -177,6 +188,14 @@ class _StubNativeController extends NovelNativeDocumentController {
   final List<int> shownPages = [];
 
   static const int _pages = 3;
+
+  // 这个桩直接给出 pageMetrics、不走真正的排版,所以要自己宣布「版面已就绪」——
+  // 否则阅读页会一直等 paginationReady,而它永远不会兑现。
+  @override
+  bool get hasPagination => true;
+
+  @override
+  Future<void> get paginationReady => Future<void>.value();
 
   @override
   Future<void> loadChapter(
@@ -1561,6 +1580,34 @@ void main() {
     expect(
       int.parse(pageLabel.data!.substring(0, pageLabel.data!.length - 1)),
       greaterThan(0),
+    );
+  });
+
+  testWidgets('a chapter that paginates late still gets its page metrics',
+      (tester) async {
+    final controller = _FakeController(
+      supportsPageFrames: true,
+      pageCount: 5,
+    )..paginationGate = Completer<void>();
+    final harness = await _readerHarness(controller);
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+    // 连兜底的等待上限都走完了（老实现的 20×50ms 轮询更是早就放弃）。
+    await tester.pump(const Duration(seconds: 25));
+    expect(
+      tester.widget<Text>(find.byKey(const Key('novel-status-page'))).data,
+      endsWith('%'),
+    );
+
+    controller.paginationGate!.complete();
+    await tester.pumpAndSettle();
+
+    // 排版真的完成以后页帧补刷一次，页码和翻页动画才有东西可用。
+    expect(
+      tester.widget<Text>(find.byKey(const Key('novel-status-page'))).data,
+      '1/5',
     );
   });
 

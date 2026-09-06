@@ -126,6 +126,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   NovelSelection? _selection;
   Set<String> _unresolvedAnnotationIds = const {};
   NovelPageMetrics? _pageMetrics;
+  bool _paginationRefreshPending = false;
   NovelPageFrame? _previousFrame;
   NovelPageFrame? _currentFrame;
   NovelPageFrame? _nextFrame;
@@ -352,7 +353,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       return;
     }
     final metrics = await _waitForPageMetrics(chapterId, generation);
-    if (metrics == null) return;
+    if (metrics == null) {
+      _refreshWhenPaginationCompletes(chapterId, generation);
+      return;
+    }
     final current = await _controller.capturePage(metrics.currentPageIndex);
     if (!_pageRequestIsCurrent(chapterId, generation) || current == null) {
       return;
@@ -384,10 +388,26 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _prefetchBoundaryDocuments(metrics);
   }
 
+  NovelPaginationSignals? get _paginationSignals {
+    final controller = _controller;
+    return controller is NovelPaginationSignals ? controller : null;
+  }
+
+  /// 等排版的上限。它只是兜底 —— 正常情况下控制器排完就会直接告诉我们。
+  static const Duration _paginationWait = Duration(seconds: 20);
+
   Future<NovelPageMetrics?> _waitForPageMetrics(
     String chapterId,
     int generation,
   ) async {
+    final signals = _paginationSignals;
+    if (signals != null) {
+      // 老实现是 20×50ms 固定轮询：超大章节排一秒都排不完，一秒后返回 null，
+      // 于是 _pageMetrics / _currentFrame 长期为空。现在等真正的完成信号。
+      await signals.paginationReady
+          .timeout(_paginationWait, onTimeout: () {})
+          .catchError((_) {});
+    }
     for (var attempt = 0; attempt < 20; attempt++) {
       if (!_pageRequestIsCurrent(chapterId, generation)) return null;
       final metrics = await _controller.pageMetrics();
@@ -399,6 +419,23 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     return null;
+  }
+
+  /// 排版真的完成以后再刷一次页帧。
+  ///
+  /// 等到超时只能说明排版还在跑（或者视口还没落地），不该把阅读器永久留在
+  /// 「没有页码、没有翻页动画」的状态里。
+  void _refreshWhenPaginationCompletes(String chapterId, int generation) {
+    final signals = _paginationSignals;
+    if (signals == null) return;
+    // 已经排完了还拿不到 metrics，再等也是白等 —— 同时这道门卡住了递归。
+    if (signals.hasPagination || _paginationRefreshPending) return;
+    _paginationRefreshPending = true;
+    unawaited(signals.paginationReady.whenComplete(() {
+      _paginationRefreshPending = false;
+      if (!_pageRequestIsCurrent(chapterId, generation)) return;
+      unawaited(_primePageFrames(chapterId, generation));
+    }));
   }
 
   bool _pageRequestIsCurrent(String chapterId, int generation) {

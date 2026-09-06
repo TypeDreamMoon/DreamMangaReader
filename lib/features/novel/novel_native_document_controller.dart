@@ -17,7 +17,7 @@ import 'novel_document_view.dart';
 import 'novel_native_page_view.dart';
 
 class NovelNativeDocumentController extends ChangeNotifier
-    implements NovelDocumentController {
+    implements NovelDocumentController, NovelPaginationSignals {
   NovelNativeDocumentController({NovelFontRegistry? fontRegistry})
       : _fontRegistry = fontRegistry ?? NovelFontRegistry.instance;
 
@@ -39,8 +39,19 @@ class NovelNativeDocumentController extends ChangeNotifier
   final Map<int, NovelPageFrame> _pageFrames = {};
   final Map<int, Future<NovelPageFrame?>> _captureJobs = {};
 
+  Completer<void>? _paginationWaiter;
+
   NovelReaderPreferences get preferences => _preferences;
   NovelPaginationResult? get pagination => _pagination;
+
+  @override
+  bool get hasPagination => _pagination != null;
+
+  @override
+  Future<void> get paginationReady {
+    if (_pagination != null) return Future<void>.value();
+    return (_paginationWaiter ??= Completer<void>()).future;
+  }
   int get spreadIndex => _spreadIndex;
   List<NovelAnnotation> get annotations => _annotations;
   int get cachedPageImageCount => _pageImages.length;
@@ -231,6 +242,8 @@ class NovelNativeDocumentController extends ChangeNotifier
     _pagination = result;
     _viewport = viewport;
     _styleSignature = signature;
+    final waiter = _paginationWaiter;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
     _rasterDevicePixelRatio = rasterDpr;
     if (isScrollMode) {
       _rebuildScrollSlices(result);
@@ -579,6 +592,8 @@ class NovelNativeDocumentController extends ChangeNotifier
     _pagination = null;
     _viewport = null;
     _styleSignature = '';
+    // 上一轮的信号已经兑现过了，下一个等待者得拿到新的。
+    if (_paginationWaiter?.isCompleted ?? false) _paginationWaiter = null;
   }
 
   /// 页帧缓存的 key。
@@ -705,6 +720,9 @@ class NovelNativeDocumentController extends ChangeNotifier
   void dispose() {
     _disposed = true;
     _clearRasterCache();
+    // 别把等排版的人挂在那里。
+    final waiter = _paginationWaiter;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
     scrollController.dispose();
     super.dispose();
   }

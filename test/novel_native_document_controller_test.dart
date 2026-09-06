@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
@@ -294,6 +295,48 @@ void main() {
     expect(controller.scrollSlices, hasLength(1));
     // 内容比一屏高得多 —— 也就是真的有得滚。
     expect(controller.scrollContentHeight, greaterThan(720 * 3));
+  });
+
+  testWidgets('signals when a chapter has actually been paginated',
+      (tester) async {
+    final controller = NovelNativeDocumentController();
+    addTearDown(controller.dispose);
+    var paginated = false;
+    unawaited(controller.paginationReady.then((_) => paginated = true));
+    await controller.loadChapter(
+      'chapter-1',
+      NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          40,
+          (index) => '第${index + 1}段 ${List.filled(28, '排版信号正文').join()}',
+        ).join('\n'),
+      ),
+      const NovelReaderPreferences(),
+    );
+    expect(controller.hasPagination, isFalse);
+    await tester.pump();
+    expect(paginated, isFalse);
+
+    controller.paginationFor(const Size(420, 720));
+    await tester.pump();
+
+    expect(controller.hasPagination, isTrue);
+    expect(paginated, isTrue);
+
+    // 改设置 = 重排，信号重新武装，不能拿上一轮的结果充数。
+    await controller.applyPreferences(
+      const NovelReaderPreferences(fontSize: 24),
+    );
+    expect(controller.hasPagination, isFalse);
+    var repaginated = false;
+    unawaited(controller.paginationReady.then((_) => repaginated = true));
+    await tester.pump();
+    expect(repaginated, isFalse);
+
+    controller.paginationFor(const Size(420, 720));
+    await tester.pump();
+    expect(repaginated, isTrue);
   });
 
   testWidgets('scroll position drives the reported reading locator',

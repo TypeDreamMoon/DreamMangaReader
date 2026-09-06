@@ -52,6 +52,20 @@ abstract interface class NovelDocumentController {
   Future<bool> previousPage();
 }
 
+/// 能告诉外界「排版什么时候真的排完」的控制器。
+///
+/// 原生渲染器的排版发生在 build 期间的 `LayoutBuilder` 里，阅读页拿不到直接回调，
+/// 于是只好定时轮询 [NovelDocumentController.pageMetrics]。超大章节排一次要好几秒，
+/// 轮询一超时就再也没人回来补一次 —— 页码停在 1/1、翻页动画退化成瞬切。
+abstract interface class NovelPaginationSignals
+    implements NovelDocumentController {
+  /// 当前章节排版完成的信号；每次重排后重新武装。
+  Future<void> get paginationReady;
+
+  /// 已经有排版结果。
+  bool get hasPagination;
+}
+
 class WebNovelDocumentController implements NovelDocumentController {
   WebNovelDocumentController({
     NovelFontStore? fontStore,
