@@ -7,6 +7,7 @@ import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/translate/translator.dart';
 import '../../ui/ui.dart';
+import 'translate_messages.dart';
 
 /// 搜索翻译设置:选服务商(谷歌 / 微软 免费,或大模型 API)+ 大模型参数 + 测试。
 /// 实际翻译动作集成在发现页搜索栏。
@@ -26,13 +27,10 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
   bool _testOk = false;
   TranslateLang _targetSource = TranslateLang.zhHans; // 正在编辑目标顺序的源语言
 
-  // 服务商名(枚举 label 是中文,按当前语言映射)。语言名(TranslateLang.label)是各语言
-  // 自身写法(简体中文/日本語…),不翻译、保持原样。
-  String _provName(BuildContext context, TranslateProvider v) => switch (v) {
-        TranslateProvider.google => context.l10n.trans_provGoogle,
-        TranslateProvider.microsoft => context.l10n.trans_provMicrosoft,
-        TranslateProvider.llm => context.l10n.trans_provLlm,
-      };
+  // 服务商名按当前语言映射(见 translate_messages.dart)。语言名(TranslateLang.label)
+  // 是各语言自身写法(简体中文/日本語…),不翻译、保持原样。
+  String _provName(BuildContext context, TranslateProvider v) =>
+      translateProviderName(context.l10n, v);
 
   String _desc(BuildContext context, TranslateProvider v) => switch (v) {
         TranslateProvider.google => context.l10n.trans_descGoogle,
@@ -75,9 +73,10 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
       });
     } catch (e) {
       if (!mounted) return;
+      final reason = translateErrorText(context.l10n, e);
       setState(() {
         _testOk = false;
-        _testResult = '$e';
+        _testResult = reason;
       });
     } finally {
       if (mounted) setState(() => _testing = false);

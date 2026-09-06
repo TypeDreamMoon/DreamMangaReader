@@ -140,9 +140,11 @@ void main() {
 
     expect(result.status, SourceHealthStatus.ok);
     expect(result.count, 6);
-    expect(result.log, contains('测试:getNovelDiscovery(1)'));
-    expect(result.log, contains('发现 6 部(其中 2 部带封面)'));
-    expect(result.log, contains('示例:宿命之环、诡秘之主、深空彼岸、夜的命名术、灵境行者'));
+    expect(result.report!.discoveryFn, 'getNovelDiscovery');
+    expect(result.report!.count, 6);
+    expect(result.report!.withCover, 2);
+    expect(result.report!.samples,
+        ['宿命之环', '诡秘之主', '深空彼岸', '夜的命名术', '灵境行者']);
     expect(source.discoveryCalls, 1);
     expect(source.disposed, isTrue);
     expect(mangaBuilderCalled, isFalse);
@@ -164,7 +166,7 @@ void main() {
     );
 
     expect(result.status, SourceHealthStatus.ok);
-    expect(result.log, contains('测试:getDiscovery(1)'));
+    expect(result.report!.discoveryFn, 'getDiscovery');
     expect(source.discoveryCalls, 1);
     expect(source.disposed, isTrue);
     expect(novelBuilderCalled, isFalse);
@@ -192,7 +194,7 @@ void main() {
     );
 
     expect(result.status, SourceHealthStatus.ok);
-    expect(result.log, contains('测试:getDiscovery(1)'));
+    expect(result.report!.discoveryFn, 'getDiscovery');
     expect(source.discoveryCalls, 1);
     expect(source.disposed, isTrue);
     expect(novelBuilderCalled, isFalse);
@@ -221,8 +223,9 @@ void main() {
     );
 
     expect(result.status, SourceHealthStatus.fail);
-    expect(result.log, contains('expected manga, anime, or novel'));
-    expect(result.log, isNot(contains('测试:')));
+    expect(result.report!.errorDetail,
+        contains('expected manga, anime, or novel'));
+    expect(result.report!.discoveryFn, isNull);
     expect(mangaBuilderCalled, isFalse);
     expect(novelBuilderCalled, isFalse);
   });
@@ -244,7 +247,7 @@ void main() {
     final result = await checkSourceHealth(qidian, novelBuilder: (_) => source);
 
     expect(result.status, SourceHealthStatus.fail);
-    expect(result.log, contains('connection reset'));
+    expect(result.report!.errorDetail, contains('connection reset'));
     expect(source.disposed, isTrue);
   });
 
@@ -258,7 +261,7 @@ void main() {
     );
 
     expect(result.status, SourceHealthStatus.fail);
-    expect(result.log, contains('TimeoutException'));
+    expect(result.report!.errorDetail, contains('TimeoutException'));
     expect(source.disposed, isTrue);
   });
 }

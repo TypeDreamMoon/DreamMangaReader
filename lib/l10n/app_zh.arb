@@ -772,6 +772,136 @@
   "srcmgmt_healthScriptStuck": "脚本卡死 · 已停用该源",
   "srcmgmt_healthChecking": "检测中…（联网）",
   "srcmgmt_healthUnknown": "未检测",
+  "srcmgmt_logSource": "源:{name}  (id: {id})",
+  "@srcmgmt_logSource": {
+    "placeholders": {
+      "name": {},
+      "id": {}
+    }
+  },
+  "srcmgmt_logTransport": "传输:{transport}",
+  "@srcmgmt_logTransport": {
+    "placeholders": {
+      "transport": {}
+    }
+  },
+  "srcmgmt_logTransportDio": "dio",
+  "srcmgmt_logTransportWebView": "WebView",
+  "srcmgmt_logExperimental": "实验性",
+  "srcmgmt_logTest": "测试:{fn}(1)  超时 {seconds}s",
+  "@srcmgmt_logTest": {
+    "placeholders": {
+      "fn": {},
+      "seconds": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logElapsed": "耗时:{ms} ms",
+  "@srcmgmt_logElapsed": {
+    "placeholders": {
+      "ms": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logResultOk": "结果:✓ 发现 {count} 部(其中 {withCover} 部带封面)",
+  "@srcmgmt_logResultOk": {
+    "placeholders": {
+      "count": {
+        "type": "num",
+        "format": "compact"
+      },
+      "withCover": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logSamples": "示例:{samples}",
+  "@srcmgmt_logSamples": {
+    "placeholders": {
+      "samples": {}
+    }
+  },
+  "srcmgmt_logResultEmpty": "结果:⚠ 发现 0 部",
+  "srcmgmt_logEmptyHint": "可能:被限流 / 需登录 / 站点结构变动导致解析为空。",
+  "srcmgmt_logResultFail": "结果:✗ 失败",
+  "srcmgmt_logStuckHint": "脚本执行超时:该源的脚本卡住了(死循环 / 退化正则),引擎已停用它。重试无用,需要换或修脚本。",
+  "srcmgmt_logNotChecked": "未检测",
+  "srcmgmt_repoStNotConfigured": "未配置源仓库",
+  "srcmgmt_repoStRemote": "已从仓库加载 {n} 个源",
+  "@srcmgmt_repoStRemote": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStLocalDir": "已从本地目录加载 {n} 个源",
+  "@srcmgmt_repoStLocalDir": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStCache": "已从缓存加载 {n} 个源",
+  "@srcmgmt_repoStCache": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStDevDir": "已从开发目录加载 {n} 个源",
+  "@srcmgmt_repoStDevDir": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStCacheAfterFailure": "加载失败,已用缓存({n} 个源)",
+  "@srcmgmt_repoStCacheAfterFailure": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStFailed": "加载失败:{detail}",
+  "@srcmgmt_repoStFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "srcmgmt_repoStNotLoaded": "未加载",
+  "srcmgmt_repoStLocalExtra": " · +{n} 本地源",
+  "@srcmgmt_repoStLocalExtra": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStHidden": " · 隐藏 {n}",
+  "@srcmgmt_repoStHidden": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
   "srcmgmt_checkLogTitle": "{name} · 检测日志",
   "@srcmgmt_checkLogTitle": {
     "placeholders": {
@@ -969,6 +1099,44 @@
   "trans_provGoogle": "谷歌翻译 · 免费",
   "trans_provMicrosoft": "微软翻译 · 免费",
   "trans_provLlm": "大模型 API",
+  "trans_errLlmNotConfigured": "大模型翻译未配置(到设置 · 翻译里填 API 地址 / 密钥 / 模型)",
+  "trans_errNoProvider": "没有可用的翻译服务商(到设置 · 翻译里配置)",
+  "trans_errConnectFailed": "连不上翻译服务(检查网络 / 代理)",
+  "trans_errTimeout": "翻译服务响应超时",
+  "trans_errRequest": "翻译请求出错({detail})",
+  "@trans_errRequest": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "trans_errBadResponse": "翻译服务返回异常(检查网络 / 代理)",
+  "trans_errHttp": "{provider} 请求失败(HTTP {status})",
+  "@trans_errHttp": {
+    "placeholders": {
+      "provider": {},
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "trans_errEmptyResult": "{provider} 没有返回译文",
+  "@trans_errEmptyResult": {
+    "placeholders": {
+      "provider": {}
+    }
+  },
+  "trans_errToken": "{provider} 取临时令牌失败(HTTP {status})",
+  "@trans_errToken": {
+    "placeholders": {
+      "provider": {},
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "trans_errFailed": "翻译失败",
   "proxy_testOk": "✓ 连通 · HTTP {status} · {ms}ms · 经 {via}",
   "@proxy_testOk": {
     "placeholders": {

@@ -30,6 +30,7 @@ import 'account_page.dart';
 import 'font_picker_sheet.dart';
 import 'log_page.dart';
 import 'proxy_settings_page.dart';
+import 'translate_messages.dart';
 import 'source_management_page.dart';
 import 'sync_page.dart';
 import 'translate_settings_page.dart';
@@ -289,7 +290,9 @@ class SettingsPage extends StatelessWidget {
                 _tile(
                   Icons.translate_rounded,
                   l10n.trans_title,
-                  l10n.set_translateSubtitle(lib.translateProvider.label),
+                  // 服务商名走 l10n;枚举上原来那个中文 label 已经去掉了。
+                  l10n.set_translateSubtitle(
+                      translateProviderName(l10n, lib.translateProvider)),
                   () => pushRoute(context, MaterialPageRoute(
                       builder: (_) => const TranslateSettingsPage())),
                 ),

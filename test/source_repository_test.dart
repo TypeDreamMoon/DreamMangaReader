@@ -74,7 +74,7 @@ void main() {
       await repo.load();
 
       expect(scriptIds(), ['a', 'c'], reason: '少了脚本的源跳过,其余照常可用');
-      expect(repo.status, contains('缓存'));
+      expect(repo.status.origin, SourceRepoOrigin.cache);
     });
 
     test('an entirely broken cache leaves the app running with no sources',
@@ -167,7 +167,7 @@ void main() {
       expect(jsonDecode(File('${cacheDirectory.path}/index.json')
               .readAsStringSync())['sources'],
           hasLength(1));
-      expect(repo.status, contains('缓存'));
+      expect(repo.status.origin, SourceRepoOrigin.cacheAfterFailure);
     });
 
     test('a 404 with no usable cache reports the failure and stays empty',
@@ -180,7 +180,7 @@ void main() {
       await repo.load();
 
       expect(scriptIds(), isEmpty);
-      expect(repo.status, contains('失败'));
+      expect(repo.status.origin, SourceRepoOrigin.failed);
       expect(Directory('${cacheDirectory.path}.staging').existsSync(), isFalse,
           reason: '暂存目录必须清掉');
     });

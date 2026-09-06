@@ -15,6 +15,7 @@ import '../../core/source/source_registry.dart';
 import '../../core/source/source_repository.dart';
 import '../../ui/ui.dart';
 import 'source_account.dart';
+import 'source_messages.dart';
 
 /// 源管理:启用/禁用漫画源(至少保留一个)+ 每个源的**可用性状态点**。
 /// 打开即联网自检各源(getDiscovery);点圆点看检测日志。禁用的源不在书架源切换器里出现。
@@ -57,7 +58,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
     _revalidate(sc);
     if (!mounted) return;
     setState(() => _reloading = false);
-    showAppNotify(context, _repo.status, kind: AppNotifyKind.info);
+    showAppNotify(context, sourceRepoStatusText(context.l10n, _repo.status),
+        kind: AppNotifyKind.info);
     _checkAll();
   }
 
@@ -257,7 +259,7 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
         constraints: const BoxConstraints(maxWidth: 460),
         child: SingleChildScrollView(
           child: SelectableText(
-            r.log,
+            sourceHealthLogText(context.l10n, r),
             style: TextStyle(
               color: p.textPrimary,
               fontSize: 12.5,
@@ -270,7 +272,8 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       actions: [
         TextButton(
           onPressed: () {
-            Clipboard.setData(ClipboardData(text: r.log));
+            Clipboard.setData(
+                ClipboardData(text: sourceHealthLogText(context.l10n, r)));
             showAppNotify(context, context.l10n.srcmgmt_logCopied, kind: AppNotifyKind.success);
           },
           child: Text(context.l10n.srcmgmt_copy),
@@ -386,7 +389,9 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
                 const SizedBox(width: 12),
                 // 状态文本可能很长(URL/错误/路径)→ Expanded + 省略号,别撑溢出。
                 Expanded(
-                  child: Text(context.l10n.srcmgmt_repoStatus(registeredSources.length, _repo.status),
+                  child: Text(context.l10n.srcmgmt_repoStatus(
+                      registeredSources.length,
+                      sourceRepoStatusText(context.l10n, _repo.status)),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,

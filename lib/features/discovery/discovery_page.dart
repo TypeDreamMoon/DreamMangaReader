@@ -29,6 +29,7 @@ import '../novel/novel_browser.dart';
 import 'manga_identity_tracker.dart';
 import 'recommend_controller.dart';
 import 'recommend_strip.dart';
+import '../settings/translate_messages.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 /// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
@@ -786,7 +787,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _searchCtrl.selection = TextSelection.collapsed(offset: out.length);
       _search(out); // 翻好即用译文搜(方便换语种源)
     } catch (e) {
-      if (mounted) showAppNotify(context, '$e', kind: AppNotifyKind.error);
+      if (mounted) {
+        showAppNotify(context, translateErrorText(context.l10n, e),
+            kind: AppNotifyKind.error);
+      }
     } finally {
       if (mounted) setState(() => _translating = false);
     }

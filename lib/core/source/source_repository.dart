@@ -14,6 +14,66 @@ import '../script/script_source.dart' show ScriptSource;
 import '../storage/secret_store.dart';
 import 'source_registry.dart';
 
+/// 源清单这一轮是从哪儿来的。核心层只给码,文案由设置页按当前语言渲染
+/// (以前 status 是拼好的中文串,英/日界面照样显示中文)。
+enum SourceRepoOrigin {
+  notLoaded, // 还没跑过 load()
+  notConfigured, // 没配仓库地址,也没有缓存
+  remote, // 从配置的仓库 URL 拉到
+  localDir, // 从用户选的本地目录读到
+  cache, // 没配仓库,用上次缓存
+  devDir, // 桌面开发目录 sources_local/
+  cacheAfterFailure, // 拉取失败,退回缓存
+  failed, // 拉取失败且没有缓存可用
+}
+
+/// 最近一次源加载的结果。
+@immutable
+class SourceRepoStatus {
+  const SourceRepoStatus(
+    this.origin, {
+    this.repoCount = 0,
+    this.localCount = 0,
+    this.hiddenCount = 0,
+    this.error,
+  });
+
+  final SourceRepoOrigin origin;
+
+  /// 来自仓库/缓存/目录的源数量。
+  final int repoCount;
+
+  /// 用户手动添加的本地单文件源数量。
+  final int localCount;
+
+  /// 被用户删除、这轮过滤掉的源数量。
+  final int hiddenCount;
+
+  /// [SourceRepoOrigin.failed] 时的底层原因。
+  final String? error;
+
+  bool get isFailure =>
+      origin == SourceRepoOrigin.failed ||
+      origin == SourceRepoOrigin.cacheAfterFailure;
+
+  /// **仅日志/诊断用**的中文摘要。要给用户看的地方走 UI 层的 l10n 映射。
+  String get debugText {
+    final head = switch (origin) {
+      SourceRepoOrigin.notLoaded => '未加载',
+      SourceRepoOrigin.notConfigured => '未配置源仓库',
+      SourceRepoOrigin.remote => '已从仓库加载 $repoCount 个源',
+      SourceRepoOrigin.localDir => '已从本地目录加载 $repoCount 个源',
+      SourceRepoOrigin.cache => '已从缓存加载 $repoCount 个源',
+      SourceRepoOrigin.devDir => '已从开发目录加载 $repoCount 个源',
+      SourceRepoOrigin.cacheAfterFailure => '加载失败,已用缓存($repoCount 个源)',
+      SourceRepoOrigin.failed => '加载失败:${error ?? ''}',
+    };
+    final local = localCount == 0 ? '' : ' · +$localCount 本地源';
+    final hidden = hiddenCount == 0 ? '' : ' · 隐藏 $hiddenCount';
+    return '$head$local$hidden';
+  }
+}
+
 /// 运行时漫画源仓库。
 ///
 /// 引擎**不内置任何源脚本**。启动时按优先级从外部清单(`index.json` + 若干脚本文件)
@@ -73,8 +133,8 @@ class SourceRepository {
   Future<SharedPreferences> _prefs() async =>
       _preferences ??= await SharedPreferences.getInstance();
 
-  /// 最近一次加载的人类可读状态(设置页展示)。
-  String status = '未加载';
+  /// 最近一次加载的状态(结构化;设置页按当前语言渲染)。
+  SourceRepoStatus status = const SourceRepoStatus(SourceRepoOrigin.notLoaded);
 
   /// 当前 registeredSources 里哪些是「本地单文件源」(用户手动加的),供 UI 标注/移除。
   Set<String> localIds = {};
@@ -126,14 +186,15 @@ class SourceRepository {
       // 一个 PathNotFoundException 就能从 load() 逃出去把启动带崩。
       registeredSources = const <SourceMeta>[];
       localIds = <String>{};
-      status = '加载失败:$e';
+      status = SourceRepoStatus(SourceRepoOrigin.failed, error: '$e');
     } finally {
-      debugPrint('[sources] $status · ${registeredSources.length} 个');
+      debugPrint('[sources] ${status.debugText} · ${registeredSources.length} 个');
       final n = registeredSources.length;
-      final lvl = status.contains('失败')
+      final lvl = status.isFailure
           ? LogLevel.error
           : (n == 0 ? LogLevel.warning : LogLevel.success);
-      AppLog.i.log(LogCat.source, '加载源 · $n 个 · $status', level: lvl);
+      AppLog.i.log(LogCat.source, '加载源 · $n 个 · ${status.debugText}',
+          level: lvl);
       onChanged?.call();
     }
   }
@@ -152,25 +213,26 @@ class SourceRepository {
 
     // 1) 仓库源(URL / 本地目录 / 缓存 / 开发目录)。
     var repo = <SourceMeta>[];
-    var repoStatus = '未配置源仓库';
+    var origin = SourceRepoOrigin.notConfigured;
+    String? loadError;
     try {
       if (repoUrl != null && repoUrl!.trim().isNotEmpty) {
         repo = await _loadFromUrl(repoUrl!.trim());
-        repoStatus = '已从仓库加载 ${repo.length} 个源';
+        origin = SourceRepoOrigin.remote;
       } else if (localDir != null && localDir!.trim().isNotEmpty) {
         repo = await _loadFromDir(Directory(localDir!.trim()));
-        repoStatus = '已从本地目录加载 ${repo.length} 个源';
+        origin = SourceRepoOrigin.localDir;
       } else {
         final cached = await _loadFromCache();
         if (cached != null) {
           repo = cached;
-          repoStatus = '已从缓存加载 ${repo.length} 个源';
+          origin = SourceRepoOrigin.cache;
         } else if (!Platform.isAndroid && !Platform.isIOS) {
           // 桌面开发便利:仓库根下 sources_local/(已 gitignore)。
           final dev = _devDirectory ?? Directory('sources_local');
           if (await File('${dev.path}/index.json').exists()) {
             repo = await _loadFromDir(dev);
-            repoStatus = '已从开发目录加载 ${repo.length} 个源';
+            origin = SourceRepoOrigin.devDir;
           }
         }
       }
@@ -179,9 +241,10 @@ class SourceRepository {
       final cached = await _loadFromCache();
       if (cached != null) {
         repo = cached;
-        repoStatus = '加载失败,已用缓存(${repo.length} 个源)';
+        origin = SourceRepoOrigin.cacheAfterFailure;
       } else {
-        repoStatus = '加载失败:$e';
+        origin = SourceRepoOrigin.failed;
+        loadError = '$e';
       }
     }
 
@@ -201,11 +264,13 @@ class SourceRepository {
         combined.where((e) => !removedIds.contains(e.id)).toList();
     localIds =
         localKept.where((e) => !removedIds.contains(e.id)).map((e) => e.id).toSet();
-    final hidden = removedIds.isEmpty ? '' : ' · 隐藏 ${removedIds.length}';
-    status = (localKept.isEmpty
-            ? repoStatus
-            : '$repoStatus · +${localKept.length} 本地源') +
-        hidden;
+    status = SourceRepoStatus(
+      origin,
+      repoCount: repo.length,
+      localCount: localKept.length,
+      hiddenCount: removedIds.length,
+      error: loadError,
+    );
   }
 
   /// 拉整套仓库。**先把清单和全部脚本下到暂存目录,全部成功后再原子替换缓存**——
