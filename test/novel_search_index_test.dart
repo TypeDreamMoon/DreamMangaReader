@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_render_document.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_search_index.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -148,6 +149,75 @@ void main() {
           .expand((event) => event.results),
       hasLength(2),
     );
+  });
+
+  test('results carry the block they landed in, not just a fraction', () async {
+    final document = _text('\u7b2c\u4e00\u6bb5\u5f00\u5934\u3002\n\u7b2c\u4e8c\u6bb5\u91cc\u6709\u795e\u79d8\u4e8b\u4ef6\u3002\n\u7b2c\u4e09\u6bb5\u7ed3\u5c3e\u3002');
+    final events = await index
+        .search(
+          bookKey: 'local:blocks',
+          sourceFingerprint: 'v1',
+          chapters: _chapters(1),
+          query: '\u795e\u79d8',
+          loadCachedDocument: (_) async => document,
+        )
+        .toList();
+    final result = events
+        .whereType<NovelSearchResultBatch>()
+        .expand((event) => event.results)
+        .single;
+
+    // 没有 blockId 的 locator 会让分页器退化成按比例估算，开搜索结果会差好几页。
+    expect(result.locator.blockId, isNotNull);
+
+    final blocks = NovelRenderDocumentParser.parse(document).blocks;
+    final block = blocks.firstWhere(
+      (value) => value.id == result.locator.blockId,
+    );
+    final offset = result.locator.charOffset!;
+    // charOffset 是块内偏移 —— 与 NovelPageFragment.sourceStart 同一坐标系。
+    expect(
+      block.plainText.substring(offset, offset + result.locator.quote!.length),
+      '\u795e\u79d8',
+    );
+  });
+
+  test('a changed source fingerprint rebuilds instead of reusing the index',
+      () async {
+    Future<void> run(String fingerprint, NovelDocument? cached) async {
+      await index
+          .search(
+            bookKey: 'local:fingerprint',
+            sourceFingerprint: fingerprint,
+            chapters: _chapters(1),
+            query: '\u795e\u79d8',
+            loadCachedDocument: (_) async => cached,
+          )
+          .drain<void>();
+    }
+
+    Future<int> hits(String fingerprint) async {
+      final events = await index
+          .search(
+            bookKey: 'local:fingerprint',
+            sourceFingerprint: fingerprint,
+            chapters: _chapters(1),
+            query: '\u795e\u79d8',
+            loadCachedDocument: (_) async => null,
+          )
+          .toList();
+      return events
+          .whereType<NovelSearchResultBatch>()
+          .expand((event) => event.results)
+          .length;
+    }
+
+    await run('v1', _text('\u795e\u79d8\u4e8b\u4ef6\u3002'));
+
+    // 同一份正文：缓存照用。
+    expect(await hits('v1'), 1);
+    // manifest 里的 sourceFingerprint 以前只写不比，正文在线更新后会一直沿用旧索引。
+    expect(await hits('v2'), 0);
   });
 }
 

@@ -82,6 +82,9 @@ class NovelNativeDocumentController extends ChangeNotifier
 
   static const Color _selectionColor = Color(0x553f7fd8);
 
+  /// 搜索命中词的临时高亮（与划线 / 选区颜色错开）。
+  static const Color _searchColor = Color(0x66ff8a65);
+
   static const Map<String, Color> _highlightColors = {
     'yellow': Color(0x66ffd54f),
     'green': Color(0x6681c784),
@@ -94,6 +97,7 @@ class NovelNativeDocumentController extends ChangeNotifier
   _TextAnchor? _selectionAnchor;
   _TextAnchor? _selectionFocus;
   Rect? _selectionRect;
+  NovelPageHighlight? _searchHighlight;
 
   /// 要画在正文下面的高亮：已保存的划线 + 正在拖的选区。
   List<NovelPageHighlight> get highlights => _highlights;
@@ -295,13 +299,17 @@ class NovelNativeDocumentController extends ChangeNotifier
     final document = _document;
     final anchor = _selectionAnchor;
     final focus = _selectionFocus ?? _selectionAnchor;
+    final search = _searchHighlight;
     if (document == null || anchor == null || focus == null) {
-      _highlights = _annotationHighlights;
+      _highlights = search == null
+          ? _annotationHighlights
+          : List.unmodifiable([..._annotationHighlights, search]);
       return;
     }
     final (start, end) = _orderedSelection(anchor, focus);
     _highlights = List.unmodifiable([
       ..._annotationHighlights,
+      if (search != null) search,
       ..._highlightsBetween(
         document,
         start.blockIndex,
@@ -687,6 +695,7 @@ class NovelNativeDocumentController extends ChangeNotifier
     _selectionAnchor = null;
     _selectionFocus = null;
     _selectionRect = null;
+    _searchHighlight = null;
     _rebuildAnnotationHighlights();
     _rebuildHighlights();
     _locator = NovelLocator(chapterId: chapterId);
@@ -911,14 +920,33 @@ class NovelNativeDocumentController extends ChangeNotifier
     _selectionAnchor = null;
     _selectionFocus = null;
     _selectionRect = null;
+    _searchHighlight = null;
     _rebuildHighlights();
     onSelectionChanged?.call(null);
     notifyListeners();
   }
 
   @override
-  Future<void> showSearchResult(NovelLocator locator) =>
-      restoreLocator(locator);
+  Future<void> showSearchResult(NovelLocator locator) async {
+    await restoreLocator(locator);
+    // 打开搜索结果以前只是 restoreLocator，命中词在满屏正文里没任何标记。
+    _searchHighlight = _highlightForQuote(locator, _searchColor);
+    _rebuildHighlights();
+    notifyListeners();
+  }
+
+  NovelPageHighlight? _highlightForQuote(NovelLocator locator, Color color) {
+    final blockId = locator.blockId;
+    final quote = locator.quote;
+    if (blockId == null || quote == null || quote.isEmpty) return null;
+    final start = locator.charOffset ?? 0;
+    return NovelPageHighlight(
+      blockId: blockId,
+      start: start,
+      end: start + quote.length,
+      color: color,
+    );
+  }
 
   @override
   Future<bool> nextPage() async {

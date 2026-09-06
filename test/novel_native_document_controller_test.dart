@@ -684,6 +684,30 @@ void main() {
 
       expect(marked, isNot(plain));
     });
+
+    testWidgets('opening a search result highlights the matched word',
+        (tester) async {
+      final controller = await open();
+      addTearDown(controller.dispose);
+      final blockId =
+          controller.pagination!.pages.first.fragments.first.blockId;
+
+      await controller.showSearchResult(NovelLocator(
+        chapterId: 'chapter-1',
+        blockId: blockId,
+        charOffset: 3,
+        quote: '\u9009\u8bcd',
+      ));
+
+      // 以前打开搜索结果只是 restoreLocator，命中词在正文里没任何标记。
+      expect(controller.highlights, hasLength(1));
+      expect(controller.highlights.single.blockId, blockId);
+      expect(controller.highlights.single.start, 3);
+      expect(controller.highlights.single.end, 5);
+
+      await controller.clearSelection();
+      expect(controller.highlights, isEmpty);
+    });
   });
 }
 
