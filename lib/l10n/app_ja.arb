@@ -816,6 +816,7 @@
   "novel_errorEpubResourceEscape": "EPUB のリソースが専用フォルダーの外を指しています",
   "novel_errorEpubDrm": "この EPUB は DRM で保護されているため取り込めません",
   "novel_errorDeleteOutsideRoot": "アプリの小説フォルダー外は削除しません",
+  "novel_openOnlineDetail": "オンラインの目次を開く",
   "libraryUnifiedHistory": "履歴",
   "libraryMangaFavorites": "漫画のお気に入り",
   "libraryNovelFavorites": "小説のお気に入り",

@@ -816,6 +816,7 @@
   "novel_errorEpubResourceEscape": "The EPUB resource points outside the private folder",
   "novel_errorEpubDrm": "This EPUB is DRM protected and cannot be imported",
   "novel_errorDeleteOutsideRoot": "Refusing to delete outside the app's novel folder",
+  "novel_openOnlineDetail": "Open the online chapter list",
   "libraryUnifiedHistory": "History",
   "libraryMangaFavorites": "Manga favorites",
   "libraryNovelFavorites": "Novel favorites",

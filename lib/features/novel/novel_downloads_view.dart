@@ -168,23 +168,30 @@ class NovelDownloadsView extends StatelessWidget {
         break;
       }
     }
+    // 下载页点开的是「已经下好的东西」:有离线章节就先进离线目录 —— 源还装着
+    // 也一样,不然没网时点自己下过的书只会卡在一个连不上的详情页。想看新章节
+    // 再从离线目录跳在线详情。
+    if (group.completed.isNotEmpty) {
+      await pushRoute(context, MaterialPageRoute<void>(
+        builder: (_) => _OfflineNovelPage(
+          store: store,
+          group: group,
+          onlineSource: current,
+        ),
+      ));
+      return;
+    }
     if (current != null) {
       await pushRoute(context, MaterialPageRoute<void>(
         builder: (_) => NovelDetailPage(meta: current!, novel: group.novel),
       ));
       return;
     }
-    if (group.completed.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.novel_sourceUnavailableNoOffline),
-        ),
-      );
-      return;
-    }
-    await pushRoute(context, MaterialPageRoute<void>(
-      builder: (_) => _OfflineNovelPage(store: store, group: group),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.l10n.novel_sourceUnavailableNoOffline),
+      ),
+    );
   }
 
   Future<void> _confirmDelete(
@@ -221,10 +228,17 @@ class NovelDownloadsView extends StatelessWidget {
 }
 
 class _OfflineNovelPage extends StatelessWidget {
-  const _OfflineNovelPage({required this.store, required this.group});
+  const _OfflineNovelPage({
+    required this.store,
+    required this.group,
+    this.onlineSource,
+  });
 
   final NovelDownloadStore store;
   final _NovelDownloadGroup group;
+
+  /// 源还装着的话,给一个跳回在线目录的出口(找新章节用)。
+  final SourceMeta? onlineSource;
 
   @override
   Widget build(BuildContext context) {
@@ -234,8 +248,23 @@ class _OfflineNovelPage extends StatelessWidget {
         if (left != null && right != null) return left.compareTo(right);
         return a.completedAt.compareTo(b.completedAt);
       });
+    final online = onlineSource;
     return Scaffold(
-      appBar: AppBar(title: Text(group.novel.title)),
+      appBar: AppBar(
+        title: Text(group.novel.title),
+        actions: [
+          if (online != null)
+            IconButton(
+              key: const Key('novel-offline-open-online'),
+              tooltip: context.l10n.novel_openOnlineDetail,
+              onPressed: () => pushRoute(context, MaterialPageRoute<void>(
+                builder: (_) =>
+                    NovelDetailPage(meta: online, novel: group.novel),
+              )),
+              icon: const Icon(Icons.cloud_outlined),
+            ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: records.length,
         itemBuilder: (context, index) {
