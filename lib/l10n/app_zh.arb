@@ -653,6 +653,7 @@
     }
   },
   "srcmgmt_healthFail": "不可用 · 点圆点看详情",
+  "srcmgmt_healthScriptStuck": "脚本卡死 · 已停用该源",
   "srcmgmt_healthChecking": "检测中…（联网）",
   "srcmgmt_healthUnknown": "未检测",
   "srcmgmt_checkLogTitle": "{name} · 检测日志",

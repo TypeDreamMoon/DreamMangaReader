@@ -359,6 +359,7 @@
   "srcmgmt_healthOk": "OK · {count, plural, =1{1 title} other{{count} titles}} · {ms}ms",
   "srcmgmt_healthEmpty": "Returned 0 (throttled/broken?) · {ms}ms",
   "srcmgmt_healthFail": "Unavailable · tap the dot for details",
+  "srcmgmt_healthScriptStuck": "Script hung · source disabled",
   "srcmgmt_healthChecking": "Checking… (online)",
   "srcmgmt_healthUnknown": "Not checked",
   "srcmgmt_checkLogTitle": "{name} · Health log",

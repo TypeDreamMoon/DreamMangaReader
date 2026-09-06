@@ -212,7 +212,10 @@ class _SourceManagementPageState extends State<SourceManagementPage> {
       case SourceHealthStatus.empty:
         return context.l10n.srcmgmt_healthEmpty(r.elapsedMs);
       case SourceHealthStatus.fail:
-        return context.l10n.srcmgmt_healthFail;
+        // 脚本自己卡死和「站点连不上」是两回事:重试没用,得换/修脚本。
+        return r.failure == SourceHealthFailure.scriptStuck
+            ? context.l10n.srcmgmt_healthScriptStuck
+            : context.l10n.srcmgmt_healthFail;
       case SourceHealthStatus.checking:
         return context.l10n.srcmgmt_healthChecking;
       case SourceHealthStatus.unknown:

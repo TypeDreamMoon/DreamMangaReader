@@ -359,6 +359,7 @@
   "srcmgmt_healthOk": "正常 · {count} 部 · {ms}ms",
   "srcmgmt_healthEmpty": "回傳 0 部(疑似限流/失效) · {ms}ms",
   "srcmgmt_healthFail": "無法使用 · 點圓點看詳情",
+  "srcmgmt_healthScriptStuck": "腳本卡死 · 已停用該來源",
   "srcmgmt_healthChecking": "檢測中…(連網)",
   "srcmgmt_healthUnknown": "未檢測",
   "srcmgmt_checkLogTitle": "{name} · 檢測日誌",

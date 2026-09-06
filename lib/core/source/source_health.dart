@@ -1,5 +1,6 @@
 import 'source.dart';
 import '../novel/novel_source.dart';
+import '../script/js_engine.dart';
 import 'source_registry.dart';
 
 typedef MangaHealthSourceBuilder = MangaSource Function(SourceMeta);
@@ -37,15 +38,28 @@ enum SourceHealthStatus {
   fail, // 失败(网络 / 解析异常)
 }
 
+/// 检测失败的原因分类。核心层只给码,文案由 UI 层按 l10n 映射。
+enum SourceHealthFailure {
+  /// 脚本同步执行吃满了预算(死循环 / 退化正则),引擎已被熔断。
+  /// 这类失败**不是网络问题**,重试也没用,得换/修脚本。
+  scriptStuck,
+
+  /// 其它:网络、解析、契约不符…
+  other,
+}
+
 /// 一次可用性检测的结果:状态 + 供弹窗展示的日志。
 class SourceHealthResult {
   const SourceHealthResult(this.status, this.log,
-      {this.elapsedMs = 0, this.count});
+      {this.elapsedMs = 0, this.count, this.failure});
 
   final SourceHealthStatus status;
   final String log;
   final int elapsedMs;
   final int? count; // 发现到的条目数(成功时)
+
+  /// 仅在 [status] 为 fail 时有值。
+  final SourceHealthFailure? failure;
 
   static const unknown = SourceHealthResult(SourceHealthStatus.unknown, '未检测');
   static const checking =
@@ -54,6 +68,10 @@ class SourceHealthResult {
 
 /// 联网检测一个源的可用性:按内容类型构建源 → 跑发现接口(带超时)→ 归纳状态 + 生成日志。
 /// 纯诊断,不改任何状态;检测结束会释放源(JS 引擎)。
+///
+/// 注意 [timeout] 只管得住**异步**部分(网络):脚本的同步求值一旦跑起来就没人能打断它,
+/// 那条线由 [JsEngine] 自己的执行预算兜底(超预算抛 [JsExecutionOverrun],
+/// 在这里归为 [SourceHealthFailure.scriptStuck])。
 Future<SourceHealthResult> checkSourceHealth(
   SourceMeta meta, {
   Duration timeout = const Duration(seconds: 25),
@@ -119,12 +137,20 @@ Future<SourceHealthResult> checkSourceHealth(
         elapsedMs: sw.elapsedMilliseconds, count: 0);
   } catch (e) {
     sw.stop();
+    // 脚本把 isolate 占满了预算(死循环 / 退化正则):不是网络问题,单独归一类,
+    // 让 UI 说清楚「换/修脚本」而不是让用户一遍遍重试。
+    final stuck = e is JsExecutionOverrun;
     b
       ..writeln('耗时:${sw.elapsedMilliseconds} ms')
       ..writeln('结果:✗ 失败')
       ..writeln('$e');
-    return SourceHealthResult(SourceHealthStatus.fail, b.toString().trimRight(),
-        elapsedMs: sw.elapsedMilliseconds);
+    return SourceHealthResult(
+      SourceHealthStatus.fail,
+      b.toString().trimRight(),
+      elapsedMs: sw.elapsedMilliseconds,
+      failure:
+          stuck ? SourceHealthFailure.scriptStuck : SourceHealthFailure.other,
+    );
   } finally {
     dispose?.call();
   }

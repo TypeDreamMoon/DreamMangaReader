@@ -359,6 +359,7 @@
   "srcmgmt_healthOk": "正常 · {count} 作品 · {ms}ms",
   "srcmgmt_healthEmpty": "取得 0 件(制限/無効の疑い) · {ms}ms",
   "srcmgmt_healthFail": "利用不可 · ドットをタップで詳細",
+  "srcmgmt_healthScriptStuck": "スクリプトが停止 · このソースを無効化",
   "srcmgmt_healthChecking": "確認中…(通信)",
   "srcmgmt_healthUnknown": "未確認",
   "srcmgmt_checkLogTitle": "{name} · 診断ログ",
