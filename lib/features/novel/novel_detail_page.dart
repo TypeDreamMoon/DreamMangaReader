@@ -232,8 +232,7 @@ class _NovelDetailPageState extends State<NovelDetailPage>
   }
 
   void _openChapter(int index, {bool resume = false}) {
-    final source = _source;
-    if (source == null) return;
+    if (_source == null) return;
     final meta = _meta;
     final novel = _novel;
     final chapters = _chapters;
@@ -259,7 +258,12 @@ class _NovelDetailPageState extends State<NovelDetailPage>
       );
     }
 
-    pushRoute(context, MaterialPageRoute<void>(
+    // 阅读器拿自己的 source:详情页那份是给目录用的,换源(或详情页自己被
+    // 收掉)时会连着 dispose,已经打开的阅读器不能跟着一起废掉 —— 翻下一章
+    // 就抛在这上面。句柄跟着路由走,阅读器一关就释放;路由没推成(连点保护)
+    // 时 pushRoute 直接返回已完成的 future,同样立刻释放。
+    final readerSource = widget.sourceBuilder(meta);
+    unawaited(pushRoute(context, MaterialPageRoute<void>(
       builder: (_) => NovelReaderPage(
         novel: novel,
         chapters: chapters,
@@ -272,10 +276,14 @@ class _NovelDetailPageState extends State<NovelDetailPage>
           if (cached != null) {
             return cached;
           }
-          return source.getNovelDocument(novel.id, chapter.id);
+          return readerSource.getNovelDocument(novel.id, chapter.id);
         },
       ),
-    ));
+    )).whenComplete(() {
+      try {
+        readerSource.dispose();
+      } catch (_) {}
+    }));
   }
 
   String _downloadTaskId(NovelChapter chapter) => contentDownloadTaskId(
