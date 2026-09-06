@@ -241,6 +241,43 @@ void main() {
     store.dispose();
   });
 
+  test('failures survive a restart and enqueue re-queues them', () async {
+    final store = makeStore();
+    await store.load();
+    source.error = Exception('network');
+
+    store.enqueue(meta, novel, chapter);
+    await store.idle;
+    expect(store.failures, hasLength(1));
+    store.dispose();
+
+    // 重启:失败记录以前全丢,章节既看不到也重试不了。
+    source = _FakeNovelSource();
+    final restored = makeStore();
+    await restored.load();
+
+    expect(restored.failures, hasLength(1));
+    final failure = restored.failures.single;
+    expect(failure.source.id, 'source');
+    expect(failure.chapter.id, 'chapter');
+    expect(failure.message, contains('network'));
+    expect(restored.failureOf('source', 'novel', 'chapter'), isNotNull);
+
+    // 章节列表里的重试图标直接走 enqueue —— 它不能再撞见失败记录就装死。
+    restored.enqueue(meta, novel, chapter);
+    await restored.idle;
+
+    expect(restored.isDownloaded('source', 'novel', 'chapter'), isTrue);
+    expect(restored.failures, isEmpty);
+    restored.dispose();
+
+    source = _FakeNovelSource();
+    final reloaded = makeStore();
+    await reloaded.load();
+    expect(reloaded.failures, isEmpty);
+    reloaded.dispose();
+  });
+
   test('delete novel removes its records and complete cache', () async {
     final store = makeStore();
     await store.load();

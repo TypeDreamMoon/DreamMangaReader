@@ -93,6 +93,24 @@ class NovelDownloadFailure {
   final int failedAt;
 
   String get message => error.toString();
+
+  Map<String, Object?> toJson() => {
+        'source': _sourceToJson(source),
+        'novel': _novelToJson(novel),
+        'chapter': _chapterToJson(chapter),
+        'error': message,
+        'failedAt': failedAt,
+      };
+
+  factory NovelDownloadFailure.fromJson(Map<String, dynamic> json) {
+    return NovelDownloadFailure(
+      source: _sourceFromJson(_requiredMap(json, 'source')),
+      novel: _novelFromJson(_requiredMap(json, 'novel')),
+      chapter: _chapterFromJson(_requiredMap(json, 'chapter')),
+      error: json['error'] as String? ?? '',
+      failedAt: (json['failedAt'] as num).toInt(),
+    );
+  }
 }
 
 class NovelDownloadActivity {
@@ -135,6 +153,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
         _cacheFactory = cacheFactory ?? _defaultCacheFactory;
 
   static const _indexKey = 'novel.downloads.v1';
+  static const _failuresKey = 'novel.downloads.failures.v1';
 
   /// 章节索引落盘节流:敲到这么多章、或者离上次写盘超过这么久,才真写。
   static const Duration _persistInterval = Duration(seconds: 2);
@@ -216,7 +235,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     _notify();
     try {
       await _download(job, context: context);
-      _failures.remove(job.key);
+      if (_failures.remove(job.key) != null) await _persistFailures();
     } catch (error) {
       if (!context.cancellation.isCancelled) {
         _failures[job.key] = NovelDownloadFailure(
@@ -226,6 +245,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
           error: error,
           failedAt: DateTime.now().millisecondsSinceEpoch,
         );
+        await _persistFailures();
       }
       rethrow;
     } finally {
@@ -297,13 +317,56 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
         repairIndex = true;
       }
     }
+    // 失败的章节也要跨重启活下来 —— 记录丢了,用户既看不到哪一章塌了,
+    // 也没有可以重试的入口。
+    final failures = <String, NovelDownloadFailure>{};
+    var repairFailures = false;
+    final rawFailures = prefs.getString(_failuresKey);
+    if (rawFailures != null) {
+      try {
+        final decoded = jsonDecode(rawFailures);
+        if (decoded is! List) {
+          repairFailures = true;
+        } else {
+          for (final value in decoded) {
+            if (value is! Map) {
+              repairFailures = true;
+              continue;
+            }
+            try {
+              final failure = NovelDownloadFailure.fromJson(
+                value.cast<String, dynamic>(),
+              );
+              final key = _chapterKey(
+                failure.source.id,
+                failure.novel.id,
+                failure.chapter.id,
+              );
+              if (loaded.containsKey(key) || failures.containsKey(key)) {
+                repairFailures = true;
+                continue;
+              }
+              failures[key] = failure;
+            } catch (_) {
+              repairFailures = true;
+            }
+          }
+        }
+      } catch (_) {
+        repairFailures = true;
+      }
+    }
     if (_disposed) return;
     _prefs = prefs;
     _cache = cache;
     _completed
       ..clear()
       ..addAll(loaded);
+    _failures
+      ..clear()
+      ..addAll(failures);
     if (repairIndex) await _flush();
+    if (repairFailures) await _persistFailures();
     _notify();
   }
 
@@ -333,11 +396,10 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   void enqueue(SourceMeta source, Novel novel, NovelChapter chapter) {
     _ensureReady();
     final key = _chapterKey(source.id, novel.id, chapter.id);
-    if (_completed.containsKey(key) ||
-        _progress.containsKey(key) ||
-        _failures.containsKey(key)) {
-      return;
-    }
+    if (_completed.containsKey(key) || _progress.containsKey(key)) return;
+    // 失败过的章节要能重新排队:以前碰上失败记录就静默 return,章节列表里的
+    // 重试按钮点多少下都没反应。
+    if (_failures.remove(key) != null) unawaited(_persistFailures());
     final generation = (_generations[key] ?? 0) + 1;
     _generations[key] = generation;
     final job = _NovelDownloadJob(source, novel, chapter, generation);
@@ -349,10 +411,8 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   }
 
   void retry(String sourceId, String novelId, String chapterId) {
-    final key = _chapterKey(sourceId, novelId, chapterId);
-    final failure = _failures.remove(key);
+    final failure = _failures[_chapterKey(sourceId, novelId, chapterId)];
     if (failure == null) return;
-    _notify();
     enqueue(failure.source, failure.novel, failure.chapter);
   }
 
@@ -363,6 +423,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   ) async {
     await _deleteChapter(sourceId, novelId, chapterId);
     await _flush();
+    await _persistFailures();
     _notify();
   }
 
@@ -387,6 +448,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       await _deleteChapter(identity.$1, identity.$2, identity.$3);
     }
     await _flush();
+    await _persistFailures();
     _notify();
   }
 
@@ -434,7 +496,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   Future<void> _run(_NovelDownloadJob job) async {
     try {
       await _download(job);
-      _failures.remove(job.key);
+      if (_failures.remove(job.key) != null) await _persistFailures();
     } catch (error) {
       if (!_isCancelled(job)) {
         _failures[job.key] = NovelDownloadFailure(
@@ -444,6 +506,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
           error: error,
           failedAt: DateTime.now().millisecondsSinceEpoch,
         );
+        await _persistFailures();
       }
     } finally {
       if (_generations[job.key] == job.generation) {
@@ -576,6 +639,16 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       jsonEncode(_completed.values.map((value) => value.toJson()).toList()),
     );
     if (!stored) throw StateError('Failed to persist novel download index');
+  }
+
+  /// 失败清单是账面记录,写不进去也不该回滚一次成功的下载。
+  Future<void> _persistFailures() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    await prefs.setString(
+      _failuresKey,
+      jsonEncode(_failures.values.map((value) => value.toJson()).toList()),
+    );
   }
 
   bool _isCancelled(_NovelDownloadJob job) =>
