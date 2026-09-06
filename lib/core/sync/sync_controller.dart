@@ -247,16 +247,25 @@ class SyncController extends ChangeNotifier {
   /// 首次变化后 20 秒——保证检查照样跑,阅读中进度照样按节流间隔上传。
   static const _upMaxWaitMs = 20000;
 
-  /// 高频类别的最小上传间隔:阅读进度逐页更新,阅读中最快每 2 分钟传一次;
-  /// 设置类(亮度/缩放等滑条逐 tick 通知)最快每 1 分钟——每次上传都是
-  /// 整包 pull+push(可能带 3MB 背景图),不能跟着滑条跑。停止操作后由
-  /// 去抖/节流补查兜底把最终值传上去。其余类别变化即传。
-  static const _upMinGapMs = {
-    SyncCategory.history: 120000,
-    SyncCategory.readerNotes: 60000,
-    SyncCategory.readerSettings: 60000,
-    SyncCategory.uiSettings: 60000,
-    SyncCategory.appSettings: 60000,
+  /// 高频类别的最小上传间隔。这些类别会被「用着用着就变」的动作反复弄脏
+  /// ——阅读逐页推进进度、亮度/缩放滑条逐 tick 通知、每搜一次就多一条搜索历史——
+  /// 而每次自动上传都是一整包 pull + push。之前 1~2 分钟一次太密,现在统一压到
+  /// [autoUploadMinGap]。停手之后由去抖/节流补查兜底把最终值传上去,不会漏。
+  ///
+  /// 不在表里的类别(收藏、源开关、源仓库)是明确的用户动作、频率很低,
+  /// 仍然「变了就传」——手机上收藏一本,桌面端马上能看见。
+  static const autoUploadMinGap = Duration(minutes: 5);
+
+  static final _upMinGapMs = {
+    for (final c in const [
+      SyncCategory.history,
+      SyncCategory.readerNotes,
+      SyncCategory.searchHistory,
+      SyncCategory.readerSettings,
+      SyncCategory.uiSettings,
+      SyncCategory.appSettings,
+    ])
+      c: autoUploadMinGap.inMilliseconds,
   };
 
   /// app 启动(书架读档完成后)挂上变化监听。基线优先用上次持久化的(能接着传

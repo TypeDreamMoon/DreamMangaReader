@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../app/library_store.dart';
@@ -263,7 +264,7 @@ class SyncData {
   static List<String> _strList(Object? v) =>
       (v is List) ? v.map((e) => e.toString()).toList() : <String>[];
 
-  /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图内容与版本标记)。
+  /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图相关与版本标记)。
   /// 公开:变化侦测(自动上传的类别签名)也按同一套归类,别再抄一份。
   static bool isSettingsKey(String k) =>
       k != 'v' &&
@@ -271,8 +272,10 @@ class SyncData {
       k != 'history' &&
       k != 'workProgress' && // 作品级共享进度归「进度」类别,不算设置
       k != 'disabledSources' &&
-      k != 'bgImageData' &&
+      k != 'bgImage' && // 本机文件路径,换台机器没有意义(只传指纹,见 _bgImageFingerprint)
+      k != 'bgImageData' && // 旧版嵌进来的 base64 图片,现已不再上传
       k != 'bgImageExt' &&
+      k != 'bgImageHash' &&
       // 墓碑跟着自己那一类走,不是设置——漏掉的话 apply 会把它当成一条设置
       // 塞进 LibraryStore。
       !_libraryTombstoneKeys.contains(k);
@@ -319,7 +322,6 @@ class SyncData {
     'controlRadius',
     'uiScale',
     'uiFont',
-    'bgImage',
     'bgBlur',
     'bgTintColor',
     'bgTintAlpha',
@@ -347,41 +349,50 @@ class SyncData {
     SyncCategory.appSettings,
   ];
 
-  /// 背景图:设置里只存本地路径,跨设备无意义;上传时把图片内容(base64)也带上,
-  /// 有 3MB 上限(免撑爆 blob;更大就只同步路径,目标机自行处理)。
-  static void _embedBgImage(Map<String, dynamic> outLib, Object? bgPath) {
-    final p = (bgPath is String) ? bgPath.trim() : '';
-    if (p.isEmpty) return;
-    try {
-      final f = File(p);
-      if (!f.existsSync()) return;
-      final len = f.lengthSync();
-      if (len <= 0 || len > 3 * 1024 * 1024) return;
-      outLib['bgImageData'] = base64Encode(f.readAsBytesSync());
-      final dot = p.lastIndexOf('.');
-      outLib['bgImageExt'] = (dot >= 0 && p.length - dot <= 6)
-          ? p.substring(dot + 1).toLowerCase()
-          : 'png';
-    } catch (_) {}
+  /// 背景图**只传指纹**(sha256),不传图片本身。
+  ///
+  /// 旧实现把整张图 base64 塞进 blob(上限 3MB),勾了「界面与外观」的用户每次
+  /// 自动上传都在推几 MB;README 也明说过备份/同步不传二进制。现在只写一个
+  /// 64 字符的哈希:对端据此知道「是不是同一张图」,图片本身留在各自机器上。
+  static void _bgImageFingerprint(Map<String, dynamic> outLib, Object? bgPath) {
+    outLib['bgImageHash'] = _fileHash(bgPath);
   }
 
-  /// 应用背景图:带了内容就落到本机再指过去;没带则清掉本机不存在的悬空路径(免坏图)。
+  /// 文件的 sha256(十六进制);路径为空/文件不在/读不动都返回空串。
+  static String _fileHash(Object? path) {
+    final p = (path is String) ? path.trim() : '';
+    if (p.isEmpty) return '';
+    try {
+      final f = File(p);
+      if (!f.existsSync()) return '';
+      return sha256.convert(f.readAsBytesSync()).toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 应用背景图。**不会**把对端的图片路径或图片内容搬过来:
+  /// - 指纹一致 → 两边就是同一张图,什么都不用做;
+  /// - 指纹不同/对端没图 → 本机的图照旧,只清掉指向已不存在文件的悬空路径。
+  ///
+  /// 仍读一次旧版的 `bgImageData`,让升级期间的混版设备(对端还在传 base64)
+  /// 不至于突然失去这个功能;本机自己永远不再写这个键。
   static Future<void> _applyBgImage(
       Map<String, dynamic> blib, LibraryStore lib) async {
     try {
-      final data = blib['bgImageData'] as String?;
-      if (data != null && data.isNotEmpty) {
+      final legacy = blib['bgImageData'] as String?;
+      if (legacy != null && legacy.isNotEmpty) {
         final ext = (blib['bgImageExt'] as String?)
             ?.replaceAll(RegExp(r'[^a-z0-9]'), '');
         final dir = await getApplicationSupportDirectory();
         final file = File(
             '${dir.path}/synced_bg.${ext == null || ext.isEmpty ? 'png' : ext}');
-        await file.writeAsBytes(base64Decode(data));
+        await file.writeAsBytes(base64Decode(legacy));
         lib.bgImage = file.path;
-      } else {
-        final cur = lib.bgImage.trim();
-        if (cur.isNotEmpty && !File(cur).existsSync()) lib.bgImage = '';
+        return;
       }
+      final cur = lib.bgImage.trim();
+      if (cur.isNotEmpty && !File(cur).existsSync()) lib.bgImage = '';
     } catch (_) {}
   }
 
@@ -439,12 +450,11 @@ class SyncData {
       if (cat != null && categories.contains(cat)) outLib[e.key] = e.value;
     }
     if (categories.contains(SyncCategory.uiSettings)) {
-      // 先放墓碑再嵌图:本机没有可嵌的背景图(没设/超 3MB)时,空串会经
-      // overlay/LWW 盖掉云端残留的旧 bgImageData——否则清掉的背景图会在
-      // 别的设备上复活。_applyBgImage 对空串按「无图」处理。
+      // 墓碑:空串会经 overlay/LWW 盖掉云端残留的旧 base64 图,
+      // 否则老版本传上去的几 MB 会一直赖在 blob 里。
       outLib['bgImageData'] = '';
       outLib['bgImageExt'] = '';
-      _embedBgImage(outLib, full['bgImage']); // 背景图内容随「界面与外观」走
+      _bgImageFingerprint(outLib, full['bgImage']); // 只带指纹,不带图
     }
     final allDisabled = _strList(full['disabledSources']);
     if (categories.contains(SyncCategory.mangaSources)) {
