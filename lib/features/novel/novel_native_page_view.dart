@@ -243,44 +243,101 @@ class _NovelNativeScrollViewState extends State<NovelNativeScrollView> {
       color: widget.canvasColor,
       child: NotificationListener<ScrollNotification>(
         onNotification: _onNotification,
-        child: SingleChildScrollView(
-          key: const Key('novel-native-scroll-view'),
-          controller: widget.controller.scrollController,
-          physics: const ClampingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: math.max(0, leaf.left),
-            ),
-            child: ColoredBox(
-              key: const Key('novel-page-paper-color'),
-              color: widget.pageColor,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final slice in slices)
-                    RepaintBoundary(
-                      child: SizedBox(
-                        width: leaf.width,
-                        height: slice.height,
-                        child: NovelNativePageCanvas(
-                          page: slice.page,
-                          pageColor: widget.pageColor,
-                          textColor: widget.textColor,
-                          showPageNumber: false,
-                          innerEdge: null,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: math.max(0, leaf.left)),
+          child: ColoredBox(
+            key: const Key('novel-page-paper-color'),
+            color: widget.pageColor,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final bands = novelScrollBands(
+                  slices,
+                  bandExtent: constraints.hasBoundedHeight
+                      ? constraints.maxHeight
+                      : novelScrollFallbackBandExtent,
+                );
+                return ListView.builder(
+                  key: const Key('novel-native-scroll-view'),
+                  controller: widget.controller.scrollController,
+                  physics: const ClampingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  itemCount: bands.length,
+                  // 带高就是真实高度，相加仍然等于切片总高。定位用的是绝对偏移
+                  // (NovelScrollSlice.top)，不能交给 ListView 按平均子高去估算。
+                  itemExtentBuilder: (index, _) =>
+                      index < bands.length ? bands[index].height : 0,
+                  itemBuilder: (context, index) {
+                    final band = bands[index];
+                    // 用 NovelNativePageCanvas 而不是裸 CustomPaint：TextPainter
+                    // 缓存挂在这一带自己的 State 上，带被 ListView 回收时一起释放。
+                    return NovelNativePageCanvas(
+                      page: band.page,
+                      pageColor: widget.pageColor,
+                      textColor: widget.textColor,
+                      showPageNumber: false,
+                      innerEdge: null,
+                      bandTop: band.top,
+                    );
+                  },
+                );
+              },
             ),
           ),
         ),
       ),
     );
   }
+}
+
+/// 拿不到有界高度时的带高。
+const double novelScrollFallbackBandExtent = 720;
+
+/// 一屏高的正文带：属于 [page]，从页内 [top] 开始，高 [height]。
+class NovelScrollBand {
+  const NovelScrollBand({
+    required this.page,
+    required this.top,
+    required this.height,
+  });
+
+  final NovelPageLayout page;
+  final double top;
+  final double height;
+}
+
+/// 把排版切片再切成一屏高的带。
+///
+/// 滚动模式的排版是「整章一页」，切片通常就一个，高度是整章的高度。老实现
+/// 把它一次性放进 SingleChildScrollView + Column：一个几万像素高的 RepaintBoundary，
+/// 每帧把整章所有 fragment 重画一遍 —— 大章节直接爆内存、掉帧。切成带以后，
+/// [ListView] 只构建可见的那几带，painter 也只画落在带内的 fragment，而滚动偏移
+/// 与 locator 语义一点没变。
+///
+/// [bandExtent] 只是上限：一个切片内的带高均分到一样，而不是“前面满格、最后一带留
+/// 零头”。因为 `SliverVariedExtentList` 估算可滚总长时把子项当成等高，留了零头就会把
+/// maxScrollExtent 多算一截 —— 滚动到底会多出一块空白，进度也永远到不了 100%。
+List<NovelScrollBand> novelScrollBands(
+  List<NovelScrollSlice> slices, {
+  required double bandExtent,
+}) {
+  final extent = bandExtent.isFinite && bandExtent > 1
+      ? bandExtent
+      : novelScrollFallbackBandExtent;
+  final bands = <NovelScrollBand>[];
+  for (final slice in slices) {
+    if (slice.height <= 0) continue;
+    final count = math.max(1, (slice.height / extent).ceil());
+    final height = slice.height / count;
+    for (var index = 0; index < count; index++) {
+      bands.add(NovelScrollBand(
+        page: slice.page,
+        top: index * height,
+        height: height,
+      ));
+    }
+  }
+  return List.unmodifiable(bands);
 }
 
 /// 一页正文的画布。
@@ -296,6 +353,7 @@ class NovelNativePageCanvas extends StatefulWidget {
     required this.textColor,
     required this.showPageNumber,
     required this.innerEdge,
+    this.bandTop = 0,
   });
 
   final NovelPageLayout page;
@@ -303,6 +361,12 @@ class NovelNativePageCanvas extends StatefulWidget {
   final Color textColor;
   final bool showPageNumber;
   final Alignment? innerEdge;
+
+  /// 只画页内从 [bandTop] 起、高度为画布高度的那一段，坐标随之上移。
+  ///
+  /// 分页模式总是 0（一页就是一屏）；滚动模式把整章排成一页，靠它把一页拆成
+  /// 多带懒渲染。
+  final double bandTop;
 
   @override
   State<NovelNativePageCanvas> createState() => _NovelNativePageCanvasState();
@@ -326,6 +390,7 @@ class _NovelNativePageCanvasState extends State<NovelNativePageCanvas> {
         textColor: widget.textColor,
         showPageNumber: widget.showPageNumber,
         innerEdge: widget.innerEdge,
+        bandTop: widget.bandTop,
         textCache: _textCache,
       ),
     );
@@ -389,6 +454,7 @@ class NovelNativePagePainter extends CustomPainter {
     required this.textColor,
     required this.showPageNumber,
     required this.innerEdge,
+    this.bandTop = 0,
     this.textCache,
   });
 
@@ -398,13 +464,26 @@ class NovelNativePagePainter extends CustomPainter {
   final bool showPageNumber;
   final Alignment? innerEdge;
 
+  /// 只画页内从 [bandTop] 起、高度为画布高度的那一段，坐标随之上移。
+  ///
+  /// 分页模式总是 0（一页就是一屏）；滚动模式把整章排成一页，靠它把一页拆成
+  /// 多带懒渲染。
+  final double bandTop;
+
   /// 由 [NovelNativePageCanvas] 提供的页级缓存；为空时 painter 自建自释放。
   final NovelPageTextCache? textCache;
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = pageColor);
+    final visibleBottom = bandTop + size.height;
+    canvas.save();
+    canvas.translate(0, -bandTop);
     for (final fragment in page.fragments) {
+      if (fragment.offset.dy + fragment.height < bandTop ||
+          fragment.offset.dy > visibleBottom) {
+        continue;
+      }
       switch (fragment.blockKind) {
         case NovelRenderBlockKind.image:
           _paintImagePlaceholder(canvas, fragment);
@@ -416,6 +495,7 @@ class NovelNativePagePainter extends CustomPainter {
           _paintText(canvas, fragment);
       }
     }
+    canvas.restore();
     if (innerEdge != null) _paintInnerEdge(canvas, size);
     if (showPageNumber) _paintPageNumber(canvas, size);
   }
@@ -513,6 +593,8 @@ class NovelNativePagePainter extends CustomPainter {
         oldDelegate.pageColor != pageColor ||
         oldDelegate.textColor != textColor ||
         oldDelegate.showPageNumber != showPageNumber ||
-        oldDelegate.innerEdge != innerEdge;
+        oldDelegate.innerEdge != innerEdge ||
+        oldDelegate.bandTop != bandTop ||
+        oldDelegate.textCache != textCache;
   }
 }
