@@ -1188,6 +1188,15 @@
   },
   "detail_orderAsc": "正序",
   "detail_orderDesc": "倒序",
+  "detail_bangumiSearchHint": "输入条目名",
+  "detail_bangumiNoResults": "没有搜到相关条目",
+  "detail_bangumiNoResultsHint": "原文和译名都没搜到 · 换个关键词再试试",
+  "detail_bangumiViaTranslation": "原文没搜到,用译名「{name}」搜到",
+  "@detail_bangumiViaTranslation": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "set_preloadPages": "预加载后续页",
   "set_doublePage": "双页并排",
   "set_doublePageSub": "横屏翻页模式下左右并排显示两页",

@@ -549,6 +549,15 @@
   "fontpick_countN": "{n, plural, =1{1 font} other{{n} fonts}}",
   "detail_orderAsc": "Oldest first",
   "detail_orderDesc": "Newest first",
+  "detail_bangumiSearchHint": "Enter a title",
+  "detail_bangumiNoResults": "No matching entries",
+  "detail_bangumiNoResultsHint": "Nothing found for the original or translated title · try another keyword",
+  "detail_bangumiViaTranslation": "Nothing for the original title; found via the translation “{name}”",
+  "@detail_bangumiViaTranslation": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "set_preloadPages": "Preload pages",
   "set_doublePage": "Double page",
   "set_doublePageSub": "Show two pages side by side in landscape paged mode",

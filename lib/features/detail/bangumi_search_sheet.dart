@@ -85,7 +85,7 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
           style: TextStyle(color: p.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            hintText: '输入条目名',
+            hintText: context.l10n.detail_bangumiSearchHint,
             hintStyle: TextStyle(color: p.textMuted),
             suffixIcon: IconButton(
               tooltip: context.l10n.disc_searchTooltip,
@@ -112,10 +112,11 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
           children: [
             Icon(Icons.search_off_rounded, size: 40, color: p.textMuted),
             const SizedBox(height: 10),
-            Text('没有搜到相关条目',
+            Text(context.l10n.detail_bangumiNoResults,
                 style: TextStyle(color: p.textMuted, fontSize: 13)),
             const SizedBox(height: 4),
-            Text('原文和译名都没搜到 · 换个关键词再试试',
+            Text(context.l10n.detail_bangumiNoResultsHint,
+                textAlign: TextAlign.center,
                 style: TextStyle(color: p.textMuted, fontSize: 11.5)),
           ],
         ),
@@ -132,7 +133,8 @@ class _BangumiSearchSheetState extends State<BangumiSearchSheet> {
                 Icon(Icons.translate_rounded, size: 13, color: p.textMuted),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text('原文没搜到,用译名「$_viaTranslate」搜到',
+                  child: Text(
+                      context.l10n.detail_bangumiViaTranslation(_viaTranslate!),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: p.textMuted, fontSize: 11.5)),

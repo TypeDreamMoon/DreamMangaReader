@@ -7,6 +7,7 @@ import 'package:dream_manga_reader/core/downloads/download_executor.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/anime_downloads_view.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
+import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -51,6 +52,9 @@ void main() {
 
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('en'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: AnimeDownloadScope(
         store: store,
         child: const Scaffold(body: AnimeDownloadsView()),
@@ -59,6 +63,8 @@ void main() {
 
     expect(find.text('测试番剧'), findsOneWidget);
     expect(find.text('第一集'), findsOneWidget);
+    // 分集计数曾经写死成 '{n} 集',英文用户也看到中文。
+    expect(find.text('1 eps'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

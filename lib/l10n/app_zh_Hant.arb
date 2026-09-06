@@ -549,6 +549,15 @@
   "fontpick_countN": "{n} 個",
   "detail_orderAsc": "正序",
   "detail_orderDesc": "倒序",
+  "detail_bangumiSearchHint": "輸入條目名",
+  "detail_bangumiNoResults": "沒有搜到相關條目",
+  "detail_bangumiNoResultsHint": "原文和譯名都沒搜到 · 換個關鍵字再試試",
+  "detail_bangumiViaTranslation": "原文沒搜到,用譯名「{name}」搜到",
+  "@detail_bangumiViaTranslation": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "set_preloadPages": "預載後續頁",
   "set_doublePage": "雙頁並排",
   "set_doublePageSub": "橫向翻頁模式下左右並排顯示兩頁",

@@ -549,6 +549,15 @@
   "fontpick_countN": "{n} 件",
   "detail_orderAsc": "昇順",
   "detail_orderDesc": "降順",
+  "detail_bangumiSearchHint": "作品名を入力",
+  "detail_bangumiNoResults": "該当する作品が見つかりません",
+  "detail_bangumiNoResultsHint": "原題でも訳題でも見つかりません · 別のキーワードでお試しください",
+  "detail_bangumiViaTranslation": "原題では見つからず、訳題「{name}」で見つかりました",
+  "@detail_bangumiViaTranslation": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "set_preloadPages": "先読みページ数",
   "set_doublePage": "見開き表示",
   "set_doublePageSub": "横向きページめくり時に2ページを並べて表示",

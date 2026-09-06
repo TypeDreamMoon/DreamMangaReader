@@ -75,7 +75,7 @@ class _AnimeDownloadGroup extends StatelessWidget {
               ),
             ),
             Text(
-              '${ordered.length} 集',
+              context.l10n.anime_episodesN(ordered.length),
               style: TextStyle(color: p.textMuted, fontSize: 11.5),
             ),
           ],
