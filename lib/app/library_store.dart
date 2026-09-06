@@ -8,6 +8,7 @@ import '../core/l10n/app_locale.dart';
 import '../core/log/app_log.dart';
 import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
+import '../core/storage/secret_store.dart';
 import '../core/translate/translator.dart'
     show TranslateProvider, TranslateLang, LlmConfig, detectLang;
 import '../core/update/update_models.dart';
@@ -178,6 +179,9 @@ class WorkProgress {
 /// 页面 `LibraryScope.of(context)` 读写,notify 时依赖它的页面自动重建。
 /// 落盘走 SharedPreferences(Android + Windows 都支持,JSON 编码结构化数据)。
 class LibraryStore extends ChangeNotifier {
+  LibraryStore({SecretStore? secrets})
+      : _secrets = secrets ?? const FlutterSecretStore();
+
   static const _kFavorites = 'lib.favorites';
   static const _kHistory = 'lib.history';
   static const _kReaderMode = 'lib.readerMode';
@@ -235,7 +239,10 @@ class LibraryStore extends ChangeNotifier {
   static const _kTranslateOrder = 'lib.translateOrder'; // 服务商优先级(逗号分隔 name)
   static const _kTranslateTargets = 'lib.translateTargets'; // 各源语言的目标顺序(JSON)
   static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
-  static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
+  // 旧版把密钥明文写在 SharedPreferences 里;现在只当**迁移来源**用,读到即搬进 SecretStore 并删除。
+  static const _kLegacyTranslateLlmKey = 'lib.translateLlmKey';
+  // 大模型 API 密钥的安全存储键(与源登录 token 同一套 SecretStore,本机、不同步)。
+  static const _kTranslateLlmKeySecret = 'translate.llm.apiKey';
   static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
   static const _kWorkProgress = 'lib.workProgress'; // 作品级共享进度(跨源同名)
 
@@ -326,6 +333,7 @@ class LibraryStore extends ChangeNotifier {
   bool _loaded = false;
 
   SharedPreferences? _prefs;
+  final SecretStore _secrets;
   Timer? _persistHistoryTimer;
   Timer? _notifyTimer;
   bool _disposed = false;
@@ -602,11 +610,27 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  set translateLlmKey(String v) {
+  /// 写入大模型 API 密钥。**只进 SecretStore**(钥匙串 / keystore),永不落 SharedPreferences：
+  /// 明文 prefs 文件在 root / 备份导出里是可读的。写失败(设备无安全存储)就只留在内存里,
+  /// 本次会话仍可用,下次启动需重填——比悄悄退回明文安全。
+  Future<void> setTranslateLlmKey(String v) async {
     if (v == _translateLlmKey) return;
     _translateLlmKey = v;
-    _prefs?.setString(_kTranslateLlmKey, v);
     notifyListeners();
+    try {
+      if (v.isEmpty) {
+        await _secrets.delete(_kTranslateLlmKeySecret);
+      } else {
+        await writeVerifiedSecret(
+          secrets: _secrets,
+          key: _kTranslateLlmKeySecret,
+          value: v,
+        );
+      }
+      await _prefs?.remove(_kLegacyTranslateLlmKey);
+    } catch (_) {
+      // 见上:不回退明文。
+    }
   }
 
   set translateLlmModel(String v) {
@@ -809,7 +833,18 @@ class LibraryStore extends ChangeNotifier {
       );
       _translateTargets = _parseTargets(prefs.getString(_kTranslateTargets));
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
-      _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
+      // 单独 try:钥匙串不可用(某些 Android ROM / 无 keystore 的环境)不能连累其余设置。
+      try {
+        _translateLlmKey = await readMigratingSecret(
+              secrets: _secrets,
+              preferences: prefs,
+              secureKey: _kTranslateLlmKeySecret,
+              legacyKeys: const [_kLegacyTranslateLlmKey],
+            ) ??
+            '';
+      } catch (_) {
+        _translateLlmKey = '';
+      }
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
     } catch (e) {
       // 偏好损坏不致命:该读到的已经生效,剩下的留默认值继续。

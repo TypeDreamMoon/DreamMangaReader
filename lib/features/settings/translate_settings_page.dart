@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
@@ -336,7 +338,8 @@ class _TranslateSettingsPageState extends State<TranslateSettingsPage> {
               hint: context.l10n.trans_apiKeyHint,
               obscure: true,
               prefixIcon: Icon(Icons.key_rounded, size: 18, color: p.textMuted),
-              onChanged: (v) => lib.translateLlmKey = v.trim(),
+              // 密钥进钥匙串是异步的;这里只是逐字触发,不必等落盘。
+              onChanged: (v) => unawaited(lib.setTranslateLlmKey(v.trim())),
             ),
             const SizedBox(height: 10),
             AppTextField(
