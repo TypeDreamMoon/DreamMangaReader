@@ -38,6 +38,9 @@ void main() {
         preferences: await SharedPreferences.getInstance(),
         secrets: _MemorySecretStore(),
         cacheDirectory: cacheDirectory,
+        // 桌面回退会去读仓库根的 sources_local/。开发机上那里有十几个真源,
+        // 不挡住的话「缓存全坏 → 一个源都不剩」在本地永远是假的。
+        devDirectory: Directory('${cacheDirectory.path}/no-dev-sources'),
       );
 
   String manifest(List<String> ids) => jsonEncode({

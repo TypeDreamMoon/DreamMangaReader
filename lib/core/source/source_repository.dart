@@ -42,9 +42,11 @@ class SourceRepository {
     required SharedPreferences preferences,
     required SecretStore secrets,
     required Directory cacheDirectory,
+    Directory? devDirectory,
   }) =>
       SourceRepository._(preferences: preferences, secrets: secrets)
-        .._cacheDirectory = cacheDirectory;
+        .._cacheDirectory = cacheDirectory
+        .._devDirectory = devDirectory;
 
   static const _kUrl = 'sources.repoUrl';
   static const _kLocal = 'sources.localDir';
@@ -63,6 +65,10 @@ class SourceRepository {
   SharedPreferences? _preferences;
   final SecretStore _secrets;
   Directory? _cacheDirectory;
+
+  /// 桌面开发目录。默认是仓库根下的 `sources_local/`(见 [_resolve]);测试注入一个
+  /// 不存在的路径,免得跑在开发机上时把真实的本地源当成被测数据读进来。
+  Directory? _devDirectory;
 
   Future<SharedPreferences> _prefs() async =>
       _preferences ??= await SharedPreferences.getInstance();
@@ -161,7 +167,7 @@ class SourceRepository {
           repoStatus = '已从缓存加载 ${repo.length} 个源';
         } else if (!Platform.isAndroid && !Platform.isIOS) {
           // 桌面开发便利:仓库根下 sources_local/(已 gitignore)。
-          final dev = Directory('sources_local');
+          final dev = _devDirectory ?? Directory('sources_local');
           if (await File('${dev.path}/index.json').exists()) {
             repo = await _loadFromDir(dev);
             repoStatus = '已从开发目录加载 ${repo.length} 个源';
