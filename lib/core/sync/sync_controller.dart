@@ -15,6 +15,7 @@ import '../source/source_repository.dart';
 import 'hertz_backend.dart';
 import 'sync_backend.dart';
 import 'sync_data.dart';
+import 'sync_messages.dart';
 import 'webdav_backend.dart';
 
 /// 云同步控制器。两个可切换后端:
@@ -95,7 +96,9 @@ class SyncController extends ChangeNotifier {
 
   bool _syncing = false;
   bool get syncing => _syncing;
-  String status = '';
+
+  /// 最近一次同步动作的**结果码**(null = 还没动作过)。文案由设置页按语言渲染。
+  SyncNotice? status;
 
   IamAuth get auth => IamAuth.instance;
 
@@ -376,7 +379,7 @@ class SyncController extends ChangeNotifier {
       } catch (e) {
         // 失败退避 1 分钟(uploadNow 已记日志);之后本地变化/补查会自然重试。
         _upFailAt = DateTime.now().millisecondsSinceEpoch;
-        status = '自动上传失败:$e';
+        status = SyncNotice(SyncMessage.autoUploadFailed, detail: '$e');
         notifyListeners();
       }
     }
@@ -677,21 +680,21 @@ class SyncController extends ChangeNotifier {
       ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
       : WebDavBackend(baseUrl: url, username: username, password: password);
 
-  Future<(bool, String)> testConnection() => _backend().test();
+  Future<SyncTestResult> testConnection() => _backend().test();
 
   /// 双向同步一次。成功返回合并后条目概况;失败抛异常(带人话信息)。
-  Future<String> syncNow(
+  Future<SyncNotice> syncNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo,
   ) async {
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (syncCategories.isEmpty) {
+      throw SyncException.of(SyncMessage.noCategoriesChosen);
     }
-    if (syncCategories.isEmpty) throw Exception('至少选择一项要同步的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '同步中…';
+    status = const SyncNotice(SyncMessage.syncing);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始同步 · ${_catLabel(syncCategories)}');
     final sw = Stopwatch()..start();
@@ -772,9 +775,12 @@ class SyncController extends ChangeNotifier {
       final hisN =
           (((merged['library'] as Map)['history'] as Map?)?.length ?? 0) +
               ((mergedNovels?['history'] as Map?)?.length ?? 0);
-      status = '已同步 · 收藏 $favN · 进度 $hisN';
-      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done =
+          SyncNotice(SyncMessage.synced, favorites: favN, history: hisN);
+      status = done;
+      AppLog.i.success(LogCat.sync,
+          '已同步 · 收藏 $favN · 进度 $hisN · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '同步失败', detail: '$e');
       rethrow;
@@ -786,20 +792,18 @@ class SyncController extends ChangeNotifier {
 
   /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
   /// [categories] 不传 = 用设置里勾选的 [syncCategories];自动上传只传变化的类别。
-  Future<String> uploadNow(
+  Future<SyncNotice> uploadNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo, {
     Set<SyncCategory>? categories,
   }) async {
     final cats = categories ?? syncCategories;
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
-    }
-    if (cats.isEmpty) throw Exception('至少选择一项要同步的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (cats.isEmpty) throw SyncException.of(SyncMessage.noCategoriesChosen);
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '上传中…';
+    status = const SyncNotice(SyncMessage.uploading);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(cats)}');
     final sw = Stopwatch()..start();
@@ -835,7 +839,9 @@ class SyncController extends ChangeNotifier {
               attempt == 0 ? '已覆盖上传到远端' : '重试上传成功(第 ${attempt + 1} 次)');
           break;
         } on SyncConflict catch (c) {
-          if (++attempt > 3) throw Exception('上传冲突,多次重试仍失败,请稍后再试');
+          if (++attempt > 3) {
+            throw SyncException.of(SyncMessage.uploadConflictRetries);
+          }
           AppLog.i.warn(LogCat.sync, '上传遇并发冲突,重叠加后重试(第 $attempt 次)');
           toPush =
               c.remote == null ? local : SyncData.overlay(c.remote!, local);
@@ -843,9 +849,11 @@ class SyncController extends ChangeNotifier {
       }
       await _stampSynced();
       _rebaselineWith(preSigs); // 云端此刻 = 快照时刻的本地态
-      status = '已上传 · ${_catLabel(cats)}';
-      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done = SyncNotice(SyncMessage.uploaded, count: cats.length);
+      status = done;
+      AppLog.i.success(LogCat.sync,
+          '已上传 · ${_catLabel(cats)} · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '上传失败', detail: '$e');
       rethrow;
@@ -856,19 +864,17 @@ class SyncController extends ChangeNotifier {
   }
 
   /// 下载:服务器 → 本地。[modes] 逐类别指定方式(false=覆盖 · true=追加;不在 map=不下载)。
-  Future<String> downloadNow(
+  Future<SyncNotice> downloadNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo, {
     required Map<SyncCategory, bool> modes,
   }) async {
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
-    }
-    if (modes.isEmpty) throw Exception('至少选择一项要下载的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (modes.isEmpty) throw SyncException.of(SyncMessage.noDownloadChosen);
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '下载中…';
+    status = const SyncNotice(SyncMessage.downloading);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始从云端下载 · ${modes.length} 项');
     final sw = Stopwatch()..start();
@@ -881,9 +887,10 @@ class SyncController extends ChangeNotifier {
           detail: modeText);
       final remote = await backend.pull();
       if (remote == null) {
-        status = '服务器暂无数据';
-        AppLog.i.warn(LogCat.sync, '云端下载:$status');
-        return status;
+        const empty = SyncNotice(SyncMessage.serverEmpty);
+        status = empty;
+        AppLog.i.warn(LogCat.sync, '云端下载:服务器暂无数据');
+        return empty;
       }
       AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
       await SyncData.apply(
@@ -898,9 +905,11 @@ class SyncController extends ChangeNotifier {
       final preSigs = _localSigs(modes.keys.toSet()); // 写回完成时刻的签名
       await _stampSynced();
       _rebaselineWith(preSigs); // 下载写回的内容不算「本地新变化」
-      status = '已下载 · ${modes.length} 项';
-      AppLog.i.success(LogCat.sync, '云端$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done = SyncNotice(SyncMessage.downloaded, count: modes.length);
+      status = done;
+      AppLog.i.success(
+          LogCat.sync, '云端已下载 · ${modes.length} 项 · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '云端下载失败', detail: '$e');
       rethrow;
@@ -914,6 +923,11 @@ class SyncController extends ChangeNotifier {
     lastSyncedAt = DateTime.now().millisecondsSinceEpoch;
     await (await _p).setInt(_kLastAt, lastSyncedAt);
   }
+
+  /// 当前后端「还没配好」对应的码。
+  SyncMessage get _notConfigured => isHertz
+      ? SyncMessage.notConfiguredAccount
+      : SyncMessage.notConfiguredWebDav;
 
   static String _catLabel(Set<SyncCategory> c) => '${c.length} 项';
 
@@ -957,7 +971,7 @@ class SyncController extends ChangeNotifier {
     try {
       await syncNow(lib, novels, repo);
     } catch (e) {
-      status = '自动同步失败:$e';
+      status = SyncNotice(SyncMessage.autoSyncFailed, detail: '$e');
       notifyListeners();
     }
   }

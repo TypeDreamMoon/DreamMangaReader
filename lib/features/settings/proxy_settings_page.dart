@@ -5,6 +5,18 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/net/app_proxy.dart';
 import '../../ui/ui.dart';
 
+/// 代理来源码 → 当前语言标签。
+///
+/// `AppProxy.sourceLabel` 是**中文常量**、只给日志用;凡是要给用户看的地方
+/// (这一页,以及设置页的代理条目副标题)都走这里。
+String proxySourceText(AppLocalizations l10n, ProxySource s) => switch (s) {
+      ProxySource.forcedDirect => l10n.proxy_srcForcedDirect,
+      ProxySource.manual => l10n.proxy_srcManual,
+      ProxySource.envVar => l10n.proxy_srcEnvVar,
+      ProxySource.systemProxy => l10n.proxy_srcSystemProxy,
+      ProxySource.directNoProxy => l10n.proxy_srcDirectNoProxy,
+    };
+
 /// 网络代理设置:不使用代理 / 使用系统代理 / 自定义,带"测试连接"预演。
 class ProxySettingsPage extends StatefulWidget {
   const ProxySettingsPage({super.key});
@@ -96,15 +108,6 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
     };
   }
 
-  /// 代理来源码 → 当前语言标签。
-  String _sourceText(AppLocalizations l10n, ProxySource s) => switch (s) {
-        ProxySource.forcedDirect => l10n.proxy_srcForcedDirect,
-        ProxySource.manual => l10n.proxy_srcManual,
-        ProxySource.envVar => l10n.proxy_srcEnvVar,
-        ProxySource.systemProxy => l10n.proxy_srcSystemProxy,
-        ProxySource.directNoProxy => l10n.proxy_srcDirectNoProxy,
-      };
-
   Future<void> _save() async {
     // 存之前先校验:以前什么都收,`socks5://…` 或 `user:pass@host` 存下去后会被
     // 当成主机名硬连,用户只看到「所有源都连不上」,没人猜得到是这里写错了。
@@ -141,7 +144,7 @@ class _ProxySettingsPageState extends State<ProxySettingsPage> {
                   child: Text(
                     context.l10n.proxy_current(
                         AppProxy.current ?? context.l10n.proxy_direct,
-                        _sourceText(context.l10n, AppProxy.sourceCode)),
+                        proxySourceText(context.l10n, AppProxy.sourceCode)),
                     style: TextStyle(color: p.textPrimary, fontSize: 12.5),
                   ),
                 ),

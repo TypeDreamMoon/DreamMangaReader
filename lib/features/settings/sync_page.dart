@@ -9,6 +9,7 @@ import '../../core/sync/sync_controller.dart';
 import '../../core/sync/sync_data.dart';
 import '../../ui/ui.dart';
 import 'auth_page.dart';
+import 'sync_messages.dart';
 
 /// 同步内容类别的本地化名(页面与下载弹窗共用)。多语言下不能是 const map,
 /// 走 context.l10n(阅读设置类别复用阅读器的 reader_settings)。
@@ -93,14 +94,15 @@ class _SyncPageState extends State<SyncPage> {
       _result = '';
     });
     await _persist();
-    final (ok, msg) = await _sync.testConnection();
+    final result = await _sync.testConnection();
     if (!mounted) return;
+    final msg = syncNoticeText(context.l10n, result.notice);
     setState(() {
       _busy = false;
       _result = msg;
     });
     showAppNotify(context, msg,
-        kind: ok ? AppNotifyKind.success : AppNotifyKind.error);
+        kind: result.ok ? AppNotifyKind.success : AppNotifyKind.error);
   }
 
   /// 上传:本地(勾选的类别)→ 服务器。
@@ -113,12 +115,13 @@ class _SyncPageState extends State<SyncPage> {
     });
     await _persist();
     try {
-      final s = await _sync.uploadNow(
+      final notice = await _sync.uploadNow(
         lib,
         novels,
         SourceRepository.instance,
       );
       if (!mounted) return;
+      final s = syncNoticeText(context.l10n, notice);
       setState(() {
         _busy = false;
         _result = s;
@@ -126,11 +129,12 @@ class _SyncPageState extends State<SyncPage> {
       showAppNotify(context, s, kind: AppNotifyKind.success);
     } catch (e) {
       if (!mounted) return;
+      final reason = syncErrorText(context.l10n, e);
       setState(() {
         _busy = false;
-        _result = '$e';
+        _result = reason;
       });
-      showAppNotify(context, context.l10n.sync_uploadFailed('$e'),
+      showAppNotify(context, context.l10n.sync_uploadFailed(reason),
           kind: AppNotifyKind.error);
     }
   }
@@ -150,13 +154,14 @@ class _SyncPageState extends State<SyncPage> {
     });
     await _persist();
     try {
-      final s = await _sync.downloadNow(
+      final notice = await _sync.downloadNow(
         lib,
         novels,
         SourceRepository.instance,
         modes: modes,
       );
       if (!mounted) return;
+      final s = syncNoticeText(context.l10n, notice);
       setState(() {
         _busy = false;
         _result = s;
@@ -164,11 +169,12 @@ class _SyncPageState extends State<SyncPage> {
       showAppNotify(context, s, kind: AppNotifyKind.success);
     } catch (e) {
       if (!mounted) return;
+      final reason = syncErrorText(context.l10n, e);
       setState(() {
         _busy = false;
-        _result = '$e';
+        _result = reason;
       });
-      showAppNotify(context, context.l10n.sync_downloadFailed('$e'),
+      showAppNotify(context, context.l10n.sync_downloadFailed(reason),
           kind: AppNotifyKind.error);
     }
   }

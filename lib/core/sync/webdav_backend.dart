@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import 'sync_backend.dart';
+import 'sync_messages.dart';
 
 /// WebDAV 同步后端:把同步 blob 存成远端一个 JSON 文件(`DreamMangaReader/sync.json`)。
 /// 只用到 WebDAV 的 MKCOL(建目录)+ PUT(写)+ GET(读),Basic 认证。兼容 坚果云/Nextcloud/
@@ -57,25 +58,32 @@ class WebDavBackend implements SyncBackend {
     final r = await dio.request<void>(_dirUrl, options: Options(method: 'MKCOL'));
     final s = r.statusCode ?? 0;
     if (s == 401 || s == 403) {
-      throw Exception('WebDAV 认证/权限失败(HTTP $s)');
+      throw SyncException.of(
+          s == 401 ? SyncMessage.authFailed : SyncMessage.forbidden,
+          httpStatus: s);
     }
   }
 
   /// 测试连通 + 认证:MKCOL 同步目录。201=新建、405/301=已存在 → 都算通;401/403=认证/权限错。
   @override
-  Future<(bool, String)> test() async {
+  Future<SyncTestResult> test() async {
     try {
       final dio = _client();
       final r = await dio.request<void>(_dirUrl, options: Options(method: 'MKCOL'));
       final s = r.statusCode ?? 0;
-      if (s == 401) return (false, '认证失败:账号或密码不对(HTTP 401)');
-      if (s == 403) return (false, '权限不足:该账号不能建目录(HTTP 403)');
-      if (s == 201 || s == 405 || s == 301 || s == 200) {
-        return (true, '连接成功 · 同步目录就绪');
+      if (s == 401) {
+        return SyncTestResult.failure(SyncMessage.authFailed, httpStatus: s);
       }
-      return (false, '异常响应 HTTP $s');
+      if (s == 403) {
+        return SyncTestResult.failure(SyncMessage.forbidden, httpStatus: s);
+      }
+      if (s == 201 || s == 405 || s == 301 || s == 200) {
+        return SyncTestResult.success(SyncMessage.testWebDavReady);
+      }
+      return SyncTestResult.failure(SyncMessage.unexpectedStatus,
+          httpStatus: s);
     } catch (e) {
-      return (false, '连不上:$e');
+      return SyncTestResult.failure(SyncMessage.unreachable, detail: '$e');
     }
   }
 
@@ -90,8 +98,14 @@ class WebDavBackend implements SyncBackend {
       _etag = null;
       return null;
     }
-    if (s == 401 || s == 403) throw Exception('WebDAV 认证/权限失败(HTTP $s)');
-    if (s >= 400) throw Exception('WebDAV 拉取失败(HTTP $s)');
+    if (s == 401 || s == 403) {
+      throw SyncException.of(
+          s == 401 ? SyncMessage.authFailed : SyncMessage.forbidden,
+          httpStatus: s);
+    }
+    if (s >= 400) {
+      throw SyncException.of(SyncMessage.pullFailed, httpStatus: s);
+    }
     _etag = _strongEtag(r.headers.value('etag'));
     final body = (r.data ?? '').trim();
     if (body.isEmpty) return null;
@@ -122,7 +136,9 @@ class WebDavBackend implements SyncBackend {
       // 重新 pull 会顺带把 _etag 更新到最新版本,重试的那次 push 才推得上去。
       throw SyncConflict(await pull());
     }
-    if (s >= 400) throw Exception('WebDAV 上传失败(HTTP $s)');
+    if (s >= 400) {
+      throw SyncException.of(SyncMessage.pushFailed, httpStatus: s);
+    }
     // PUT 回的 ETag 是新版本;服务器不给就把记录清掉——宁可下一次退回无条件
     // 覆盖,也不能拿旧版本号去 If-Match(那会 412 到死)。
     _etag = _strongEtag(r.headers.value('etag'));

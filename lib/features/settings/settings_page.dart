@@ -280,8 +280,9 @@ class SettingsPage extends StatelessWidget {
                 _tile(
                   Icons.vpn_lock_rounded,
                   l10n.proxy_title,
+                  // 来源要按当前语言显示;AppProxy.sourceLabel 是日志用的中文常量。
                   l10n.set_proxyCurrent(AppProxy.current ?? l10n.proxy_direct,
-                      AppProxy.sourceLabel),
+                      proxySourceText(l10n, AppProxy.sourceCode)),
                   () => pushRoute(context, MaterialPageRoute(
                       builder: (_) => const ProxySettingsPage())),
                 ),

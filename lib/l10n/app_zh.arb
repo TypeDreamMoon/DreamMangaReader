@@ -354,6 +354,122 @@
       "e": {}
     }
   },
+  "sync_stSyncing": "同步中…",
+  "sync_stUploading": "上传中…",
+  "sync_stDownloading": "下载中…",
+  "sync_stSynced": "已同步 · 收藏 {fav} · 进度 {his}",
+  "@sync_stSynced": {
+    "placeholders": {
+      "fav": {
+        "type": "num"
+      },
+      "his": {
+        "type": "num"
+      }
+    }
+  },
+  "sync_stUploaded": "已上传 · {n} 项",
+  "@sync_stUploaded": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_stDownloaded": "已下载 · {n} 项",
+  "@sync_stDownloaded": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_stServerEmpty": "服务器暂无数据",
+  "sync_stTestWebdavReady": "连接成功 · 同步目录就绪",
+  "sync_stTestAccountReady": "连接成功 · 账号已登录",
+  "sync_errNotConfiguredAccount": "账号同步未就绪(先登录账号)",
+  "sync_errNotConfiguredWebdav": "还没配置 WebDAV 地址",
+  "sync_errNoCategories": "至少选择一项要同步的内容",
+  "sync_errNoDownload": "至少选择一项要下载的内容",
+  "sync_errAlreadySyncing": "正在同步中…",
+  "sync_errConflictRetries": "上传冲突,多次重试仍失败,请稍后再试",
+  "sync_errNotLoggedIn": "还没登录账号(或登录已过期,请重新登录)",
+  "sync_errSessionExpired": "登录已过期,请重新登录",
+  "sync_errServiceOnlineNotLoggedIn": "服务在线,但还没登录账号",
+  "sync_errServiceDown": "同步服务无响应(HTTP {status})",
+  "@sync_errServiceDown": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errAuthFailed": "认证失败:账号或密码不对(HTTP {status})",
+  "@sync_errAuthFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errForbidden": "权限不足:该账号不能写这个目录(HTTP {status})",
+  "@sync_errForbidden": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errPullFailed": "拉取失败(HTTP {status})",
+  "@sync_errPullFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errPushFailed": "上传失败(HTTP {status})",
+  "@sync_errPushFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errUnexpectedStatus": "异常响应 HTTP {status}",
+  "@sync_errUnexpectedStatus": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errUnreachable": "连不上:{detail}",
+  "@sync_errUnreachable": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "sync_errAutoSyncFailed": "自动同步失败:{detail}",
+  "@sync_errAutoSyncFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "sync_errAutoUploadFailed": "自动上传失败:{detail}",
+  "@sync_errAutoUploadFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
   "sync_neverSynced": "尚未同步",
   "sync_lastSyncedAt": "上次同步 {time}",
   "@sync_lastSyncedAt": {
@@ -429,7 +545,7 @@
   "sync_autoOnLaunch": "启动时自动同步",
   "sync_autoOnLaunchSub": "每次打开 App 后台双向合并一次(不丢本地)",
   "sync_autoUploadTitle": "变化后自动上传",
-  "sync_autoUploadSubtitle": "勾选的内容在本机变化几秒后自动上传对应类别;阅读进度最快每 2 分钟一次。",
+  "sync_autoUploadSubtitle": "勾选的内容在本机变化几秒后自动上传对应类别;进度 / 设置 / 搜索历史最快每 5 分钟一次。",
   "sync_skip": "跳过",
   "sync_overwrite": "覆盖",
   "sync_append": "追加",
