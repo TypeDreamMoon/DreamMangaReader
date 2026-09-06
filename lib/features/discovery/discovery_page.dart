@@ -485,8 +485,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           if (!_mixed && _meta != null && (_source?.sections.isNotEmpty ?? false))
             IconButton(
               tooltip: context.l10n.disc_browseSections,
-              onPressed: () => Navigator.of(context)
-                  .push(appRoute(BrowsePage(meta: _meta!))),
+              onPressed: () => pushPage(context, BrowsePage(meta: _meta!)),
               icon: const Icon(Icons.dashboard_rounded),
             ),
           if (_filters.isNotEmpty || _mixed)
@@ -1136,8 +1135,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
     int srcCountOf(Manga m) =>
         _mixed ? (_titleSrcIds[ChineseFold.dedupKey(m.title)]?.length ?? 1) : 1;
-    void open(Manga m, SourceMeta meta, String tag) => Navigator.of(context)
-        .push(appRoute(DetailPage(manga: m, meta: meta, heroTag: tag)));
+    void open(Manga m, SourceMeta meta, String tag) =>
+        pushPage(context, DetailPage(manga: m, meta: meta, heroTag: tag));
 
     return FeedView(
       layout: layout,

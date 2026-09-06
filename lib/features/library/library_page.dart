@@ -186,8 +186,7 @@ class _LibraryPageState extends State<LibraryPage> {
             : context.l10n.detail_noSameNameInOthers);
         return;
       }
-      Navigator.of(context)
-          .push(appRoute(DetailPage(manga: m.manga, meta: m.meta)));
+      pushPage(context, DetailPage(manga: m.manga, meta: m.meta));
     } finally {
       _crossOpening = false;
     }
