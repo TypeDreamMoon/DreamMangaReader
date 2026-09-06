@@ -29,8 +29,13 @@ import java.io.File
 class GalleryBridge(private val activity: FlutterActivity) {
     private var channel: MethodChannel? = null
 
-    /** 等权限结果的那一次保存。API 29 以下才可能有。 */
-    private var pendingSave: Pair<Image, MethodChannel.Result>? = null
+    /**
+     * 等同一次权限结果的那些保存,先来先落盘。API 29 以下才可能有。
+     *
+     * 必须是队列而不是一个槽:连点两次保存时,后一次会把前一次挤掉,而 [MethodChannel.Result]
+     * 一旦被丢掉就再没人回调它 —— Dart 那边的 future 永远挂着,界面卡在「保存中」。
+     */
+    private val pendingSaves = ArrayDeque<Pair<Image, MethodChannel.Result>>()
 
     private data class Image(val bytes: ByteArray, val fileName: String, val mimeType: String)
 
@@ -54,12 +59,15 @@ class GalleryBridge(private val activity: FlutterActivity) {
         }
         val image = Image(bytes, fileName, call.argument<String>("mimeType") ?: DEFAULT_MIME)
         if (needsLegacyPermission()) {
-            pendingSave = image to result
-            ActivityCompat.requestPermissions(
-                activity,
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                STORAGE_PERMISSION_REQUEST,
-            )
+            pendingSaves.addLast(image to result)
+            // 弹窗只由第一笔发起,后面的搭同一次结果的车,不去叠一堆系统对话框。
+            if (pendingSaves.size == 1) {
+                ActivityCompat.requestPermissions(
+                    activity,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    STORAGE_PERMISSION_REQUEST,
+                )
+            }
             return
         }
         complete(image, result)
@@ -135,12 +143,15 @@ class GalleryBridge(private val activity: FlutterActivity) {
 
     fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean {
         if (requestCode != STORAGE_PERMISSION_REQUEST) return false
-        val pending = pendingSave ?: return true
-        pendingSave = null
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            complete(pending.first, pending.second)
-        } else {
-            pending.second.error("permission_denied", "Storage permission denied", null)
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        // 排空:每一笔都得到答复,一笔都不能留在队列里。
+        while (pendingSaves.isNotEmpty()) {
+            val (image, result) = pendingSaves.removeFirst()
+            if (granted) {
+                complete(image, result)
+            } else {
+                result.error("permission_denied", "Storage permission denied", null)
+            }
         }
         return true
     }
@@ -148,7 +159,11 @@ class GalleryBridge(private val activity: FlutterActivity) {
     fun dispose() {
         channel?.setMethodCallHandler(null)
         channel = null
-        pendingSave = null
+        // 页面没了也要把还在等的那些回掉,否则 Dart 侧的 future 跟着一起消失在原地。
+        while (pendingSaves.isNotEmpty()) {
+            pendingSaves.removeFirst().second
+                .error("cancelled", "Gallery bridge was disposed", null)
+        }
     }
 
     companion object {
