@@ -35,6 +35,28 @@ void main() {
     expect(html, contains('保留文字'));
   });
 
+  test('protocol relative URLs get a scheme instead of staying schemeless', () {
+    final withBase = NovelDocumentSanitizer.sanitize(
+      '<p><img src="//cdn.example.com/a.png">'
+      '<a href="//cdn.example.com/next">下一章</a></p>',
+      baseUrl: Uri.parse('http://example.com/book/chapter/'),
+    );
+    final withoutBase = NovelDocumentSanitizer.sanitize(
+      '<p><img src="//cdn.example.com/a.png?v=1"></p>',
+    );
+    final localBase = NovelDocumentSanitizer.sanitize(
+      '<p><img src="//cdn.example.com/a.png"></p>',
+      baseUrl: Uri.parse('file:///books/one/index.html'),
+    );
+
+    expect(withBase, contains('src="http://cdn.example.com/a.png"'));
+    expect(withBase, contains('href="http://cdn.example.com/next"'));
+    expect(withoutBase, contains('src="https://cdn.example.com/a.png?v=1"'));
+    expect(localBase, contains('src="https://cdn.example.com/a.png"'));
+    expect(withoutBase, isNot(contains('"//cdn.example.com')));
+    expect(localBase, isNot(contains('file://cdn.example.com')));
+  });
+
   test('stable block IDs and safe internal anchors survive repeated runs', () {
     const source = '<h1 id="top">标题</h1><p>一</p><p>二</p>';
 
