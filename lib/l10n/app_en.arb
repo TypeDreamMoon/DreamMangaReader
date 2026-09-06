@@ -1020,6 +1020,25 @@
   "anime_biliLoggedInAs": "Signed in · {name}",
   "anime_noSourcesHint": "Enable an anime source (AllAnime, for example) under Settings › Manga sources to start browsing.",
   "anime_searchBangumi": "Search Bangumi",
+  "anime_deleteSeries": "Delete all downloads",
+  "anime_deleteSeriesConfirm": "Delete the local copy of {n, plural, =1{1 episode} other{{n} episodes}} of \"{title}\"?",
+  "@anime_deleteSeriesConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "anime_deleteEpisodeConfirm": "Delete the local copy of \"{episode}\" from \"{title}\"?",
+  "@anime_deleteEpisodeConfirm": {
+    "placeholders": {
+      "title": {},
+      "episode": {}
+    }
+  },
+  "anime_downloadDeleted": "Local copy deleted",
+  "anime_noDownloadableTrack": "This episode has no downloadable video track",
   "animeUnfavorite": "Remove anime favorite",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

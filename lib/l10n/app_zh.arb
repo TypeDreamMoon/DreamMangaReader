@@ -1835,6 +1835,25 @@
   },
   "anime_noSourcesHint": "在「设置 › 漫画源」里启用番剧源(如 AllAnime)后即可浏览。",
   "anime_searchBangumi": "搜索 Bangumi",
+  "anime_deleteSeries": "删除整部下载",
+  "anime_deleteSeriesConfirm": "删除《{title}》的 {n} 集本地缓存?",
+  "@anime_deleteSeriesConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "anime_deleteEpisodeConfirm": "删除《{title}》的「{episode}」本地缓存?",
+  "@anime_deleteEpisodeConfirm": {
+    "placeholders": {
+      "title": {},
+      "episode": {}
+    }
+  },
+  "anime_downloadDeleted": "已删除本地缓存",
+  "anime_noDownloadableTrack": "这一集没有可下载的视频轨道",
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/l10n/app_strings.dart';
 import '../../app/anime_download_store.dart';
+import '../../app/download_coordinator_scope.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/downloads/download_coordinator.dart';
 import '../../core/source/models.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
@@ -78,6 +80,13 @@ class _AnimeDownloadGroup extends StatelessWidget {
               context.l10n.anime_episodesN(ordered.length),
               style: TextStyle(color: p.textMuted, fontSize: 11.5),
             ),
+            IconButton(
+              key: Key('anime-download-delete-series-${first.animeId}'),
+              tooltip: context.l10n.anime_deleteSeries,
+              onPressed: () => _confirmDeleteSeries(context, ordered),
+              icon: Icon(Icons.delete_outline_rounded,
+                  color: p.textMuted, size: 20),
+            ),
           ],
         ),
         const SizedBox(height: 9),
@@ -86,43 +95,126 @@ class _AnimeDownloadGroup extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 8),
             child: FadeSlideIn(
               delayMs: 25 * index.clamp(0, 8),
-              child: AppCard(
-                radius: 8,
-                onTap: () => _open(context, ordered, index),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-                child: Row(
-                  children: [
-                    Icon(Icons.play_circle_outline_rounded,
-                        color: p.accentSoft, size: 21),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        ordered[index].episodeTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: p.textPrimary,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+              // 长按删除单集(与漫画侧的删除入口同一套确认对话框)。
+              child: GestureDetector(
+                key: Key('anime-download-episode-${ordered[index].key}'),
+                behavior: HitTestBehavior.deferToChild,
+                onLongPress: () => _confirmDeleteEpisode(
+                  context,
+                  ordered[index],
+                ),
+                child: AppCard(
+                  radius: 8,
+                  onTap: () => _open(context, ordered, index),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+                  child: Row(
+                    children: [
+                      Icon(Icons.play_circle_outline_rounded,
+                          color: p.accentSoft, size: 21),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          ordered[index].episodeTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: p.textPrimary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _sizeLabel(ordered[index].byteCount),
-                      style: TextStyle(color: p.textMuted, fontSize: 10.5),
-                    ),
-                    const SizedBox(width: 5),
-                    Icon(Icons.chevron_right_rounded,
-                        color: p.textMuted, size: 18),
-                  ],
+                      const SizedBox(width: 8),
+                      Text(
+                        _sizeLabel(ordered[index].byteCount),
+                        style: TextStyle(color: p.textMuted, fontSize: 10.5),
+                      ),
+                      const SizedBox(width: 5),
+                      Icon(Icons.chevron_right_rounded,
+                          color: p.textMuted, size: 18),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
       ],
     );
+  }
+
+  Future<void> _confirmDeleteSeries(
+    BuildContext context,
+    List<DownloadedAnimeEpisode> ordered,
+  ) async {
+    final first = ordered.first;
+    await _confirmDelete(
+      context,
+      message: context.l10n.anime_deleteSeriesConfirm(
+        first.animeTitle,
+        ordered.length,
+      ),
+      delete: (store, coordinator) => store.deleteSeries(
+        first.sourceId,
+        first.animeId,
+        coordinator: coordinator,
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteEpisode(
+    BuildContext context,
+    DownloadedAnimeEpisode episode,
+  ) async {
+    await _confirmDelete(
+      context,
+      message: context.l10n.anime_deleteEpisodeConfirm(
+        episode.animeTitle,
+        episode.episodeTitle,
+      ),
+      delete: (store, coordinator) => store.delete(
+        episode.sourceId,
+        episode.animeId,
+        episode.episodeId,
+        coordinator: coordinator,
+      ),
+    );
+  }
+
+  /// 删除确认 → 删盘 → 提示。文案与漫画侧的删除对话框同一套骨架。
+  Future<void> _confirmDelete(
+    BuildContext context, {
+    required String message,
+    required Future<void> Function(
+      AnimeDownloadStore store,
+      DownloadCoordinator? coordinator,
+    ) delete,
+  }) async {
+    final store = AnimeDownloadScope.read(context);
+    final coordinator = DownloadCoordinatorScope.maybeRead(context);
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.dl_deleteTitle),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            key: const Key('anime-download-delete-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(l10n.delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await delete(store, coordinator);
+    if (!context.mounted) return;
+    showAppNotify(context, l10n.anime_downloadDeleted);
   }
 
   void _open(

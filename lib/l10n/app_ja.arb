@@ -1020,6 +1020,25 @@
   "anime_biliLoggedInAs": "ログイン中 · {name}",
   "anime_noSourcesHint": "「設定 › マンガソース」でアニメソース(AllAnime など)を有効にすると閲覧できます。",
   "anime_searchBangumi": "Bangumi を検索",
+  "anime_deleteSeries": "ダウンロードをすべて削除",
+  "anime_deleteSeriesConfirm": "「{title}」の {n} 話分のローカルデータを削除しますか?",
+  "@anime_deleteSeriesConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "anime_deleteEpisodeConfirm": "「{title}」の「{episode}」のローカルデータを削除しますか?",
+  "@anime_deleteEpisodeConfirm": {
+    "placeholders": {
+      "title": {},
+      "episode": {}
+    }
+  },
+  "anime_downloadDeleted": "ローカルデータを削除しました",
+  "anime_noDownloadableTrack": "このエピソードにダウンロードできる映像トラックがありません",
   "animeUnfavorite": "アニメのお気に入りを解除",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

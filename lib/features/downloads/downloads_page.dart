@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../app/anime_download_store.dart';
 import '../../app/download_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_coordinator.dart';
 import '../../core/downloads/download_failure.dart';
 import '../../core/downloads/download_task.dart';
@@ -166,7 +168,7 @@ class _ActiveDownloadTileState extends State<_ActiveDownloadTile> {
                 _TaskAction(task: task, coordinator: coordinator),
                 IconButton(
                   tooltip: context.l10n.cancel,
-                  onPressed: () => coordinator.remove(task.id),
+                  onPressed: () => _cancel(context),
                   icon: Icon(Icons.close_rounded, color: p.textMuted, size: 19),
                 ),
               ],
@@ -191,6 +193,27 @@ class _ActiveDownloadTileState extends State<_ActiveDownloadTile> {
         ),
       ),
     );
+  }
+
+  /// 撤掉一条进行中的任务。
+  ///
+  /// 协调器的 `remove()` 只删任务记录,不回调执行器 —— 番剧任务半路取消时,已经落盘
+  /// 的 `segment-*.bin` 和包目录会一直留着。番剧走 store 的 delete,让它顺手把目录清掉。
+  Future<void> _cancel(BuildContext context) async {
+    if (task.kind == DownloadContentKind.anime) {
+      final store = AnimeDownloadScope.maybeRead(context);
+      if (store != null) {
+        final request = ContentDownloadRequest.fromTask(task);
+        await store.delete(
+          request.sourceId,
+          request.contentId,
+          request.chapterId,
+          coordinator: coordinator,
+        );
+        return;
+      }
+    }
+    await coordinator.remove(task.id);
   }
 }
 

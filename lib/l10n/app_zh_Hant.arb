@@ -1020,6 +1020,25 @@
   "anime_biliLoggedInAs": "已登入 · {name}",
   "anime_noSourcesHint": "在「設定 › 漫畫來源」裡啟用番劇來源(如 AllAnime)後即可瀏覽。",
   "anime_searchBangumi": "搜尋 Bangumi",
+  "anime_deleteSeries": "刪除整部下載",
+  "anime_deleteSeriesConfirm": "刪除《{title}》的 {n} 集本機快取?",
+  "@anime_deleteSeriesConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "anime_deleteEpisodeConfirm": "刪除《{title}》的「{episode}」本機快取?",
+  "@anime_deleteEpisodeConfirm": {
+    "placeholders": {
+      "title": {},
+      "episode": {}
+    }
+  },
+  "anime_downloadDeleted": "已刪除本機快取",
+  "anime_noDownloadableTrack": "這一集沒有可下載的影片軌道",
   "animeUnfavorite": "取消收藏番劇",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

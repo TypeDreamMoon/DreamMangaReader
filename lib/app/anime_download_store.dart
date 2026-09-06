@@ -7,6 +7,7 @@ import 'package:hls/hls.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/downloads/content_download_task.dart';
+import '../core/downloads/download_coordinator.dart';
 import '../core/downloads/download_executor.dart';
 import '../core/downloads/download_task.dart';
 import '../core/source/models.dart';
@@ -129,6 +130,65 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
       }
     }
     _notify();
+  }
+
+  /// 删掉一集的离线包:先撤下载任务,再抹掉磁盘上的分片和包目录。
+  ///
+  /// 目录名是从 (源, 番剧, 分集) 算出来的,不查索引 —— 取消或失败的任务从没进过
+  /// [_completed],但它留下的半个包目录一样占着几百兆。协调器的 `remove()` 只删
+  /// 任务记录、不回调执行器,所以这一步必须由这里补上,否则那些 `segment-*.bin`
+  /// 会永远躺在应用目录里。
+  ///
+  /// 先撤任务再删文件:反过来的话,正在跑的那条会立刻把刚删掉的分片重新写回来。
+  Future<void> delete(
+    String sourceId,
+    String animeId,
+    String episodeId, {
+    DownloadCoordinator? coordinator,
+  }) async {
+    await coordinator?.remove(contentDownloadTaskId(
+      DownloadContentKind.anime,
+      sourceId,
+      animeId,
+      episodeId,
+    ));
+    final root = _root;
+    if (root != null) {
+      final directory = Directory(
+        '${root.path}${Platform.pathSeparator}'
+        '${_directoryName(sourceId, animeId, episodeId)}',
+      );
+      try {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      } catch (_) {
+        // 文件被播放器占着(Windows 上很常见):索引里已经没有这一集了,
+        // 目录留给下一次删除 —— 总好过整条路径抛出去,让按钮看起来没反应。
+      }
+    }
+    if (_completed.remove(_episodeKey(sourceId, animeId, episodeId)) != null) {
+      try {
+        await _persist();
+      } catch (_) {
+        // 索引写不回去也无所谓:文件已经不在了,下次 load() 会因为缺清单剔掉它。
+      }
+    }
+    _notify();
+  }
+
+  /// 删掉整部番剧已下载的分集(书架侧「删除整部」)。
+  Future<void> deleteSeries(
+    String sourceId,
+    String animeId, {
+    DownloadCoordinator? coordinator,
+  }) async {
+    final episodes = [
+      for (final record in _completed.values)
+        if (record.sourceId == sourceId && record.animeId == animeId)
+          record.episodeId,
+    ];
+    for (final episodeId in episodes) {
+      await delete(sourceId, animeId, episodeId, coordinator: coordinator);
+    }
   }
 
   @override
