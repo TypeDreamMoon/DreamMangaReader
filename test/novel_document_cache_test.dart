@@ -167,6 +167,23 @@ void main() {
     expect(await cache.read('source', 'novel', 'chapter'), isNull);
   });
 
+  test('carriage return only text still breaks into paragraphs', () async {
+    final cache = NovelDocumentCache(root: temp.path, dio: Dio());
+    final document = NovelDocument(
+      format: NovelDocumentFormat.text,
+      content: '第一段\r第二段\r\r第四段\r\n第五段\n第六段',
+    );
+
+    final saved = await cache.save('source', 'novel', 'cr', document);
+
+    expect(saved.html, contains('>第一段</p>'));
+    expect(saved.html, contains('>第二段</p>'));
+    expect(saved.html, contains('>第四段</p>'));
+    expect(saved.html, contains('>第五段</p>'));
+    expect(saved.html, contains('>第六段</p>'));
+    expect('</p>'.allMatches(saved.html).length, 6);
+  });
+
   test('untrusted identity components cannot escape the cache root', () async {
     final cache = NovelDocumentCache(root: temp.path, dio: Dio());
     final document = NovelDocument(

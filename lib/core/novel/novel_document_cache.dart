@@ -300,7 +300,8 @@ String _documentHtml(NovelDocument document) {
     return NovelDocumentSanitizer.sanitize(document.content, baseUrl: base);
   }
   const escape = HtmlEscape(HtmlEscapeMode.element);
-  final paragraphs = document.content.split(RegExp(r'\r?\n')).map((line) {
+  // 老式 Mac / 部分脚本源只发 `\r`,只切 `\r?\n` 会把整章挤成一个段落。
+  final paragraphs = document.content.split(RegExp(r'\r\n?|\n')).map((line) {
     return line.isEmpty ? '<p><br></p>' : '<p>${escape.convert(line)}</p>';
   }).join();
   return NovelDocumentSanitizer.sanitize(paragraphs, baseUrl: base);
