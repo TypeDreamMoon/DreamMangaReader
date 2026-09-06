@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/download_fixtures.dart';
+import 'package:dream_manga_reader/core/downloads/download_executor.dart';
 
 void main() {
   testWidgets('episode download action enqueues a durable anime task',
@@ -168,6 +169,97 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('已加入 1 个下载任务'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  // 源一条能下的轨道都不给时,别让人对着同一个按钮点出同一条报错:置灰,
+  // 并把原因写在 tooltip 里(走 l10n)。
+  testWidgets('an episode with no downloadable track greys its button out',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final root = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('anime-detail-nodl-'),
+    ))!;
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final library = LibraryStore();
+    await library.load();
+    addTearDown(library.dispose);
+    final downloads = AnimeDownloadStore(
+      rootProvider: () async => root.path,
+      trackProvider: (_, __, ___) async => const [
+        VideoTrack(url: 'blob:not-downloadable', quality: '默认'),
+      ],
+      upstream: _UnusedUpstream(),
+    );
+    addTearDown(downloads.dispose);
+    final coordinator = DownloadCoordinator(
+      repository: RecordingDownloadTaskRepository(),
+      environment: () async => unrestrictedEnvironment,
+      settings: DownloadPolicySettings.new,
+    );
+    await coordinator.load();
+    addTearDown(coordinator.dispose);
+    await tester.runAsync(downloads.load);
+    await tester.runAsync(() async {
+      try {
+        await downloads.execute(
+          DownloadExecutionContext(
+            cancellation: DownloadCancellation(),
+            reportProgress: (_, __) async {},
+            checkpoint: () async {},
+          ),
+          ContentDownloadTask.anime(
+            sourceId: 'anime-source',
+            contentId: 'show',
+            contentTitle: '测试番剧',
+            chapterId: 'episode-1',
+            chapterTitle: '第一集',
+            now: 1,
+          ),
+        );
+      } on UnsupportedAnimePlaylist {
+        // 就是要它抛:抛完这一集才会被标成不可下载。
+      }
+    });
+    expect(downloads.isDownloadable('anime-source', 'show', 'episode-1'),
+        isFalse);
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: DownloadCoordinatorScope(
+          coordinator: coordinator,
+          child: AnimeDownloadScope(
+            store: downloads,
+            child: AnimeDetailPage(
+              meta: const SourceMeta(
+                id: 'anime-source',
+                name: '测试源',
+                script: '',
+                kind: 'anime',
+              ),
+              anime: const Manga(id: 'show', title: '测试番剧'),
+              sourceBuilder: (_) => _FakeAnimeSource(),
+              bangumiLookup: (_) async => null,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    final button = tester.widget<IconButton>(
+      find.byKey(const Key('anime-download-episode-1')),
+    );
+    expect(button.onPressed, isNull);
+    expect(button.tooltip, '这一集没有可下载的视频轨道');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

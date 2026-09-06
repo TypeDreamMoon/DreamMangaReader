@@ -21,6 +21,9 @@ typedef AnimeTrackProvider = Future<List<VideoTrack>> Function(
   String episodeId,
 );
 
+/// 离线包的入口文件名。HLS 包是改写过的清单;直链包是下下来的那个文件。
+const _hlsManifestName = 'index.m3u8';
+
 class DownloadedAnimeEpisode {
   const DownloadedAnimeEpisode({
     required this.sourceId,
@@ -32,6 +35,8 @@ class DownloadedAnimeEpisode {
     required this.resourceCount,
     required this.byteCount,
     required this.completedAt,
+    this.mediaName = _hlsManifestName,
+    this.audioName,
   });
 
   final String sourceId;
@@ -44,8 +49,17 @@ class DownloadedAnimeEpisode {
   final int byteCount;
   final int completedAt;
 
+  /// 包目录里的入口文件名(HLS 是 `index.m3u8`,直链是 `video.mp4` 之类)。
+  final String mediaName;
+
+  /// DASH 那种音视频分离的源,音轨单独一个文件;null = 视频自带声音。
+  final String? audioName;
+
   String get key => _episodeKey(sourceId, animeId, episodeId);
-  String get manifestPath => '$directory${Platform.pathSeparator}index.m3u8';
+  String get mediaPath => '$directory${Platform.pathSeparator}$mediaName';
+  String? get audioPath => audioName == null
+      ? null
+      : '$directory${Platform.pathSeparator}$audioName';
 
   Map<String, Object?> toJson(String relativeDirectory) => {
         'sourceId': sourceId,
@@ -57,6 +71,8 @@ class DownloadedAnimeEpisode {
         'resourceCount': resourceCount,
         'byteCount': byteCount,
         'completedAt': completedAt,
+        'media': mediaName,
+        if (audioName != null) 'audio': audioName,
       };
 }
 
@@ -73,6 +89,7 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
   final AnimeTrackProvider _trackProvider;
   final HlsUpstreamClient _upstream;
   final Map<String, DownloadedAnimeEpisode> _completed = {};
+  final Set<String> _undownloadable = {};
   Directory? _root;
   bool _disposed = false;
 
@@ -88,8 +105,20 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
   bool isDownloaded(String sourceId, String animeId, String episodeId) =>
       _completed.containsKey(_episodeKey(sourceId, animeId, episodeId));
 
-  String? localManifest(String sourceId, String animeId, String episodeId) =>
-      _completed[_episodeKey(sourceId, animeId, episodeId)]?.manifestPath;
+  /// 这一集的离线包(没下过 = null)。离线播放据此拼本地地址。
+  DownloadedAnimeEpisode? recordFor(
+    String sourceId,
+    String animeId,
+    String episodeId,
+  ) =>
+      _completed[_episodeKey(sourceId, animeId, episodeId)];
+
+  /// 这一集能不能下。
+  ///
+  /// 源给了什么轨道要联网才知道,所以默认都当作能下;真的问出来「一条都下不了」
+  /// 之后记在这里,界面据此把下载按钮置灰,而不是让人一次次点出同一条报错。
+  bool isDownloadable(String sourceId, String animeId, String episodeId) =>
+      !_undownloadable.contains(_episodeKey(sourceId, animeId, episodeId));
 
   Future<void> load() async {
     final root = Directory(await _rootProvider());
@@ -119,8 +148,10 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
               resourceCount: (json['resourceCount'] as num).toInt(),
               byteCount: (json['byteCount'] as num).toInt(),
               completedAt: (json['completedAt'] as num).toInt(),
+              mediaName: _safeFileName(json['media']) ?? _hlsManifestName,
+              audioName: _safeFileName(json['audio']),
             );
-            if (await File(record.manifestPath).exists()) {
+            if (await File(record.mediaPath).exists()) {
               _completed[record.key] = record;
             }
           }
@@ -212,7 +243,16 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
       request.chapterId,
     );
     context.cancellation.throwIfCancelled();
-    final track = _selectTrack(tracks);
+    final VideoTrack track;
+    try {
+      track = _selectTrack(tracks);
+    } on UnsupportedAnimePlaylist {
+      // 记下来,界面把这一集的下载按钮置灰 —— 再点也只会得到同一条报错。
+      _undownloadable.add(key);
+      _notify();
+      rethrow;
+    }
+    _undownloadable.remove(key);
     final relativeDirectory = _directoryName(
       request.sourceId,
       request.contentId,
@@ -221,12 +261,36 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
     final directory = Directory(
       '${root.path}${Platform.pathSeparator}$relativeDirectory',
     );
-    final result = await AnimeHlsPackageWriter(_upstream).write(
-      playlistUri: Uri.parse(track.url),
-      headers: Map.unmodifiable(track.headers ?? const {}),
-      directory: directory,
-      context: context,
+    final headers = Map<String, String>.unmodifiable(
+      track.headers ?? const <String, String>{},
     );
+    final String mediaName;
+    final String? audioName;
+    final int resourceCount;
+    final int byteCount;
+    if (track.hls) {
+      final result = await AnimeHlsPackageWriter(_upstream).write(
+        playlistUri: Uri.parse(track.url),
+        headers: headers,
+        directory: directory,
+        context: context,
+      );
+      mediaName = _hlsManifestName;
+      audioName = null;
+      resourceCount = result.resourceCount;
+      byteCount = result.byteCount;
+    } else {
+      final result = await AnimeFilePackageWriter(_upstream).write(
+        track: track,
+        headers: headers,
+        directory: directory,
+        context: context,
+      );
+      mediaName = result.mediaName;
+      audioName = result.audioName;
+      resourceCount = result.resourceCount;
+      byteCount = result.byteCount;
+    }
     context.cancellation.throwIfCancelled();
     final record = DownloadedAnimeEpisode(
       sourceId: request.sourceId,
@@ -235,9 +299,11 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
       episodeId: request.chapterId,
       episodeTitle: task.itemTitle,
       directory: directory.path,
-      resourceCount: result.resourceCount,
-      byteCount: result.byteCount,
+      resourceCount: resourceCount,
+      byteCount: byteCount,
       completedAt: DateTime.now().millisecondsSinceEpoch,
+      mediaName: mediaName,
+      audioName: audioName,
     );
     _completed[key] = record;
     try {
@@ -249,13 +315,28 @@ class AnimeDownloadStore extends ChangeNotifier implements DownloadExecutor {
     _notify();
   }
 
+  /// 挑一条下得动的轨道。
+  ///
+  /// HLS 优先 —— 分片包能一段一段续、清单能改写成本地相对路径。但番剧源里只有一半
+  /// 给 HLS:B站给的是 DASH 分离流和老式 durl 整段 mp4/flv,全都 `hls: false`,
+  /// 于是「没有可下载的 HLS 轨道」把每一次点击都挡了回去。直链现在照样收:整段文件
+  /// 按 Range 分块拉下来,DASH 的音轨作为第二个文件一起存,离线播放交给播放器合流
+  /// (在线播放本来就是这么放的,不需要在这里转封装)。
   VideoTrack _selectTrack(List<VideoTrack> tracks) {
-    final candidates = tracks.where((track) => track.hls).toList();
-    if (candidates.isEmpty) {
-      throw const UnsupportedAnimePlaylist('该分集没有可下载的 HLS 轨道');
-    }
-    candidates.sort(
-        (left, right) => _qualityHeight(left).compareTo(_qualityHeight(right)));
+    final remote = tracks.where((track) => _isRemote(track.url));
+    final hls = _preferredTrack(remote.where((track) => track.hls));
+    if (hls != null) return hls;
+    final direct = _preferredTrack(remote.where((track) => !track.hls));
+    if (direct != null) return direct;
+    throw const UnsupportedAnimePlaylist('该分集没有可下载的视频轨道');
+  }
+
+  /// 同一集里挑清晰度:不超过 1080 的最高一档,全都超了就取最低的那档。
+  VideoTrack? _preferredTrack(Iterable<VideoTrack> tracks) {
+    final candidates = tracks.toList()
+      ..sort((left, right) =>
+          _qualityHeight(left).compareTo(_qualityHeight(right)));
+    if (candidates.isEmpty) return null;
     final eligible = candidates.where((track) => _qualityHeight(track) <= 1080);
     return eligible.isNotEmpty ? eligible.last : candidates.first;
   }
@@ -363,6 +444,162 @@ class _ResolvedPlaylist {
   final HlsVariant? variant;
   final HlsMediaPlaylist? audio;
   final HlsRendition? audioRendition;
+}
+
+class AnimeFilePackageResult {
+  const AnimeFilePackageResult({
+    required this.mediaName,
+    required this.audioName,
+    required this.resourceCount,
+    required this.byteCount,
+  });
+
+  final String mediaName;
+  final String? audioName;
+  final int resourceCount;
+  final int byteCount;
+}
+
+/// 直链轨道(durl 的 mp4/flv、DASH 的 m4s)的离线包。
+///
+/// 上游客户端一次只回一整段字节,整集几百兆全塞进内存显然不行,所以按块要 Range
+/// 追加写进 `.part`。断点续传是顺带的:重来一次直接从 `.part` 现有长度接着要。
+/// 服务器不认 Range(回 200 而不是 206)时退化成整段重下,不会把两段拼成坏文件。
+class AnimeFilePackageWriter {
+  const AnimeFilePackageWriter(
+    this.upstream, {
+    this.chunkSize = 4 * 1024 * 1024,
+  });
+
+  final HlsUpstreamClient upstream;
+  final int chunkSize;
+
+  Future<AnimeFilePackageResult> write({
+    required VideoTrack track,
+    required Map<String, String> headers,
+    required Directory directory,
+    required DownloadExecutionContext context,
+  }) async {
+    context.cancellation.throwIfCancelled();
+    await directory.create(recursive: true);
+    final videoUri = Uri.parse(track.url);
+    final originHost = videoUri.host;
+    final audioUrl = track.audioUrl;
+    final audioUri = audioUrl == null || audioUrl.isEmpty
+        ? null
+        : Uri.tryParse(audioUrl);
+
+    var byteCount = 0;
+    var expected = 0;
+    Future<void> progress(int written, int? total) async {
+      await context.reportProgress(
+        byteCount + written,
+        expected > 0 ? expected : byteCount + written,
+      );
+      await context.checkpoint();
+    }
+
+    final mediaName = 'video.${_extensionOf(videoUri, 'mp4')}';
+    byteCount += await _downloadFile(
+      uri: videoUri,
+      headers: headers,
+      originHost: originHost,
+      output: File('${directory.path}${Platform.pathSeparator}$mediaName'),
+      context: context,
+      onProgress: progress,
+      onTotalKnown: (total) => expected += total,
+    );
+
+    String? audioName;
+    if (audioUri != null && audioUri.hasScheme) {
+      audioName = 'audio.${_extensionOf(audioUri, 'm4a')}';
+      byteCount += await _downloadFile(
+        uri: audioUri,
+        headers: headers,
+        originHost: originHost,
+        output: File('${directory.path}${Platform.pathSeparator}$audioName'),
+        context: context,
+        onProgress: progress,
+        onTotalKnown: (total) => expected += total,
+      );
+    }
+
+    context.cancellation.throwIfCancelled();
+    await context.reportProgress(byteCount, byteCount);
+    return AnimeFilePackageResult(
+      mediaName: mediaName,
+      audioName: audioName,
+      resourceCount: audioName == null ? 1 : 2,
+      byteCount: byteCount,
+    );
+  }
+
+  Future<int> _downloadFile({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String originHost,
+    required File output,
+    required DownloadExecutionContext context,
+    required Future<void> Function(int written, int? total) onProgress,
+    required void Function(int total) onTotalKnown,
+  }) async {
+    if (await output.exists()) {
+      final length = await output.length();
+      if (length > 0) {
+        onTotalKnown(length);
+        return length;
+      }
+    }
+    final part = File('${output.path}.part');
+    var written = await part.exists() ? await part.length() : 0;
+    int? total;
+    var reported = false;
+    while (total == null || written < total) {
+      context.cancellation.throwIfCancelled();
+      final response = await upstream.get(
+        uri,
+        headers: scopeHlsCredentialHeaders(
+          headers,
+          originHost: originHost,
+          target: uri,
+        ),
+        rangeStart: written,
+        rangeLength: chunkSize,
+      );
+      if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable) {
+        // 已经拿完了(续传时最常见)。
+        break;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('直链请求失败: ${response.statusCode}', uri: uri);
+      }
+      final bytes = response.bytes;
+      if (response.statusCode != HttpStatus.partialContent) {
+        // 服务器无视了 Range,回的是整段:从头覆盖,别把两段拼成坏文件。
+        if (bytes.isEmpty) throw StateError('直链响应为空: $uri');
+        await part.writeAsBytes(bytes, flush: true);
+        written = bytes.length;
+        total = written;
+      } else {
+        if (bytes.isEmpty) break;
+        await part.writeAsBytes(bytes, mode: FileMode.append, flush: true);
+        written += bytes.length;
+        total ??= _contentRangeTotal(response.headers);
+        if (total == null && bytes.length < chunkSize) total = written;
+      }
+      if (!reported && total != null) {
+        reported = true;
+        onTotalKnown(total);
+      }
+      await onProgress(written, total);
+    }
+    if (written <= 0) throw StateError('直链响应为空: $uri');
+    if (!reported) onTotalKnown(written);
+    context.cancellation.throwIfCancelled();
+    if (await output.exists()) await output.delete();
+    await part.rename(output.path);
+    return written;
+  }
 }
 
 class AnimeHlsPackageResult {
@@ -817,3 +1054,39 @@ String _directoryName(String sourceId, String animeId, String episodeId) =>
 
 bool _safeDirectoryName(String value) =>
     value.isNotEmpty && RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
+
+/// 索引里的文件名只认包目录内的普通名字 —— 存档被改花了也不能指到目录外面去。
+String? _safeFileName(Object? value) {
+  if (value is! String) return null;
+  if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$').hasMatch(value)) return null;
+  return value.contains('..') ? null : value;
+}
+
+/// 只下 http(s) 直链;源偶尔会给空串或 `blob:`/`data:` 之类,这些下不了。
+bool _isRemote(String url) {
+  final uri = Uri.tryParse(url);
+  return uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.host.isNotEmpty;
+}
+
+/// 从 URL 末段猜扩展名(`…/1080.m4s?token=…` → `m4s`),猜不出用兜底值。
+String _extensionOf(Uri uri, String fallback) {
+  final last = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+  final dot = last.lastIndexOf('.');
+  if (dot <= 0 || dot == last.length - 1) return fallback;
+  final extension = last.substring(dot + 1).toLowerCase();
+  return RegExp(r'^[a-z0-9]{1,5}$').hasMatch(extension) ? extension : fallback;
+}
+
+/// `Content-Range: bytes 0-4194303/12345678` → 12345678(`*` 或缺失 = null)。
+int? _contentRangeTotal(Map<String, List<String>> headers) {
+  for (final entry in headers.entries) {
+    if (entry.key.toLowerCase() != HttpHeaders.contentRangeHeader) continue;
+    final value = entry.value.firstOrNull;
+    if (value == null) return null;
+    final match = RegExp(r'/\s*(\d+)\s*$').firstMatch(value);
+    return match == null ? null : int.tryParse(match.group(1)!);
+  }
+  return null;
+}

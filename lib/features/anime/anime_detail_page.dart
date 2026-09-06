@@ -661,6 +661,21 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
         ),
       );
     }
+    // 源一条能下的轨道都没给(有些站只放不可下载的分离流):置灰并说清原因,
+    // 别让人对着同一个按钮点出同一条报错。
+    final downloadable =
+        downloads.isDownloadable(widget.meta.id, widget.anime.id, episode.id);
+    if (!downloadable) {
+      return IconButton(
+        key: Key('anime-download-${episode.id}'),
+        onPressed: null,
+        tooltip: context.l10n.anime_noDownloadableTrack,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        icon: Icon(Icons.download_rounded, size: 18, color: p.line),
+      );
+    }
     final failed = task?.state == DownloadTaskState.failed ||
         task?.state == DownloadTaskState.cancelled;
     return IconButton(

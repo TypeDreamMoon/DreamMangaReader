@@ -520,14 +520,20 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       }
 
       VideoTrack? localTrackForEpisode(String episodeId) {
-        final manifest = AnimeDownloadScope.maybeRead(context)?.localManifest(
+        final record = AnimeDownloadScope.maybeRead(context)?.recordFor(
           widget.meta.id,
           widget.animeId,
           episodeId,
         );
-        if (manifest == null) return null;
+        if (record == null) return null;
+        // 直链包(DASH)的音轨是单独一个文件,和在线播放一样交给播放器合流。
+        final audio = record.audioPath;
         return VideoTrack(
-          url: Uri.file(manifest, windows: Platform.isWindows).toString(),
+          url: Uri.file(record.mediaPath, windows: Platform.isWindows)
+              .toString(),
+          audioUrl: audio == null
+              ? null
+              : Uri.file(audio, windows: Platform.isWindows).toString(),
           quality: context.l10n.anime_offline,
         );
       }

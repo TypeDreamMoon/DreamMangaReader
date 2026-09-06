@@ -287,7 +287,7 @@ episode.ts
     await store.execute(_context([]), task);
 
     expect(store.isDownloaded('source', 'anime', 'episode'), isTrue);
-    final local = store.localManifest('source', 'anime', 'episode');
+    final local = store.recordFor('source', 'anime', 'episode')?.mediaPath;
     expect(local, isNotNull);
     expect(await File(local!).exists(), isTrue);
     final index = await File('${root.path}/index.json').readAsString();
@@ -302,7 +302,7 @@ episode.ts
     );
     await reloaded.load();
     expect(reloaded.downloads.single.episodeTitle, '第一集');
-    expect(reloaded.localManifest('source', 'anime', 'episode'), local);
+    expect(reloaded.recordFor('source', 'anime', 'episode')?.mediaPath, local);
     reloaded.dispose();
   });
 }
