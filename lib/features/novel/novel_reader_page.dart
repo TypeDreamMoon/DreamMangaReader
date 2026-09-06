@@ -172,6 +172,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onFontFallback = _onFontFallback;
       webController.onBackgroundFallback = _onBackgroundFallback;
       webController.onRecoverableError = _showRecoverableReaderError;
+    } else if (webController is NovelNativeDocumentController) {
+      webController.onBackgroundFallback = _onBackgroundFallback;
     }
     _setWakeLock(_preferences.keepScreenOn);
     _startStatusUpdates();
@@ -1949,6 +1951,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onFontFallback = null;
       webController.onBackgroundFallback = null;
       webController.onRecoverableError = null;
+    } else if (webController is NovelNativeDocumentController) {
+      webController.onBackgroundFallback = null;
     }
     if (widget.controller == null &&
         webController is NovelNativeDocumentController) {

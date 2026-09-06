@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_native_document_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -209,6 +212,23 @@ void main() {
       dimmed!.key.layoutFingerprint,
       isNot(base!.key.layoutFingerprint),
     );
+
+    // 纹理强度 / 背景铺法只影响像素，现在原生渲染器真的会画它们，所以它们也必须
+    // 进页帧 key —— 否则调完滑块拿回来的还是上一套配色的位图。
+    await controller.applyPreferences(
+      const NovelReaderPreferences(
+        brightness: .7,
+        textureStrength: .9,
+        backgroundFit: NovelBackgroundFit.tile,
+      ),
+    );
+    controller.ensurePagination(const Size(420, 720));
+    final textured = await tester.runAsync(() => controller.capturePage(0));
+
+    expect(
+      textured!.key.layoutFingerprint,
+      isNot(dimmed.key.layoutFingerprint),
+    );
   });
 
   testWidgets('defers pagination out of the build phase', (tester) async {
@@ -379,6 +399,141 @@ void main() {
     expect(restored, isNotNull);
     controller.reportScroll(restored!, maxExtent);
     expect((await controller.captureLocator()).blockId, anchor.blockId);
+  });
+
+  group('background and brightness reach the native renderer', () {
+    late Directory directory;
+    late NovelBackgroundStore store;
+
+    final document = NovelDocument(
+      format: NovelDocumentFormat.text,
+      content: List.generate(
+        24,
+        (index) => '\u7b2c${index + 1}\u6bb5 ${List.filled(24, '\u80cc\u666f\u6e32\u67d3\u6b63\u6587').join()}',
+      ).join('\n'),
+    );
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('dmr-novel-background');
+      store = NovelBackgroundStore(
+        applicationSupportDirectory: () async => directory,
+      );
+    });
+
+    tearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+
+    Future<NovelNativeDocumentController> open(
+      NovelReaderPreferences preferences,
+    ) async {
+      final controller = NovelNativeDocumentController(backgroundStore: store);
+      await controller.loadChapter('chapter-1', document, preferences);
+      // 截页帧要立刻有版面，走同步的 ensurePagination，别等 build 后的那次异步排版。
+      controller.ensurePagination(const Size(420, 720));
+      return controller;
+    }
+
+    Future<Uint8List> raster(
+      WidgetTester tester,
+      NovelReaderPreferences preferences,
+    ) async {
+      final bytes = await tester.runAsync(() async {
+        final controller = await open(preferences);
+        try {
+          return (await controller.capturePage(0))!.bytes;
+        } finally {
+          controller.dispose();
+        }
+      });
+      return bytes!;
+    }
+
+    testWidgets('texture strength and brightness change what gets painted',
+        (tester) async {
+      // 五项背景设置原本只有已废弃的 WebView 控制器消费，原生渲染器只画主题纯色，
+      // 拖动滑块屏幕上没任何反应。
+      final withoutTexture = await raster(
+        tester,
+        const NovelReaderPreferences(
+          theme: NovelReaderTheme.paper,
+          textureStrength: 0,
+        ),
+      );
+      final withTexture = await raster(
+        tester,
+        const NovelReaderPreferences(
+          theme: NovelReaderTheme.paper,
+          textureStrength: 1,
+        ),
+      );
+      final dimmed = await raster(
+        tester,
+        const NovelReaderPreferences(
+          theme: NovelReaderTheme.paper,
+          textureStrength: 0,
+          brightness: .6,
+        ),
+      );
+
+      expect(withTexture, isNot(withoutTexture));
+      expect(dimmed, isNot(withoutTexture));
+    });
+
+    testWidgets('an imported background is laid out by the chosen fit',
+        (tester) async {
+      final imported = await tester.runAsync(() async {
+        final source = File('${directory.path}${Platform.pathSeparator}bg.png');
+        final picture = img.Image(width: 16, height: 16);
+        for (var y = 0; y < 16; y++) {
+          for (var x = 0; x < 16; x++) {
+            picture.setPixelRgba(x, y, x * 16, y * 16, 128, 255);
+          }
+        }
+        await source.writeAsBytes(img.encodePng(picture));
+        return store.importImage(source);
+      });
+
+      final cropped = await raster(
+        tester,
+        NovelReaderPreferences(
+          backgroundAssetId: imported!.id,
+          backgroundFit: NovelBackgroundFit.crop,
+        ),
+      );
+      final tiled = await raster(
+        tester,
+        NovelReaderPreferences(
+          backgroundAssetId: imported.id,
+          backgroundFit: NovelBackgroundFit.tile,
+        ),
+      );
+
+      expect(cropped, isNot(tiled));
+    });
+
+    testWidgets('a background that will not decode falls back to the theme',
+        (tester) async {
+      final fallbacks = <void>[];
+      final controller = await tester.runAsync(() async {
+        final value = NovelNativeDocumentController(backgroundStore: store);
+        value.onBackgroundFallback = () => fallbacks.add(null);
+        await value.loadChapter(
+          'chapter-1',
+          document,
+          NovelReaderPreferences(backgroundAssetId: 'imported:${'a' * 64}'),
+        );
+        return value;
+      });
+      addTearDown(controller!.dispose);
+
+      // 没有这个图就该回到主题底色，并告诉阅读页把这项设置清掉 ——
+      // 原生渲染路径以前压根没人发过这个回调。
+      expect(fallbacks, hasLength(1));
+      expect(controller.pageBackground, isNull);
+    });
   });
 }
 

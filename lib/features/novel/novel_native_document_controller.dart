@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/novel_library_store.dart';
 import '../../core/novel/models.dart';
+import '../../core/novel/reader/novel_background_store.dart';
 import '../../core/novel/reader/novel_font_store.dart';
 import '../../core/novel/reader/novel_paginator.dart';
 import '../../core/novel/reader/novel_page_turn_physics.dart';
@@ -16,14 +17,24 @@ import '../../core/novel/reader/novel_render_document.dart';
 import 'novel_document_view.dart';
 import 'novel_native_page_view.dart';
 
+/// 内置纸张纹理的种子。与 WebView 渲染器取同一个，两边纹理才一致。
+const int novelPaperTextureSeed = 20260807;
+
+/// 主题自带纸张纹理时的内部标识。
+const String _paperBackgroundKey = 'theme:paper';
+
 class NovelNativeDocumentController extends ChangeNotifier
     implements NovelDocumentController, NovelPaginationSignals {
-  NovelNativeDocumentController({NovelFontRegistry? fontRegistry})
-      : _fontRegistry = fontRegistry ?? NovelFontRegistry.instance;
+  NovelNativeDocumentController({
+    NovelFontRegistry? fontRegistry,
+    NovelBackgroundStore? backgroundStore,
+  })  : _fontRegistry = fontRegistry ?? NovelFontRegistry.instance,
+        _backgroundStore = backgroundStore ?? NovelBackgroundStore();
 
   final NovelFontRegistry _fontRegistry;
   bool _fontLoadFailed = false;
 
+  final NovelBackgroundStore _backgroundStore;
   String _chapterId = '';
   NovelRenderDocument? _document;
   NovelReaderPreferences _preferences = const NovelReaderPreferences();
@@ -40,6 +51,27 @@ class NovelNativeDocumentController extends ChangeNotifier
   final Map<int, Future<NovelPageFrame?>> _captureJobs = {};
 
   Completer<void>? _paginationWaiter;
+
+  ui.Image? _backgroundImage;
+  String? _backgroundKey;
+  int _backgroundGeneration = 0;
+
+  /// 背景图解码失败 / 文件不在了，请上层把这项设置清掉。
+  VoidCallback? onBackgroundFallback;
+
+  /// 铺在正文下面的背景（导入图或主题自带的纸张纹理）。
+  NovelPageBackground? get pageBackground {
+    final image = _backgroundImage;
+    if (image == null) return null;
+    return NovelPageBackground(
+      image: image,
+      // 纸张纹理本来就是一块瓷砖，拿「裁切」把 128px 噴成满屏只会糊成一片。
+      fit: _backgroundKey == _paperBackgroundKey
+          ? NovelBackgroundFit.tile
+          : _preferences.backgroundFit,
+      opacity: _preferences.textureStrength,
+    );
+  }
 
   NovelReaderPreferences get preferences => _preferences;
   NovelPaginationResult? get pagination => _pagination;
@@ -313,6 +345,7 @@ class NovelNativeDocumentController extends ChangeNotifier
   ) async {
     _chapterId = chapterId;
     _preferences = preferences;
+    await _syncBackground();
     _document = NovelRenderDocumentParser.parse(document);
     _locator = NovelLocator(chapterId: chapterId);
     _spreadIndex = 0;
@@ -462,6 +495,8 @@ class NovelNativeDocumentController extends ChangeNotifier
     // 导入字体要先真正注册进引擎才能拿来排版 —— 而且必须在这里等它,阅读页紧接着
     // 就要读 pageMetrics().fontLoadFailed 决定是不是回退。
     await _registerSelectedFont();
+    // 背景只影响绘制,不影响断行,所以它换了也走下面的「丢页帧、不重排」这条路。
+    await _syncBackground();
     if (_fontRegistry.familyFor(preferences.fontFamily) != previousFamily) {
       _invalidateLayout();
       notifyListeners();
@@ -474,6 +509,47 @@ class NovelNativeDocumentController extends ChangeNotifier
       _invalidateLayout();
     }
     notifyListeners();
+  }
+
+  /// 把设置里选的背景解码成一张可直接上画布的图。
+  ///
+  /// 换不动就不重新读盘；换了才重新解码，以免每改一次字号都去碰一次文件。
+  Future<void> _syncBackground() async {
+    final key = _preferences.backgroundAssetId ??
+        (_preferences.theme == NovelReaderTheme.paper
+            ? _paperBackgroundKey
+            : null);
+    if (key == _backgroundKey && (key == null || _backgroundImage != null)) {
+      return;
+    }
+    _backgroundKey = key;
+    final generation = ++_backgroundGeneration;
+    _backgroundImage?.dispose();
+    _backgroundImage = null;
+    if (key == null) return;
+    ui.Image? image;
+    try {
+      final record = key == _paperBackgroundKey
+          ? await _backgroundStore.paperTexture(seed: novelPaperTextureSeed)
+          : await _backgroundStore.resolve(key);
+      if (record != null) {
+        image = await decodeImageFromList(await record.file.readAsBytes());
+      }
+    } catch (_) {
+      image = null;
+    }
+    if (generation != _backgroundGeneration) {
+      image?.dispose();
+      return;
+    }
+    if (image == null) {
+      // 图没了或者解不开：回到主题底色，并告诉阅读页把这项设置清掉 ——
+      // 否则读者永远在设置面里看到一个早就失效的背景。
+      _backgroundKey = null;
+      if (key != _paperBackgroundKey) onBackgroundFallback?.call();
+      return;
+    }
+    _backgroundImage = image;
   }
 
   @override
@@ -664,6 +740,7 @@ class NovelNativeDocumentController extends ChangeNotifier
         textColor: textColor,
         showPageNumber: _preferences.showPageNumber,
         innerEdge: innerEdge,
+        background: pageBackground,
         textCache: textCache,
       ).paint(canvas, rect.size);
       canvas.restore();
@@ -681,6 +758,14 @@ class NovelNativeDocumentController extends ChangeNotifier
         pagination.leafRects.last,
         spread.rightPage!,
         pagination.pagesPerSpread == 2 ? Alignment.centerLeft : null,
+      );
+    }
+    // 亮度遮罩盖整张画布，页帧才能和实时渲染长得一样。
+    final mask = novelReaderBrightnessMask(_preferences.brightness);
+    if (mask != null) {
+      canvas.drawRect(
+        Offset.zero & pagination.viewport,
+        Paint()..color = mask,
       );
     }
     final picture = recorder.endRecording();
@@ -719,6 +804,9 @@ class NovelNativeDocumentController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    _backgroundGeneration++;
+    _backgroundImage?.dispose();
+    _backgroundImage = null;
     _clearRasterCache();
     // 别把等排版的人挂在那里。
     final waiter = _paginationWaiter;
@@ -786,6 +874,8 @@ class NovelNativeDocumentView extends StatelessWidget {
                 canvasColor: canvasColor,
                 pageColor: pageColor,
                 textColor: Color(profile.foregroundArgb),
+                background: controller.pageBackground,
+                brightness: controller.preferences.brightness,
                 onReachedEnd: onReachedEnd,
               );
             }
@@ -796,6 +886,8 @@ class NovelNativeDocumentView extends StatelessWidget {
               pageColor: pageColor,
               textColor: Color(profile.foregroundArgb),
               showPageNumbers: controller.preferences.showPageNumber,
+              background: controller.pageBackground,
+              brightness: controller.preferences.brightness,
             );
           },
         );
