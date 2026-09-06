@@ -1611,6 +1611,42 @@ void main() {
     );
   });
 
+  testWidgets('long pressing the page raises the selection bar',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 760);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final harness = await _readerHarness(
+      null,
+      useDefaultDocumentView: true,
+      loadDocument: (chapter) async => NovelDocument(
+        format: NovelDocumentFormat.text,
+        content: List.generate(
+          20,
+          (index) => '第${index + 1}段 ${List.filled(24, '长按选词正文').join()}',
+        ).join('\n'),
+      ),
+    );
+    addTearDown(harness.store.dispose);
+
+    await tester.pumpWidget(harness.widget);
+    await tester.pumpAndSettle();
+
+    // 原生渲染器根本没有选区入口，选择条 / 划线 / 笔记全是死路径。
+    expect(find.byKey(const Key('novel-selection-bar')), findsNothing);
+
+    await tester.longPressAt(const Offset(180, 200));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('novel-selection-bar')), findsOneWidget);
+
+    // 点一下空白处就能退出选区。
+    await tester.tapAt(const Offset(210, 700));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('novel-selection-bar')), findsNothing);
+  });
+
   test('reader HTML shell sanitizes HTML and escapes plain text', () {
     final html = buildNovelReaderHtml(NovelDocument(
       format: NovelDocumentFormat.html,

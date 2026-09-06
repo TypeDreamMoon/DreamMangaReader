@@ -73,6 +73,342 @@ class NovelNativeDocumentController extends ChangeNotifier
     );
   }
 
+  // ——— 选词 / 划线 ———
+  //
+  // 原生渲染器以前既不画划线也不能选词：`applyAnnotations` 只把注记存进一个只有
+  // getter 的字段，`clearSelection` 只回调 null，全文没有任何选区入口 —— 于是选择条、
+  // 划线、笔记全是死路径。这里用排版信息（TextPainter.getPositionForOffset /
+  // getBoxesForSelection）把画布坐标换成「块 + 块内偏移」，与 locator 同一坐标系。
+
+  static const Color _selectionColor = Color(0x553f7fd8);
+
+  static const Map<String, Color> _highlightColors = {
+    'yellow': Color(0x66ffd54f),
+    'green': Color(0x6681c784),
+    'blue': Color(0x6664b5f6),
+    'pink': Color(0x66f48fb1),
+  };
+
+  List<NovelPageHighlight> _annotationHighlights = const [];
+  List<NovelPageHighlight> _highlights = const [];
+  _TextAnchor? _selectionAnchor;
+  _TextAnchor? _selectionFocus;
+  Rect? _selectionRect;
+
+  /// 要画在正文下面的高亮：已保存的划线 + 正在拖的选区。
+  List<NovelPageHighlight> get highlights => _highlights;
+
+  bool get hasSelection => _selectionAnchor != null;
+
+  /// 长按开始选词：先选中手指下的那个词。
+  bool beginSelection(Offset position) {
+    final anchor = _anchorAt(position, wholeWord: true);
+    if (anchor == null) return false;
+    _selectionAnchor = anchor;
+    _selectionFocus = anchor;
+    _selectionRect = anchor.rect;
+    _rebuildHighlights();
+    notifyListeners();
+    return true;
+  }
+
+  /// 拖动扩展选区。
+  void updateSelection(Offset position) {
+    if (_selectionAnchor == null) return;
+    final focus = _anchorAt(position, wholeWord: false);
+    if (focus == null) return;
+    _selectionFocus = focus;
+    _rebuildHighlights();
+    notifyListeners();
+  }
+
+  /// 松手：把选区发给阅读页，选择条才能弹出来。
+  void commitSelection() {
+    final selection = currentSelection;
+    if (selection == null) {
+      unawaited(clearSelection());
+      return;
+    }
+    onSelectionChanged?.call(selection);
+  }
+
+  /// 当前选区。没选中任何字时为 null。
+  NovelSelection? get currentSelection {
+    final document = _document;
+    final anchor = _selectionAnchor;
+    final focus = _selectionFocus ?? _selectionAnchor;
+    if (document == null || anchor == null || focus == null) return null;
+    final (start, end) = _orderedSelection(anchor, focus);
+    final text = _textBetween(document, start, end);
+    if (text.isEmpty) return null;
+    final rect = _selectionRect;
+    return NovelSelection(
+      text: text,
+      start: NovelLocator(
+        chapterId: _chapterId,
+        blockId: start.blockId,
+        charOffset: start.offset,
+        quote: text,
+      ),
+      end: NovelLocator(
+        chapterId: _chapterId,
+        blockId: end.blockId,
+        charOffset: end.offset,
+      ),
+      rect: rect == null
+          ? null
+          : NovelSelectionRect(rect.left, rect.top, rect.width, rect.height),
+    );
+  }
+
+  (_TextAnchor, _TextAnchor) _orderedSelection(
+    _TextAnchor anchor,
+    _TextAnchor focus,
+  ) {
+    final forward = focus.blockIndex > anchor.blockIndex ||
+        (focus.blockIndex == anchor.blockIndex &&
+            focus.offset >= anchor.offset);
+    // 长按选中的那个词始终包在选区里，往哪边拖都不会把它丢掉。
+    final start = forward
+        ? _TextAnchor(
+            blockIndex: anchor.blockIndex,
+            blockId: anchor.blockId,
+            offset: anchor.wordStart,
+            wordStart: anchor.wordStart,
+            wordEnd: anchor.wordEnd,
+            rect: anchor.rect,
+          )
+        : focus;
+    final end = forward
+        ? (focus.blockIndex == anchor.blockIndex &&
+                focus.offset < anchor.wordEnd
+            ? _TextAnchor(
+                blockIndex: anchor.blockIndex,
+                blockId: anchor.blockId,
+                offset: anchor.wordEnd,
+                wordStart: anchor.wordStart,
+                wordEnd: anchor.wordEnd,
+                rect: anchor.rect,
+              )
+            : focus)
+        : _TextAnchor(
+            blockIndex: anchor.blockIndex,
+            blockId: anchor.blockId,
+            offset: anchor.wordEnd,
+            wordStart: anchor.wordStart,
+            wordEnd: anchor.wordEnd,
+            rect: anchor.rect,
+          );
+    return (start, end);
+  }
+
+  String _textBetween(
+    NovelRenderDocument document,
+    _TextAnchor start,
+    _TextAnchor end,
+  ) {
+    final buffer = StringBuffer();
+    for (var index = start.blockIndex; index <= end.blockIndex; index++) {
+      if (index < 0 || index >= document.blocks.length) continue;
+      final text = document.blocks[index].plainText;
+      final from =
+          index == start.blockIndex ? start.offset.clamp(0, text.length) : 0;
+      final to = index == end.blockIndex
+          ? end.offset.clamp(0, text.length)
+          : text.length;
+      if (to <= from) continue;
+      if (buffer.isNotEmpty) buffer.write('\n');
+      buffer.write(text.substring(from, to));
+    }
+    return buffer.toString();
+  }
+
+  /// 把一个跨块区间展开成逐块的高亮。
+  List<NovelPageHighlight> _highlightsBetween(
+    NovelRenderDocument document,
+    int startIndex,
+    int startOffset,
+    int endIndex,
+    int endOffset,
+    Color color,
+  ) {
+    final result = <NovelPageHighlight>[];
+    for (var index = startIndex; index <= endIndex; index++) {
+      if (index < 0 || index >= document.blocks.length) continue;
+      final block = document.blocks[index];
+      final length = block.plainText.length;
+      final from = index == startIndex ? startOffset.clamp(0, length) : 0;
+      final to = index == endIndex ? endOffset.clamp(0, length) : length;
+      if (to <= from) continue;
+      result.add(NovelPageHighlight(
+        blockId: block.id,
+        start: from,
+        end: to,
+        color: color,
+      ));
+    }
+    return result;
+  }
+
+  /// 把存盘的注记换成可绘制的区间，并报回那些错字对不上的。
+  Set<String> _rebuildAnnotationHighlights() {
+    final document = _document;
+    if (document == null) {
+      _annotationHighlights = const [];
+      return const {};
+    }
+    final order = <String, int>{
+      for (var index = 0; index < document.blocks.length; index++)
+        document.blocks[index].id: index,
+    };
+    final result = <NovelPageHighlight>[];
+    final unresolved = <String>{};
+    for (final annotation in _annotations) {
+      final startId = annotation.range.start.blockId;
+      final endId = annotation.range.end.blockId ?? startId;
+      final startIndex = startId == null ? null : order[startId];
+      final endIndex = endId == null ? null : order[endId];
+      if (startIndex == null || endIndex == null || endIndex < startIndex) {
+        unresolved.add(annotation.id);
+        continue;
+      }
+      final ranges = _highlightsBetween(
+        document,
+        startIndex,
+        annotation.range.start.charOffset ?? 0,
+        endIndex,
+        annotation.range.end.charOffset ??
+            document.blocks[endIndex].plainText.length,
+        _highlightColors[annotation.colorId] ?? _highlightColors['yellow']!,
+      );
+      if (ranges.isEmpty) {
+        unresolved.add(annotation.id);
+        continue;
+      }
+      result.addAll(ranges);
+    }
+    _annotationHighlights = List.unmodifiable(result);
+    return unresolved;
+  }
+
+  void _rebuildHighlights() {
+    final document = _document;
+    final anchor = _selectionAnchor;
+    final focus = _selectionFocus ?? _selectionAnchor;
+    if (document == null || anchor == null || focus == null) {
+      _highlights = _annotationHighlights;
+      return;
+    }
+    final (start, end) = _orderedSelection(anchor, focus);
+    _highlights = List.unmodifiable([
+      ..._annotationHighlights,
+      ..._highlightsBetween(
+        document,
+        start.blockIndex,
+        start.offset,
+        end.blockIndex,
+        end.offset,
+        _selectionColor,
+      ),
+    ]);
+  }
+
+  /// 画布坐标 → 正文位置。
+  _TextAnchor? _anchorAt(Offset position, {required bool wholeWord}) {
+    final pagination = _pagination;
+    final document = _document;
+    if (pagination == null || document == null) return null;
+    NovelPageLayout? page;
+    Offset origin;
+    if (isScrollMode) {
+      if (_scrollSlices.isEmpty) return null;
+      final leaf = pagination.leafRects.first;
+      final contentY = _scrollOffset + position.dy;
+      var slice = _scrollSlices.first;
+      for (final candidate in _scrollSlices) {
+        if (contentY >= candidate.top) slice = candidate;
+      }
+      page = slice.page;
+      origin = Offset(math.max(0, leaf.left), slice.top - _scrollOffset);
+    } else {
+      final spread = pagination
+          .spreads[_spreadIndex.clamp(0, pagination.spreads.length - 1)];
+      final rects = pagination.leafRects;
+      if (pagination.pagesPerSpread == 2 &&
+          spread.leftPage != null &&
+          position.dx < rects.first.right) {
+        page = spread.leftPage;
+        origin = rects.first.topLeft;
+      } else {
+        page = spread.rightPage ?? spread.leftPage;
+        origin = (spread.rightPage != null ? rects.last : rects.first).topLeft;
+      }
+    }
+    if (page == null) return null;
+    return _anchorInPage(document, page, position - origin, origin, wholeWord);
+  }
+
+  _TextAnchor? _anchorInPage(
+    NovelRenderDocument document,
+    NovelPageLayout page,
+    Offset local,
+    Offset origin,
+    bool wholeWord,
+  ) {
+    NovelPageFragment? best;
+    var bestDistance = double.infinity;
+    for (final fragment in page.fragments) {
+      if (fragment.sourceText.isEmpty) continue;
+      final top = fragment.offset.dy;
+      final bottom = top + fragment.height;
+      final distance = local.dy < top
+          ? top - local.dy
+          : local.dy > bottom
+              ? local.dy - bottom
+              : 0.0;
+      if (distance < bestDistance) {
+        best = fragment;
+        bestDistance = distance;
+        if (distance == 0) break;
+      }
+    }
+    final fragment = best;
+    if (fragment == null) return null;
+    final blockIndex =
+        document.blocks.indexWhere((block) => block.id == fragment.blockId);
+    if (blockIndex < 0) return null;
+    final prefix = fragment.displayText.length - fragment.sourceText.length;
+    final painter = TextPainter(
+      text: TextSpan(text: fragment.displayText, style: fragment.textStyle),
+      textAlign: fragment.textAlign,
+      textDirection: TextDirection.ltr,
+      textScaler: TextScaler.noScaling,
+    )..layout(maxWidth: fragment.width);
+    final caret = painter.getPositionForOffset(local - fragment.offset);
+    final word = wholeWord
+        ? painter.getWordBoundary(caret)
+        : TextRange(start: caret.offset, end: caret.offset);
+    painter.dispose();
+
+    int toSource(int display) =>
+        (display - prefix).clamp(0, fragment.sourceText.length) +
+        fragment.sourceStart;
+
+    return _TextAnchor(
+      blockIndex: blockIndex,
+      blockId: fragment.blockId,
+      offset: toSource(caret.offset),
+      wordStart: toSource(word.start),
+      wordEnd: toSource(word.end),
+      rect: Rect.fromLTWH(
+        origin.dx + fragment.offset.dx,
+        origin.dy + fragment.offset.dy,
+        fragment.width,
+        fragment.height,
+      ),
+    );
+  }
+
   NovelReaderPreferences get preferences => _preferences;
   NovelPaginationResult? get pagination => _pagination;
 
@@ -84,6 +420,7 @@ class NovelNativeDocumentController extends ChangeNotifier
     if (_pagination != null) return Future<void>.value();
     return (_paginationWaiter ??= Completer<void>()).future;
   }
+
   int get spreadIndex => _spreadIndex;
   List<NovelAnnotation> get annotations => _annotations;
   int get cachedPageImageCount => _pageImages.length;
@@ -347,6 +684,11 @@ class NovelNativeDocumentController extends ChangeNotifier
     _preferences = preferences;
     await _syncBackground();
     _document = NovelRenderDocumentParser.parse(document);
+    _selectionAnchor = null;
+    _selectionFocus = null;
+    _selectionRect = null;
+    _rebuildAnnotationHighlights();
+    _rebuildHighlights();
     _locator = NovelLocator(chapterId: chapterId);
     _spreadIndex = 0;
     await _registerSelectedFont();
@@ -557,14 +899,21 @@ class NovelNativeDocumentController extends ChangeNotifier
     Iterable<NovelAnnotation> annotations,
   ) async {
     _annotations = List.unmodifiable(annotations);
-    onUnresolvedAnnotationsChanged?.call(const {});
+    final unresolved = _rebuildAnnotationHighlights();
+    _rebuildHighlights();
+    onUnresolvedAnnotationsChanged?.call(unresolved);
     notifyListeners();
-    return const {};
+    return unresolved;
   }
 
   @override
   Future<void> clearSelection() async {
+    _selectionAnchor = null;
+    _selectionFocus = null;
+    _selectionRect = null;
+    _rebuildHighlights();
     onSelectionChanged?.call(null);
+    notifyListeners();
   }
 
   @override
@@ -741,6 +1090,7 @@ class NovelNativeDocumentController extends ChangeNotifier
         showPageNumber: _preferences.showPageNumber,
         innerEdge: innerEdge,
         background: pageBackground,
+        highlights: _highlights,
         textCache: textCache,
       ).paint(canvas, rect.size);
       canvas.restore();
@@ -842,58 +1192,93 @@ class NovelNativeDocumentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) {
-        final profile = novelReaderThemeProfile(
-          controller.preferences.theme,
-          foregroundOverrideArgb: controller.preferences.foregroundArgb,
-        );
-        final pageColor = Color(profile.backgroundArgb);
-        final canvasColor = Color(
-          blendNovelReaderArgb(
-            profile.backgroundArgb,
-            profile.foregroundArgb,
-            .045,
-          ),
-        );
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final size = constraints.biggest;
-            final pagination = controller.paginationFor(
-              size,
-              devicePixelRatio: View.of(context).devicePixelRatio,
-            );
-            if (pagination == null) {
-              return ColoredBox(color: pageColor);
-            }
-            if (controller.isScrollMode) {
-              return NovelNativeScrollView(
-                controller: controller,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      // 长按开始、拖动扩展、松手弹选择条。长按需要手指先稳住，所以不会和
+      // 上层的翻页拖拽抢手势。
+      onLongPressStart: (details) =>
+          controller.beginSelection(details.localPosition),
+      onLongPressMoveUpdate: (details) =>
+          controller.updateSelection(details.localPosition),
+      onLongPressEnd: (_) => controller.commitSelection(),
+      // 普通点击也会走这个回调，没选区时就不要白白惊动一次阅读页。
+      onLongPressCancel: () {
+        if (controller.hasSelection) unawaited(controller.clearSelection());
+      },
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) {
+          final profile = novelReaderThemeProfile(
+            controller.preferences.theme,
+            foregroundOverrideArgb: controller.preferences.foregroundArgb,
+          );
+          final pageColor = Color(profile.backgroundArgb);
+          final canvasColor = Color(
+            blendNovelReaderArgb(
+              profile.backgroundArgb,
+              profile.foregroundArgb,
+              .045,
+            ),
+          );
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final size = constraints.biggest;
+              final pagination = controller.paginationFor(
+                size,
+                devicePixelRatio: View.of(context).devicePixelRatio,
+              );
+              if (pagination == null) {
+                return ColoredBox(color: pageColor);
+              }
+              if (controller.isScrollMode) {
+                return NovelNativeScrollView(
+                  controller: controller,
+                  pagination: pagination,
+                  canvasColor: canvasColor,
+                  pageColor: pageColor,
+                  textColor: Color(profile.foregroundArgb),
+                  background: controller.pageBackground,
+                  brightness: controller.preferences.brightness,
+                  highlights: controller.highlights,
+                  onReachedEnd: onReachedEnd,
+                );
+              }
+              return NovelNativePageView(
                 pagination: pagination,
+                spreadIndex: controller.spreadIndex,
                 canvasColor: canvasColor,
                 pageColor: pageColor,
                 textColor: Color(profile.foregroundArgb),
+                showPageNumbers: controller.preferences.showPageNumber,
                 background: controller.pageBackground,
                 brightness: controller.preferences.brightness,
-                onReachedEnd: onReachedEnd,
+                highlights: controller.highlights,
               );
-            }
-            return NovelNativePageView(
-              pagination: pagination,
-              spreadIndex: controller.spreadIndex,
-              canvasColor: canvasColor,
-              pageColor: pageColor,
-              textColor: Color(profile.foregroundArgb),
-              showPageNumbers: controller.preferences.showPageNumber,
-              background: controller.pageBackground,
-              brightness: controller.preferences.brightness,
-            );
-          },
-        );
-      },
+            },
+          );
+        },
+      ),
     );
   }
+}
+
+/// 正文里的一个位置：第几个块、块内第几个字，以及它所在片段在画布上的矩形。
+class _TextAnchor {
+  const _TextAnchor({
+    required this.blockIndex,
+    required this.blockId,
+    required this.offset,
+    required this.wordStart,
+    required this.wordEnd,
+    required this.rect,
+  });
+
+  final int blockIndex;
+  final String blockId;
+  final int offset;
+  final int wordStart;
+  final int wordEnd;
+  final Rect rect;
 }
 
 /// 影响**断行**的设置。变了就必须重排整章。

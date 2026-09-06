@@ -1907,6 +1907,14 @@ class _NovelReaderPageState extends State<NovelReaderPage>
                         : (rect.top - 56).clamp(8, constraints.maxHeight - 56);
                     return Stack(
                       children: [
+                        // 选区开着的时候 NovelReaderInput 是阻断的，没这层的话读者点哪里都退不出选择。
+                        Positioned.fill(
+                          child: GestureDetector(
+                            key: const Key('novel-selection-dismiss'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => unawaited(_clearSelection()),
+                          ),
+                        ),
                         Positioned(
                           left: left.toDouble(),
                           top: top.toDouble(),

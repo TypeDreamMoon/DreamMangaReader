@@ -6,6 +6,7 @@ import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_background_store.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_font_store.dart';
+import 'package:dream_manga_reader/core/novel/reader/novel_reader_data.dart';
 import 'package:dream_manga_reader/core/novel/reader/novel_reader_models.dart';
 import 'package:dream_manga_reader/features/novel/novel_native_document_controller.dart';
 import 'package:flutter/material.dart';
@@ -533,6 +534,155 @@ void main() {
       // 原生渲染路径以前压根没人发过这个回调。
       expect(fallbacks, hasLength(1));
       expect(controller.pageBackground, isNull);
+    });
+  });
+
+  group('selection and highlights', () {
+    final document = NovelDocument(
+      format: NovelDocumentFormat.text,
+      content: List.generate(
+        12,
+        (index) => '\u7b2c${index + 1}\u6bb5 ${List.filled(20, '\u5212\u7ebf\u9009\u8bcd\u6b63\u6587').join()}',
+      ).join('\n'),
+    );
+
+    Future<NovelNativeDocumentController> open() async {
+      final controller = NovelNativeDocumentController();
+      await controller.loadChapter(
+        'chapter-1',
+        document,
+        const NovelReaderPreferences(),
+      );
+      // 选区 / 高亮都要拿现成的版面来映射，走同步的 ensurePagination，
+      // 而不是 build 期间「只读缓存、算完再通知」的 paginationFor。
+      controller.ensurePagination(const Size(420, 720));
+      return controller;
+    }
+
+    testWidgets('stored annotations become paintable ranges', (tester) async {
+      final controller = await open();
+      addTearDown(controller.dispose);
+      final blockId =
+          controller.pagination!.pages.first.fragments.first.blockId;
+
+      final unresolved = await controller.applyAnnotations([
+        NovelAnnotation.create(
+          bookKey: 'book',
+          range: NovelAnnotationRange(
+            start: NovelLocator(
+              chapterId: 'chapter-1',
+              blockId: blockId,
+              charOffset: 2,
+            ),
+            end: NovelLocator(
+              chapterId: 'chapter-1',
+              blockId: blockId,
+              charOffset: 9,
+            ),
+            quote: '\u5212\u7ebf',
+          ),
+          colorId: 'yellow',
+          createdAt: 1,
+        ),
+        NovelAnnotation.create(
+          bookKey: 'book',
+          range: const NovelAnnotationRange(
+            start: NovelLocator(
+              chapterId: 'chapter-1',
+              blockId: 'dmr-does-not-exist',
+              charOffset: 0,
+            ),
+            end: NovelLocator(
+              chapterId: 'chapter-1',
+              blockId: 'dmr-does-not-exist',
+              charOffset: 3,
+            ),
+            quote: '\u4e22\u4e86',
+          ),
+          colorId: 'green',
+          createdAt: 2,
+        ),
+      ]);
+
+      // 老实现 applyAnnotations 只把注记存进一个没人读的字段，并且总是报「没有失效」。
+      expect(controller.highlights, hasLength(1));
+      expect(controller.highlights.single.blockId, blockId);
+      expect(controller.highlights.single.start, 2);
+      expect(controller.highlights.single.end, 9);
+      expect(unresolved, hasLength(1));
+    });
+
+    testWidgets('a long press selects a word and the drag extends it',
+        (tester) async {
+      final controller = await open();
+      addTearDown(controller.dispose);
+      final selections = <NovelSelection?>[];
+      controller.onSelectionChanged = selections.add;
+
+      expect(controller.beginSelection(const Offset(120, 40)), isTrue);
+      final anchored = controller.currentSelection;
+      expect(anchored, isNotNull);
+      expect(anchored!.text, isNotEmpty);
+      expect(anchored.start.blockId, isNotNull);
+      expect(controller.highlights, isNotEmpty);
+
+      controller.updateSelection(const Offset(300, 120));
+      final extended = controller.currentSelection!;
+      expect(extended.text.length, greaterThan(anchored.text.length));
+
+      controller.commitSelection();
+      expect(selections, hasLength(1));
+      expect(selections.single!.text, extended.text);
+      expect(selections.single!.rect, isNotNull);
+
+      await controller.clearSelection();
+      expect(controller.hasSelection, isFalse);
+      expect(controller.highlights, isEmpty);
+      expect(selections.last, isNull);
+    });
+
+    testWidgets('a highlight actually shows up in the painted page',
+        (tester) async {
+      final plain = await tester.runAsync(() async {
+        final controller = await open();
+        try {
+          return (await controller.capturePage(0))!.bytes;
+        } finally {
+          controller.dispose();
+        }
+      });
+      final marked = await tester.runAsync(() async {
+        final controller = await open();
+        try {
+          final blockId =
+              controller.pagination!.pages.first.fragments.first.blockId;
+          await controller.applyAnnotations([
+            NovelAnnotation.create(
+              bookKey: 'book',
+              range: NovelAnnotationRange(
+                start: NovelLocator(
+                  chapterId: 'chapter-1',
+                  blockId: blockId,
+                  charOffset: 0,
+                ),
+                end: NovelLocator(
+                  chapterId: 'chapter-1',
+                  blockId: blockId,
+                  charOffset: 12,
+                ),
+                quote: '\u5212\u7ebf',
+              ),
+              colorId: 'yellow',
+              createdAt: 1,
+            ),
+          ]);
+          return (await controller.capturePage(0))!.bytes;
+        } finally {
+          controller.dispose();
+        }
+      });
+
+      expect(marked, isNot(plain));
     });
   });
 }
