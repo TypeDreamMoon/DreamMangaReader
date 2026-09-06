@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -10,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 class _StubAdapter implements HttpClientAdapter {
   _StubAdapter(this.handler);
 
-  final ResponseBody Function(RequestOptions options) handler;
+  final FutureOr<ResponseBody> Function(RequestOptions options) handler;
 
   @override
   Future<ResponseBody> fetch(
@@ -90,32 +91,94 @@ void main() {
     );
   });
 
-  test('failed resource download never publishes a completed index', () async {
+  test('one failed resource never costs the whole chapter', () async {
     final dio = Dio()
-      ..httpClientAdapter = _StubAdapter(
-        (_) => ResponseBody.fromString('failure', 503),
-      );
+      ..httpClientAdapter = _StubAdapter((options) {
+        if (options.uri.path.endsWith('bad.png')) {
+          return ResponseBody.fromString('failure', 503);
+        }
+        return ResponseBody.fromBytes([1, 2, 3], 200);
+      });
     final cache = NovelDocumentCache(root: temp.path, dio: dio);
     final document = NovelDocument(
       format: NovelDocumentFormat.html,
-      content: '<p><img src="a.png"></p>',
+      content: '<p>正文<img src="good.png"><img src="bad.png"></p>',
       baseUrl: 'https://example.test/chapter/',
-      resources: const {'a.png': 'https://example.test/a.png'},
     );
 
-    await expectLater(
-      cache.save('source', 'novel', 'chapter', document),
-      throwsException,
+    final saved = await cache.save('source', 'novel', 'chapter', document);
+    final restored = await cache.read('source', 'novel', 'chapter');
+
+    expect(saved.resourceCount, 1);
+    expect(saved.missingResourceCount, 1);
+    expect(saved.html, contains('正文'));
+    expect(saved.html, contains('resources/'));
+    // 失败的那张留着远程地址当占位,不再拖垮整章。
+    expect(saved.html, contains('https://example.test/chapter/bad.png'));
+    expect(restored, isNotNull);
+    expect(restored!.missingResourceCount, 1);
+  });
+
+  test('chapter resources are fetched with bounded concurrency', () async {
+    var active = 0;
+    var peak = 0;
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((_) async {
+        active++;
+        if (active > peak) peak = active;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        active--;
+        return ResponseBody.fromBytes([1, 2, 3], 200);
+      });
+    final cache = NovelDocumentCache(
+      root: temp.path,
+      dio: dio,
+      resourceConcurrency: 3,
+    );
+    final document = NovelDocument(
+      format: NovelDocumentFormat.html,
+      content: [
+        for (var index = 0; index < 9; index++)
+          '<p><img src="https://cdn.example.test/$index.png"></p>',
+      ].join(),
     );
 
-    expect(await cache.read('source', 'novel', 'chapter'), isNull);
-    expect(
-      Directory(temp.path)
-          .listSync(recursive: true)
-          .whereType<File>()
-          .any((entry) => entry.path.endsWith('metadata.json')),
-      isFalse,
+    final saved = await cache.save('source', 'novel', 'many', document);
+
+    expect(saved.resourceCount, 9);
+    expect(saved.missingResourceCount, 0);
+    expect(peak, greaterThan(1));
+    expect(peak, lessThanOrEqualTo(3));
+  });
+
+  test('a resource that never answers times out on its own', () async {
+    final stalled = Completer<ResponseBody>();
+    addTearDown(() {
+      if (!stalled.isCompleted) {
+        stalled.complete(ResponseBody.fromBytes(const [], 200));
+      }
+    });
+    final dio = Dio()
+      ..httpClientAdapter = _StubAdapter((options) {
+        if (options.uri.path.endsWith('slow.png')) return stalled.future;
+        return ResponseBody.fromBytes([1, 2, 3], 200);
+      });
+    final cache = NovelDocumentCache(
+      root: temp.path,
+      dio: dio,
+      resourceTimeout: const Duration(milliseconds: 30),
     );
+    final document = NovelDocument(
+      format: NovelDocumentFormat.html,
+      content: '<p>正文<img src="https://cdn.example.test/slow.png">'
+          '<img src="https://cdn.example.test/quick.png"></p>',
+    );
+
+    final saved = await cache.save('source', 'novel', 'slow', document);
+
+    expect(saved.resourceCount, 1);
+    expect(saved.missingResourceCount, 1);
+    expect(saved.html, contains('https://cdn.example.test/slow.png'));
   });
 
   test('remote images in sanitized HTML are cached without a resource map',

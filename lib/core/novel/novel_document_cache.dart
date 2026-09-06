@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,6 +16,7 @@ class CachedNovelDocument {
     required this.html,
     required this.resourceCount,
     required this.byteCount,
+    this.missingResourceCount = 0,
   });
 
   final String directory;
@@ -22,6 +24,9 @@ class CachedNovelDocument {
   final String html;
   final int resourceCount;
   final int byteCount;
+
+  /// 下载失败、只能留着远程地址当占位的章内资源数量。
+  final int missingResourceCount;
 }
 
 /// 一章离线缓存的体检结果:目录、正文文件路径、资源数和总字节数。
@@ -33,19 +38,36 @@ class CachedNovelChapterStat {
     required this.documentPath,
     required this.resourceCount,
     required this.byteCount,
+    this.missingResourceCount = 0,
   });
 
   final String directory;
   final String documentPath;
   final int resourceCount;
   final int byteCount;
+
+  /// 下载时抓不到、正文里仍指向远程地址的资源数。
+  final int missingResourceCount;
 }
 
 class NovelDocumentCache {
-  NovelDocumentCache({required this.root, required Dio dio}) : _dio = dio;
+  NovelDocumentCache({
+    required this.root,
+    required Dio dio,
+    int resourceConcurrency = 4,
+    Duration resourceTimeout = const Duration(seconds: 30),
+  })  : _dio = dio,
+        _resourceConcurrency = resourceConcurrency < 1 ? 1 : resourceConcurrency,
+        _resourceTimeout = resourceTimeout;
 
   final String root;
   final Dio _dio;
+
+  /// 章内资源的并发上限:一章几十张插图串行拉会把下载队列堵死。
+  final int _resourceConcurrency;
+
+  /// 单个资源的超时:一张图挂在那里不能拖住整章。
+  final Duration _resourceTimeout;
 
   Future<CachedNovelDocument> save(
     String sourceId,
@@ -66,42 +88,57 @@ class NovelDocumentCache {
     try {
       var html = _documentHtml(document);
       final resourcesDirectory = Directory(_join(partial.path, 'resources'));
+      final candidates = _resourceCandidates(html, document);
+      if (candidates.isNotEmpty) {
+        await resourcesDirectory.create(recursive: true);
+      }
+      // 限流并发拉取:失败的那一个只丢掉自己,整章照样落盘。
+      final stored = List<_StoredResource?>.filled(candidates.length, null);
+      var cursor = 0;
+      Future<void> worker() async {
+        while (true) {
+          final slot = cursor++;
+          if (slot >= candidates.length) return;
+          stored[slot] = await _fetchResource(
+            candidates[slot],
+            slot,
+            resourcesDirectory,
+            headers,
+          );
+        }
+      }
+
+      await Future.wait([
+        for (var i = 0;
+            i < _resourceConcurrency && i < candidates.length;
+            i++)
+          worker(),
+      ]);
+
       final resourceMetadata = <Map<String, Object?>>[];
+      final missingResources = <String>[];
       final replacements = <String, String>{};
       var resourcesBytes = 0;
-      var index = 0;
-      for (final resource in _resourceCandidates(html, document)) {
-        final remote = resource.remote;
-        final response = await _dio.get<List<int>>(
-          remote.toString(),
-          options: Options(
-            headers: headers,
-            responseType: ResponseType.bytes,
-            validateStatus: (status) =>
-                status != null && status >= 200 && status < 300,
-          ),
-        );
-        final bytes = response.data;
-        if (bytes == null) {
-          throw StateError('Empty novel resource response: $remote');
+      for (var slot = 0; slot < candidates.length; slot++) {
+        final candidate = candidates[slot];
+        final remote = candidate.remote.toString();
+        final resource = stored[slot];
+        if (resource == null) {
+          // 留着原始远程地址当占位:联网时还能显示,离线时是一张坏图,
+          // 但不会连累整章。
+          missingResources.add(remote);
+          continue;
         }
-        await resourcesDirectory.create(recursive: true);
-        final filename = 'resource-${index.toString().padLeft(4, '0')}'
-            '${_safeExtension(resource.extensionHint, remote.path)}';
-        final relative = 'resources/$filename';
-        final file = File(_join(resourcesDirectory.path, filename));
-        await file.writeAsBytes(bytes, flush: true);
-        resourcesBytes += bytes.length;
+        resourcesBytes += resource.byteCount;
         resourceMetadata.add({
-          'path': relative,
-          'bytes': bytes.length,
-          'source': remote.toString(),
+          'path': resource.path,
+          'bytes': resource.byteCount,
+          'source': remote,
         });
-        for (final alias in resource.aliases) {
-          replacements[alias] = relative;
+        for (final alias in candidate.aliases) {
+          replacements[alias] = resource.path;
         }
-        replacements[remote.toString()] = relative;
-        index++;
+        replacements[remote] = resource.path;
       }
       html = _rewriteResources(html, replacements);
 
@@ -115,6 +152,7 @@ class NovelDocumentCache {
         'documentBytes': documentBytes,
         'resourceCount': resourceMetadata.length,
         'resources': resourceMetadata,
+        'missingResources': missingResources,
         'byteCount': documentBytes + resourcesBytes,
       };
       await File(_join(partial.path, 'metadata.json')).writeAsString(
@@ -152,6 +190,46 @@ class NovelDocumentCache {
     }
   }
 
+  /// 拉一个章内资源并落盘。失败(含超时)返回 null —— 调用方用远程地址占位。
+  Future<_StoredResource?> _fetchResource(
+    _ResourceCandidate candidate,
+    int slot,
+    Directory directory,
+    Map<String, String> headers,
+  ) async {
+    final remote = candidate.remote.toString();
+    final cancelToken = CancelToken();
+    List<int>? bytes;
+    try {
+      final response = await _dio
+          .get<List<int>>(
+            remote,
+            cancelToken: cancelToken,
+            options: Options(
+              headers: headers,
+              responseType: ResponseType.bytes,
+              validateStatus: (status) =>
+                  status != null && status >= 200 && status < 300,
+            ),
+          )
+          .timeout(_resourceTimeout);
+      bytes = response.data;
+    } on TimeoutException {
+      cancelToken.cancel('novel resource timed out');
+      return null;
+    } catch (_) {
+      return null;
+    }
+    if (bytes == null) return null;
+    final filename = 'resource-${slot.toString().padLeft(4, '0')}'
+        '${_safeExtension(candidate.extensionHint, candidate.remote.path)}';
+    await File(_join(directory.path, filename)).writeAsBytes(
+      bytes,
+      flush: true,
+    );
+    return _StoredResource('resources/$filename', bytes.length);
+  }
+
   Future<CachedNovelDocument?> read(
     String sourceId,
     String novelId,
@@ -166,6 +244,7 @@ class NovelDocumentCache {
         html: await File(stat.documentPath).readAsString(),
         resourceCount: stat.resourceCount,
         byteCount: stat.byteCount,
+        missingResourceCount: stat.missingResourceCount,
       );
     } catch (_) {
       return null;
@@ -217,11 +296,13 @@ class NovelDocumentCache {
           decoded['byteCount'] != documentBytes + resourceBytes) {
         return null;
       }
+      final missing = decoded['missingResources'];
       return CachedNovelChapterStat(
         directory: directory.path,
         documentPath: documentFile.path,
         resourceCount: resources.length,
         byteCount: documentBytes + resourceBytes,
+        missingResourceCount: missing is List ? missing.length : 0,
       );
     } catch (_) {
       return null;
@@ -244,6 +325,13 @@ class NovelDocumentCache {
       _identitySegment(chapterId, 'chapterId'),
     ));
   }
+}
+
+class _StoredResource {
+  const _StoredResource(this.path, this.byteCount);
+
+  final String path;
+  final int byteCount;
 }
 
 class _ResourceCandidate {
