@@ -439,7 +439,7 @@ class NovelReaderStatusOverlay extends StatelessWidget {
                   if (showTime)
                     _statusText(
                       const Key('novel-status-time'),
-                      '${_twoDigits(now.hour)}:${_twoDigits(now.minute)}',
+                      _formattedTime(context),
                     ),
                   if (showBatteryValue)
                     _statusText(
@@ -455,6 +455,18 @@ class NovelReaderStatusOverlay extends StatelessWidget {
     );
   }
 
+  /// 状态栏的钟表。
+  ///
+  /// 老实现是手搓的 `HH:mm`，于是无论系统语言、无论用户在系统里选了 12
+  /// 小时制，阅读器都只会显示 24 小时制。交给 [MaterialLocalizations] 后，格式
+  /// 跟着区域走，而“12/24 小时制”以系统设置（[MediaQuery.alwaysUse24HourFormatOf]）为准。
+  String _formattedTime(BuildContext context) {
+    return MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.fromDateTime(now),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+  }
+
   Widget _statusText(Key key, String value) {
     return Padding(
       padding: const EdgeInsets.only(left: 10),
@@ -462,5 +474,3 @@ class NovelReaderStatusOverlay extends StatelessWidget {
     );
   }
 }
-
-String _twoDigits(int value) => value.toString().padLeft(2, '0');

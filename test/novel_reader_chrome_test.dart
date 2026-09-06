@@ -114,6 +114,34 @@ void main() {
     expect(slider.semanticFormatterCallback, isNotNull);
     expect(slider.semanticFormatterCallback!(.42), '42%');
   });
+
+  testWidgets('status clock follows the system 12/24 hour setting',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_harness(
+      chromeVisible: false,
+      locale: const Locale('en'),
+      alwaysUse24HourFormat: false,
+    ));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('novel-status-time'))).data,
+      '1:30 PM',
+    );
+
+    await tester.pumpWidget(_harness(
+      chromeVisible: false,
+      locale: const Locale('en'),
+      alwaysUse24HourFormat: true,
+    ));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('novel-status-time'))).data,
+      '13:30',
+    );
+  });
 }
 
 Widget _harness({
@@ -124,12 +152,19 @@ Widget _harness({
   bool showBookProgress = true,
   bool showTime = true,
   bool showBattery = true,
+  bool alwaysUse24HourFormat = true,
 }) {
   return MaterialApp(
     theme: buildTheme(AppThemeVariant.light),
     locale: locale,
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        alwaysUse24HourFormat: alwaysUse24HourFormat,
+      ),
+      child: child!,
+    ),
     home: Scaffold(
       body: Stack(
         fit: StackFit.expand,
