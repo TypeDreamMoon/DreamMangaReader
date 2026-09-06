@@ -79,7 +79,10 @@ class TxtNovelImporter {
     await local.create(recursive: true);
 
     final destination = Directory(_join(local.path, preview.sha256));
-    if (await destination.exists()) return destination;
+    final index = jsonEncode(_buildIndex(preview));
+    // 目录名仍旧是 sha256(书架条目与阅读进度都挂在它上面),但同一份文件换个
+    // 编码或改个书名再导一次,解析结果是新的 —— 旧目录得让位,不能白导。
+    if (await _isInstalled(destination, index)) return destination;
 
     final temporary = Directory(
       _join(
@@ -93,20 +96,60 @@ class TxtNovelImporter {
         _join(temporary.path, 'content.txt'),
       );
       await File(_join(temporary.path, 'index.json')).writeAsString(
-        jsonEncode(_buildIndex(preview)),
+        index,
         encoding: utf8,
         flush: true,
       );
-      if (await destination.exists()) {
-        await temporary.delete(recursive: true);
-        return destination;
-      }
-      final installed = await temporary.rename(destination.path);
+      final installed = await _replace(temporary, destination, novels);
+      // 规范化后的中间文本只服务这次导入,装好就删。
       await _deleteQuietly(File(preview.normalizedTextPath));
       return installed;
     } catch (_) {
       if (await temporary.exists()) await temporary.delete(recursive: true);
       if (await destination.exists()) return destination;
+      rethrow;
+    }
+  }
+
+  /// 目标目录里已经是同一份解析结果吗?是的话重复导入就是个空操作。
+  Future<bool> _isInstalled(Directory destination, String index) async {
+    try {
+      if (!await File(_join(destination.path, 'content.txt')).exists()) {
+        return false;
+      }
+      final file = File(_join(destination.path, 'index.json'));
+      return await file.exists() && await file.readAsString() == index;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 原子替换:先把旧目录挪走,装好新的再删旧的;装不上就把旧的放回去。
+  Future<Directory> _replace(
+    Directory temporary,
+    Directory destination,
+    Directory novels,
+  ) async {
+    Directory? stale;
+    if (await destination.exists()) {
+      stale = Directory(_join(
+        novels.path,
+        '.stale-$pid-${DateTime.now().microsecondsSinceEpoch}',
+      ));
+      await destination.rename(stale.path);
+    }
+    try {
+      final installed = await temporary.rename(destination.path);
+      if (stale != null && await stale.exists()) {
+        await stale.delete(recursive: true);
+      }
+      return installed;
+    } catch (_) {
+      if (stale != null &&
+          await stale.exists() &&
+          !await destination.exists()) {
+        await stale.rename(destination.path);
+      }
       rethrow;
     }
   }

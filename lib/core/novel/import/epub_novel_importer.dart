@@ -206,7 +206,10 @@ class EpubNovelImporter {
     await local.create(recursive: true);
 
     final destination = Directory(_join(local.path, preview.sha256));
-    if (await destination.exists()) {
+    final index = jsonEncode(_buildIndex(preview));
+    // 目录名仍旧是 sha256(书架条目与阅读进度都挂在它上面),但改了书名/作者再
+    // 导一次就得把索引重写,不能拿旧目录糊弄用户。
+    if (await _isInstalled(destination, index)) {
       return ImportedEpubNovel(directory: destination, preview: preview);
     }
 
@@ -228,20 +231,59 @@ class EpubNovelImporter {
         await file.writeAsBytes(resource.value, flush: true);
       }
       await File(_join(temporary.path, 'index.json')).writeAsString(
-        jsonEncode(_buildIndex(preview)),
+        index,
         encoding: utf8,
         flush: true,
       );
-      if (await destination.exists()) {
-        await temporary.delete(recursive: true);
-        return ImportedEpubNovel(directory: destination, preview: preview);
-      }
-      final installed = await temporary.rename(destination.path);
+      final installed = await _replace(temporary, destination, novels);
       return ImportedEpubNovel(directory: installed, preview: preview);
     } catch (_) {
       if (await temporary.exists()) await temporary.delete(recursive: true);
       if (await destination.exists()) {
         return ImportedEpubNovel(directory: destination, preview: preview);
+      }
+      rethrow;
+    }
+  }
+
+  /// 目标目录里已经是同一份索引吗?是的话重复导入就是个空操作。
+  Future<bool> _isInstalled(Directory destination, String index) async {
+    try {
+      if (!await File(_join(destination.path, 'original.epub')).exists()) {
+        return false;
+      }
+      final file = File(_join(destination.path, 'index.json'));
+      return await file.exists() && await file.readAsString() == index;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 原子替换:先把旧目录挪走,装好新的再删旧的;装不上就把旧的放回去。
+  Future<Directory> _replace(
+    Directory temporary,
+    Directory destination,
+    Directory novels,
+  ) async {
+    Directory? stale;
+    if (await destination.exists()) {
+      stale = Directory(_join(
+        novels.path,
+        '.stale-$pid-${DateTime.now().microsecondsSinceEpoch}',
+      ));
+      await destination.rename(stale.path);
+    }
+    try {
+      final installed = await temporary.rename(destination.path);
+      if (stale != null && await stale.exists()) {
+        await stale.delete(recursive: true);
+      }
+      return installed;
+    } catch (_) {
+      if (stale != null &&
+          await stale.exists() &&
+          !await destination.exists()) {
+        await stale.rename(destination.path);
       }
       rethrow;
     }

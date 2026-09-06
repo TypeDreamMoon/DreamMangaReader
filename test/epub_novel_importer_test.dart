@@ -140,6 +140,50 @@ void main() {
         book.directory.path);
   });
 
+  test('re-importing the same EPUB with an edited title rewrites the index',
+      () async {
+    final bytes = epub2Fixture();
+    final preview = await importer.previewBytes(bytes);
+    final installed = await importer.importPreview(preview);
+
+    final renamed = EpubNovelImportPreview(
+      sha256: preview.sha256,
+      title: '改过的书名',
+      authors: const ['作者乙'],
+      chapters: preview.chapters,
+      hasCover: preview.hasCover,
+      language: preview.language,
+      originalBytes: preview.originalBytes,
+      resources: preview.resources,
+      chapterResources: preview.chapterResources,
+    );
+    final reinstalled = await importer.importPreview(renamed);
+
+    // 目录名还是 sha256 —— 书架条目与阅读进度都挂在它上面,不能换。
+    expect(reinstalled.directory.path, installed.directory.path);
+    final index = jsonDecode(
+      await File(
+        '${reinstalled.directory.path}${Platform.pathSeparator}index.json',
+      ).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(index['title'], '改过的书名');
+    expect(index['authors'], ['作者乙']);
+    expect(
+      await File(
+        '${reinstalled.directory.path}${Platform.pathSeparator}original.epub',
+      ).exists(),
+      isTrue,
+    );
+    final novels = reinstalled.directory.parent.parent;
+    expect(
+      novels.listSync().where(
+            (entry) =>
+                entry.path.contains('.tmp-') || entry.path.contains('.stale-'),
+          ),
+      isEmpty,
+    );
+  });
+
   test('accepts EPUB 2 cover metadata that uses href instead of manifest id',
       () async {
     final preview = await importer.previewBytes(

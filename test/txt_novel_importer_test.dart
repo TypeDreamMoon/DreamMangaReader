@@ -160,4 +160,56 @@ void main() {
     );
     expect((await importer.importPreview(preview)).path, installed.path);
   });
+
+  test('re-importing the same file with a new encoding rewrites the book',
+      () async {
+    final source = File('${sandbox.path}${Platform.pathSeparator}book.txt');
+    await source.writeAsString('第一章 开始\n正文一。');
+    final importer = TxtNovelImporter(
+      applicationSupportDirectory: () async => supportDirectory,
+    );
+    final preview = await importer.preview(source);
+    final installed = await importer.importPreview(preview);
+
+    // 用户发现编码认错了 → 改成 Big5、顺手改了书名,再导一次同一个文件。
+    final correctedText =
+        File('${sandbox.path}${Platform.pathSeparator}corrected.txt');
+    await correctedText.writeAsString('第一章 開始\n正文一。');
+    final corrected = TxtNovelImportPreview(
+      sha256: preview.sha256,
+      title: '改过的书名',
+      authors: const ['作者乙'],
+      chapters: preview.chapters,
+      encoding: 'big5',
+      // 上一次导入已经把规范化文本搬进书库并删掉了原文件,重导给出新的一份。
+      normalizedTextPath: correctedText.path,
+      outline: preview.outline,
+    );
+    final reinstalled = await importer.importPreview(corrected);
+
+    // 目录名还是 sha256 —— 书架条目与阅读进度都挂在它上面,不能换。
+    expect(reinstalled.path, installed.path);
+    final index = jsonDecode(
+      await File(
+        '${reinstalled.path}${Platform.pathSeparator}index.json',
+      ).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(index['encoding'], 'big5');
+    expect(index['title'], '改过的书名');
+    expect(index['authors'], ['作者乙']);
+    expect(
+      await File(
+        '${reinstalled.path}${Platform.pathSeparator}content.txt',
+      ).readAsString(),
+      '第一章 開始\n正文一。',
+    );
+    final novels = reinstalled.parent.parent;
+    expect(
+      novels.listSync().where(
+            (entry) =>
+                entry.path.contains('.tmp-') || entry.path.contains('.stale-'),
+          ),
+      isEmpty,
+    );
+  });
 }
