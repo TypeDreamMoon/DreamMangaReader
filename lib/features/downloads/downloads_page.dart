@@ -200,20 +200,20 @@ class _ActiveDownloadTileState extends State<_ActiveDownloadTile> {
   /// 协调器的 `remove()` 只删任务记录,不回调执行器 —— 番剧任务半路取消时,已经落盘
   /// 的 `segment-*.bin` 和包目录会一直留着。番剧走 store 的 delete,让它顺手把目录清掉。
   Future<void> _cancel(BuildContext context) async {
-    if (task.kind == DownloadContentKind.anime) {
+    if (widget.task.kind == DownloadContentKind.anime) {
       final store = AnimeDownloadScope.maybeRead(context);
       if (store != null) {
-        final request = ContentDownloadRequest.fromTask(task);
+        final request = ContentDownloadRequest.fromTask(widget.task);
         await store.delete(
           request.sourceId,
           request.contentId,
           request.chapterId,
-          coordinator: coordinator,
+          coordinator: widget.coordinator,
         );
         return;
       }
     }
-    await coordinator.remove(task.id);
+    await widget.coordinator.remove(widget.task.id);
   }
 }
 
