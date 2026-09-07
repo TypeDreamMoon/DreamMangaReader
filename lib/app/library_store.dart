@@ -871,23 +871,44 @@ class LibraryStore extends ChangeNotifier {
       );
       _translateTargets = _parseTargets(prefs.getString(_kTranslateTargets));
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
-      // 单独 try:钥匙串不可用(某些 Android ROM / 无 keystore 的环境)不能连累其余设置。
-      try {
-        _translateLlmKey = await readMigratingSecret(
-              secrets: _secrets,
-              preferences: prefs,
-              secureKey: _kTranslateLlmKeySecret,
-              legacyKeys: const [_kLegacyTranslateLlmKey],
-            ) ??
-            '';
-      } catch (_) {
-        _translateLlmKey = '';
-      }
+      // 密钥读取**不挂在 load 上**:它要过一次平台通道(钥匙串 / keystore),而那条
+      // 通道在某些环境里会迟迟不回话 —— 挂上去就等于让书架、阅读进度乃至第一帧
+      // 一起陪等。翻译密钥只有真去翻译时才用得上,晚到几毫秒无所谓,到手再通知一次。
+      _translateLlmKeyReady = _loadTranslateLlmKey(prefs);
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
     } catch (e) {
       // 偏好损坏不致命:该读到的已经生效,剩下的留默认值继续。
       AppLog.i.warn(LogCat.app, '书库偏好读取中断,余下项用默认值', detail: '$e');
     }
+  }
+
+  /// 上面那次后台读取。真正要用密钥的地方(以及测试)可以 await 它;
+  /// 不关心的地方照旧直接读 [translateLlmKey]。
+  Future<void> _translateLlmKeyReady = Future<void>.value();
+
+  /// 大模型密钥是否已经从安全存储读回来了。
+  Future<void> get translateLlmKeyReady => _translateLlmKeyReady;
+
+  /// 后台把大模型密钥从安全存储读回来(顺带迁移旧的明文键)。
+  ///
+  /// 钥匙串不可用(某些 Android ROM、无 keystore 的环境,或测试里根本没有插件)
+  /// 时静默留空:密钥缺失只影响大模型翻译这一项,不该连累任何别的东西。
+  Future<void> _loadTranslateLlmKey(SharedPreferences prefs) async {
+    String value;
+    try {
+      value = await readMigratingSecret(
+            secrets: _secrets,
+            preferences: prefs,
+            secureKey: _kTranslateLlmKeySecret,
+            legacyKeys: const [_kLegacyTranslateLlmKey],
+          ) ??
+          '';
+    } catch (_) {
+      value = '';
+    }
+    if (_disposed || value.isEmpty || value == _translateLlmKey) return;
+    _translateLlmKey = value;
+    notifyListeners();
   }
 
   set readerMode(ReaderMode v) {

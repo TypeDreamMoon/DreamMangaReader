@@ -35,6 +35,8 @@ void main() {
     final secrets = _MemorySecretStore();
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
 
     expect(store.translateLlmKey, 'sk-plaintext');
     expect(secrets.values[_secretKey], 'sk-plaintext');
@@ -49,6 +51,8 @@ void main() {
     final secrets = _MemorySecretStore({_secretKey: 'sk-secure'});
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
 
     expect(store.translateLlmKey, 'sk-secure');
     final prefs = await SharedPreferences.getInstance();
@@ -60,6 +64,8 @@ void main() {
     final secrets = _MemorySecretStore();
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
 
     await store.setTranslateLlmKey('sk-new');
     expect(store.translateLlmKey, 'sk-new');
@@ -78,6 +84,8 @@ void main() {
     final secrets = _MemorySecretStore({_secretKey: 'sk-old'});
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
 
     await store.setTranslateLlmKey('');
     expect(store.translateLlmKey, '');
@@ -89,6 +97,8 @@ void main() {
     final secrets = _MemorySecretStore()..failWrites = true;
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
 
     await store.setTranslateLlmKey('sk-nokeystore');
     expect(store.translateLlmKey, 'sk-nokeystore');
@@ -102,6 +112,8 @@ void main() {
     final secrets = _MemorySecretStore();
     final store = LibraryStore(secrets: secrets);
     await store.load();
+    // 密钥读取不挂在 load 上(平台通道可能迟迟不回话),等它自己那条。
+    await store.translateLlmKeyReady;
     await store.setTranslateLlmKey('sk-secret');
 
     expect(store.exportData().toString(), isNot(contains('sk-secret')));
