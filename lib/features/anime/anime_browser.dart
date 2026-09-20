@@ -247,15 +247,17 @@ class AnimeBrowserState extends State<AnimeBrowser> {
           : await _source!.getSearch(_query, _page);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        final before = _results.length;
         for (final anime in paged.items) {
           _addResult(anime, _meta!);
         }
-        _hasNext = paged.hasNext && paged.items.isNotEmpty;
+        _hasNext = paged.hasNext && paged.items.isNotEmpty && _results.length > before;
         _page++;
         _loading = false;
         _error = null;
         _sortResults();
       });
+      _fillViewportIfNeeded();
       await _maybeFallback(generation); // 搜索首页零结果 → 尝试译名回退
     } catch (e) {
       if (!mounted || generation != _loadGeneration) return;
@@ -264,6 +266,13 @@ class AnimeBrowserState extends State<AnimeBrowser> {
         _error = '$e';
       });
     }
+  }
+
+  void _fillViewportIfNeeded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_hasNext || _loading || !_scroll.hasClients) return;
+      if (_scroll.position.maxScrollExtent <= 0) unawaited(_loadMore());
+    });
   }
 
   Future<void> _loadMixedCursor(

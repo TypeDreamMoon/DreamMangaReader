@@ -292,13 +292,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ];
         _results.addAll(freshItems
             .map((manga) => (manga: manga, meta: sourceMeta, rank: 0)));
-        _hasNext = page.hasNext && page.items.isNotEmpty;
+        _hasNext = page.hasNext && page.items.isNotEmpty && freshItems.isNotEmpty;
         _page++;
         _loading = false;
         // 上一页失败、这一页成功 → 错误态到此为止。不清的话页脚会一直挂着
         // 「加载失败」,_maybeFallback 也会被 `_error != null` 一直挡在门外。
         _error = null;
       });
+      _fillViewportIfNeeded();
       _maybeFallback(); // 首页零结果 → 尝试译名回退
     } catch (e) {
       if (mounted && gen == _loadGen) {
@@ -308,6 +309,13 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         });
       }
     }
+  }
+
+  void _fillViewportIfNeeded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_hasNext || _loading || !_scroll.hasClients) return;
+      if (_scroll.position.maxScrollExtent <= 0) unawaited(_loadMore());
+    });
   }
 
   /// 混合:拉某个源的下一页并**就地追加**(异步、独立)。慢源不阻塞其它源;
