@@ -110,80 +110,46 @@ final RegExp _bareSeasonPattern = RegExp(
 const int _minYear = 1900;
 const int _maxYear = 2099;
 
+/// 三条取号工厂：规则表里只有「取第 1 组」和「取第 1、2 组」两种写法，
+/// 逐条手写闭包会把「谁先谁后」淹没在样板里。
+_EpisodeMatch _episodeAt(RegExpMatch match) =>
+    _EpisodeMatch(match.start, match.end, episode: int.parse(match[1]!));
+
+_EpisodeMatch _seasonAt(RegExpMatch match) =>
+    _EpisodeMatch(match.start, match.end, season: int.parse(match[1]!));
+
+_EpisodeMatch _seasonAndEpisodeAt(RegExpMatch match) => _EpisodeMatch(
+      match.start,
+      match.end,
+      season: int.parse(match[1]!),
+      episode: int.parse(match[2]!),
+    );
+
 /// 集号规则：命中即停，所以顺序 = 优先级。
 final List<_EpisodeRule> _seasonEpisodeRules = <_EpisodeRule>[
-  _EpisodeRule(
-    _seasonEpisodePattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      season: int.parse(match[1]!),
-      episode: int.parse(match[2]!),
-    ),
-  ),
-  _EpisodeRule(
-    _crossPattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      season: int.parse(match[1]!),
-      episode: int.parse(match[2]!),
-    ),
-  ),
-  _EpisodeRule(
-    _chineseEpisodePattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      episode: int.parse(match[1]!),
-    ),
-  ),
-  _EpisodeRule(
-    _episodePrefixPattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      episode: int.parse(match[1]!),
-    ),
-  ),
-  _EpisodeRule(
-    _bracketEpisodePattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      episode: int.parse(match[1]!),
-    ),
-  ),
+  _EpisodeRule(_seasonEpisodePattern, _seasonAndEpisodeAt),
+  _EpisodeRule(_crossPattern, _seasonAndEpisodeAt),
+  _EpisodeRule(_chineseEpisodePattern, _episodeAt),
+  _EpisodeRule(_episodePrefixPattern, _episodeAt),
+  _EpisodeRule(_bracketEpisodePattern, _episodeAt),
   _EpisodeRule(_trailingEpisodePattern, _resolveTrailingEpisode),
 ];
 
 /// 只有季号时（`Show S02`、`Show 第2季`）的兜底规则。
 final List<_EpisodeRule> _seasonOnlyRules = <_EpisodeRule>[
-  _EpisodeRule(
-    _chineseSeasonPattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      season: int.parse(match[1]!),
-    ),
-  ),
-  _EpisodeRule(
-    _seasonWordPattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      season: int.parse(match[1]!),
-    ),
-  ),
-  _EpisodeRule(
-    _bareSeasonPattern,
-    (match) => _EpisodeMatch(
-      match.start,
-      match.end,
-      season: int.parse(match[1]!),
-    ),
-  ),
+  _EpisodeRule(_chineseSeasonPattern, _seasonAt),
+  _EpisodeRule(_seasonWordPattern, _seasonAt),
+  _EpisodeRule(_bareSeasonPattern, _seasonAt),
 ];
+
+/// 按优先级扫一遍规则，返回首个有效命中（`null` 表示全落空）。顺序 = 优先级。
+_EpisodeMatch? _firstRuleMatch(List<_EpisodeRule> rules, String text) {
+  for (final rule in rules) {
+    final match = rule.firstMatch(text);
+    if (match != null) return match;
+  }
+  return null;
+}
 
 _EpisodeMatch? _resolveTrailingEpisode(RegExpMatch match) {
   final value = int.parse(match[1]!);
@@ -248,13 +214,13 @@ final RegExp _fullWidthPattern = RegExp(
   r'[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\uFF08\uFF09\uFF3B\uFF3D\uFF5B\uFF5D\u3010\u3011\u3000]',
 );
 
+/// 全角 ASCII 与半角的码位差：`０`(U+FF10) ↔ `0`(U+30)、`Ａ` ↔ `A`、`ａ` ↔ `a`、
+/// 全角括号 `（）［］｛｝` 都落在同一个偏移上，不必逐字符列表。
+const int _fullWidthOffset = 0xFEE0;
+
+/// 偏移量不成立的少数几个：全角空格，以及不在全角 ASCII 区里的 `【】`。
 const Map<int, String> _fullWidthReplacements = <int, String>{
-  0xFF08: '(',
-  0xFF09: ')',
-  0xFF3B: '[',
-  0xFF3D: ']',
-  0xFF5B: '{',
-  0xFF5D: '}',
+  0x3000: ' ',
   0x3010: '[',
   0x3011: ']',
 };
@@ -272,34 +238,19 @@ ParsedMediaName parseMediaFileName(String fileName) {
   if (base.isEmpty) return const ParsedMediaName(title: '');
 
   final spans = <_EpisodeMatch>[];
-  int? season;
-  int? episode;
-
-  for (final rule in _seasonEpisodeRules) {
-    final match = rule.firstMatch(base);
-    if (match == null) continue;
-    spans.add(match);
-    season = match.season;
-    episode = match.episode;
-    break;
-  }
-
+  final episodeMatch = _firstRuleMatch(_seasonEpisodeRules, base);
   // 只有季号的命名（`Show S02`、`Show 第2季`）：等集号规则全落空再找一次，
   // 免得把 `Show S02E05` 的季号重复匹配第二遍。
-  if (season == null) {
-    for (final rule in _seasonOnlyRules) {
-      final match = rule.firstMatch(base);
-      if (match == null) continue;
-      spans.add(match);
-      season = match.season;
-      break;
-    }
-  }
+  final seasonMatch = episodeMatch?.season == null
+      ? _firstRuleMatch(_seasonOnlyRules, base)
+      : null;
+  if (episodeMatch != null) spans.add(episodeMatch);
+  if (seasonMatch != null) spans.add(seasonMatch);
 
   return ParsedMediaName(
     title: _finalizeTitle(withoutEpisode: _removeSpans(base, spans), base: base),
-    season: season,
-    episode: episode,
+    season: episodeMatch?.season ?? seasonMatch?.season,
+    episode: episodeMatch?.episode,
   );
 }
 
@@ -639,22 +590,13 @@ String _extensionOf(String fileName) {
 }
 
 /// 全角数字/字母/括号/空格 → 半角，让 `Ｓ０１Ｅ０２` 也能命中规则。
-String _toHalfWidth(String text) {
-  return text.replaceAllMapped(_fullWidthPattern, (match) {
-    final code = match.group(0)!.codeUnitAt(0);
-    if (code == 0x3000) return ' ';
-    if (code >= 0xFF10 && code <= 0xFF19) {
-      return String.fromCharCode(code - 0xFF10 + 0x30);
-    }
-    if (code >= 0xFF21 && code <= 0xFF3A) {
-      return String.fromCharCode(code - 0xFF21 + 0x41);
-    }
-    if (code >= 0xFF41 && code <= 0xFF5A) {
-      return String.fromCharCode(code - 0xFF41 + 0x61);
-    }
-    return _fullWidthReplacements[code] ?? match.group(0)!;
-  });
-}
+String _toHalfWidth(String text) =>
+    text.replaceAllMapped(_fullWidthPattern, (match) {
+      final code = match.group(0)!.codeUnitAt(0);
+      // 正则只匹配「偏移量成立的全角 ASCII」+ 上面那张表的例外，查不到表就平移。
+      return _fullWidthReplacements[code] ??
+          String.fromCharCode(code - _fullWidthOffset);
+    });
 
 bool _isDigit(int code) => code >= 0x30 && code <= 0x39;
 

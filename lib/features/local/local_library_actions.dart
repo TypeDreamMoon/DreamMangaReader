@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../app/local_media_store.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/local/dart_io_directory_walker.dart';
 import '../../core/local/local_episode_parser.dart';
@@ -10,7 +11,6 @@ import '../../core/local/local_models.dart';
 import '../../core/local/saf_directory_walker.dart';
 import '../../core/platform/local_media_bridge.dart';
 import '../../ui/app_notify.dart';
-import '../../app/local_media_store.dart';
 import 'local_location_picker.dart';
 
 /// 提示回调:页面把它接到 `showAppNotify(context, message, kind: kind)`。
@@ -49,6 +49,10 @@ class LocalLibraryActions {
 
   final bool windows;
   final LocalLibraryReporter? report;
+
+  /// 提示的唯一出口:页面把它接到 `showAppNotify(context, message, kind: kind)`,
+  /// 测试里只记消息。没接就是不提示(所有分支都允许静默)。
+  void _notify(String message, AppNotifyKind kind) => report?.call(message, kind);
 
   /// 路线 A:挑一个目录 → 建库 → 立刻扫一遍(规格 §8.1)。
   ///
@@ -89,7 +93,7 @@ class LocalLibraryActions {
     if (picked.isEmpty) return null;
     final items = _itemsFromPicked(picked);
     if (items.isEmpty) {
-      report?.call(l10n.local_emptyUnsupported, AppNotifyKind.warn);
+      _notify(l10n.local_emptyUnsupported, AppNotifyKind.warn);
       return null;
     }
     return _create(
@@ -108,21 +112,21 @@ class LocalLibraryActions {
     if (library.kind != LocalLibraryKind.folder) return null;
     final root = windows ? library.path : library.treeUri;
     if (root == null || root.trim().isEmpty) {
-      report?.call(l10n.local_emptyHint, AppNotifyKind.warn);
+      _notify(l10n.local_emptyHint, AppNotifyKind.warn);
       return null;
     }
-    report?.call(l10n.local_scanning, AppNotifyKind.info);
+    _notify(l10n.local_scanning, AppNotifyKind.info);
     final scanner = LocalLibraryScanner(walker: _walkerFor(), windows: windows);
     final result = await scanner.scan(
       libraryId: library.id,
       root: root,
       onProgress: (count) =>
-          report?.call(l10n.local_scanFound(count), AppNotifyKind.info),
+          _notify(l10n.local_scanFound(count), AppNotifyKind.info),
     );
     if (result.items.isEmpty) {
       // 整次失败（桥不可用/根目录没了）与「这个目录里没有媒体」都到这里：
       // 两种情况下都没什么可合并的，直接提示并保留原索引。
-      report?.call(
+      _notify(
         result.warning ?? l10n.local_emptyFolder,
         result.warning == null ? AppNotifyKind.warn : AppNotifyKind.error,
       );
@@ -132,10 +136,10 @@ class LocalLibraryActions {
     try {
       summary = await store.applyScanResult(library.id, result.items);
     } on LocalMediaException catch (error) {
-      report?.call(error.message, AppNotifyKind.error);
+      _notify(error.message, AppNotifyKind.error);
       return null;
     }
-    report?.call(_summaryMessage(result, summary), AppNotifyKind.success);
+    _notify(_summaryMessage(result, summary), AppNotifyKind.success);
     return summary;
   }
 
@@ -145,7 +149,7 @@ class LocalLibraryActions {
       await store.removeLibrary(library.id);
       return true;
     } on LocalMediaException catch (error) {
-      report?.call(error.message, AppNotifyKind.error);
+      _notify(error.message, AppNotifyKind.error);
       return false;
     }
   }
@@ -173,13 +177,11 @@ class LocalLibraryActions {
         items: items,
       );
     } on LocalMediaException catch (error) {
-      report?.call(
-        error.reason == LocalMediaError.duplicateLocation
-            ? l10n.local_duplicateLocation
-            : error.message,
-        error.reason == LocalMediaError.duplicateLocation
-            ? AppNotifyKind.info
-            : AppNotifyKind.error,
+      // 位置重复不是错误:换个提示语气就行,所以这里只算一次判断。
+      final duplicate = error.reason == LocalMediaError.duplicateLocation;
+      _notify(
+        duplicate ? l10n.local_duplicateLocation : error.message,
+        duplicate ? AppNotifyKind.info : AppNotifyKind.error,
       );
       return null;
     }
@@ -201,18 +203,8 @@ class LocalLibraryActions {
         videoFileName: entry.name,
         directoryFileNames: names,
       )) {
-        final candidates = [
-          for (final candidate in picked)
-            if (candidate.name == subName) candidate,
-        ];
-        if (candidates.length != 1) continue;
-        subtitles.add(
-          LocalSubtitle(
-            location: candidates.single.location,
-            label: subtitleLabelFor(subName),
-            language: subtitleLanguageFor(subName),
-          ),
-        );
+        final subtitle = _subtitleFor(subName, picked);
+        if (subtitle != null) subtitles.add(subtitle);
       }
       final sizeBytes = windows ? _sizeOf(entry.location) : 0;
       final modifiedAt = windows ? _modifiedAtOf(entry.location) : null;
@@ -235,38 +227,52 @@ class LocalLibraryActions {
     return items;
   }
 
+  /// 一个候选字幕名 → 字幕条目;**同名文件不止一个就不猜**(宁可少配也不错配)。
+  LocalSubtitle? _subtitleFor(String subName, List<PickedLocation> picked) {
+    final candidates = [
+      for (final candidate in picked)
+        if (candidate.name == subName) candidate,
+    ];
+    if (candidates.length != 1) return null;
+    return LocalSubtitle(
+      location: candidates.single.location,
+      label: subtitleLabelFor(subName),
+      language: subtitleLanguageFor(subName),
+    );
+  }
+
   /// 一批文件合成一个库时用什么名字。
   ///
   /// 同一个目录里挑的 → 用目录名(和「加文件夹」观感一致);
   /// 分散在不同目录(或 Android 上只拿得到文件名) → 用第一个文件的名字。
   String _nameForPickedFiles(List<PickedLocation> picked) {
-    if (!windows) {
-      return picked.first.name.isEmpty ? l10n.local_unknownTitle : picked.first.name;
-    }
+    if (!windows) return _fallbackNameFor(picked);
     final parents = {
       for (final entry in picked) localLocationParent(entry.location),
     };
     if (parents.length == 1) {
-      final parent = parents.single;
-      final name = localLocationName(parent);
+      final name = localLocationName(parents.single);
       if (name.isNotEmpty) return name;
     }
-    return picked.first.name.isEmpty ? l10n.local_unknownTitle : picked.first.name;
+    return _fallbackNameFor(picked);
   }
 
-  int _sizeOf(String location) {
-    try {
-      final file = File(location);
-      return file.existsSync() ? file.lengthSync() : 0;
-    } on Object {
-      return 0;
-    }
-  }
+  /// 拿不到目录名时的库名:第一个挑中文件的名字(空名字兜一个「未知标题」)。
+  String _fallbackNameFor(List<PickedLocation> picked) =>
+      picked.first.name.isEmpty ? l10n.local_unknownTitle : picked.first.name;
 
-  int? _modifiedAtOf(String location) {
+  int _sizeOf(String location) =>
+      _readLocalFile(location, (file) => file.lengthSync()) ?? 0;
+
+  int? _modifiedAtOf(String location) => _readLocalFile(
+      location, (file) => file.lastModifiedSync().millisecondsSinceEpoch);
+
+  /// 真去读一个本地文件(Windows 才有真实路径):不存在、读不动都当「没有」,
+  /// 绝不向上抛 —— 索引能建起来比读到一个大小更重要。
+  T? _readLocalFile<T>(String location, T? Function(File file) read) {
     try {
       final file = File(location);
-      return file.existsSync() ? file.lastModifiedSync().millisecondsSinceEpoch : null;
+      return file.existsSync() ? read(file) : null;
     } on Object {
       return null;
     }
@@ -282,7 +288,7 @@ class LocalLibraryActions {
 
   /// 失败提示:只说「哪一类错」,**绝不带上路径**(规格 §10)。
   void _reportError(Object error) {
-    report?.call(l10n.local_error(_scrubError(error)), AppNotifyKind.error);
+    _notify(l10n.local_error(scrubLocalPath(error.toString())), AppNotifyKind.error);
   }
 }
 
@@ -292,5 +298,3 @@ String scrubLocalPath(String text) => text
     .replaceAll(RegExp(r'[A-Za-z][A-Za-z0-9+.-]*://[^\s,;)]+'), '<位置>')
     .replaceAll(RegExp(r'[A-Za-z]:\\[^\s,;)]*'), '<路径>')
     .replaceAll(RegExp(r'/(?:[^\s,;:)]+/)+[^\s,;:)]*'), '<路径>');
-
-String _scrubError(Object error) => scrubLocalPath(error.toString());

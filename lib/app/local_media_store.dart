@@ -398,17 +398,12 @@ class LocalMediaStore extends ChangeNotifier {
       final key = parsed.dedupeKey(windows: windows);
       if (key.isEmpty || !knownKeys.add(key)) continue;
       final id = newLocalId();
-      nextLibraries[id] = LocalLibrary(
-        id: id,
-        name: parsed.name,
-        kind: parsed.kind,
-        path: parsed.path,
-        treeUri: parsed.treeUri,
+      nextLibraries[id] = _libraryWithId(
+        parsed,
+        id,
         addedAt: parsed.addedAt > 0
             ? parsed.addedAt
             : DateTime.now().millisecondsSinceEpoch,
-        lastScannedAt: parsed.lastScannedAt,
-        coverThumb: parsed.coverThumb,
       );
       for (final item in LocalMediaItem.listFromJson(entry['items'])) {
         if (item.location.trim().isEmpty) continue;
@@ -450,7 +445,8 @@ class LocalMediaStore extends ChangeNotifier {
     final temporary = File('${index.path}.tmp');
     final backup = File('${index.path}.backup');
     await temporary.writeAsString(
-      jsonEncode(_toJson()),
+      // 落盘用的就是「带位置的全量导出」,与 [exportData] 同一份结构。
+      jsonEncode(exportData()),
       encoding: utf8,
       flush: true,
     );
@@ -474,13 +470,10 @@ class LocalMediaStore extends ChangeNotifier {
     final index = _indexFile(root);
     final backup = File('${index.path}.backup');
     var sawCorrupt = false;
-    if (await index.exists()) {
-      final snapshot = await _readIndex(index);
-      if (!snapshot.corrupt) return snapshot;
-      sawCorrupt = true;
-    }
-    if (await backup.exists()) {
-      final snapshot = await _readIndex(backup, fromBackup: true);
+    for (final candidate in <File>[index, backup]) {
+      if (!await candidate.exists()) continue;
+      final snapshot =
+          await _readIndex(candidate, fromBackup: candidate != index);
       if (!snapshot.corrupt) return snapshot;
       sawCorrupt = true;
     }
@@ -504,10 +497,8 @@ class LocalMediaStore extends ChangeNotifier {
   /// 单个库里读不动的条目直接跳过,不牵连整个索引。
   _IndexSnapshot _parseSnapshot(String raw, {required bool fromBackup}) {
     final decoded = jsonDecode(raw);
-    if (decoded is! Map) {
-      return _IndexSnapshot(corrupt: true, fromBackup: fromBackup);
-    }
-    final rawLibraries = decoded['libraries'];
+    // 不是对象、或没有 `libraries` 数组 → 整份索引算损坏(两种情形处理相同)。
+    final rawLibraries = decoded is Map ? decoded['libraries'] : null;
     if (rawLibraries is! List) {
       return _IndexSnapshot(corrupt: true, fromBackup: fromBackup);
     }
@@ -521,18 +512,7 @@ class LocalMediaStore extends ChangeNotifier {
       final id = _safeId(parsed.id);
       if (!knownIds.add(id)) continue;
       libraries.add(
-        id == parsed.id
-            ? parsed
-            : LocalLibrary(
-                id: id,
-                name: parsed.name,
-                kind: parsed.kind,
-                path: parsed.path,
-                treeUri: parsed.treeUri,
-                addedAt: parsed.addedAt,
-                lastScannedAt: parsed.lastScannedAt,
-                coverThumb: parsed.coverThumb,
-              ),
+        id == parsed.id ? parsed : _libraryWithId(parsed, id),
       );
       for (final item in LocalMediaItem.listFromJson(entry['items'])) {
         if (item.location.trim().isEmpty) continue;
@@ -545,14 +525,6 @@ class LocalMediaStore extends ChangeNotifier {
       fromBackup: fromBackup,
     );
   }
-
-  Map<String, Object?> _toJson() => {
-        'version': _indexVersion,
-        'libraries': [
-          for (final library in libraries)
-            _libraryJson(library, includeLocations: true),
-        ],
-      };
 
   Map<String, Object?> _libraryJson(
     LocalLibrary library, {
@@ -610,6 +582,20 @@ class LocalMediaStore extends ChangeNotifier {
   }
 
   // --- 纯函数工具 ---------------------------------------------------------
+
+  /// 换一个 id 重建库。[LocalLibrary.copyWith] 不动 id,而 id 会参与落盘拼接,
+  /// 所以读档与导入这两条「外来的 id 不可信」的路径都得整只重建。
+  LocalLibrary _libraryWithId(LocalLibrary library, String id, {int? addedAt}) =>
+      LocalLibrary(
+        id: id,
+        name: library.name,
+        kind: library.kind,
+        path: library.path,
+        treeUri: library.treeUri,
+        addedAt: addedAt ?? library.addedAt,
+        lastScannedAt: library.lastScannedAt,
+        coverThumb: library.coverThumb,
+      );
 
   /// 把条目归属到 [libraryId];[id] 为空时按需发新 id。
   LocalMediaItem _adopt(

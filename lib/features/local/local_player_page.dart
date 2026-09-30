@@ -184,6 +184,9 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
 
   LocalMediaItem get _item => widget.items[_i];
 
+  /// 还有下一集吗:自动连播、「下一集」按钮与失败页跳集共用同一处边界判断。
+  bool get _hasNext => _i < widget.items.length - 1;
+
   // —— 平台外观 ——
 
   void _enterImmersiveLandscape() {
@@ -326,7 +329,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
       _autoAdvanced = true;
       if (_loopSingle) {
         unawaited(_reload());
-      } else if (_autoPlay && _i < widget.items.length - 1) {
+      } else if (_autoPlay && _hasNext) {
         unawaited(_goTo(_i + 1));
       }
     });
@@ -350,19 +353,19 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
     try {
       final item = _item;
       final playable = await _playableItem(item);
-      if (_disposed || generation != _loadGeneration) return;
+      if (_loadExpired(generation)) return;
       final track = buildLocalTrack(
         playable,
         qualityLabel: l10n.local_qualityLocal,
       );
       final session = _sessionFor(track);
       await session.start([track], track, initialPosition: _resumeFor(item));
-      if (_disposed || generation != _loadGeneration) return;
+      if (_loadExpired(generation)) return;
       if (_rate != 1.0) {
         await _adapter?.setRate(_rate);
       }
     } on Object catch (error) {
-      if (_disposed || generation != _loadGeneration || !mounted) return;
+      if (_loadExpired(generation) || !mounted) return;
       setState(() => _playback = PlaybackState(
             phase: PlaybackPhase.failed,
             message: l10n.local_openFailed('$error'),
@@ -374,6 +377,10 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
     _lastPosition = Duration.zero;
     await _load();
   }
+
+  /// 这次加载是否已经作废:页面已销毁,或期间又发起了新一次加载。
+  bool _loadExpired(int generation) =>
+      _disposed || generation != _loadGeneration;
 
   /// 这一集该从哪儿开始:库详情页带来的断点优先,其次读历史。
   Duration _resumeFor(LocalMediaItem item) {
@@ -522,108 +529,112 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
         ..._embedded,
       ];
 
-  Future<void> _showEpisodesSheet() async {
+  /// 面板底色:播放页恒为深色,不跟主题走。
+  static const Color _sheetBg = Color(0xFF161616);
+
+  /// 三个面板共用的外壳:统一底色与标题行,并在开面板前停掉控制条自动隐藏、
+  /// 收起后重新计时。
+  ///
+  /// [builder] 拿到的是弹层自己的 context —— 面板里要 pop 就用它,别用页面的。
+  Future<void> _showSheet({
+    required String title,
+    required Widget Function(BuildContext sheetContext) builder,
+  }) async {
     _controlsTimer?.cancel();
-    final current = _i;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _sheetBg,
-      builder: (sheetContext) => _sheet(
-        title: context.l10n.local_episodeList,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: widget.items.length,
-          itemBuilder: (_, index) => _sheetRow(
-            label: '${index + 1}. ${widget.items[index].title}',
-            selected: index == current,
-            icon: index == current
+      builder: (sheetContext) =>
+          _sheet(title: title, child: builder(sheetContext)),
+    );
+    if (mounted) _scheduleHideControls();
+  }
+
+  Future<void> _showEpisodesSheet() {
+    final current = _i;
+    return _showSheet(
+      title: context.l10n.local_episodeList,
+      builder: (sheetContext) => ListView.builder(
+        shrinkWrap: true,
+        itemCount: widget.items.length,
+        itemBuilder: (_, index) {
+          final item = widget.items[index];
+          final selected = index == current;
+          return _sheetRow(
+            label: '${index + 1}. ${item.title}',
+            selected: selected,
+            icon: selected
                 ? Icons.play_circle_fill_rounded
                 : Icons.play_circle_outline,
             onTap: () {
               Navigator.of(sheetContext).maybePop();
               unawaited(_goTo(index));
             },
-          ),
-        ),
+          );
+        },
       ),
     );
-    if (mounted) _scheduleHideControls();
   }
 
-  Future<void> _showSubtitleSheet() async {
-    _controlsTimer?.cancel();
+  Future<void> _showSubtitleSheet() {
     final options = _subtitleOptions;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: _sheetBg,
-      builder: (sheetContext) => _sheet(
-        title: context.l10n.local_subtitles,
-        child: options.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.fromLTRB(16, 6, 16, 22),
-                child: Text(
-                  context.l10n.player_noSubtitles,
-                  style: const TextStyle(color: Colors.white54, fontSize: 13),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                itemCount: options.length + 1,
-                itemBuilder: (_, index) {
-                  if (index == 0) {
-                    return _sheetRow(
-                      label: context.l10n.local_subtitleOff,
-                      selected: _subtitle.isOff,
-                      icon: Icons.subtitles_off_outlined,
-                      onTap: () => unawaited(_setSubtitle(SubtitleOption.off)),
-                    );
-                  }
-                  final option = options[index - 1];
-                  return _sheetRow(
-                    label: option.label.isEmpty
-                        ? context.l10n.player_subtitleN(index)
-                        : option.label,
-                    selected: option == _subtitle,
-                    icon: Icons.subtitles_outlined,
-                    onTap: () => unawaited(_setSubtitle(option)),
-                  );
-                },
+    return _showSheet(
+      title: context.l10n.local_subtitles,
+      builder: (_) => options.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 22),
+              child: Text(
+                context.l10n.player_noSubtitles,
+                style: const TextStyle(color: Colors.white54, fontSize: 13),
               ),
-      ),
-    );
-    if (mounted) _scheduleHideControls();
-  }
-
-  Future<void> _showRateSheet() async {
-    _controlsTimer?.cancel();
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: _sheetBg,
-      builder: (sheetContext) => _sheet(
-        title: context.l10n.local_speed,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: _rates.length,
-          itemBuilder: (_, index) {
-            final rate = _rates[index];
-            final label = rate == 1.0 ? '1.0x' : '${rate}x';
-            return _sheetRow(
-              label: label,
-              selected: _rate == rate,
-              icon: Icons.speed_rounded,
-              onTap: () {
-                Navigator.of(sheetContext).maybePop();
-                unawaited(_setRate(rate));
+            )
+          : ListView.builder(
+              shrinkWrap: true,
+              itemCount: options.length + 1,
+              itemBuilder: (_, index) {
+                if (index == 0) {
+                  return _sheetRow(
+                    label: context.l10n.local_subtitleOff,
+                    selected: _subtitle.isOff,
+                    icon: Icons.subtitles_off_outlined,
+                    onTap: () => unawaited(_setSubtitle(SubtitleOption.off)),
+                  );
+                }
+                final option = options[index - 1];
+                return _sheetRow(
+                  label: option.label.isEmpty
+                      ? context.l10n.player_subtitleN(index)
+                      : option.label,
+                  selected: option == _subtitle,
+                  icon: Icons.subtitles_outlined,
+                  onTap: () => unawaited(_setSubtitle(option)),
+                );
               },
-            );
-          },
-        ),
-      ),
+            ),
     );
-    if (mounted) _scheduleHideControls();
   }
 
-  static const Color _sheetBg = Color(0xFF161616);
+  Future<void> _showRateSheet() {
+    return _showSheet(
+      title: context.l10n.local_speed,
+      builder: (sheetContext) => ListView.builder(
+        shrinkWrap: true,
+        itemCount: _rates.length,
+        itemBuilder: (_, index) {
+          final rate = _rates[index];
+          return _sheetRow(
+            label: rate == 1.0 ? '1.0x' : '${rate}x',
+            selected: _rate == rate,
+            icon: Icons.speed_rounded,
+            onTap: () {
+              Navigator.of(sheetContext).maybePop();
+              unawaited(_setRate(rate));
+            },
+          );
+        },
+      ),
+    );
+  }
 
   Widget _sheet({required String title, required Widget child}) => SafeArea(
         top: false,
@@ -746,117 +757,8 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0xCC000000), Color(0x00000000)],
-              ),
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: Row(
-                children: [
-                  const SizedBox(width: 4),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    icon: const Icon(Icons.arrow_back_rounded,
-                        color: Colors.white),
-                    tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          '${widget.library.name} · ${_i + 1}/${widget.items.length}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [Color(0xE6000000), Color(0x00000000)],
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 18),
-                child: AnimePlayerControls(
-                  position: _dragTarget ?? _playback.position,
-                  duration: _playback.duration,
-                  buffered: _playback.buffered,
-                  playing: _playing,
-                  buffering: _buffering,
-                  onPlayPause: _togglePlay,
-                  onScrubStart: (wasPlaying) {
-                    _controlsTimer?.cancel();
-                    if (wasPlaying) unawaited(_adapter?.pause());
-                  },
-                  onSeek: (target, resumeAfterSeek) {
-                    _scheduleHideControls();
-                    unawaited(
-                      _session?.seekTo(target, resumeAfterSeek: resumeAfterSeek),
-                    );
-                  },
-                  onOpenPanel: () => unawaited(_showSubtitleSheet()),
-                  onEpisodes: widget.items.length > 1
-                      ? () => unawaited(_showEpisodesSheet())
-                      : null,
-                  onRate: () => unawaited(_showRateSheet()),
-                  rateLabel: _rate == 1.0 ? '' : '${_rate}x',
-                  // 本地文件没有清晰度/线路可言:传 null 按钮就不出现。
-                  onQuality: null,
-                  qualityLabel: context.l10n.local_qualityLocal,
-                  onPrevEpisode: _i > 0 ? () => unawaited(_goTo(_i - 1)) : null,
-                  onNextEpisode: _i < widget.items.length - 1
-                      ? () => unawaited(_goTo(_i + 1))
-                      : null,
-                  // 移动端播放页本来就占满屏,再给全屏键只会点了没反应。
-                  onFullscreen:
-                      WindowFullscreen.supported ? _toggleFullscreen : null,
-                  fullscreen: WindowFullscreen.instance.isFullscreen,
-                ),
-              ),
-            ),
-          ),
-        ),
+        _topChrome(),
+        _bottomChrome(),
         // 恢复/失败提示:压在画面上方偏上,不挡控制条。
         if ((_playback.message ?? '').isNotEmpty &&
             _playback.phase != PlaybackPhase.failed)
@@ -873,6 +775,121 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
       ],
     );
   }
+
+  /// 顶部栏:返回键 + 标题 + 集数,压在自上而下的渐变上。
+  Widget _topChrome() => Positioned(
+        top: 0,
+        left: 0,
+        right: 0,
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xCC000000), Color(0x00000000)],
+            ),
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded,
+                      color: Colors.white),
+                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        '${widget.library.name} · ${_i + 1}/${widget.items.length}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  /// 底部栏:控制条,压在自下而上的渐变上。
+  Widget _bottomChrome() => Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Color(0xE6000000), Color(0x00000000)],
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 18),
+              child: AnimePlayerControls(
+                position: _dragTarget ?? _playback.position,
+                duration: _playback.duration,
+                buffered: _playback.buffered,
+                playing: _playing,
+                buffering: _buffering,
+                onPlayPause: _togglePlay,
+                onScrubStart: (wasPlaying) {
+                  _controlsTimer?.cancel();
+                  if (wasPlaying) unawaited(_adapter?.pause());
+                },
+                onSeek: (target, resumeAfterSeek) {
+                  _scheduleHideControls();
+                  unawaited(
+                    _session?.seekTo(target, resumeAfterSeek: resumeAfterSeek),
+                  );
+                },
+                onOpenPanel: () => unawaited(_showSubtitleSheet()),
+                onEpisodes: widget.items.length > 1
+                    ? () => unawaited(_showEpisodesSheet())
+                    : null,
+                onRate: () => unawaited(_showRateSheet()),
+                rateLabel: _rate == 1.0 ? '' : '${_rate}x',
+                // 本地文件没有清晰度/线路可言:传 null 按钮就不出现。
+                onQuality: null,
+                qualityLabel: context.l10n.local_qualityLocal,
+                onPrevEpisode: _i > 0 ? () => unawaited(_goTo(_i - 1)) : null,
+                onNextEpisode: _hasNext
+                    ? () => unawaited(_goTo(_i + 1))
+                    : null,
+                // 移动端播放页本来就占满屏,再给全屏键只会点了没反应。
+                onFullscreen:
+                    WindowFullscreen.supported ? _toggleFullscreen : null,
+                fullscreen: WindowFullscreen.instance.isFullscreen,
+              ),
+            ),
+          ),
+        ),
+      );
 
   Widget _seekPreview() {
     final target = _dragTarget!;
@@ -927,7 +944,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
                       onPressed: () => unawaited(_reload()),
                       child: Text(context.l10n.local_play),
                     ),
-                    if (_i < widget.items.length - 1)
+                    if (_hasNext)
                       OutlinedButton(
                         onPressed: () => unawaited(_goTo(_i + 1)),
                         child: Text(context.l10n.local_episodes),

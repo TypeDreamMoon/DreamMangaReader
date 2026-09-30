@@ -13,6 +13,7 @@ import '../common/animations.dart';
 import '../common/transitions.dart';
 import 'local_library_actions.dart';
 import 'local_player_page.dart';
+import 'local_widgets.dart';
 
 /// 一个本地库的详情页:条目列表 + 继续观看 + 重新扫描 + 移除条目(规格 §8.2)。
 ///
@@ -49,13 +50,10 @@ class LocalLibraryDetailPage extends StatefulWidget {
   State<LocalLibraryDetailPage> createState() => _LocalLibraryDetailPageState();
 }
 
-class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
-  LocalMediaStore? _store;
+class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage>
+    with LocalLibraryPageScaffold<LocalLibraryDetailPage> {
   AnimeLibraryStore? _history;
-  LocalLibraryActions? _actions;
   LocalMediaBridge? _bridge;
-  bool _bootstrapped = false;
-  bool _rescanning = false;
 
   /// Android 上授权失效过一次(播放前 `stat` 拿不到条目):显示「重新授权」。
   bool _authNeeded = false;
@@ -63,34 +61,20 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final l10n = context.l10n;
+    // 桥与历史每次依赖变化都重新解析(与重构前一致);
+    // store 与 actions 只解析一次,闸门与提示出口都在脚手架里。
     _bridge = widget.bridge ?? LocalMediaBridge();
     _history = AnimeLibraryScope.maybeRead(context);
-    if (_bootstrapped) return;
-    _bootstrapped = true;
-    _store = widget.store ?? LocalMediaScope.of(context);
-    _actions = widget.actions ??
-        LocalLibraryActions(
-          store: _store!,
-          l10n: l10n,
-          bridge: _bridge,
-          report: (message, kind) {
-            if (!mounted) return;
-            showAppNotify(context, message, kind: kind);
-          },
-        );
+    bootstrapLocalLibrary(
+      store: widget.store,
+      actions: widget.actions,
+      bridge: _bridge,
+    );
   }
 
-  Future<void> _rescan(LocalLibrary library) async {
-    final actions = _actions;
-    if (actions == null || _rescanning) return;
-    setState(() => _rescanning = true);
-    try {
-      await actions.rescan(library);
-    } finally {
-      if (mounted) setState(() => _rescanning = false);
-    }
-  }
+  /// 重扫:与列表页共用同一道防连点闸门(build 用 [localBusy] 显示那颗小圈)。
+  Future<void> _rescan(LocalLibrary library) =>
+      runLocalLibraryAction((a) => a.rescan(library));
 
   Future<void> _removeLibrary(LocalLibrary library) async {
     final l10n = context.l10n;
@@ -102,13 +86,13 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
       destructive: true,
     );
     if (!confirmed || !mounted) return;
-    final removed = await _actions?.removeLibrary(library) ?? false;
+    final removed = await localActions?.removeLibrary(library) ?? false;
     if (!removed || !mounted) return;
     Navigator.of(context).maybePop();
   }
 
   Future<void> _removeItem(LocalMediaItem item) async {
-    final store = _store;
+    final store = localStore;
     if (store == null) return;
     try {
       await store.removeItem(item.id);
@@ -123,7 +107,7 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
   /// SAF 的持久授权失效后,子文档 uri 不变,重新挑同一个目录就能把权限拿回来 ——
   /// 所以这里**不改索引**,只是把「不可用」的状态清掉再试一次。
   Future<void> _reauthorize() async {
-    final actions = _actions;
+    final actions = localActions;
     if (actions == null) return;
     try {
       final picked = await actions.picker.pickDirectory();
@@ -137,7 +121,7 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
   }
 
   Future<void> _play(LocalMediaItem item, {Duration startAt = Duration.zero}) async {
-    final store = _store;
+    final store = localStore;
     final library = store?.library(widget.libraryId);
     if (store == null || library == null) return;
     final items = store.items(widget.libraryId);
@@ -199,7 +183,7 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
   Widget build(BuildContext context) {
     final p = context.palette;
     final l10n = context.l10n;
-    final store = _store;
+    final store = localStore;
     if (store == null) return const SizedBox.shrink();
     final library = store.library(widget.libraryId);
     if (library == null) {
@@ -220,8 +204,8 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
           if (library.kind == LocalLibraryKind.folder)
             IconButton(
               tooltip: l10n.local_rescan,
-              onPressed: _rescanning ? null : () => unawaited(_rescan(library)),
-              icon: _rescanning
+              onPressed: localBusy ? null : () => unawaited(_rescan(library)),
+              icon: localBusy
                   ? const SizedBox(
                       width: 18,
                       height: 18,
@@ -240,43 +224,23 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
         children: [
           if (warning != null) ...[
-            AppCard(
-              radius: 8,
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-              child: Row(
-                children: [
-                  Icon(Icons.error_outline_rounded, size: 18, color: p.statusFail),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      warning,
-                      style: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.4),
-                    ),
-                  ),
-                ],
-              ),
+            LocalNoticeCard(
+              icon: Icons.error_outline_rounded,
+              iconColor: p.statusFail,
+              message: warning,
+              messageStyle: TextStyle(color: p.textMuted, fontSize: 12.5, height: 1.4),
             ),
             const SizedBox(height: 10),
           ],
           if (_authNeeded) ...[
-            AppCard(
-              radius: 8,
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-              child: Row(
-                children: [
-                  Icon(Icons.lock_outline_rounded, size: 18, color: p.statusWarn),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      l10n.local_needAuth,
-                      style: TextStyle(color: p.textPrimary, fontSize: 13),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => unawaited(_reauthorize()),
-                    child: Text(l10n.local_authorize),
-                  ),
-                ],
+            LocalNoticeCard(
+              icon: Icons.lock_outline_rounded,
+              iconColor: p.statusWarn,
+              message: l10n.local_needAuth,
+              messageStyle: TextStyle(color: p.textPrimary, fontSize: 13),
+              action: TextButton(
+                onPressed: () => unawaited(_reauthorize()),
+                child: Text(l10n.local_authorize),
               ),
             ),
             const SizedBox(height: 10),
@@ -325,25 +289,10 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage> {
             ),
             const SizedBox(height: 10),
           ],
-          Row(
-            children: [
-              Icon(Icons.playlist_play_rounded, color: p.accent, size: 20),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  l10n.local_episodes,
-                  style: TextStyle(
-                    color: p.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Text(
-                l10n.local_itemCount(items.length),
-                style: TextStyle(color: p.textMuted, fontSize: 11.5),
-              ),
-            ],
+          LocalSectionHeader(
+            icon: Icons.playlist_play_rounded,
+            title: l10n.local_episodes,
+            trailing: l10n.local_itemCount(items.length),
           ),
           const SizedBox(height: 8),
           if (items.isEmpty)

@@ -26,6 +26,9 @@ class SafDirectoryWalker implements LocalDirectoryWalker, LocalWalkSkipReport {
 
   int _skipped = 0;
 
+  /// 每扫到这么多条就让出一次事件循环，免得长列表把 UI 卡住。
+  static const int _yieldEvery = 200;
+
   /// 上一次遍历中「连文件名都拿不到」的条目数。
   ///
   /// 权限失效这类整目录级的失败由桥/原生吞掉（保留已扫到的条目），不会走到这里；
@@ -58,7 +61,7 @@ class SafDirectoryWalker implements LocalDirectoryWalker, LocalWalkSkipReport {
           modifiedAt: entry.lastModified > 0 ? entry.lastModified : null,
         ),
       );
-      if (result.length % 200 == 0) {
+      if (result.length % _yieldEvery == 0) {
         onProgress?.call(result.length);
         await Future<void>.delayed(Duration.zero);
       }
@@ -80,16 +83,8 @@ class SafDirectoryWalker implements LocalDirectoryWalker, LocalWalkSkipReport {
 String safDirectoryKey(String uri) {
   final trimmed = uri.trim();
   if (trimmed.isEmpty) return '';
-  final List<String> segments;
-  try {
-    segments = Uri.parse(trimmed)
-        .pathSegments
-        .where((segment) => segment.isNotEmpty)
-        .toList(growable: false);
-  } on FormatException {
-    return trimmed;
-  }
-  if (segments.isEmpty) return trimmed;
+  final segments = _segmentsOf(trimmed);
+  if (segments == null || segments.isEmpty) return trimmed;
   return _parentDocumentId(segments.last);
 }
 
@@ -97,19 +92,25 @@ String safDirectoryKey(String uri) {
 String safLastSegment(String uri) {
   final trimmed = uri.trim();
   if (trimmed.isEmpty) return '';
+  final segments = _segmentsOf(trimmed);
+  if (segments == null || segments.isEmpty) return trimmed;
+  // document id 里还可能带 `/`（`primary:Movies/E01.mkv`），再取一次末段。
+  final documentId = segments.last;
+  final name = _lastPathSegment(documentId);
+  return name.isEmpty ? documentId : name;
+}
+
+/// uri 的非空 path 段；uri 结构不可信（[FormatException]）时返回 null。
+///
+/// 解析细节见 [safDirectoryKey] 的说明，两个函数共用这一份解析。
+List<String>? _segmentsOf(String trimmed) {
   try {
-    final segments = Uri.parse(trimmed)
+    return Uri.parse(trimmed)
         .pathSegments
         .where((segment) => segment.isNotEmpty)
         .toList(growable: false);
-    if (segments.isEmpty) return trimmed;
-    // document id 里还可能带 `/`（`primary:Movies/E01.mkv`），再取一次末段。
-    final documentId = segments.last;
-    final cut = documentId.lastIndexOf('/');
-    final name = cut < 0 ? documentId : documentId.substring(cut + 1);
-    return name.isEmpty ? documentId : name;
   } on FormatException {
-    return trimmed;
+    return null;
   }
 }
 
@@ -118,6 +119,11 @@ String _parentDocumentId(String documentId) {
   // 没有父目录（`primary:Movies` 这种根级 document）→ 自己当分组键。
   if (cut <= 0) return documentId;
   return documentId.substring(0, cut);
+}
+
+String _lastPathSegment(String documentId) {
+  final cut = documentId.lastIndexOf('/');
+  return cut < 0 ? documentId : documentId.substring(cut + 1);
 }
 
 /// 这个文件能不能进本地库（扩展名白名单，与扫描器同源）。

@@ -53,27 +53,24 @@ class SafLocalLocationPicker implements LocalLocationPicker {
   @override
   Future<PickedLocation?> pickDirectory() async {
     final picked = await bridge.pickDirectory();
-    if (picked == null) return null;
-    return PickedLocation(
-      location: picked.uri,
-      name: picked.name,
-      kind: picked.kind,
-    );
+    return picked == null ? null : _fromBridgeLocation(picked);
   }
 
   @override
   Future<List<PickedLocation>> pickFiles() async {
     final picked = await bridge.pickFiles();
     return [
-      for (final entry in picked)
-        PickedLocation(
-          location: entry.uri,
-          name: entry.name,
-          kind: entry.kind,
-        ),
+      for (final entry in picked) _fromBridgeLocation(entry),
     ];
   }
 }
+
+/// SAF 桥的位置 → 页面认的位置(两边字段一一对应,只是换了个名字)。
+PickedLocation _fromBridgeLocation(PickedLocalLocation picked) => PickedLocation(
+      location: picked.uri,
+      name: picked.name,
+      kind: picked.kind,
+    );
 
 /// Windows / 桌面的实现:走 `file_picker`,拿到的是真实绝对路径。
 ///
@@ -83,8 +80,8 @@ class FilePickerLocalLocationPicker implements LocalLocationPicker {
 
   @override
   Future<PickedLocation?> pickDirectory() async {
-    final path = await FilePicker.getDirectoryPath();
-    if (path == null || path.trim().isEmpty) return null;
+    final path = _nonBlankPath(await FilePicker.getDirectoryPath());
+    if (path == null) return null;
     return PickedLocation(
       location: path,
       name: localLocationName(path),
@@ -102,8 +99,8 @@ class FilePickerLocalLocationPicker implements LocalLocationPicker {
     if (result == null) return const <PickedLocation>[];
     final picked = <PickedLocation>[];
     for (final file in result.files) {
-      final path = file.path;
-      if (path == null || path.trim().isEmpty) continue;
+      final path = _nonBlankPath(file.path);
+      if (path == null) continue;
       picked.add(
         PickedLocation(
           location: path,
@@ -115,6 +112,11 @@ class FilePickerLocalLocationPicker implements LocalLocationPicker {
     return picked;
   }
 }
+
+/// file_picker 回来的空路径(取消、或拿不到真实路径)= 没挑中;
+/// 非空时原样返回,**不做 trim**,免得把用户路径里的空格改掉。
+String? _nonBlankPath(String? path) =>
+    (path == null || path.trim().isEmpty) ? null : path;
 
 /// 当前平台该用哪个挑选实现。
 ///
@@ -159,11 +161,17 @@ const List<String> kLocalPickableExtensions = <String>[
   'sub',
 ];
 
+/// 反斜杠统一成 `/`,并去掉末尾的 `/`(Windows 路径与 SAF uri 都能过一遍)。
+String _normalizedLocalLocation(String location) {
+  final normalized = location.replaceAll(r'\', '/');
+  return normalized.endsWith('/')
+      ? normalized.substring(0, normalized.length - 1)
+      : normalized;
+}
+
 /// 从一个位置里取出展示名(Windows 反斜杠也认)。
 String localLocationName(String location) {
-  final normalized = location.replaceAll(r'\', '/');
-  final trimmed =
-      normalized.endsWith('/') ? normalized.substring(0, normalized.length - 1) : normalized;
+  final trimmed = _normalizedLocalLocation(location);
   final cut = trimmed.lastIndexOf('/');
   final name = cut < 0 ? trimmed : trimmed.substring(cut + 1);
   return name.isEmpty ? trimmed : name;
@@ -171,9 +179,7 @@ String localLocationName(String location) {
 
 /// Windows 上取一个路径的父目录;没有父目录时返回它自己。
 String localLocationParent(String location) {
-  final normalized = location.replaceAll(r'\', '/');
-  final trimmed =
-      normalized.endsWith('/') ? normalized.substring(0, normalized.length - 1) : normalized;
+  final trimmed = _normalizedLocalLocation(location);
   final cut = trimmed.lastIndexOf('/');
   if (cut <= 0) return trimmed;
   return trimmed.substring(0, cut);

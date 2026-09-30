@@ -383,12 +383,18 @@ String _summarizeScanError(Object error) {
   return redacted.isEmpty ? '未知错误' : redacted;
 }
 
+/// 抹路径用的三条正则（顺序敏感：先 uri、再盘符、最后 POSIX，别合并）。
+/// 提到顶层复用，异常摘要每次都要过一遍，不必每次调用重建。
+final RegExp _uriLikePattern = RegExp(r'[A-Za-z][A-Za-z0-9+.\-]*://[^\s]*');
+final RegExp _drivePathPattern = RegExp(r'[A-Za-z]:[\\/][^\s]*');
+final RegExp _posixPathPattern = RegExp(r'/(?:[^\s/]+/)+[^\s/]*');
+
 /// 盘符路径 / uri / POSIX 绝对路径 → 占位符。
 ///
 /// 泛型异常（`Exception('读取 F:\\Anime\\Show 失败')`）的原文里可能带完整路径，
 /// 而目录名可能就是用户的真实姓名，所以一律抹掉，只留「哪里出了什么事」。
 String _redactPathLike(String text) => text
-    .replaceAll(RegExp(r'[A-Za-z][A-Za-z0-9+.\-]*://[^\s]*'), '<位置>')
-    .replaceAll(RegExp(r'[A-Za-z]:[\\/][^\s]*'), '<路径>')
-    .replaceAll(RegExp(r'/(?:[^\s/]+/)+[^\s/]*'), '<路径>')
+    .replaceAll(_uriLikePattern, '<位置>')
+    .replaceAll(_drivePathPattern, '<路径>')
+    .replaceAll(_posixPathPattern, '<路径>')
     .trim();

@@ -232,6 +232,24 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
         setState(() => _status = 'fd 已释放');
       });
 
+  /// 步骤按钮:顺序就是真机操作顺序,标签里的圈号与规格 §7.2 的步骤编号一一对应。
+  List<Widget> _stepButtons() => [
+        _step('① 选目录', _pick),
+        _step('② 列子项', _list),
+        _step('③ stat', _stat),
+        _step('④ openFd', _openFd),
+        _step('⑤ 播裸路径', () => _play(asFileUri: false)),
+        _step('⑤ 播 file://', () => _play(asFileUri: true)),
+        _step('⑥ 释放 fd', _releaseFd, outlined: true),
+      ];
+
+  Widget _step(String label, VoidCallback action, {bool outlined = false}) {
+    final onPressed = _busy ? null : action;
+    return outlined
+        ? OutlinedButton(onPressed: onPressed, child: Text(label))
+        : FilledButton(onPressed: onPressed, child: Text(label));
+  }
+
   LocalMediaEntry? _firstVideo() {
     for (final entry in _entries) {
       if (entry.mime.startsWith('video/') || entry.name.contains('.')) {
@@ -283,36 +301,7 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [
-                FilledButton(
-                  onPressed: _busy ? null : _pick,
-                  child: const Text('① 选目录'),
-                ),
-                FilledButton(
-                  onPressed: _busy ? null : _list,
-                  child: const Text('② 列子项'),
-                ),
-                FilledButton(
-                  onPressed: _busy ? null : _stat,
-                  child: const Text('③ stat'),
-                ),
-                FilledButton(
-                  onPressed: _busy ? null : _openFd,
-                  child: const Text('④ openFd'),
-                ),
-                FilledButton(
-                  onPressed: _busy ? null : () => _play(asFileUri: false),
-                  child: const Text('⑤ 播裸路径'),
-                ),
-                FilledButton(
-                  onPressed: _busy ? null : () => _play(asFileUri: true),
-                  child: const Text('⑤ 播 file://'),
-                ),
-                OutlinedButton(
-                  onPressed: _busy ? null : _releaseFd,
-                  child: const Text('⑥ 释放 fd'),
-                ),
-              ],
+              children: _stepButtons(),
             ),
           ),
           Padding(

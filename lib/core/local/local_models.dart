@@ -42,8 +42,8 @@ class LocalSubtitle {
       };
 
   factory LocalSubtitle.fromJson(Map<Object?, Object?> json) => LocalSubtitle(
-        location: json['location'] as String? ?? '',
-        label: json['label'] as String? ?? '',
+        location: _stringField(json, 'location'),
+        label: _stringField(json, 'label'),
         language: json['language'] as String?,
       );
 
@@ -162,22 +162,19 @@ class LocalMediaItem {
 
   /// 读索引时对缺失字段一律取默认值(向后兼容,规格 §9)。
   factory LocalMediaItem.fromJson(Map<Object?, Object?> json) => LocalMediaItem(
-        id: json['id'] as String? ?? '',
-        libraryId: json['libraryId'] as String? ?? '',
-        title: json['title'] as String? ?? '',
-        location: json['location'] as String? ?? '',
-        season: (json['season'] as num?)?.toInt(),
-        episode: (json['episode'] as num?)?.toInt(),
-        sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
-        modifiedAt: (json['modifiedAt'] as num?)?.toInt(),
-        durationMs: (json['durationMs'] as num?)?.toInt(),
-        subtitles: [
-          for (final value in (json['subtitles'] as List?) ?? const [])
-            if (value is Map) LocalSubtitle.fromJson(value),
-        ],
+        id: _stringField(json, 'id'),
+        libraryId: _stringField(json, 'libraryId'),
+        title: _stringField(json, 'title'),
+        location: _stringField(json, 'location'),
+        season: _intField(json, 'season'),
+        episode: _intField(json, 'episode'),
+        sizeBytes: _intField(json, 'sizeBytes') ?? 0,
+        modifiedAt: _intField(json, 'modifiedAt'),
+        durationMs: _intField(json, 'durationMs'),
+        subtitles: _subtitlesFromJson(json['subtitles']),
         thumbPath: json['thumbPath'] as String?,
-        addedAt: (json['addedAt'] as num?)?.toInt() ?? 0,
-        lastPlayedAt: (json['lastPlayedAt'] as num?)?.toInt(),
+        addedAt: _intField(json, 'addedAt') ?? 0,
+        lastPlayedAt: _intField(json, 'lastPlayedAt'),
       );
 
   static List<LocalMediaItem> listFromJson(Object? value) => [
@@ -256,16 +253,16 @@ class LocalLibrary {
       };
 
   factory LocalLibrary.fromJson(Map<Object?, Object?> json) => LocalLibrary(
-        id: json['id'] as String? ?? '',
-        name: json['name'] as String? ?? '',
+        id: _stringField(json, 'id'),
+        name: _stringField(json, 'name'),
         kind: LocalLibraryKind.values.firstWhere(
           (value) => value.name == json['kind'],
           orElse: () => LocalLibraryKind.folder,
         ),
         path: json['path'] as String?,
         treeUri: json['treeUri'] as String?,
-        addedAt: (json['addedAt'] as num?)?.toInt() ?? 0,
-        lastScannedAt: (json['lastScannedAt'] as num?)?.toInt() ?? 0,
+        addedAt: _intField(json, 'addedAt') ?? 0,
+        lastScannedAt: _intField(json, 'lastScannedAt') ?? 0,
         coverThumb: json['coverThumb'] as String?,
       );
 
@@ -297,7 +294,10 @@ String localLibraryDedupeKey({
 /// 索引里落盘的库/条目名字:与 `DownloadStore._safe`、`AnimeDownloadStore`
 /// 同一套硬化规则,防止路径穿越(规格 §10)。
 String localSafeName(String name) =>
-    name.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
+    name.replaceAll(_unsafeNamePattern, '_');
+
+/// 路径硬化要替换掉的字符:非字母/数字/`_`/`.`/`-`。提到顶层复用,避免每次调用重建。
+final RegExp _unsafeNamePattern = RegExp(r'[^A-Za-z0-9_.-]');
 
 /// 生成一个 uuid v4 形式的本地 id。
 ///
@@ -308,8 +308,24 @@ String newLocalId() {
   final bytes = List<int>.generate(16, (_) => random.nextInt(256));
   bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
-  String hex(int start, int end) => [
-        for (var i = start; i < end; i++) bytes[i].toRadixString(16).padLeft(2, '0'),
-      ].join();
-  return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
+  final buffer = StringBuffer();
+  for (var i = 0; i < bytes.length; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) buffer.write('-');
+    buffer.write(bytes[i].toRadixString(16).padLeft(2, '0'));
+  }
+  return buffer.toString();
 }
+
+/// 索引字段读取:旧索引可能缺字段、类型也可能不对(手改过的 json),所以字符串
+/// 一律回落到空串、数字一律回落到 null,由各 `fromJson` 决定要不要再补 `?? 0`。
+String _stringField(Map<Object?, Object?> json, String key) =>
+    json[key] as String? ?? '';
+
+int? _intField(Map<Object?, Object?> json, String key) =>
+    (json[key] as num?)?.toInt();
+
+/// 字幕数组:非列表按空处理,列表里的非 Map 元素跳过(与旧行为一致)。
+List<LocalSubtitle> _subtitlesFromJson(Object? value) => [
+      for (final entry in (value as List?) ?? const [])
+        if (entry is Map) LocalSubtitle.fromJson(entry),
+    ];
