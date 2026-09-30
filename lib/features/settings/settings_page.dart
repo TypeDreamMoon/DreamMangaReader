@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/app_info.dart';
+import '../../app/anime_library_store.dart';
 import '../../app/backup.dart';
 import '../../app/download_settings.dart';
 import '../../app/library_store.dart';
@@ -16,11 +17,13 @@ import 'accent_color_sheet.dart';
 import '../../core/l10n/app_locale.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/library/update_tracker.dart';
+import '../../core/local/local_models.dart';
 import '../../core/net/app_proxy.dart';
 import '../../core/net/image_cache.dart';
 import '../../core/source/source_repository.dart';
 import '../../core/platform/system_fonts.dart';
 import '../common/transitions.dart';
+import '../local/local_library_page.dart';
 import '../../core/update/update_models.dart';
 import '../../core/update/update_service.dart';
 import '../../ui/ui.dart';
@@ -373,6 +376,15 @@ class SettingsPage extends StatelessWidget {
                 _tile(Icons.cleaning_services_rounded, l10n.set_clearCache,
                     l10n.set_clearCacheSub, () => _showCacheSheet(context)),
               ]),
+              _group(l10n.local_secGroup, [
+                _tile(
+                    Icons.video_library_rounded,
+                    l10n.local_title,
+                    l10n.local_emptyHint,
+                    () => pushPage(context, const LocalLibraryPage())),
+                _tile(Icons.restart_alt_rounded, l10n.local_clearProgress, null,
+                    () => _clearLocalProgress(context)),
+              ]),
               _group(l10n.set_secUpdate, [
                 _updateSourceRow(context, l10n, lib),
                 _switch(
@@ -713,6 +725,28 @@ class SettingsPage extends StatelessWidget {
         bodyPadding: const EdgeInsets.fromLTRB(20, 12, 16, 24),
         body: (ctx, setSheet) => const _CacheSheet(),
       );
+
+  /// 清空本地播放进度:只清 `sourceId == 'local'` 的番剧历史(本地播放的续播点),
+  /// 库与文件都不动 —— 与「移除库」一样,永不碰用户文件(规格 §5.5)。
+  Future<void> _clearLocalProgress(BuildContext context) async {
+    final l10n = context.l10n;
+    final confirmed = await showAppConfirm(
+      context,
+      title: l10n.local_clearProgress,
+      confirmLabel: l10n.local_clearProgress,
+      destructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+    final anime = AnimeLibraryScope.read(context);
+    final locals = anime.history
+        .where((entry) => entry.sourceId == LocalSource.id)
+        .toList(growable: false);
+    for (final entry in locals) {
+      anime.removeHistory(entry.sourceId, entry.animeId);
+    }
+    if (!context.mounted) return;
+    showAppNotify(context, l10n.local_clearProgressDone);
+  }
 }
 
 /// 缓存清理弹层:分别展示图片缓存 / 源缓存占用,可各自清理。

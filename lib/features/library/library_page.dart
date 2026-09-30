@@ -16,6 +16,7 @@ import '../anime/anime_history_resume.dart';
 import '../common/cover_hero.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
+import '../local/local_library_page.dart';
 import '../novel/novel_import_sheet.dart';
 import '../novel/novel_library_view.dart';
 import 'history_page.dart';
@@ -400,6 +401,11 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
         _checkUpdatesButton(p),
         const NovelImportButton(compact: true),
+        IconButton(
+          tooltip: context.l10n.local_title,
+          onPressed: () => pushPage(context, const LocalLibraryPage()),
+          icon: const Icon(Icons.video_library_outlined),
+        ),
         IconButton(
           tooltip: context.l10n.shelf_historyTooltip,
           onPressed: () => pushRoute(context, MaterialPageRoute<void>(builder: (_) => const HistoryPage())),

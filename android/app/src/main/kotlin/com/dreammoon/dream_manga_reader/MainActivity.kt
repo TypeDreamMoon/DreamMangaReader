@@ -5,6 +5,7 @@ import android.os.Build
 import android.view.KeyEvent
 import com.dreammoon.dream_manga_reader.downloads.ContentDownloadBridge
 import com.dreammoon.dream_manga_reader.gallery.GalleryBridge
+import com.dreammoon.dream_manga_reader.local.LocalMediaBridge
 import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,6 +21,7 @@ class MainActivity : FlutterActivity() {
     private var updateBridge: UpdateDownloadBridge? = null
     private var contentDownloadBridge: ContentDownloadBridge? = null
     private var galleryBridge: GalleryBridge? = null
+    private var localMediaBridge: LocalMediaBridge? = null
     private var volumeKeyPaging = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -49,6 +51,7 @@ class MainActivity : FlutterActivity() {
         updateBridge = UpdateDownloadBridge(this).also { it.configure(flutterEngine) }
         contentDownloadBridge = ContentDownloadBridge(this).also { it.configure(flutterEngine) }
         galleryBridge = GalleryBridge(this).also { it.configure(flutterEngine) }
+        localMediaBridge = LocalMediaBridge(this).also { it.configure(flutterEngine) }
     }
 
     override fun onResume() {
@@ -83,6 +86,14 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        // 本地媒体桥的 SAF 选择器结果(ACTION_OPEN_DOCUMENT(_TREE) 拿回授权 uri)。
+        val handled = localMediaBridge?.onActivityResult(requestCode, resultCode, data) == true
+        if (!handled) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     override fun onDestroy() {
         updateBridge?.dispose()
         updateBridge = null
@@ -90,6 +101,8 @@ class MainActivity : FlutterActivity() {
         contentDownloadBridge = null
         galleryBridge?.dispose()
         galleryBridge = null
+        localMediaBridge?.dispose()
+        localMediaBridge = null
         super.onDestroy()
     }
 
