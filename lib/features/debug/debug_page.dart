@@ -18,6 +18,7 @@ import '../../core/source/source.dart';
 import '../../core/source/source_registry.dart';
 import '../../ui/ui.dart';
 import '../spike/cloudflare_spike_page.dart';
+import '../spike/local_playback_spike_page.dart';
 
 /// 调试工具:环境信息 + 各环节自检 + 抓取探针。产品页面不含这些,统一收在这里。
 /// 入口受 [debugToolsAvailable] 门控,release 里不可达。
@@ -475,6 +476,20 @@ class _DebugPageState extends State<DebugPage> {
               const SizedBox(height: 8),
               _resultBox(p, _pagesResult),
             ],
+          ),
+          const SizedBox(height: 20),
+          _sectionLabel(p, '本地 · 探针'),
+          _card2(
+            p,
+            '⑧ 本地播放(路线 A:fd 直读)',
+            'SAF 选目录 → openFd → 把 /proc/self/fd/N 交给 libmpv 播。'
+                '结论决定 Android 走零拷贝(路线 A)还是导入(路线 B)。',
+            () => pushRoute(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const LocalPlaybackSpikePage()),
+            ),
+            '打开路线 A 验证 →',
           ),
         ],
       ),

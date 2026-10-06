@@ -24,6 +24,7 @@ import 'download_settings.dart';
 import 'download_store.dart';
 import 'legacy_download_migrator.dart';
 import 'library_store.dart';
+import 'local_media_store.dart';
 import 'novel_library_store.dart';
 import 'novel_download_store.dart';
 import 'source_controller.dart';
@@ -56,6 +57,7 @@ class _AppState extends State<App> {
   final LibraryStore _library = LibraryStore();
   final NovelLibraryStore _novelLibrary = NovelLibraryStore();
   final AnimeLibraryStore _animeLibrary = AnimeLibraryStore();
+  final LocalMediaStore _localMedia = LocalMediaStore();
   final DownloadStore _downloads = DownloadStore();
   final NovelDownloadStore _novelDownloads = NovelDownloadStore();
   final AnimeDownloadStore _animeDownloads = AnimeDownloadStore();
@@ -127,6 +129,11 @@ class _AppState extends State<App> {
       if (!mounted) return;
       await guardedStartupLoad('启动追更检查', _autoCheckUpdates);
     });
+    // 本地库读档走自己一条线,不进上面那条 wait:它的索引落在应用支持目录
+    // (path_provider),而平台通道拿不到回应时那个 Future 会一直挂着 —— 排进 wait
+    // 就等于把「自动上传监听 → 启动同步 → 追更检查」一起卡死。它跟首帧无关,
+    // 读完自己 notify,本地库页面照常刷新。
+    unawaited(guardedStartupLoad('本地库', _localMedia.load));
     // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
     unawaited(guardedStartupLoad('源登录态', _auth.load));
   }
@@ -238,69 +245,74 @@ class _AppState extends State<App> {
             store: _novelLibrary,
             child: AnimeLibraryScope(
               store: _animeLibrary,
-              child: DownloadSettingsScope(
-                settings: _downloadSettings,
-                child: DownloadCoordinatorScope(
-                  coordinator: _downloadCoordinator,
-                  child: DownloadScope(
-                    store: _downloads,
-                    child: NovelDownloadScope(
-                      store: _novelDownloads,
-                      child: AnimeDownloadScope(
-                        store: _animeDownloads,
-                        child: AuthScope(
-                          store: _auth,
-                          child: AnimatedBuilder(
-                            animation: Listenable.merge([
-                              _theme,
-                              _library.controlRadiusVN,
-                              _library.uiScaleVN,
-                              _library.uiFontVN,
-                              _library.uiLocaleVN,
-                              _novelLibrary.preferencesNotifier,
-                            ]),
-                            builder: (context, _) {
-                              const desktop = {
-                                TargetPlatform.windows,
-                                TargetPlatform.linux,
-                                TargetPlatform.macOS,
-                              };
-                              final isDesktop =
-                                  desktop.contains(defaultTargetPlatform);
-                              return MaterialApp(
-                                title: 'Dream Manga Reader',
-                                debugShowCheckedModeBanner: false,
-                                // 多语言:gen-l10n 生成的委托 + 支持语言列表(含 Material 组件本地化)。
-                                locale: _library.uiLocale.toLocale(),
-                                supportedLocales:
-                                    AppLocalizations.supportedLocales,
-                                localizationsDelegates:
-                                    AppLocalizations.localizationsDelegates,
-                                theme: buildTheme(_theme.variant,
-                                    controlRadius: _library.controlRadius,
-                                    accent: _theme.accent,
-                                    // 字体只在桌面平台生效
-                                    fontFamily:
-                                        isDesktop ? _library.uiFont : ''),
-                                home: const SplashGate(child: HomeShell()),
-                                // 桌面(尤其 Windows)无障碍桥有 AXTree bug:每加载一张图就触发一次
-                                // 语义更新、应用失败刷屏,严重时卡死。漫画阅读器桌面端不需要无障碍,
-                                // 整体关掉语义树彻底规避;手机端保留。ExcludeSemantics 只去 a11y。
-                                builder: (context, child) {
-                                  var w = child ?? const SizedBox.shrink();
-                                  if (isDesktop) w = ExcludeSemantics(child: w);
-                                  // 全局背景垫在所有页面之后(透明 scaffold 才能透出)。
-                                  w = AppBackground(child: w);
-                                  // 桌面界面缩放:整体等比缩放(文字/图标/间距一起),并按缩放后的
-                                  // 画布重新布局——不像 textScaler 只放大文字会撑破固定高度的布局。
-                                  if (isDesktop && _library.uiScale != 1.0) {
-                                    w = UiScale(
-                                        scale: _library.uiScale, child: w);
-                                  }
-                                  return w;
-                                },
-                              );
-                            },
+              child: LocalMediaScope(
+                store: _localMedia,
+                child: DownloadSettingsScope(
+                  settings: _downloadSettings,
+                  child: DownloadCoordinatorScope(
+                    coordinator: _downloadCoordinator,
+                    child: DownloadScope(
+                      store: _downloads,
+                      child: NovelDownloadScope(
+                        store: _novelDownloads,
+                        child: AnimeDownloadScope(
+                          store: _animeDownloads,
+                          child: AuthScope(
+                            store: _auth,
+                            child: AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _theme,
+                                _library.controlRadiusVN,
+                                _library.uiScaleVN,
+                                _library.uiFontVN,
+                                _library.uiLocaleVN,
+                                _novelLibrary.preferencesNotifier,
+                              ]),
+                              builder: (context, _) {
+                                const desktop = {
+                                  TargetPlatform.windows,
+                                  TargetPlatform.linux,
+                                  TargetPlatform.macOS,
+                                };
+                                final isDesktop =
+                                    desktop.contains(defaultTargetPlatform);
+                                return MaterialApp(
+                                  title: 'Dream Manga Reader',
+                                  debugShowCheckedModeBanner: false,
+                                  // 多语言:gen-l10n 生成的委托 + 支持语言列表(含 Material 组件本地化)。
+                                  locale: _library.uiLocale.toLocale(),
+                                  supportedLocales:
+                                      AppLocalizations.supportedLocales,
+                                  localizationsDelegates:
+                                      AppLocalizations.localizationsDelegates,
+                                  theme: buildTheme(_theme.variant,
+                                      controlRadius: _library.controlRadius,
+                                      accent: _theme.accent,
+                                      // 字体只在桌面平台生效
+                                      fontFamily:
+                                          isDesktop ? _library.uiFont : ''),
+                                  home: const SplashGate(child: HomeShell()),
+                                  // 桌面(尤其 Windows)无障碍桥有 AXTree bug:每加载一张图就触发一次
+                                  // 语义更新、应用失败刷屏,严重时卡死。漫画阅读器桌面端不需要无障碍,
+                                  // 整体关掉语义树彻底规避;手机端保留。ExcludeSemantics 只去 a11y。
+                                  builder: (context, child) {
+                                    var w = child ?? const SizedBox.shrink();
+                                    if (isDesktop) {
+                                      w = ExcludeSemantics(child: w);
+                                    }
+                                    // 全局背景垫在所有页面之后(透明 scaffold 才能透出)。
+                                    w = AppBackground(child: w);
+                                    // 桌面界面缩放:整体等比缩放(文字/图标/间距一起),并按缩放后的
+                                    // 画布重新布局——不像 textScaler 只放大文字会撑破固定高度的布局。
+                                    if (isDesktop && _library.uiScale != 1.0) {
+                                      w = UiScale(
+                                          scale: _library.uiScale, child: w);
+                                    }
+                                    return w;
+                                  },
+                                );
+                              },
+                            ),
                           ),
                         ),
                       ),
@@ -323,6 +335,7 @@ class _AppState extends State<App> {
     _library.dispose();
     _novelLibrary.dispose();
     _animeLibrary.dispose();
+    _localMedia.dispose();
     _downloads.dispose();
     _novelDownloads.dispose();
     _animeDownloads.dispose();

@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import com.dreammoon.dream_manga_reader.downloads.ContentDownloadBridge
 import com.dreammoon.dream_manga_reader.downloads.DownloadEnvironmentBridge
 import com.dreammoon.dream_manga_reader.gallery.GalleryBridge
+import com.dreammoon.dream_manga_reader.local.LocalMediaBridge
 import com.dreammoon.dream_manga_reader.net.SystemProxyBridge
 import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
@@ -23,6 +24,7 @@ class MainActivity : FlutterActivity() {
     private var contentDownloadBridge: ContentDownloadBridge? = null
     private var downloadEnvironmentBridge: DownloadEnvironmentBridge? = null
     private var galleryBridge: GalleryBridge? = null
+    private var localMediaBridge: LocalMediaBridge? = null
     private var systemProxyBridge: SystemProxyBridge? = null
     private var volumeKeyPaging = false
 
@@ -54,6 +56,7 @@ class MainActivity : FlutterActivity() {
         contentDownloadBridge = ContentDownloadBridge(this).also { it.configure(flutterEngine) }
         downloadEnvironmentBridge = DownloadEnvironmentBridge(this).also { it.configure(flutterEngine) }
         galleryBridge = GalleryBridge(this).also { it.configure(flutterEngine) }
+        localMediaBridge = LocalMediaBridge(this).also { it.configure(flutterEngine) }
         systemProxyBridge = SystemProxyBridge(this).also { it.configure(flutterEngine) }
     }
 
@@ -89,6 +92,14 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        // 本地媒体桥的 SAF 选择器结果(ACTION_OPEN_DOCUMENT(_TREE) 拿回授权 uri)。
+        val handled = localMediaBridge?.onActivityResult(requestCode, resultCode, data) == true
+        if (!handled) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     override fun onDestroy() {
         updateBridge?.dispose()
         updateBridge = null
@@ -98,6 +109,8 @@ class MainActivity : FlutterActivity() {
         downloadEnvironmentBridge = null
         galleryBridge?.dispose()
         galleryBridge = null
+        localMediaBridge?.dispose()
+        localMediaBridge = null
         systemProxyBridge?.dispose()
         systemProxyBridge = null
         super.onDestroy()
