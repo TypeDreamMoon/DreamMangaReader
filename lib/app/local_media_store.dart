@@ -13,7 +13,15 @@ typedef LocalMediaRootProvider = Future<String> Function();
 
 /// [LocalMediaException] 的原因码,供 UI 映射成 l10n 文案(Task 8),
 /// 不要把 [LocalMediaException.message] 直接当用户可见文案。
-enum LocalMediaError { duplicateLocation, libraryNotFound, itemNotFound }
+enum LocalMediaError {
+  duplicateLocation,
+  libraryNotFound,
+  itemNotFound,
+
+  /// 改名字时给了个只有空白的名字(库名不能为空,条目名空着则表示恢复原名,
+  /// 不走这条)。
+  invalidName,
+}
 
 /// 本地媒体索引库的领域异常。
 class LocalMediaException implements Exception {
@@ -239,11 +247,61 @@ class LocalMediaStore extends ChangeNotifier {
     await _commit(libraries: _libraries, items: nextItems);
   }
 
+  /// 改一个本地库的名字(规格 §5.6)。名字只影响展示:位置、条目、播放进度都不动。
+  ///
+  /// 只有空白的名字抛 [LocalMediaError.invalidName](库名是卡片上唯一的标识);
+  /// 名字没变时直接返回,不写盘也不通知。
+  Future<void> renameLibrary(String libraryId, String name) async {
+    final library = _libraries[libraryId];
+    if (library == null) {
+      throw LocalMediaException(
+        LocalMediaError.libraryNotFound,
+        '本地库不存在:$libraryId',
+      );
+    }
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw const LocalMediaException(
+        LocalMediaError.invalidName,
+        '本地库名称不能为空',
+      );
+    }
+    if (trimmed == library.name) return;
+    final nextLibraries = Map<String, LocalLibrary>.from(_libraries)
+      ..[libraryId] = library.copyWith(name: trimmed);
+    await _commit(libraries: nextLibraries, items: _items);
+  }
+
+  /// 改一个条目的显示名(规格 §5.6)。
+  ///
+  /// [title] 只剩空白、或正好等于解析出来的 [LocalMediaItem.title],都表示
+  /// **恢复原名**:清掉 `customTitle`,界面回到解析结果。名字存在 `customTitle`
+  /// 而不是直接改 `title`,就是为了让重扫刷新 `title` 时不会把用户改的名字冲掉。
+  ///
+  /// 条目不存在时抛 [LocalMediaError.itemNotFound]。
+  Future<void> renameItem(String itemId, String title) async {
+    final item = _items[itemId];
+    if (item == null) {
+      throw LocalMediaException(
+        LocalMediaError.itemNotFound,
+        '本地条目不存在:$itemId',
+      );
+    }
+    final trimmed = title.trim();
+    final next = (trimmed.isEmpty || trimmed == item.title)
+        ? item.copyWith(clearCustomTitle: true)
+        : item.copyWith(customTitle: trimmed);
+    if (next.customTitle == item.customTitle) return;
+    final nextItems = Map<String, LocalMediaItem>.from(_items)..[itemId] = next;
+    await _commit(libraries: _libraries, items: nextItems);
+  }
+
   /// 合并一次扫描结果(§8.4 的「重新扫描」)。
   ///
   /// 按 `dedupeKey` 匹配库内已有条目:
   /// - 命中:**保留** `id`/`addedAt`/`lastPlayedAt`/`durationMs`/`thumbPath`
-  ///   (`id` 是进度记录的 `episodeId`,绝不能因为重扫而变),刷新
+  ///   /`customTitle`(`id` 是进度记录的 `episodeId`,绝不能因为重扫而变;
+  ///   用户改过的名字同理,刷新 `title` 不该把 `customTitle` 冲掉),刷新
   ///   `title`/`season`/`episode`/`sizeBytes`/`modifiedAt`/`subtitles`;
   /// - 未命中:用 [newLocalId] 新建;
   /// - 索引里有、本轮没扫到的条目**保留不删**,由 UI 用 [isAvailable] 灰显。
@@ -616,6 +674,7 @@ class LocalMediaStore extends ChangeNotifier {
         durationMs: item.durationMs,
         subtitles: item.subtitles,
         thumbPath: item.thumbPath,
+        customTitle: item.customTitle,
         addedAt: addedAt ?? item.addedAt,
         lastPlayedAt: item.lastPlayedAt,
       );

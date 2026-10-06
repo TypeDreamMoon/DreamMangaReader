@@ -53,7 +53,21 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
     );
   }
 
+  /// 改库名:名字只是展示(位置、条目、播放进度都不动),所以不需要二次确认。
+  Future<void> _renameLibrary(LocalLibrary library) async {
+    final l10n = context.l10n;
+    final name = await showLocalRenameDialog(
+      context,
+      title: l10n.local_renameLibraryTitle,
+      hint: l10n.local_renameLibraryHint,
+      initial: library.name,
+    );
+    if (name == null || !mounted) return;
+    await runLocalLibraryAction((actions) => actions.renameLibrary(library, name));
+  }
+
   Future<void> _removeLibrary(LocalLibrary library) async {
+
     final l10n = context.l10n;
     final confirmed = await showAppConfirm(
       context,
@@ -184,6 +198,7 @@ class _LocalLibraryPageState extends State<LocalLibraryPage>
                             runLocalLibraryAction((a) => a.rescan(libraries[index])),
                           )
                       : null,
+                  onRename: () => unawaited(_renameLibrary(libraries[index])),
                   onRemove: () => unawaited(_removeLibrary(libraries[index])),
                 ),
               ),
@@ -212,6 +227,7 @@ class _LibraryCard extends StatelessWidget {
     required this.lastPlayedAt,
     required this.onOpen,
     required this.onRescan,
+    required this.onRename,
     required this.onRemove,
   });
 
@@ -222,6 +238,7 @@ class _LibraryCard extends StatelessWidget {
 
   /// null 表示这个库不适合重扫(文件型库没有可枚举的根)。
   final VoidCallback? onRescan;
+  final VoidCallback onRename;
   final VoidCallback onRemove;
 
   @override
@@ -285,10 +302,22 @@ class _LibraryCard extends StatelessWidget {
               tooltip: l10n.local_rescan,
               icon: Icon(Icons.more_vert_rounded, size: 20, color: p.textMuted),
               onSelected: (value) {
+                if (value == 'rename') onRename();
                 if (value == 'rescan') onRescan?.call();
                 if (value == 'remove') onRemove();
               },
               itemBuilder: (ctx) => [
+                PopupMenuItem<String>(
+                  value: 'rename',
+                  child: Row(
+                    children: [
+                      Icon(Icons.drive_file_rename_outline_rounded,
+                          size: 18, color: ctx.palette.textMuted),
+                      const SizedBox(width: 8),
+                      Text(ctx.l10n.local_rename),
+                    ],
+                  ),
+                ),
                 if (onRescan != null)
                   PopupMenuItem<String>(
                     value: 'rescan',

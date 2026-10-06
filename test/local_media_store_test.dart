@@ -978,7 +978,136 @@ void main() {
     store.dispose();
   });
 
+  // ------------------------------------------------------------------ 改名
+
+  test('renameLibrary 只改名字,落盘后读回一致', () async {
+    final store = newStore();
+    await store.load();
+    final library = await store.addLibrary(name: '选的文件', kind: file);
+    await store.renameLibrary(library.id, '  Loki S02  ');
+    expect(store.library(library.id)!.name, 'Loki S02');
+
+    final reloaded = newStore();
+    await reloaded.load();
+    expect(reloaded.library(library.id)!.name, 'Loki S02');
+    store.dispose();
+    reloaded.dispose();
+  });
+
+  test('renameLibrary 拒绝空白名字;库不存在抛 libraryNotFound', () async {
+    final store = newStore();
+    await store.load();
+    final library = await store.addLibrary(name: '原名', kind: file);
+
+    await expectLater(
+      store.renameLibrary(library.id, '   '),
+      throwsA(isA<LocalMediaException>().having(
+          (e) => e.reason, 'reason', LocalMediaError.invalidName)),
+    );
+    await expectLater(
+      store.renameLibrary('nope', 'x'),
+      throwsA(isA<LocalMediaException>().having(
+          (e) => e.reason, 'reason', LocalMediaError.libraryNotFound)),
+    );
+    expect(store.library(library.id)!.name, '原名');
+    store.dispose();
+  });
+
+  test('renameItem 存 customTitle;重扫刷新 title 也不冲掉它', () async {
+    final store = newStore();
+    await store.load();
+    final library = await store.addLibrary(name: 'Loki', kind: file);
+    await store.applyScanResult(library.id, [
+      item(
+        libraryId: library.id,
+        title: 'Loki',
+        location: r'C:\Media\Loki.S02E06.mov',
+        season: 2,
+        episode: 6,
+      ),
+    ]);
+    final target = store.items(library.id).single;
+    expect(target.displayTitle, 'Loki');
+
+    await store.renameItem(target.id, '  Loki 第九集  ');
+    var read = store.item(target.id)!;
+    expect(read.customTitle, 'Loki 第九集');
+    expect(read.displayTitle, 'Loki 第九集');
+    // 解析出来的 title 不动 —— 用户的名字另外存一份。
+    expect(read.title, 'Loki');
+
+    // 重扫:title 跟着文件名刷新,id 与用户改的名字都得留住。
+    await store.applyScanResult(library.id, [
+      item(
+        libraryId: library.id,
+        title: 'Loki (2021)',
+        location: r'C:\Media\Loki.S02E06.mov',
+        season: 2,
+        episode: 6,
+      ),
+    ]);
+    read = store.item(target.id)!;
+    expect(read.id, target.id);
+    expect(read.title, 'Loki (2021)');
+    expect(read.displayTitle, 'Loki 第九集');
+
+    // 填回解析出来的原名 = 恢复默认,不留一份多余的 customTitle。
+    await store.renameItem(target.id, 'Loki (2021)');
+    expect(store.item(target.id)!.customTitle, isNull);
+    expect(store.item(target.id)!.displayTitle, 'Loki (2021)');
+
+    // 空白同样表示恢复默认。
+    await store.renameItem(target.id, '第九集');
+    expect(store.item(target.id)!.customTitle, '第九集');
+    await store.renameItem(target.id, '   ');
+    expect(store.item(target.id)!.customTitle, isNull);
+    expect(store.item(target.id)!.displayTitle, 'Loki (2021)');
+
+    await expectLater(
+      store.renameItem('nope', 'x'),
+      throwsA(isA<LocalMediaException>().having(
+          (e) => e.reason, 'reason', LocalMediaError.itemNotFound)),
+    );
+    store.dispose();
+  });
+
+  test('customTitle 落盘读回;老索引没这个字段也照样读', () async {
+    final store = newStore();
+    await store.load();
+    final library = await store.addLibrary(name: 'Loki', kind: file);
+    await store.applyScanResult(library.id, [
+      item(
+        libraryId: library.id,
+        title: 'Loki',
+        location: r'C:\Media\a.mov',
+        episode: 1,
+      ),
+    ]);
+    final target = store.items(library.id).single;
+    await store.renameItem(target.id, '我的第一集');
+
+    final reloaded = newStore();
+    await reloaded.load();
+    expect(reloaded.item(target.id)!.customTitle, '我的第一集');
+    expect(reloaded.item(target.id)!.displayTitle, '我的第一集');
+
+    // 旧索引(手写一份没有 customTitle 的)读回来是「没改过」。
+    final legacy = LocalMediaItem.fromJson(const {
+      'id': 'x',
+      'libraryId': 'y',
+      'title': 'Loki',
+      'location': r'C:\Media\a.mov',
+      'sizeBytes': 0,
+      'addedAt': 0,
+    });
+    expect(legacy.customTitle, isNull);
+    expect(legacy.displayTitle, 'Loki');
+    store.dispose();
+    reloaded.dispose();
+  });
+
   testWidgets('LocalMediaScope 下发 store,并在索引变更时重建依赖者', (tester) async {
+
     final store = newStore();
     // testWidgets 的假异步区里真实文件 I/O 不会完成,落盘必须放进 runAsync。
     await tester.runAsync(store.load);

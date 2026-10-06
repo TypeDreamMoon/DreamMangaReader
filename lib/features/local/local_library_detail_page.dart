@@ -91,6 +91,22 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage>
     Navigator.of(context).maybePop();
   }
 
+  /// 改条目名。留空、或填回解析出来的原名,都表示「恢复默认」(见 store 的 `renameItem`)。
+  Future<void> _renameItem(LocalMediaItem item) async {
+    final l10n = context.l10n;
+    final name = await showLocalRenameDialog(
+      context,
+      title: l10n.local_renameItemTitle,
+      hint: l10n.local_renameItemHint,
+      initial: item.displayTitle,
+      allowEmpty: true,
+    );
+    if (name == null || !mounted) return;
+    final actions = localActions;
+    if (actions == null) return;
+    await runLocalLibraryAction((a) => a.renameItem(item, name));
+  }
+
   Future<void> _removeItem(LocalMediaItem item) async {
     final store = localStore;
     if (store == null) return;
@@ -311,6 +327,7 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage>
                   item: items[index],
                   available: store.isAvailable(items[index]),
                   onPlay: () => unawaited(_play(items[index])),
+                  onRename: () => unawaited(_renameItem(items[index])),
                   onRemove: () => unawaited(_removeItem(items[index])),
                 ),
               ),
@@ -326,6 +343,7 @@ class _ItemCard extends StatelessWidget {
     required this.item,
     required this.available,
     required this.onPlay,
+    required this.onRename,
     required this.onRemove,
   });
 
@@ -333,6 +351,7 @@ class _ItemCard extends StatelessWidget {
   final LocalMediaItem item;
   final bool available;
   final VoidCallback onPlay;
+  final VoidCallback onRename;
   final VoidCallback onRemove;
 
   @override
@@ -370,7 +389,9 @@ class _ItemCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.title.isEmpty ? l10n.local_unknownTitle : item.title,
+                    item.displayTitle.isEmpty
+                        ? l10n.local_unknownTitle
+                        : item.displayTitle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -405,10 +426,27 @@ class _ItemCard extends StatelessWidget {
               ),
             ),
             PopupMenuButton<String>(
-              tooltip: l10n.local_removeItem,
+              tooltip: l10n.local_rename,
               icon: Icon(Icons.more_vert_rounded, size: 20, color: p.textMuted),
-              onSelected: (_) => onRemove(),
+              onSelected: (value) {
+                if (value == 'rename') {
+                  onRename();
+                  return;
+                }
+                onRemove();
+              },
               itemBuilder: (ctx) => [
+                PopupMenuItem<String>(
+                  value: 'rename',
+                  child: Row(
+                    children: [
+                      Icon(Icons.drive_file_rename_outline_rounded,
+                          size: 18, color: ctx.palette.textMuted),
+                      const SizedBox(width: 8),
+                      Text(l10n.local_rename),
+                    ],
+                  ),
+                ),
                 PopupMenuItem<String>(
                   value: 'remove',
                   child: Row(

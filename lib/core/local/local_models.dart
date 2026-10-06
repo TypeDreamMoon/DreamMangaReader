@@ -75,6 +75,7 @@ class LocalMediaItem {
     this.durationMs,
     this.subtitles = const [],
     this.thumbPath,
+    this.customTitle,
     this.addedAt = 0,
     this.lastPlayedAt,
   });
@@ -85,6 +86,12 @@ class LocalMediaItem {
 
   /// 清理后的展示标题(去扩展名、去分辨率等噪声),由文件名解析器给出。
   final String title;
+
+  /// 用户自己起的名字;为空表示没改过(规格 §5.6)。
+  ///
+  /// 与 [title] **分开存**是有意的:重扫会按解析结果刷新 [title],如果直接改
+  /// [title],用户起的名字下次重扫就被冲掉了。
+  final String? customTitle;
 
   /// Windows 绝对路径,或 Android document uri。
   final String location;
@@ -115,6 +122,14 @@ class LocalMediaItem {
   String dedupeKey({required bool windows}) =>
       localDedupeKey(location, windows: windows);
 
+  /// 界面上该显示的名字:用户改过就用用户的,否则用解析出来的。
+  ///
+  /// 空白的 [customTitle](手改过索引、或老数据)当没改过处理。
+  String get displayTitle {
+    final custom = customTitle?.trim() ?? '';
+    return custom.isEmpty ? title : custom;
+  }
+
   LocalMediaItem copyWith({
     String? title,
     String? location,
@@ -125,6 +140,8 @@ class LocalMediaItem {
     int? durationMs,
     List<LocalSubtitle>? subtitles,
     String? thumbPath,
+    String? customTitle,
+    bool clearCustomTitle = false,
     int? lastPlayedAt,
   }) =>
       LocalMediaItem(
@@ -139,6 +156,7 @@ class LocalMediaItem {
         durationMs: durationMs ?? this.durationMs,
         subtitles: subtitles ?? this.subtitles,
         thumbPath: thumbPath ?? this.thumbPath,
+        customTitle: clearCustomTitle ? null : (customTitle ?? this.customTitle),
         addedAt: addedAt,
         lastPlayedAt: lastPlayedAt ?? this.lastPlayedAt,
       );
@@ -156,6 +174,7 @@ class LocalMediaItem {
         if (subtitles.isNotEmpty)
           'subtitles': [for (final s in subtitles) s.toJson()],
         if (thumbPath != null) 'thumbPath': thumbPath,
+        if ((customTitle?.trim() ?? '').isNotEmpty) 'customTitle': customTitle,
         'addedAt': addedAt,
         if (lastPlayedAt != null) 'lastPlayedAt': lastPlayedAt,
       };
@@ -173,6 +192,7 @@ class LocalMediaItem {
         durationMs: _intField(json, 'durationMs'),
         subtitles: _subtitlesFromJson(json['subtitles']),
         thumbPath: json['thumbPath'] as String?,
+        customTitle: _optionalStringField(json, 'customTitle'),
         addedAt: _intField(json, 'addedAt') ?? 0,
         lastPlayedAt: _intField(json, 'lastPlayedAt'),
       );
@@ -321,6 +341,13 @@ String newLocalId() {
 String _stringField(Map<Object?, Object?> json, String key) =>
     json[key] as String? ?? '';
 
+/// 可选字符串字段:缺失、类型不对、只有空白都当「没有」。读回来顺手 trim,
+/// 手改过索引里带空格的 `customTitle` 不该变成界面上一个带空格的名字。
+String? _optionalStringField(Map<Object?, Object?> json, String key) {
+  final value = (json[key] as String?)?.trim() ?? '';
+  return value.isEmpty ? null : value;
+}
+
 int? _intField(Map<Object?, Object?> json, String key) =>
     (json[key] as num?)?.toInt();
 
@@ -329,3 +356,204 @@ List<LocalSubtitle> _subtitlesFromJson(Object? value) => [
       for (final entry in (value as List?) ?? const [])
         if (entry is Map) LocalSubtitle.fromJson(entry),
     ];
+
+// --- 位置字符串工具 -------------------------------------------------------
+//
+// Windows 的反斜杠路径与 Android 的 SAF uri 在这里走同一套:先统一成 `/`,再按
+// 段处理。**不做 URL 解码**(规格 §9),只有需要显示目录名时才解码(见
+// [localParentDisplayName])。
+
+/// 位置去掉末尾 `/` 并统一分隔符(Windows 路径与 SAF uri 都能过一遍)。
+String _normalizedLocation(String location) {
+  final normalized = location.replaceAll(r'\', '/');
+  return normalized.endsWith('/')
+      ? normalized.substring(0, normalized.length - 1)
+      : normalized;
+}
+
+/// 从一个位置里取出展示名(Windows 反斜杠也认)。
+String localLocationName(String location) {
+  final trimmed = _normalizedLocation(location);
+  final cut = trimmed.lastIndexOf('/');
+  final name = cut < 0 ? trimmed : trimmed.substring(cut + 1);
+  return name.isEmpty ? trimmed : name;
+}
+
+/// Windows 上取一个路径的父目录;没有父目录时返回它自己。
+String localLocationParent(String location) {
+  final trimmed = _normalizedLocation(location);
+  final cut = trimmed.lastIndexOf('/');
+  if (cut <= 0) return trimmed;
+  return trimmed.substring(0, cut);
+}
+
+/// SAF 的 document/tree uri 前缀。
+const String _contentUriPrefix = 'content://';
+
+/// 位置所在**目录的键** —— 同一个目录下的文件给出同一个键(不用于展示,只用于
+/// 判断「是不是一堆东西」)。
+///
+/// 两条路形态完全不同,所以要分开处理:
+/// - Windows 之类的真实路径:分隔符就是 `/`(规范化过),取父目录;
+/// - SAF:`content://…/document/primary%3AMovies%2Fx.mkv` —— 卷名 + 路径整段是
+///   **一个**路径段(百分号编码的 `/` 不是分隔符),不先解码的话所有文件都会算出
+///   同一个父目录 `…/document`。
+String localParentKey(String location) {
+  final normalized = _normalizedLocation(location);
+  if (normalized.isEmpty) return '';
+  if (normalized.startsWith(_contentUriPrefix)) {
+    final segments = _safDocIdSegments(normalized);
+    if (segments.isEmpty) return normalized;
+    // 最后一段是文件本身;只有一段时这个 uri 指向的就是目录(比如 tree uri)。
+    final folder = segments.length >= 2
+        ? segments.sublist(0, segments.length - 1)
+        : segments;
+    return folder.join('/');
+  }
+  final parent = localLocationParent(normalized);
+  return parent.isEmpty ? normalized : parent;
+}
+
+/// 位置所在目录的**展示名**:Windows 取最后一段目录名;SAF 取解码后 docId 里的
+/// 目录段(`primary%3AMovies%2Fx.mkv` → `Movies`)。卷名(SD 卡号、`primary`)不是
+/// 目录名,不进显示名。
+///
+/// 位置本身就是个裸名字(没有目录)、或拿不到目录名时返回空串(调用方自己兜底),
+/// 绝不抛错。
+String localParentDisplayName(String location) {
+  final normalized = _normalizedLocation(location);
+  final key = localParentKey(normalized);
+  if (key.isEmpty || key == normalized) return '';
+  // `primary:Media/Movies` / `C:/Media/Movies` 的冒号前都是「卷」,不是目录。
+  final colon = key.indexOf(':');
+  final withoutVolume = colon >= 0 ? key.substring(colon + 1) : key;
+  final segments = [
+    for (final segment in withoutVolume.split('/'))
+      if (segment.trim().isNotEmpty) segment,
+  ];
+  return segments.isEmpty ? withoutVolume.trim() : segments.last.trim();
+}
+
+/// SAF docId 解码后的路径段:`primary%3AMedia%2FMovies%2Fx.mkv` →
+/// `['primary:Media', 'Movies', 'x.mkv']`(卷名黏在第一段上)。
+///
+/// 解不开(手改过的 uri、半截编码)就用原样,至少不是个异常。
+List<String> _safDocIdSegments(String location) {
+  final docId = localLocationName(location);
+  if (docId.isEmpty) return const [];
+  var decoded = docId;
+  try {
+    decoded = Uri.decodeComponent(docId);
+  } on Object {
+    decoded = docId;
+  }
+  return [
+    for (final segment in decoded.split('/'))
+      if (segment.trim().isNotEmpty) segment,
+  ];
+}
+
+// --- 「哪几条属于同一部剧」-------------------------------------------------
+
+/// 剧名归一化后的匹配键:大小写、空白与常见分隔符都不参与比较。
+///
+/// 只用来**判断两条是不是同一部剧**,不用于展示,所以可以尽情报复性归一
+/// (`Loki` / `loki` / `LOKI-` 都会落到 `loki`)。
+String localSeriesKey(String title) =>
+    title.toLowerCase().replaceAll(_seriesKeyNoise, '');
+
+/// 剧名归一化时抹掉的字符:空白 + 常见分隔/包装符号(半角与全角都收)。
+final RegExp _seriesKeyNoise = RegExp(
+  r'''[\s._\-–—·・~～@#$%&*+=|\\/?!,;:'"“”‘’《》〈〉「」【】〔〕\[\](){}（）]+''',
+);
+
+/// 一批待入库条目分出来的一份「库」。
+class LocalLibraryGroup {
+  const LocalLibraryGroup({
+    required this.key,
+    required this.name,
+    required this.items,
+  });
+
+  /// 归并键:同键的条目属于同一个库。
+  ///
+  /// - 带季/集号的(剧集):`series:<归一化剧名>`;
+  /// - 没有季集号的(散装电影/录音):`dir:<所在目录>`。
+  final String key;
+
+  /// 建议的库名(剧名,或目录名/条目名);可能为空,由调用方兜底。
+  final String name;
+
+  final List<LocalMediaItem> items;
+
+  @override
+  String toString() => 'LocalLibraryGroup($key, $name, ${items.length} items)';
+}
+
+/// 把一批条目分成几份「库」(规格 §8.1:一次挑两部剧就该两张卡)。
+///
+/// 规则:
+/// - 带季号或集号的条目按**归一化剧名**归堆 —— 这是「一部剧加两集变两张卡」
+///   那个问题的正面解法;
+/// - 没有季集号的条目按**所在目录**归堆,保持「一个目录一个库」的老观感,
+///   重复从同一个目录挑电影也不会每次开一张新卡;
+/// - 分组顺序 = 每组第一条在入参里的顺序,结果稳定可测。
+List<LocalLibraryGroup> groupLocalItemsForLibraries(
+  List<LocalMediaItem> items,
+) {
+  // Dart 的 Map 保持插入顺序,所以这一趟下来组序就是「每组第一条的先后」。
+  final buckets = <String, List<LocalMediaItem>>{};
+  final seriesGroup = <String, bool>{};
+  for (final item in items) {
+    final isSeries = item.season != null || item.episode != null;
+    final String key;
+    if (isSeries) {
+      final normalized = localSeriesKey(item.title);
+      key = normalized.isEmpty ? 'series-title:${item.title}' : 'series:$normalized';
+    } else {
+      key = 'dir:${localParentKey(item.location)}';
+    }
+    (buckets[key] ??= <LocalMediaItem>[]).add(item);
+    seriesGroup[key] = isSeries;
+  }
+
+  return [
+    for (final entry in buckets.entries)
+      LocalLibraryGroup(
+        key: entry.key,
+        name: (seriesGroup[entry.key] ?? false)
+            ? _dominantTitle(entry.value)
+            : _looseGroupName(entry.value),
+        items: List.unmodifiable(entry.value),
+      ),
+  ];
+}
+
+/// 一组里出现次数最多的标题(并列取先出现的那个)。
+String _dominantTitle(List<LocalMediaItem> items) {
+  final counts = <String, int>{};
+  for (final item in items) {
+    final title = item.title.trim();
+    if (title.isEmpty) continue;
+    counts[title] = (counts[title] ?? 0) + 1;
+  }
+  var best = '';
+  var bestCount = 0;
+  for (final entry in counts.entries) {
+    if (entry.value > bestCount) {
+      best = entry.key;
+      bestCount = entry.value;
+    }
+  }
+  return best;
+}
+
+/// 散装组的名字:**目录名**(`Movies` / `Download` 之类)。
+///
+/// 刻意不用组里某一条的标题:同一个目录里第一张卡叫「Inception」,第二部电影并
+/// 进来之后这个名字就在骗人了。目录拿不到(奇怪的 uri)才退回标题。
+String _looseGroupName(List<LocalMediaItem> items) {
+  final directory = localParentDisplayName(items.first.location);
+  if (directory.isNotEmpty) return directory;
+  return _dominantTitle(items);
+}

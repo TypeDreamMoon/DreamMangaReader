@@ -406,7 +406,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
       animeId: widget.library.id,
       title: widget.library.name,
       episodeId: item.id,
-      episodeName: item.title,
+      episodeName: item.displayTitle,
       episodeIndex: _i,
       position: position,
       duration: duration,
@@ -565,7 +565,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
           final item = widget.items[index];
           final selected = index == current;
           return _sheetRow(
-            label: '${index + 1}. ${item.title}',
+            label: '${index + 1}. ${item.displayTitle}',
             selected: selected,
             icon: selected
                 ? Icons.play_circle_fill_rounded
@@ -810,7 +810,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        _item.title,
+                        _item.displayTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
