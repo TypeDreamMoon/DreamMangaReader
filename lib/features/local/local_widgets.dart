@@ -88,6 +88,91 @@ mixin LocalLibraryPageScaffold<T extends StatefulWidget> on State<T> {
   }
 }
 
+/// 改名对话框:一个输入框 + 取消/保存。
+///
+/// 返回 `null` 表示用户取消;返回空串表示「清掉自定义名字、恢复原名」——
+/// 只有条目允许这样([allowEmpty] 为真),库名空着会让卡片只剩「未知标题」,
+/// 所以那种情况下保存按钮直接禁用。
+///
+/// 用 StatefulWidget 拿住 controller(而不是 `try/finally` 里 dispose):
+/// 对话框退场动画期间输入框还在树上,提前 dispose 会炸。
+Future<String?> showLocalRenameDialog(
+  BuildContext context, {
+  required String title,
+  required String hint,
+  required String initial,
+  bool allowEmpty = false,
+}) =>
+    showDialog<String>(
+      context: context,
+      builder: (context) => _LocalRenameDialog(
+        title: title,
+        hint: hint,
+        initial: initial,
+        allowEmpty: allowEmpty,
+      ),
+    );
+
+class _LocalRenameDialog extends StatefulWidget {
+  const _LocalRenameDialog({
+    required this.title,
+    required this.hint,
+    required this.initial,
+    required this.allowEmpty,
+  });
+
+  final String title;
+  final String hint;
+  final String initial;
+  final bool allowEmpty;
+
+  @override
+  State<_LocalRenameDialog> createState() => _LocalRenameDialogState();
+}
+
+class _LocalRenameDialogState extends State<_LocalRenameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final canSave = widget.allowEmpty || _controller.text.trim().isNotEmpty;
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        key: const Key('local-rename-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 120,
+        textInputAction: TextInputAction.done,
+        onChanged: (_) => setState(() {}),
+        onSubmitted: (_) {
+          if (canSave) _submit();
+        },
+        decoration: InputDecoration(hintText: widget.hint),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(context.l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: canSave ? _submit : null,
+          child: Text(context.l10n.save),
+        ),
+      ],
+    );
+  }
+}
+
 /// 一条提示横幅:图标 + 一段文字(可选一个尾部动作)。
 ///
 /// 列表页的「加载警告」与详情页的「加载警告 / 需要重新授权」结构完全相同,

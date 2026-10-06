@@ -875,7 +875,7 @@ void main() {
         onlineLoads++;
         return const [_track];
       },
-      localTrackForEpisode: (_) => offline,
+      localTrackForEpisode: (_) async => offline,
       videoBuilder: (_) => const ColoredBox(color: Colors.black),
     );
 

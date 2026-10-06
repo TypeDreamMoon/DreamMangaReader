@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/anime_library_store.dart';
@@ -17,6 +19,7 @@ import '../common/cover_hero.dart';
 import '../common/transitions.dart';
 import '../detail/detail_page.dart';
 import '../local/local_library_page.dart';
+import '../local/local_resume.dart';
 import '../novel/novel_import_sheet.dart';
 import '../novel/novel_library_view.dart';
 import 'history_page.dart';
@@ -215,6 +218,11 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   void _openAnime(AnimeFavoriteEntry entry, {Object? heroTag}) {
+    // 本地库播放留下的记录:没有 id 为 `local` 的源,按源找只会找不到。
+    if (isLocalHistorySource(entry.sourceId)) {
+      unawaited(openLocalLibrary(context, entry.animeId));
+      return;
+    }
     final meta = sourceMetaById(entry.sourceId);
     if (meta == null) {
       _snack(context.l10n.shelf_sourceGone(sourceNameOf(entry.sourceId)));
@@ -751,7 +759,9 @@ class _LibraryPageState extends State<LibraryPage> {
               ? formatShelfClock(h.durationSeconds)
               : '--:--',
         );
-        onTap = () => openAnimeHistory(context, h);
+        onTap = isLocalHistorySource(h.sourceId)
+            ? () => unawaited(openLocalHistory(context, h))
+            : () => openAnimeHistory(context, h);
     }
     return SizedBox(
       width: 92,
@@ -846,7 +856,10 @@ class _LibraryPageState extends State<LibraryPage> {
     final text = switch (item.kind) {
       ShelfKind.novel => item.subtitle,
       ShelfKind.manga => sourceNameOf(item.mangaEntry!.sourceId),
-      ShelfKind.anime => sourceNameOf(item.animeEntry!.sourceId),
+      // 本地库没有脚本源,`sourceNameOf('local')` 只会把保留 id 原样吐出来。
+      ShelfKind.anime => isLocalHistorySource(item.animeEntry!.sourceId)
+          ? context.l10n.local_title
+          : sourceNameOf(item.animeEntry!.sourceId),
     };
     return text.isEmpty ? ' ' : text;
   }

@@ -173,7 +173,12 @@ class AnimePlayerDependencies {
   final PlaybackTrackProvider tracks;
   final Future<List<VideoTrack>> Function(String episodeId) loadTracks;
   final Widget Function(BoxFit fit) videoBuilder;
-  final VideoTrack? Function(String episodeId)? localTrackForEpisode;
+
+  /// 这一集在本地文件里(离线下载 / 本地库):给得出轨道就不去问源。
+  ///
+  /// **异步**是因为本地库那条路要先把 `content://` 经 SAF 桥换成
+  /// `/proc/self/fd/N`(规格 §7.2 路线 A),那是一次平台通道往返。
+  final Future<VideoTrack?> Function(String episodeId)? localTrackForEpisode;
 }
 
 class _OfflineAwareTracks implements PlaybackTrackProvider {
@@ -183,11 +188,13 @@ class _OfflineAwareTracks implements PlaybackTrackProvider {
   });
 
   final PlaybackTrackProvider delegate;
-  final VideoTrack? Function() localTrack;
+
+  /// 当前这一集的本地轨道,拿不到就是「这一集不在本地」。
+  final Future<VideoTrack?> Function() localTrack;
 
   @override
   Future<List<VideoTrack>> refresh() async {
-    final local = localTrack();
+    final local = await localTrack();
     return local == null ? delegate.refresh() : [local];
   }
 
@@ -224,6 +231,7 @@ class AnimePlayerPage extends StatefulWidget {
     required this.index,
     this.initialPosition = Duration.zero,
     this.dependencies,
+    this.localFilesOnly = false,
   });
 
   final SourceMeta meta;
@@ -236,6 +244,11 @@ class AnimePlayerPage extends StatefulWidget {
   final int index;
   final Duration initialPosition;
   final AnimePlayerDependencies? dependencies;
+
+  /// 本地库播放(没有源):藏掉「收藏 / 下载这一集 / 复制链接」这三个入口 ——
+  /// 它们都要拿 [meta]`.id` 去问源或下载器,本地文件没有源,点了只会失败。
+  /// 只在注入 [dependencies] 的路径上有意义。
+  final bool localFilesOnly;
 
   @override
   State<AnimePlayerPage> createState() => _AnimePlayerPageState();
@@ -253,7 +266,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
   MangaSource? _source;
   PlayerAdapter? _adapter;
   Future<List<VideoTrack>> Function(String episodeId)? _loadTracks;
-  VideoTrack? Function(String episodeId)? _localTrackForEpisode;
+  Future<VideoTrack?> Function(String episodeId)? _localTrackForEpisode;
   Widget Function(BoxFit fit)? _videoBuilder;
   PlaybackSessionController? _session;
   StreamSubscription<PlaybackState>? _stateSubscription;
@@ -519,7 +532,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
         return source.getVideo(widget.animeId, episodeId);
       }
 
-      VideoTrack? localTrackForEpisode(String episodeId) {
+      Future<VideoTrack?> localTrackForEpisode(String episodeId) async {
         final record = AnimeDownloadScope.maybeRead(context)?.recordFor(
           widget.meta.id,
           widget.animeId,
@@ -583,7 +596,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
     required PlaybackTrackProvider tracks,
     required Future<List<VideoTrack>> Function(String episodeId) loadTracks,
     required Widget Function(BoxFit fit) videoBuilder,
-    VideoTrack? Function(String episodeId)? localTrackForEpisode,
+    Future<VideoTrack?> Function(String episodeId)? localTrackForEpisode,
   }) {
     _adapter = adapter;
     _loadTracks = loadTracks;
@@ -1032,7 +1045,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
       });
     }
     try {
-      final local = _localTrackForEpisode?.call(_ep.id);
+      final local = await _localTrackForEpisode?.call(_ep.id);
       final tracks = local == null ? await _loadTracks!(_ep.id) : [local];
       if (_disposed || generation != _loadGeneration) return;
       if (tracks.isEmpty) throw StateError(_messages!.noRoute);
@@ -1422,7 +1435,11 @@ class _AnimePlayerPageState extends State<AnimePlayerPage>
   ///
   /// 这三样以前只有退回详情页才够得着,可它们要的恰恰是「正在看这一集」这个
   /// 上下文 —— 看到一半想收藏、想留一份离线、想把链接发给人。
+  ///
+  /// 本地库播放([AnimePlayerPage.localFilesOnly])一个都不给:三样全要拿
+  /// `meta.id` 去问源或下载器,本地文件没有源。
   List<Widget> _topActions() {
+    if (widget.localFilesOnly) return const [];
     final library = AnimeLibraryScope.maybeOf(context);
     final favorite =
         library?.isFavorite(widget.meta.id, widget.animeId) ?? false;

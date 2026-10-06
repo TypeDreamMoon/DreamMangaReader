@@ -18,15 +18,17 @@ import '../anime/playback/subtitle_option.dart';
 /// open() 返回时文件常常还没打开,紧随其后的 seek 会被静默丢掉(见 player_adapter.dart:22-25)。
 /// 这一点由 [rebuildDecoder] 沿用。
 class LocalPlayerAdapter implements PlayerAdapter {
-  LocalPlayerAdapter(this._backend, {required VideoTrack track}) : _track = track;
+  /// [track] 可以不给:番剧播放页那条注入路径把轨道交给 [open],构造时还没有
+  /// 任何文件 —— 那时 [rebuildDecoder] 没有可重开的东西,直接算恢复完成。
+  LocalPlayerAdapter(this._backend, {VideoTrack? track}) : _track = track;
 
   final MediaKitBackend _backend;
-  VideoTrack _track;
+  VideoTrack? _track;
   SubtitleOption? _subtitle;
   bool _disposed = false;
 
-  /// 当前文件。恢复流程([rebuildDecoder])重开的就是它。
-  VideoTrack get track => _track;
+  /// 当前文件。恢复流程([rebuildDecoder])重开的就是它;还没 [open] 过时为 null。
+  VideoTrack? get track => _track;
 
   @override
   Stream<bool> get playing => _backend.playing;
@@ -58,8 +60,11 @@ class LocalPlayerAdapter implements PlayerAdapter {
   @override
   Future<void> rebuildDecoder(Duration resumePosition) async {
     if (_disposed) return;
+    final track = _track;
+    // 还没 open 过(番剧页的注入路径把轨道交给 open):没有可重开的东西。
+    if (track == null) return;
     // 卡顿/回退后的重开同样是「从这个位置开机」,不是开完再跳回去。
-    await _backend.open(_track, startAt: resumePosition);
+    await _backend.open(track, startAt: resumePosition);
     await _restoreSubtitle();
   }
 
