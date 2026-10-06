@@ -11,8 +11,8 @@
 
 - 新增「本地播放」：把本机视频/音频目录或单个文件加入本地库，直接播放，不复刻文件。
 - 数据层：`LocalMediaStore`（`<support>/local-media/index.json`）、`LocalLibraryScanner`（Windows `dart:io` 递归）、`LocalEpisodeParser`（剧集号/季解析、字幕配对）、`LocalMediaBridge`（Android SAF）。
-- 播放层：`buildLocalTrack`、`LocalTrackProvider`、`LocalPlayerAdapter`（不调 `configure()`、不配网络参数）。
-- 界面：`LocalLibraryPage`、`LocalLibraryDetailPage`、`LocalPlayerPage`，入口在书架页顶部动作区与设置页「本地播放」分组。
+- 播放层：`buildLocalTrack`、`LocalPlayerAdapter`（不调 `configure()`、不配网络参数）；M1.2 起会话与界面直接复用番剧播放页（`LocalPlaybackHost` 负责装配）。
+- 界面：`LocalLibraryPage`、`LocalLibraryDetailPage`；播放页 `LocalPlayerPage` 是 `AnimePlayerPage` 的一层壳（M1.2）。入口在书架页顶部动作区与设置页「本地播放」分组。
 - 进度复用番剧库：`sourceId = 'local'`、`animeId = 库 id`、`episodeId = 条目 id`；本地条目在历史/书架里以「番剧」形态出现（M1 接受的副作用）。
 - **M1.1（2026-10-07）**：添加文件时按剧名**自动并入已有同剧库**、库名改用解析出的剧名、
   库与条目都支持重命名（条目名存可选的 `customTitle`）。规则与边界见
