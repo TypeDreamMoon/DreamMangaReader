@@ -784,4 +784,8 @@ class LocalMediaScope extends InheritedNotifier<LocalMediaStore> {
     assert(scope != null, 'LocalMediaScope not found in context');
     return scope!.notifier!;
   }
+
+  /// 拿不到就返回 null(书架/历史那些地方可能没有本地库这一层)。
+  static LocalMediaStore? maybeRead(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<LocalMediaScope>()?.notifier;
 }

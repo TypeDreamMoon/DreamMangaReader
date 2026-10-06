@@ -1081,6 +1081,7 @@
   "local_unknownTitle": "無題",
   "local_duplicateLocation": "この場所はすでにローカルライブラリにあります",
   "local_qualityLocal": "ローカル",
+  "local_libraryGone": "このローカルライブラリは削除されています",
   "local_subtitles": "字幕",
   "local_subtitleOff": "字幕オフ",
   "local_speed": "再生速度",

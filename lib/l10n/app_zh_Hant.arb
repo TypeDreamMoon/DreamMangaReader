@@ -1081,6 +1081,7 @@
   "local_unknownTitle": "未命名",
   "local_duplicateLocation": "這個位置已經在本地媒體庫裡了",
   "local_qualityLocal": "本地",
+  "local_libraryGone": "這個本機媒體庫已經被移除了",
   "local_subtitles": "字幕",
   "local_subtitleOff": "關閉字幕",
   "local_speed": "播放速度",

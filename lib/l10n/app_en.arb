@@ -1081,6 +1081,7 @@
   "local_unknownTitle": "Untitled",
   "local_duplicateLocation": "This location is already in your local library",
   "local_qualityLocal": "Local",
+  "local_libraryGone": "This local library has been removed",
   "local_subtitles": "Subtitles",
   "local_subtitleOff": "Subtitles off",
   "local_speed": "Playback speed",

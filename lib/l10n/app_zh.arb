@@ -1902,6 +1902,7 @@
   "local_unknownTitle": "未命名",
   "local_duplicateLocation": "这个位置已经在本地库里了",
   "local_qualityLocal": "本地",
+  "local_libraryGone": "这个本地库已经被移除了",
   "local_subtitles": "字幕",
   "local_subtitleOff": "关闭字幕",
   "local_speed": "倍速",

@@ -90,6 +90,33 @@ Android 的 `content://` 必须先用 `LocalMediaBridge.openFd` 换成
 > 副作用（与番剧一致）：播放中切到下一集时，那一集从 0 开始，即使以前看过一半。
 > M1 那份自己写的播放页会为每一集查历史，现在这条行为对齐了番剧页。
 
+## 书架 / 历史里的本地条目（同一批改动）
+
+本地播放的进度写在番剧库里（`sourceId = 'local'`、`animeId = 库 id`），所以它在
+书架的历史横条、历史页、以及旧版本留下的本地收藏里都以「番剧」形态出现。点它
+不能再走「按 sourceId 找源」那条路 —— 没有 id 为 `local` 的源，那条路只会弹一句
+「番剧源不可用」（实测报障）。
+
+- 新增 `lib/features/local/local_resume.dart`：`openLocalHistory` / `openLocalLibrary`。
+  落点与番剧一致：本地库详情页（那页自己会把「继续观看」摆在最上面）；库已经被
+  移除时提示「这个本地库已经被移除了」（新增文案 `local_libraryGone`），
+  不做「换个源找回」—— 条目位置只活在这台设备上。
+- 三个入口各自分支：书架的历史卡片、历史页那一行、书架收藏卡（`_openAnime`）。
+- 副标题：`sourceNameOf('local')` 只会把保留 id 原样吐出来，所以本地条目显示
+  「本地播放」。
+- 追更检查（`ShelfProjector.updateTargets`）排除本地条目：没有源可查 —— 与
+  「本地导入的小说」同一处理，否则它们会永远停在「检查失败」那一栏。
+
+### 同步：本地记录天然不进云端
+
+同步载荷（`SyncData.build`）只收漫画 `LibraryStore`、小说 `NovelLibraryStore`、
+源脚本与设置；`AnimeLibraryStore`、`LocalMediaStore` 整体没有参与同步。所以
+`sourceId='local'` 的播放记录与本地库索引（含用户目录名/文件路径）**不会**被上传，
+换设备也拉不回来（这是有意的：那些 `location` 只在这台设备上成立）。
+
+将来若要把番剧库纳入同步，必须先在 `sourceId == 'local'` 的条目上排除 ——
+本地库索引与本地进度是设备本地数据。
+
 ## 删掉的东西
 
 - `lib/features/local/local_player_page.dart` 里那套自写的手势/控件/侧栏（929 → 约 320 行）；
