@@ -18,7 +18,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.16.0';
+  static const version = '1.17.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -36,6 +36,7 @@ class AppInfo {
     '小说导入:本地 TXT(UTF-8 / GBK / Big5 自动识别)与可重排 EPUB',
     '番剧在线观看:HLS 播放器(libmpv)· 右上角三点里只剩字幕与设置,不再重复摆一遍',
     '番剧播放器底栏:选集 / 倍速 / 清晰度就在右下角,弹一张小卡片而不是拉开整块面板',
+    '本地播放:导入本机视频目录或文件直接播放,不复制文件 · 季集识别 + 字幕配对 · 续播进度',
     '番剧选集:竖排列表,一行一集带集名,不再是点不中的数字方阵',
     '番剧连播:单集循环 / 列表循环 / 不循环 · 自动连播,选了就记住',
     '番剧播放器工具:截屏进相册(DCIM/ScreenShot)· 锁屏挡误触 · 收藏 / 下载本集 / 复制链接',
