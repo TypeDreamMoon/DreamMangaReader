@@ -62,7 +62,12 @@
 - **Kotlin 未编译**：`android/app/src/main/kotlin/.../local/LocalMediaBridge.kt` 与 `MainActivity.kt` 的改动**没有经过编译器校验**，目前只有 Dart 侧的源码契约测试（`test/local_media_bridge_test.dart`）。两次编译尝试都失败在**与本次改动无关的前置步骤**上：
   - `gradle :app:compileDebugKotlin --offline`（缓存 gradle 8.13）→ `No cached version of com.android.tools.build:gradle:8.12.1 / org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0 available for offline mode`。
   - 联网重跑（同一 gradle 8.13，本机有 `ANDROID_HOME`/`JAVA_HOME`/`android/local.properties`）→ 依赖解析耗时 7m25s 后失败在 `media_kit_libs_android_video-1.3.8/android/build.gradle:83`：该插件要从 GitHub Releases 下载 libmpv 的 4 个 jar（`v1.1.7/default-*.jar`），本机到 `github.com` 连接超时（镜像可用，但当时未预置 jar）。
-  - 因此**编译从未走到 `:app:compileKotlin`**，既不能证明也不能否证本次 Kotlin 改动的正确性。作者侧构建前必须先跑一次 `flutter build apk`（或 Android Studio 编译）；若同样卡在 libmpv jar 下载，把 `v1.1.7/default-*.jar` 预置到 `media_kit_libs_android_video-1.3.8/android/build/v1.1.7/` 并核对 MD5 即可跳过下载。
+  - 因此**编译从未走到 `:app:compileKotlin`**，既不能证明也不能否证本次 Kotlin 改动的正确性。作者侧构建前必须先跑一次 `flutter build apk`（或 Android Studio 编译）；若同样卡在 libmpv jar 下载，按下一条预置即可跳过。
+  - **2026-10-07 更新（Kotlin 已编译过）**：`flutter build apk --profile` 在本机跑通了（`assembleProfile` 235s，产出 `app-profile.apk`），`MainActivity.kt` 与 `LocalMediaBridge.kt` **已经过编译器校验**；随后真机驱动（`flutter drive … -d emulator-5554`）也装包运行成功。原先卡住的两步现在都有确定解法：
+    - Gradle 分发：官方源 21 KB/s，换 `https://mirrors.huaweicloud.com/gradle/gradle-8.14-bin.zip`（137 MB / 85s，SHA-256 与官方一致），落到 `~/.gradle/wrapper/dists/gradle-8.14-bin/<hash>/gradle-8.14-bin.zip`。
+    - libmpv jar：**预置路径不是 pub cache**（本文档旧版写错了）。插件的 `$buildDir` 被 Flutter 改写成**工程的** build 目录，即
+      `build/media_kit_libs_android_video/v1.1.7/default-*.jar`（arm64-v8a / armeabi-v7a / x86_64 / x86 四个）。
+      放对了它就不再下载；放错地方会看到 `MD5 mismatch. File deleted` 然后去 GitHub 拉、拉不动就 `BUILD FAILED`。MD5 见该插件 `android/build.gradle:60-65`。
 
 ## 待执行的运行时验收
 
