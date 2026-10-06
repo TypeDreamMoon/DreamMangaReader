@@ -17,6 +17,10 @@
 - **M1.1（2026-10-07）**：添加文件时按剧名**自动并入已有同剧库**、库名改用解析出的剧名、
   库与条目都支持重命名（条目名存可选的 `customTitle`）。规则与边界见
   `docs/superpowers/specs/2026-10-07-local-library-grouping-design.md`。
+- **M1.2（2026-10-07）**：本地播放**整页复用番剧播放页**（`LocalPlayerPage` 只剩壳），
+  手势（双击暂停、左亮度/右音量、长按倍速）、设置抽屉、锁屏、截图全部与番剧一致；
+  为此把 `AnimePlayerDependencies.localTrackForEpisode` 改成异步（Android 要开 fd）。
+  见 `docs/superpowers/specs/2026-10-07-local-player-reuse-design.md`。
 - 不包含：备份/同步、封面抽帧、时长探测、`ShelfKind.local`、Windows 拖拽与文件关联（均为 M2/M3）；「移动条目 / 合并两个库」也不在本次范围。
 
 ## 自动化结果
@@ -25,9 +29,9 @@
 
 执行范围：`test/local_*_test.dart`。
 
-- 测试文件：13
-- 测试用例：214
-- 结果：214 通过，0 失败
+- 测试文件：12
+- 测试用例：211
+- 结果：211 通过，0 失败
 
 | 测试文件 | 用例 | 覆盖 |
 | --- | --- | --- |
@@ -36,20 +40,19 @@
 | `test/local_series_test.dart` | 15 | **M1.1**：剧名归一化键、按剧/目录分组、组名与组序、SAF 目录键与目录展示名（`/document` 不当目录） |
 | `test/local_media_store_test.dart` | 38 | 索引读写与损坏回退、去重、扫描合并保住 id 与 `customTitle`、`markPlayed`、`removeItem`/`removeLibrary` 不删源文件、`renameLibrary`/`renameItem` 与空白名拒绝、导出导入、Scope 通知 |
 | `test/local_track_test.dart` | 8 | `file:` URL 构造、空位置与 `content://` 拒绝、字幕透传 |
-| `test/local_track_provider_test.dart` | 5 | `refresh` 恒非空、`matchRefreshed`/`lowerQuality`/`alternateLine` 语义 |
-| `test/local_player_adapter_test.dart` | 11 | 流转发、`open` 用 `startAt`、**从不调用 `configure()`**、换集清空字幕、`rebuildDecoder` 恢复外挂字幕 |
+| `test/local_player_adapter_test.dart` | 11 | 流转发、`open` 用 `startAt`、**从不调用 `configure()`**、换集清空字幕、`rebuildDecoder` 恢复外挂字幕（没 open 过时是空操作） |
 | `test/local_media_bridge_test.dart` | 22 | Dart 侧通道契约 + 原生源码契约（channel 名、两类 Intent、`takePersistableUriPermission`、`buildChildDocumentsUriUsingTree`、`openFileDescriptor(uri,"r")`、`/proc/self/fd/$fd`、fd 强引用、MainActivity 注册；并断言 Manifest 不含 `READ_MEDIA_VIDEO`/`MANAGE_EXTERNAL_STORAGE`） |
 | `test/local_library_actions_test.dart` | 15 | 添加文件夹/文件、重复位置提示、扫描失败仍建库且提示脱敏（不含真实路径与文件名）、重新扫描保住 id、移除库不删文件；**M1.1**：同剧并卡、两部剧两张卡、散装按目录归堆、不并进目录型库、改名提示 |
 | `test/local_library_page_test.dart` | 5 | 空态两种入口、库卡片、进详情页、移除库只删索引；**M1.1**：⋮ 改名（空名禁用保存）只动名字 |
-| `test/local_library_detail_page_test.dart` | 4 | 剧集列表与「已看」「文件不存在」徽章、继续观看从历史续播、移除条目不动文件；**M1.1**：条目改名后行标题跟着变、解析名留着 |
-| `test/local_player_page_test.dart` | 4 | 打开首集并从历史续播、播完自动下一集、`content://` 经桥 `openFd`/退出 `releaseFd`、进度回写番剧库 |
+| `test/local_library_detail_page_test.dart` | 5 | 剧集列表与「已看」「文件不存在」徽章、继续观看从历史续播、移除条目不动文件；**M1.1**：条目改名后行标题跟着变、解析名留着；**M1.2**：点列表里的一集 → 从**那一集自己的**历史断点续播 |
+| `test/local_player_page_test.dart` | 5 | 开播断点、播完自动下一集、`content://` 经桥 `openFd`/退出 `releaseFd`、进度回写番剧库；**M1.2**：落地页是 `AnimePlayerPage` 且 `localFilesOnly`、问源的三个入口不渲染、**双击=播放/暂停且不 seek、上下滑=音量** |
 | `test/local_playback_spike_page_test.dart` | 2 | 非 Android 拒绝调用桥并说明用途；Android 走通 选目录 → 列子项 → openFd → 释放 |
 
 ### 静态检查
 
 - `flutter gen-l10n`：成功（`local_` 键 47 个，简中/繁中/英/日四份 arb 齐全）。
 - `flutter analyze --no-pub`：`No issues found!`
-- `flutter test --no-pub`：1483 passed（2026-10-07，含 M1.1 全部改动）。
+- `flutter test --no-pub`：1480 passed（2026-10-07，含 M1.1/M1.2 全部改动）。
 - `git diff --check`：无输出。
 
 ### 并入上游时的两处非文本改动
@@ -112,6 +115,12 @@
 6. **M1.1 重命名**：库改名后卡片标题即时变；条目改名后列表、播放页标题、选集都跟着变；
    改名后**重新扫描**（或再加一集触发合并），名字不被冲掉；条目名留空保存 = 恢复解析出的原名。
 7. 用「添加文件夹」加的目录型库不受 M1.1 影响：散装文件不会并进它，重扫语义不变。
+8. **M1.2 播放器是同一个**：本地播放页与番剧播放页的控件/手势完全一致 ——
+   双击暂停、左侧上下滑调亮度、右侧上下滑调音量、横拖定位、长按 3 倍速、
+   右上角 ⋮ 打开设置抽屉（字幕 / 倍速 / 画面比例 / 循环 / 截图）、锁屏键可用；
+   顶部**没有**收藏 / 下载这一集 / 复制链接（本地没有源）。
+9. **M1.2 断点**：从列表点某一集 → 从那一集自己的历史位置续播；「继续观看」卡片同样。
+   播放中切到下一集从 0 开始（与番剧一致）。
 
 ## 发布前结论
 

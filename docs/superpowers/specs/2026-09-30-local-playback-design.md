@@ -75,6 +75,11 @@ PlaybackSessionController + PlaybackState + AnimePlayerControls
 
 ### 4.2 为什么新建播放页而不是复用 `AnimePlayerPage`
 
+> **⚠️ 本节结论已被推翻（2026-10-07，M1.2）。** 自写的播放页与番剧页的手势/面板
+> 分叉成了两套实现（双击快进 vs 暂停、没有亮度/音量手势、没有设置抽屉），实测报障。
+> 现在本地播放整页复用 `AnimePlayerPage`，`LocalPlayerPage` 只剩一层壳 ——
+> 见 `2026-10-07-local-player-reuse-design.md`。下面保留当时的判断与理由，作为记录。
+
 `AnimePlayerPage` 有一个注入缝：`AnimePlayerDependencies({player, tracks, loadTracks, videoBuilder, localTrackForEpisode})`（lib/features/anime/anime_player_page.dart:142-156，注入路径从 didChangeDependencies :374-386 进入），理论上可以给它喂 `SourceMeta` + 每个文件一个 `Chapter` 就白拿全部 UI。
 
 **决定：不这么做，新建 `LocalPlayerPage`。** 理由：

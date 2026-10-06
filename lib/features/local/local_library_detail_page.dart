@@ -136,7 +136,12 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage>
     }
   }
 
-  Future<void> _play(LocalMediaItem item, {Duration startAt = Duration.zero}) async {
+  /// 播一集。
+  ///
+  /// 断点由这一层算:番剧播放页只在**开播那一集**接受一个 `initialPosition`
+  /// (它自己不读历史),所以从列表点进来的那一集得在这里查好 ——
+  /// [startAt] 是「继续观看」卡片带来的,给了就用它。
+  Future<void> _play(LocalMediaItem item, {Duration? startAt}) async {
     final store = localStore;
     final library = store?.library(widget.libraryId);
     if (store == null || library == null) return;
@@ -173,11 +178,24 @@ class _LocalLibraryDetailPageState extends State<LocalLibraryDetailPage>
         library: library,
         items: playable,
         initialIndex: index,
-        initialPosition: startAt,
+        initialPosition: startAt ?? _resumeFor(item),
         bridge: widget.bridge,
         dependencies: widget.playerDependencies,
       ),
     );
+  }
+
+  /// 这一集自己的断点(历史里记的是 `episodeId`,不是下标)。
+  ///
+  /// 与「继续观看」同一套规则:距片尾 10 秒内不算续播点(§5.4)。
+  Duration _resumeFor(LocalMediaItem item) {
+    final entry = _history?.historyFor(LocalSource.id, widget.libraryId);
+    if (entry == null || entry.episodeId != item.id) return Duration.zero;
+    final position = entry.positionSeconds;
+    if (position <= 0) return Duration.zero;
+    final duration = entry.durationSeconds;
+    if (duration > 0 && position >= duration - 10) return Duration.zero;
+    return Duration(seconds: position);
   }
 
   /// 继续观看:历史里记的是 `episodeId`(条目 id),按 id 找回条目而不是信任下标。
