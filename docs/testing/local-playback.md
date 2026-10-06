@@ -52,9 +52,11 @@
 
 - `flutter gen-l10n`：成功（`local_` 键 47 个，简中/繁中/英/日四份 arb 齐全）。
 - `flutter analyze --no-pub`：`No issues found!`
-- `flutter test --no-pub`：1482 passed（2026-10-07，含 M1.1/M1.2 全部改动）。
+- `flutter test --no-pub`：1483 passed（2026-10-07，含 M1.1/M1.2 全部改动）。
 - 书架/历史那条链路不在 `local_*` 里：`test/unified_history_page_test.dart` 新增 2 例
   （本地历史行点开进本地库；库已被移除时提示「这个本地库已经被移除了」）。
+- 同步那条护栏在 `test/sync_payload_weight_test.dart`：勾满全部类别后，载荷里
+  不应出现本地库名 / 条目 id / 用户目录（番剧库与本地库整体没接同步）。
 - `git diff --check`：无输出。
 
 ### 并入上游时的两处非文本改动

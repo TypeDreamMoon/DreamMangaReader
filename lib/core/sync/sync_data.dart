@@ -63,6 +63,13 @@ enum SyncTombstoneGroup {
 /// 云同步的数据 blob:书架数据(收藏/历史/设置/源开关)+ 源仓库配置。
 /// **不含**每源登录 token 与下载文件。
 ///
+/// **也不含**番剧库与本地库:`AnimeLibraryStore`(番剧的进度/收藏,而本地播放的
+/// 记录就写在它里面 —— `sourceId = 'local'`)与 `LocalMediaStore`(用户的目录名
+/// 与文件名)都是**设备本地数据**,换台设备那些 `location` 一个都不成立。
+/// 将来要把番剧库接进同步,必须先在 `sourceId == LocalSource.id` 的条目上排除
+/// (见 docs/superpowers/specs/2026-10-07-local-player-reuse-design.md 的「同步」小节;
+/// 护栏测试在 test/sync_payload_weight_test.dart)。
+///
 /// - [build] 只放所选类别;源开关按 source kind 分别存储,不改旧键。
 /// - [merge] 类别并集 + 墓碑裁剪(自动双向同步用)。
 /// - [overlay] 把 over 的类别盖到 base 上(上传:本地覆盖服务器对应类别,保留其余)。
