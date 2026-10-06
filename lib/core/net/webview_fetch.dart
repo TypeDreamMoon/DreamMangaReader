@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -6,6 +7,70 @@ import 'package:path_provider/path_provider.dart';
 
 import '../log/app_log.dart';
 import '../source/source.dart';
+
+/// WebView 传输做不到的请求(如 PUT / DELETE)。**明确抛错**而不是悄悄降级成 GET ——
+/// 降级会拿回首页 HTML,脚本解析出一堆无关内容,比失败更难查。
+class WebViewTransportException implements Exception {
+  const WebViewTransportException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'WebViewTransportException: $message';
+}
+
+/// 一次 WebView 导航的规范化请求:method / body / headers 都带上,
+/// 而不是只拿 url + UA 就发车。
+///
+/// 约束来自平台:Android 的 `URLRequest` 只认 GET 和 POST(见 flutter_inappwebview
+/// 的 `URLRequest.method` 注释),所以其余方法在这里就挡下。
+@immutable
+class WebViewNavigation {
+  const WebViewNavigation._(this.method, this.body, this.headers);
+
+  /// 已大写的 HTTP 方法(仅 GET / POST)。
+  final String method;
+
+  /// 请求体(仅 POST);GET 恒为 null。
+  final String? body;
+
+  /// 导航请求头。UA 走 [InAppWebViewSettings.userAgent],这里已剔除,
+  /// 其余(Referer / Cookie / Content-Type…)原样带上。
+  final Map<String, String> headers;
+
+  static const _supported = {'GET', 'POST'};
+
+  factory WebViewNavigation.of({
+    String method = 'GET',
+    String? body,
+    Map<String, String> headers = const {},
+  }) {
+    final m = method.trim().isEmpty ? 'GET' : method.trim().toUpperCase();
+    if (!_supported.contains(m)) {
+      throw WebViewTransportException(
+          'WebView 传输只支持 GET / POST,收到 $m(源脚本请改走 dio 传输)');
+    }
+    if (m == 'GET' && (body ?? '').isNotEmpty) {
+      throw const WebViewTransportException('WebView 传输的 GET 请求不能带 body');
+    }
+    final out = <String, String>{};
+    headers.forEach((key, value) {
+      // UA 由 InAppWebViewSettings 设定,重复带上会和站点指纹检测打架。
+      if (key.toLowerCase() == 'user-agent') return;
+      if (value.isEmpty) return;
+      out[key] = value;
+    });
+    return WebViewNavigation._(m, m == 'GET' ? null : body, out);
+  }
+
+  /// 交给 flutter_inappwebview 的初始导航请求。
+  URLRequest toUrlRequest(String url) => URLRequest(
+        url: WebUri(url),
+        method: method,
+        body: body == null ? null : Uint8List.fromList(utf8.encode(body!)),
+        headers: headers.isEmpty ? null : headers,
+      );
+}
 
 /// 判断当前 HTML 是否仍是「拦截门页」而非真内容 —— 用于**越门轮询**。
 ///
@@ -70,14 +135,18 @@ class WebViewFetcher {
   }
 
   /// 在隐藏 WebView 里加载 [url],等页面稳定后返回其 HTML。
+  ///
+  /// [nav] 带上脚本给的 method / body / headers ——初始导航就带 Referer / Cookie,
+  /// POST 走 `URLRequest(method:, body:)`,不再被悄悄降级成裸 GET。
   static Future<String> fetchHtml(
     String url, {
     String? userAgent,
     bool raw = false,
-    Map<String, String>? headers,
+    WebViewNavigation? nav,
     Duration timeout = const Duration(seconds: 30),
     Duration settle = const Duration(milliseconds: 700),
   }) async {
+    final navigation = nav ?? WebViewNavigation.of();
     final env = await _environment();
     final completer = Completer<String>();
     HeadlessInAppWebView? headless;
@@ -85,7 +154,7 @@ class WebViewFetcher {
 
     headless = HeadlessInAppWebView(
       webViewEnvironment: env,
-      initialUrlRequest: URLRequest(url: WebUri(url)),
+      initialUrlRequest: navigation.toUrlRequest(url),
       initialSettings: InAppWebViewSettings(
         userAgent: userAgent,
         javaScriptEnabled: true,
@@ -105,11 +174,19 @@ class WebViewFetcher {
             if (raw) {
               // raw:用页面自身 origin 的 fetch 取“原始 HTML”(含 packer 脚本,不 403)。
               // 章节页用它(packer 只在原始 HTML 里,JS 跑完就没了)。
+              // 页内 fetch 要**重放同一个请求**(方法 + body),否则 POST 页会被
+              // 一个 GET 的响应覆盖掉。
               try {
                 final res = await controller.callAsyncJavaScript(
                   functionBody:
-                      "var r = await fetch(window.location.href, {credentials:'include', headers: h || {}}); return await r.text();",
-                  arguments: {'h': headers ?? const <String, String>{}},
+                      "var o = {credentials:'include', headers: h || {}, method: m};"
+                      'if (b !== null) o.body = b;'
+                      'var r = await fetch(window.location.href, o); return await r.text();',
+                  arguments: {
+                    'h': navigation.headers,
+                    'm': navigation.method,
+                    'b': navigation.body,
+                  },
                 );
                 final s = (res?.value ?? '').toString();
                 if (s.isNotEmpty) return s;
@@ -148,9 +225,11 @@ class WebViewFetcher {
     String url,
     String jsSource, {
     String? userAgent,
+    WebViewNavigation? nav,
     Duration timeout = const Duration(seconds: 30),
     Duration settle = const Duration(milliseconds: 800),
   }) async {
+    final navigation = nav ?? WebViewNavigation.of();
     final env = await _environment();
     final completer = Completer<Object?>();
     HeadlessInAppWebView? headless;
@@ -158,7 +237,7 @@ class WebViewFetcher {
 
     headless = HeadlessInAppWebView(
       webViewEnvironment: env,
-      initialUrlRequest: URLRequest(url: WebUri(url)),
+      initialUrlRequest: navigation.toUrlRequest(url),
       initialSettings: InAppWebViewSettings(
         userAgent: userAgent,
         javaScriptEnabled: true,
@@ -211,12 +290,20 @@ class WebViewHttpService implements HttpService {
     final sw = Stopwatch()..start();
     final mode = request.pageJs != null ? 'WebView·JS' : 'WebView';
     try {
+      // 先把 method / body / headers 规范化:不支持的组合在发车前就抛错,
+      // 不会变成一个「拿回首页」的 GET。
+      final nav = WebViewNavigation.of(
+        method: request.method,
+        body: request.body,
+        headers: request.headers,
+      );
       // pageJs:加载页面后在其上下文执行脚本,返回值即响应体(需同源 fetch/读页面密钥的源用)。
       if (request.pageJs != null) {
         final out = await WebViewFetcher.evalInPage(
           request.url,
           request.pageJs!,
           userAgent: userAgent ?? request.headers['User-Agent'],
+          nav: nav,
           timeout: request.timeout < const Duration(seconds: 20)
               ? const Duration(seconds: 30)
               : request.timeout,
@@ -230,7 +317,7 @@ class WebViewHttpService implements HttpService {
         request.url,
         userAgent: userAgent ?? request.headers['User-Agent'],
         raw: request.rawHtml,
-        headers: request.headers,
+        nav: nav,
       );
       sw.stop();
       logHttp(mode, request.url, 200, html.length, sw.elapsedMilliseconds);

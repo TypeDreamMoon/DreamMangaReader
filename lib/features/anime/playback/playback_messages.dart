@@ -9,6 +9,8 @@ class PlaybackMessages {
     required this.bufferTimeout,
     required this.recovering,
     required this.recoverFailed,
+    required this.configureFailed,
+    required this.gatewayFallbackFailed,
   });
 
   /// 一集解析不出任何可播放地址。
@@ -22,4 +24,10 @@ class PlaybackMessages {
 
   /// 几轮恢复都没救回来。[detail] 是**已脱敏**的底层原因,可以直接进 UI。
   final String Function(String detail) recoverFailed;
+
+  /// 播放器的网络参数 [key] 没配上去。这一条会一路冒到「播放失败」框里。
+  final String Function(String key, String detail) configureFailed;
+
+  /// 本地 HLS 网关塌了,直连回退也没救回来。[detail] 是两次失败的原因。
+  final String Function(String detail) gatewayFallbackFailed;
 }

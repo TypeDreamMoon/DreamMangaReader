@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:open_filex/open_filex.dart';
@@ -62,11 +63,8 @@ class UpdateInstaller {
     final tmp = await getTemporaryDirectory();
     final bat = File('${tmp.path}\\dmr_update.bat');
     await bat.writeAsString(
-      '@echo off\r\n'
-      'timeout /t 2 /nobreak >NUL\r\n'
-      '"$setupPath" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
-      'start "" "$exe"\r\n'
-      'del "%~f0"\r\n',
+      buildWindowsUpdateScript(setupPath: setupPath, exePath: exe),
+      encoding: utf8,
     );
     await Process.start(
       'cmd',
@@ -77,6 +75,28 @@ class UpdateInstaller {
     await Future<void>.delayed(const Duration(milliseconds: 300));
     exit(0); // 退出让安装器替换文件
   }
+
+  /// Windows 静默更新脚本正文(UTF-8 落盘,见 [_installWindows])。
+  ///
+  /// 脚本里必然带用户名(临时目录、安装目录),而中文用户名是常态。cmd 默认按 OEM
+  /// 代码页(简体中文机器上是 936)解释 .bat 的字节,UTF-8 写出的非 ASCII 路径会被
+  /// 拆成乱码 → 安装器根本没跑;调用方那边却已经 `exit(0)`,表现就是「点了更新,
+  /// App 关了,什么也没发生」。所以 `@echo off` 之后立刻 `chcp 65001` 切到 UTF-8。
+  ///
+  /// cmd 的怪癖:它按字节偏移逐行读脚本,换代码页会让**紧跟 chcp 那一行**的解码错位。
+  /// 因此 `chcp` 独占一行,后面垫一行注释当牺牲品——就算这行被读坏也只是个 `rem`,
+  /// 真正的命令从再下一行才开始。
+  static String buildWindowsUpdateScript({
+    required String setupPath,
+    required String exePath,
+  }) =>
+      '@echo off\r\n'
+      'chcp 65001 >NUL\r\n'
+      'rem keep this line: cmd misreads the line right after chcp\r\n'
+      'timeout /t 2 /nobreak >NUL\r\n'
+      '"$setupPath" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+      'start "" "$exePath"\r\n'
+      'del "%~f0"\r\n';
 
   /// 目录是否免提权可写(区分 per-user 安装 vs 需 UAC 的系统级安装)。
   static bool _canWrite(String dir) {

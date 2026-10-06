@@ -5,8 +5,10 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/l10n/app_locale.dart';
+import '../core/log/app_log.dart';
 import '../core/source/chapter_number.dart';
 import '../core/source/title_match.dart';
+import '../core/storage/secret_store.dart';
 import '../core/translate/translator.dart'
     show TranslateProvider, TranslateLang, LlmConfig, detectLang;
 import '../core/update/update_models.dart';
@@ -177,6 +179,9 @@ class WorkProgress {
 /// 页面 `LibraryScope.of(context)` 读写,notify 时依赖它的页面自动重建。
 /// 落盘走 SharedPreferences(Android + Windows 都支持,JSON 编码结构化数据)。
 class LibraryStore extends ChangeNotifier {
+  LibraryStore({SecretStore? secrets})
+      : _secrets = secrets ?? const FlutterSecretStore();
+
   static const _kFavorites = 'lib.favorites';
   static const _kHistory = 'lib.history';
   static const _kReaderMode = 'lib.readerMode';
@@ -200,6 +205,8 @@ class LibraryStore extends ChangeNotifier {
   static const _kAutoCheckUpdate = 'lib.autoCheckUpdate'; // 启动自动检查更新
   static const _kUpdateIncludeBeta = 'lib.updateIncludeBeta'; // 检查更新含测试版
   static const _kUpdateSource = 'lib.updateSource'; // 首选更新源(另一源始终自动回退)
+  static const _kUpdatePromptAt = 'lib.updatePromptAt'; // 上次自动弹更新框的时刻
+  static const _kUpdateSkipVersion = 'lib.updateSkipVersion'; // 用户跳过的版本号
   static const _kUiScale = 'lib.uiScale'; // 桌面:界面文字缩放
   static const _kUiFont = 'lib.uiFont'; // 桌面:字体族(空=跟随回退栈)
   static const _kUiLocale = 'lib.uiLocale'; // 界面语言(本机设置,不随云同步)
@@ -234,7 +241,10 @@ class LibraryStore extends ChangeNotifier {
   static const _kTranslateOrder = 'lib.translateOrder'; // 服务商优先级(逗号分隔 name)
   static const _kTranslateTargets = 'lib.translateTargets'; // 各源语言的目标顺序(JSON)
   static const _kTranslateLlmBase = 'lib.translateLlmBase'; // 大模型 API 地址
-  static const _kTranslateLlmKey = 'lib.translateLlmKey'; // 大模型 API 密钥(本机,不同步)
+  // 旧版把密钥明文写在 SharedPreferences 里;现在只当**迁移来源**用,读到即搬进 SecretStore 并删除。
+  static const _kLegacyTranslateLlmKey = 'lib.translateLlmKey';
+  // 大模型 API 密钥的安全存储键(与源登录 token 同一套 SecretStore,本机、不同步)。
+  static const _kTranslateLlmKeySecret = 'translate.llm.apiKey';
   static const _kTranslateLlmModel = 'lib.translateLlmModel'; // 大模型模型名
   static const _kWorkProgress = 'lib.workProgress'; // 作品级共享进度(跨源同名)
 
@@ -242,6 +252,14 @@ class LibraryStore extends ChangeNotifier {
   final Map<String, ReadState> _history = {};
   // 作品级共享进度:key = normalizeTitle(标题)。同名书跨源共用续读点 + 已读章集合。
   final Map<String, WorkProgress> _workProgress = {};
+  // 标题 → 分组 key 的索引。解析一次要拿 coreTitle 跟 _workProgress 的**全部** key
+  // 比一遍(容繁简),而阅读器每翻一页都要问一次 —— 缓存起来,只在 key 集合变了
+  // (加了新作品 / 删了记录 / 导入)时整体作废。
+  final Map<String, String> _workKeyCache = {};
+
+  /// 历史条数上限。历史每 ~600ms 全量重写成一份 JSON,不封顶的话用得越久写得越慢
+  /// (也越占空间)。超出时裁掉最久没读的那几条。
+  static const int maxHistoryEntries = 500;
   final Set<String> _disabledSources = {};
   ReaderMode _readerMode = ReaderMode.paged;
   int _gridColumns = 0; // 0 = 自适应
@@ -260,7 +278,9 @@ class LibraryStore extends ChangeNotifier {
   final ValueNotifier<double> uiScaleVN = ValueNotifier(1.0);
   final ValueNotifier<String> uiFontVN = ValueNotifier('');
   // 界面语言:VN 广播 → 驱动 MaterialApp.locale 重建(本机设置,不进 exportData/同步)。
-  final ValueNotifier<AppLocale> uiLocaleVN = ValueNotifier(AppLocale.zhHans);
+  // 读档前就跟随系统,否则日语/英语用户会先看到一帧简体中文再跳过去。
+  final ValueNotifier<AppLocale> uiLocaleVN =
+      ValueNotifier(AppLocale.systemDefault());
   final ValueNotifier<bool> closeToTrayVN = ValueNotifier(true);
   String _bgImage = ''; // 全局背景图路径(空=无)
   double _bgBlur = 12; // 背景模糊(0~40)
@@ -272,6 +292,8 @@ class LibraryStore extends ChangeNotifier {
   bool _autoCheckUpdate = true; // 启动时自动检查更新
   bool _updateIncludeBeta = false; // 检查更新是否含测试版(-beta/-rc)
   UpdateSource _updateSource = UpdateSource.gitee; // 国内默认 Gitee，GitHub 自动备用
+  int _updatePromptAt = 0; // 上次自动弹更新框的 epoch ms(0=从没弹过)
+  String _updateSkipVersion = ''; // 用户点过「跳过此版本」的版本号
   double _detailTintStrength = 0.55; // 详情页封面色融合强度(0=纯底色/黑,1=纯封面色)
   bool _readerGestures = true; // 阅读器左右点击翻页
   bool _readerGestureHintSeen = false; // 首次进入阅读器的手势提示是否已展示
@@ -315,11 +337,27 @@ class LibraryStore extends ChangeNotifier {
   bool _loaded = false;
 
   SharedPreferences? _prefs;
+  final SecretStore _secrets;
   Timer? _persistHistoryTimer;
   Timer? _notifyTimer;
   bool _disposed = false;
 
+  // 某段存档这次没读成(JSON 损坏)。内存里只剩残片,再写回去就等于把磁盘上
+  // 那份**还完整**的记录抹掉 —— 所以本进程内一律拒绝覆盖,只留备份等用户恢复。
+  bool _favoritesLoadFailed = false;
+  bool _historyLoadFailed = false;
+  bool _workProgressLoadFailed = false;
+
   bool get loaded => _loaded;
+
+  /// 收藏这次是不是加载失败了(失败时拒绝落盘,见 [_persistFavorites])。
+  bool get favoritesLoadFailed => _favoritesLoadFailed;
+
+  /// 阅读历史这次是不是加载失败了(失败时拒绝落盘,见 [_persistHistoryNow])。
+  bool get historyLoadFailed => _historyLoadFailed;
+
+  /// 作品级共享进度这次是不是加载失败了。
+  bool get workProgressLoadFailed => _workProgressLoadFailed;
   ReaderMode get readerMode => _readerMode;
   int get gridColumns => _gridColumns; // 0 = 自适应
   int get preload => _preload;
@@ -345,6 +383,38 @@ class LibraryStore extends ChangeNotifier {
   bool get autoCheckUpdate => _autoCheckUpdate;
   bool get updateIncludeBeta => _updateIncludeBeta;
   UpdateSource get updateSource => _updateSource;
+
+  /// 自动更新提示的最小间隔。手动「检查更新」不受它约束。
+  static const updatePromptInterval = Duration(hours: 24);
+
+  String get updateSkipVersion => _updateSkipVersion;
+
+  /// 距上次自动弹更新框是否已超过 [updatePromptInterval]。
+  /// 参照 `LibraryUpdateTracker.sweepDue`:闸门只看时间,与是哪个版本无关,
+  /// 这样连网检查本身也能省掉。
+  bool updatePromptDue([int? nowMs]) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return now - _updatePromptAt >= updatePromptInterval.inMilliseconds;
+  }
+
+  /// 用户对这个版本点过「跳过此版本」。
+  bool isUpdateVersionSkipped(String version) =>
+      version.isNotEmpty && version == _updateSkipVersion;
+
+  /// 记下「刚弹过」,开始新的 24h 冷却。
+  void markUpdatePrompted([int? nowMs]) {
+    _updatePromptAt = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    _prefs?.setInt(_kUpdatePromptAt, _updatePromptAt);
+  }
+
+  /// 跳过某个版本:之后自动检查再发现同一个版本就不弹了(更高的版本照弹)。
+  void skipUpdateVersion(String version) {
+    if (version == _updateSkipVersion) return;
+    _updateSkipVersion = version;
+    _prefs?.setString(_kUpdateSkipVersion, version);
+    notifyListeners();
+  }
+
   double get detailTintStrength => _detailTintStrength;
   bool get readerGestures => _readerGestures;
   bool get readerGestureHintSeen => _readerGestureHintSeen;
@@ -576,11 +646,27 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  set translateLlmKey(String v) {
+  /// 写入大模型 API 密钥。**只进 SecretStore**(钥匙串 / keystore),永不落 SharedPreferences：
+  /// 明文 prefs 文件在 root / 备份导出里是可读的。写失败(设备无安全存储)就只留在内存里,
+  /// 本次会话仍可用,下次启动需重填——比悄悄退回明文安全。
+  Future<void> setTranslateLlmKey(String v) async {
     if (v == _translateLlmKey) return;
     _translateLlmKey = v;
-    _prefs?.setString(_kTranslateLlmKey, v);
     notifyListeners();
+    try {
+      if (v.isEmpty) {
+        await _secrets.delete(_kTranslateLlmKeySecret);
+      } else {
+        await writeVerifiedSecret(
+          secrets: _secrets,
+          key: _kTranslateLlmKeySecret,
+          value: v,
+        );
+      }
+      await _prefs?.remove(_kLegacyTranslateLlmKey);
+    } catch (_) {
+      // 见上:不回退明文。
+    }
   }
 
   set translateLlmModel(String v) {
@@ -629,21 +715,77 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = _prefs = await SharedPreferences.getInstance();
-    try {
-      final favRaw = prefs.getString(_kFavorites);
-      if (favRaw != null) {
-        for (final j in (jsonDecode(favRaw) as List)) {
-          final e = FavoriteEntry.fromJson((j as Map).cast<String, dynamic>());
-          _favorites[e.key] = e;
+    // 收藏 / 历史 / 偏好各读各的:一段的 JSON 烂了不能把后面几段一起吞掉
+    // ——那会让书架和历史双双停在默认值,随后被防抖落盘用空表覆盖,永久丢失。
+    _favoritesLoadFailed = !_readSection(prefs, _kFavorites, (raw) {
+      for (final j in (jsonDecode(raw) as List)) {
+        final e = FavoriteEntry.fromJson((j as Map).cast<String, dynamic>());
+        _favorites[e.key] = e;
+      }
+    });
+    _historyLoadFailed = !_readSection(prefs, _kHistory, (raw) {
+      (jsonDecode(raw) as Map).forEach((k, v) {
+        _history[k as String] =
+            ReadState.fromJson((v as Map).cast<String, dynamic>());
+      });
+    });
+    _workKeyCache.clear();
+    _workProgressLoadFailed = !_readSection(prefs, _kWorkProgress, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('workProgress 不是对象');
+      m.forEach((k, v) {
+        if (v is Map) {
+          _workProgress[k as String] =
+              WorkProgress.fromJson(v.cast<String, dynamic>());
         }
-      }
-      final hRaw = prefs.getString(_kHistory);
-      if (hRaw != null) {
-        (jsonDecode(hRaw) as Map).forEach((k, v) {
-          _history[k as String] =
-              ReadState.fromJson((v as Map).cast<String, dynamic>());
-        });
-      }
+      });
+    });
+    _readSection(prefs, _kBangumiBindings, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('bangumiBindings 不是对象');
+      m.forEach((k, v) {
+        final id = (v as num?)?.toInt();
+        if (id != null) _bangumiBindings[k as String] = id;
+      });
+    });
+    _readSection(prefs, _kMangaModes, (raw) {
+      final m = jsonDecode(raw);
+      if (m is! Map) throw const FormatException('mangaModes 不是对象');
+      m.forEach((k, v) {
+        if (v is String) _mangaModes[k as String] = v;
+      });
+    });
+    await _loadPreferences(prefs);
+    _loaded = true;
+    notifyListeners();
+  }
+
+  /// 读一段独立存档。解析失败:把**原文**备份到 `<key>.corrupt.<时间戳>`、记一条
+  /// 错误日志,并返回 false —— 调用方据此把该段标成 loadFailed,本进程内不再落盘。
+  ///
+  /// 解析到一半才炸时内存里留的是残片(比清空好:界面至少还能用),但正因为是残片,
+  /// **绝不能**写回磁盘。
+  bool _readSection(
+      SharedPreferences prefs, String key, void Function(String raw) parse) {
+    final raw = prefs.getString(key);
+    if (raw == null || raw.isEmpty) return true;
+    try {
+      parse(raw);
+      return true;
+    } catch (e) {
+      final backup = '$key.corrupt.${DateTime.now().millisecondsSinceEpoch}';
+      // 备份先于一切:哪怕后面的日志/UI 出问题,原始数据也已经落在另一个键上。
+      unawaited(prefs.setString(backup, raw));
+      AppLog.i.err(LogCat.app, '书库存档「$key」损坏,已备份并停止写入该段',
+          detail: '备份键:$backup\n$e');
+      return false;
+    }
+  }
+
+  /// 偏好设置(纯标量,与收藏/历史互不相干)。整段包一个 try:某个键的值类型被
+  /// 外部改坏时退回默认值,但不影响已经读好的收藏与历史。
+  Future<void> _loadPreferences(SharedPreferences prefs) async {
+    try {
       final mode = prefs.getString(_kReaderMode);
       _readerMode = switch (mode) {
         'webtoon' => ReaderMode.webtoon,
@@ -684,6 +826,8 @@ class LibraryStore extends ChangeNotifier {
       if (savedUpdateSource != _updateSource.name) {
         await prefs.setString(_kUpdateSource, _updateSource.name);
       }
+      _updatePromptAt = prefs.getInt(_kUpdatePromptAt) ?? 0;
+      _updateSkipVersion = prefs.getString(_kUpdateSkipVersion) ?? '';
       _detailTintStrength =
           (prefs.getDouble(_kDetailTintStrength) ?? 0.55).clamp(0, 1);
       _readerGestures = prefs.getBool(_kReaderGestures) ?? true;
@@ -715,30 +859,6 @@ class LibraryStore extends ChangeNotifier {
           orElse: () => FeedLayout.masonry);
       _autoScrollSpeed =
           (prefs.getDouble(_kAutoScrollSpeed) ?? 40).clamp(10, 200);
-      // 单独 try:损坏的绑定 JSON 不能连累后面 _disabledSources 等的加载。
-      final bgmRaw = prefs.getString(_kBangumiBindings);
-      if (bgmRaw != null) {
-        try {
-          final m = jsonDecode(bgmRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              final id = (v as num?)?.toInt();
-              if (id != null) _bangumiBindings[k as String] = id;
-            });
-          }
-        } catch (_) {}
-      }
-      final mmRaw = prefs.getString(_kMangaModes);
-      if (mmRaw != null) {
-        try {
-          final m = jsonDecode(mmRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              if (v is String) _mangaModes[k as String] = v;
-            });
-          }
-        } catch (_) {}
-      }
       _disabledSources
           .addAll(prefs.getStringList(_kDisabledSources) ?? const []);
       final sh = prefs.getStringList(_kSearchHistory);
@@ -751,26 +871,43 @@ class LibraryStore extends ChangeNotifier {
       );
       _translateTargets = _parseTargets(prefs.getString(_kTranslateTargets));
       _translateLlmBase = prefs.getString(_kTranslateLlmBase) ?? '';
-      _translateLlmKey = prefs.getString(_kTranslateLlmKey) ?? '';
+      // 密钥读取**不挂在 load 上**:它要过一次平台通道(钥匙串 / keystore),而那条
+      // 通道在某些环境里会迟迟不回话 —— 挂上去就等于让书架、阅读进度乃至第一帧
+      // 一起陪等。翻译密钥只有真去翻译时才用得上,晚到几毫秒无所谓,到手再通知一次。
+      _translateLlmKeyReady = _loadTranslateLlmKey(prefs);
       _translateLlmModel = prefs.getString(_kTranslateLlmModel) ?? '';
-      final wpRaw = prefs.getString(_kWorkProgress);
-      if (wpRaw != null) {
-        try {
-          final m = jsonDecode(wpRaw);
-          if (m is Map) {
-            m.forEach((k, v) {
-              if (v is Map) {
-                _workProgress[k as String] =
-                    WorkProgress.fromJson(v.cast<String, dynamic>());
-              }
-            });
-          }
-        } catch (_) {}
-      }
-    } catch (_) {
-      // 损坏的存档不致命:当作空的继续。
+    } catch (e) {
+      // 偏好损坏不致命:该读到的已经生效,剩下的留默认值继续。
+      AppLog.i.warn(LogCat.app, '书库偏好读取中断,余下项用默认值', detail: '$e');
     }
-    _loaded = true;
+  }
+
+  /// 上面那次后台读取。真正要用密钥的地方(以及测试)可以 await 它;
+  /// 不关心的地方照旧直接读 [translateLlmKey]。
+  Future<void> _translateLlmKeyReady = Future<void>.value();
+
+  /// 大模型密钥是否已经从安全存储读回来了。
+  Future<void> get translateLlmKeyReady => _translateLlmKeyReady;
+
+  /// 后台把大模型密钥从安全存储读回来(顺带迁移旧的明文键)。
+  ///
+  /// 钥匙串不可用(某些 Android ROM、无 keystore 的环境,或测试里根本没有插件)
+  /// 时静默留空:密钥缺失只影响大模型翻译这一项,不该连累任何别的东西。
+  Future<void> _loadTranslateLlmKey(SharedPreferences prefs) async {
+    String value;
+    try {
+      value = await readMigratingSecret(
+            secrets: _secrets,
+            preferences: prefs,
+            secureKey: _kTranslateLlmKeySecret,
+            legacyKeys: const [_kLegacyTranslateLlmKey],
+          ) ??
+          '';
+    } catch (_) {
+      value = '';
+    }
+    if (_disposed || value.isEmpty || value == _translateLlmKey) return;
+    _translateLlmKey = value;
     notifyListeners();
   }
 
@@ -1190,6 +1327,7 @@ class LibraryStore extends ChangeNotifier {
       st.chapters[chapterId] = ChapterMark(page, total);
     }
     _history[key] = st;
+    _trimHistory();
     // 同步推进作品级共享进度(跨源同名共用续读点/已读章;解析不出话数的章自动忽略)。
     recordWork(
       title: title,
@@ -1204,6 +1342,20 @@ class LibraryStore extends ChangeNotifier {
     _scheduleNotify();
   }
 
+  /// 超出 [maxHistoryEntries] 时裁掉最久没读的几条。
+  ///
+  /// 只动 _history:作品级共享进度是「这部书读到哪」,和历史列表长度无关,
+  /// 不该被自动裁剪顺手抹掉(它自己按作品去重,不会随翻页无限增长)。
+  void _trimHistory() {
+    final excess = _history.length - maxHistoryEntries;
+    if (excess <= 0) return;
+    final oldest = _history.values.toList()
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    for (var i = 0; i < excess; i++) {
+      _history.remove(oldest[i].key);
+    }
+  }
+
   // 防抖通知(高频进度更新用)。
   void _scheduleNotify() {
     _notifyTimer?.cancel();
@@ -1214,15 +1366,31 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     _history.clear();
+    // 作品级共享进度是历史的另一半(详情页的续读点和章节勾都读它)。只清 _history
+    // 会让「清空历史」之后详情页照旧打勾、照旧「继续阅读」—— 记录明明已经没了。
+    _workProgress.clear();
+    _workKeyCache.clear();
+    // 用户明确要清空:删键(而非用残片覆盖),之后这段就没什么可保护的了。
+    _historyLoadFailed = false;
+    _workProgressLoadFailed = false;
     await _prefs?.remove(_kHistory);
+    await _prefs?.remove(_kWorkProgress);
     notifyListeners();
   }
 
   void removeHistory(String sourceId, String mangaId) {
-    if (_history.remove('$sourceId:$mangaId') != null) {
-      _persistHistoryNow();
-      notifyListeners();
+    final removed = _history.remove('$sourceId:$mangaId');
+    if (removed == null) return;
+    // 同一部作品在别的源还有记录 → 它确实还在读,共享进度留着;
+    // 最后一条也删了才连带清掉,详情页才不会继续打勾/续读。
+    final workKey = _workKeyFor(removed.title);
+    if (workKey.isNotEmpty &&
+        !_history.values.any((h) => _workKeyFor(h.title) == workKey)) {
+      _workProgress.remove(workKey);
+      _workKeyCache.clear();
     }
+    _persistHistoryNow();
+    notifyListeners();
   }
 
   // ---- 作品级共享进度(跨源同名) ----
@@ -1232,11 +1400,13 @@ class LibraryStore extends ChangeNotifier {
   String _workKeyFor(String title) {
     final core = coreTitle(title);
     if (core.isEmpty) return '';
-    if (_workProgress.containsKey(core)) return core;
+    final cached = _workKeyCache[core];
+    if (cached != null) return cached;
+    if (_workProgress.containsKey(core)) return _workKeyCache[core] = core;
     for (final k in _workProgress.keys) {
-      if (sameCoreKey(core, k)) return k;
+      if (sameCoreKey(core, k)) return _workKeyCache[core] = k;
     }
-    return core;
+    return _workKeyCache[core] = core;
   }
 
   /// 取某作品的共享进度(容繁简/副标题);无则 null。
@@ -1261,6 +1431,7 @@ class LibraryStore extends ChangeNotifier {
     if (num == null) return;
     final wp = _workProgress[key];
     if (wp == null) {
+      _workKeyCache.clear(); // 键集变了:之前解析出的分组 key 可能不再是最优解
       _workProgress[key] = WorkProgress(
         chapterNumber: num,
         chapterLabel: chapterName,
@@ -1282,8 +1453,13 @@ class LibraryStore extends ChangeNotifier {
     if (changed) _persistWorkProgress();
   }
 
-  void _persistWorkProgress() => _prefs?.setString(_kWorkProgress,
-      jsonEncode({for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+  void _persistWorkProgress() {
+    if (_workProgressLoadFailed) return; // 残片不覆盖磁盘(见 _readSection)
+    _prefs?.setString(
+        _kWorkProgress,
+        jsonEncode(
+            {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+  }
 
   /// 退出前(如 Windows 自更新的 exit(0))把还在防抖队列里的进度**立刻并等待**落盘,
   /// 避免硬退出丢掉最近的阅读进度 / 共享进度。
@@ -1291,10 +1467,15 @@ class LibraryStore extends ChangeNotifier {
     _persistHistoryTimer?.cancel();
     final p = _prefs;
     if (p == null) return;
-    await p.setString(_kHistory,
-        jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
-    await p.setString(_kWorkProgress, jsonEncode(
-        {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+    // 加载失败的那段依然不写:退出时的「兜底落盘」正是最容易把残片刻进磁盘的地方。
+    if (!_historyLoadFailed) {
+      await p.setString(_kHistory,
+          jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    }
+    if (!_workProgressLoadFailed) {
+      await p.setString(_kWorkProgress, jsonEncode(
+          {for (final e in _workProgress.entries) e.key: e.value.toJson()}));
+    }
   }
 
   // ---- 备份 / 恢复 ----
@@ -1371,7 +1552,9 @@ class LibraryStore extends ChangeNotifier {
     bool replaceFavorites = true,
     bool replaceHistory = true,
   }) async {
+    // 恢复备份是用户的明确指令,且整段替换 —— 加载失败的那段到此为止,可以再写盘了。
     if (replaceFavorites) {
+      _favoritesLoadFailed = false;
       _favorites.clear();
       for (final f in (j['favorites'] as List? ?? const [])) {
         final e = FavoriteEntry.fromJson((f as Map).cast<String, dynamic>());
@@ -1379,6 +1562,7 @@ class LibraryStore extends ChangeNotifier {
       }
     }
     if (replaceHistory) {
+      _historyLoadFailed = false;
       _history.clear();
       ((j['history'] as Map?) ?? const {}).forEach((k, v) {
         _history[k as String] =
@@ -1387,7 +1571,9 @@ class LibraryStore extends ChangeNotifier {
     }
     // 作品级共享进度随「历史/进度」类别走。只有 j 里带了才动(旧备份没有 → 不误清)。
     if (replaceHistory && j.containsKey('workProgress')) {
+      _workProgressLoadFailed = false;
       _workProgress.clear();
+      _workKeyCache.clear();
       ((j['workProgress'] as Map?) ?? const {}).forEach((k, v) {
         if (v is Map) {
           _workProgress[k as String] =
@@ -1568,6 +1754,7 @@ class LibraryStore extends ChangeNotifier {
   }
 
   void _persistFavorites() {
+    if (_favoritesLoadFailed) return; // 残片不覆盖磁盘(见 _readSection)
     _prefs?.setString(_kFavorites,
         jsonEncode([for (final e in _favorites.values) e.toJson()]));
   }
@@ -1580,8 +1767,12 @@ class LibraryStore extends ChangeNotifier {
   }
 
   void _persistHistoryNow() {
-    _prefs?.setString(_kHistory,
-        jsonEncode({for (final e in _history.entries) e.key: e.value.toJson()}));
+    if (!_historyLoadFailed) {
+      _prefs?.setString(
+          _kHistory,
+          jsonEncode(
+              {for (final e in _history.entries) e.key: e.value.toJson()}));
+    }
     // 共享进度的续读点(同章翻页只改内存)也跟着这班防抖车落盘:让磁盘态和内存态
     // 保持一致,云同步「变化后自动上传」的持久化基线才对得上,不会重启后误传旧态。
     _persistWorkProgress();

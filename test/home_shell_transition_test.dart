@@ -1,5 +1,6 @@
 import 'package:dream_manga_reader/app/app.dart';
 import 'package:dream_manga_reader/app/library_store.dart';
+import 'package:dream_manga_reader/core/l10n/app_strings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,8 +20,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 1800));
     final originalLibrary = tester.element(find.byKey(const Key('home-tab-0')));
+    // 界面语言默认跟随系统:标签文案从 l10n 取,不写死简体。
+    final l10n = AppLocalizations.of(tester.element(find.byType(NavigationBar)));
 
-    await tester.tap(find.text('发现').last);
+    await tester.tap(find.text(l10n.navDiscover).last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 60));
 
@@ -37,7 +40,7 @@ void main() {
     );
     expect(transition.opacity.value, 1);
 
-    await tester.tap(find.text('书架').last);
+    await tester.tap(find.text(l10n.navBookshelf).last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 130));
     expect(

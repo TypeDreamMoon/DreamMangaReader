@@ -158,6 +158,75 @@ void main() {
     expect(persisted.single['positionSeconds'], 42);
   });
 
+  testWidgets('progress reported while switching stays off the next episode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final library = AnimeLibraryStore(persistDelay: Duration.zero);
+    await library.load();
+    addTearDown(library.dispose);
+    final adapter = _PageFakeAdapter();
+    // 第二集的取轨道卡住:切集有一段窗口,旧流还在播、还在报位置。
+    final gate = Completer<List<VideoTrack>>();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (episodeId) =>
+          episodeId == 'ep-2' ? gate.future : Future.value(const [_track]),
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimeLibraryScope(
+        store: library,
+        child: AnimePlayerPage(
+          meta: const SourceMeta(
+            id: 'test-anime',
+            name: 'Test Anime',
+            script: '',
+            kind: 'anime',
+          ),
+          animeId: 'anime-1',
+          animeTitle: '测试番剧',
+          episodes: const [
+            Chapter(id: 'ep-1', name: '第一集'),
+            Chapter(id: 'ep-2', name: '第二集'),
+          ],
+          index: 0,
+          dependencies: dependencies,
+        ),
+      ),
+    ));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.positionController.add(const Duration(seconds: 42));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-1');
+
+    await tester.tap(find.byTooltip('下一集'));
+    await tester.pump();
+    await tester.pump();
+
+    // 窗口里的这一发位置是第一集的,写进第二集就等于把新集的历史推到 43 秒。
+    adapter.positionController.add(const Duration(seconds: 43));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-1');
+    expect(library.history.single.positionSeconds, 42);
+
+    gate.complete(const [_track]);
+    await tester.pump();
+    await tester.pump();
+    adapter.positionController.add(const Duration(seconds: 5));
+    await tester.pump();
+    expect(library.history.single.episodeId, 'ep-2');
+    expect(library.history.single.positionSeconds, 5);
+  });
+
   testWidgets('shows transient playback state without replacing the video',
       (tester) async {
     for (final entry in <(PlaybackState, String)>[
@@ -216,6 +285,97 @@ void main() {
     expect(find.textContaining('连接已断开'), findsOneWidget);
     await tester.tap(find.text('重试'));
     expect(retried, isTrue);
+  });
+
+  // 开流失败点重试,要接着断点播,不是从头播。
+  testWidgets('a failed first open keeps the resume point for the retry',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    var calls = 0;
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async {
+        if (calls++ == 0) throw StateError('fixture resolve failure');
+        return const [_track];
+      },
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+        index: 0,
+        initialPosition: const Duration(seconds: 83),
+        dependencies: dependencies,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('播放失败'), findsOneWidget);
+    expect(adapter.openStarts, isEmpty);
+
+    // 真的点下去:失败态下那层全屏手势要让开,否则这颗键点不着。
+    await tester.tap(find.text('重试'));
+    await tester.pump();
+    await tester.pump();
+    expect(adapter.openStarts, [const Duration(seconds: 83)]);
+  });
+
+  testWidgets('leaving the player hands the window back out of fullscreen',
+      (tester) async {
+    final fullscreen = _FakeWindowFullscreen()..isOn = true;
+    playerWindowFullscreen = fullscreen;
+    addTearDown(() => playerWindowFullscreen = const PlayerWindowFullscreen());
+    final adapter = _PageFakeAdapter();
+    final dependencies = AnimePlayerDependencies(
+      player: adapter,
+      tracks: _PageFakeTracks(),
+      loadTracks: (_) async => const [_track],
+      videoBuilder: (_) => const ColoredBox(color: Colors.black),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+        index: 0,
+        dependencies: dependencies,
+      ),
+    ));
+    await tester.pump();
+    expect(fullscreen.exits, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(fullscreen.exits, 1);
+    expect(fullscreen.isOn, isFalse);
   });
 
   testWidgets('page delegates opening and readiness to the session controller',
@@ -355,9 +515,115 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // 唯一清晰度仍显示读数，但不再塞进重复的设置抽屉页签。
+    // 唯一清晰度仍显示读数,只是不再塞进重复的设置抽屉页签。
     expect(find.text('1080P'), findsNWidgets(3));
-    expect(find.text('这条流只提供这一种清晰度'), findsNothing);
+    // 那一行点了没反应,得说一句为什么 —— 不说就跟坏了一样,那正是 #31 的观感。
+    expect(find.text('这条流只提供这一种清晰度'), findsOneWidget);
+    final row = find.ancestor(
+      of: find.text('这条流只提供这一种清晰度'),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.widget<InkWell>(row.first).onTap, isNull);
+  });
+
+  // 安卓返回键该和桌面 Esc 一样一层层往外退,不该一按就把人踢出播放页。
+  testWidgets('the system back button peels one layer at a time',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () =>
+                  Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => AnimePlayerPage(
+                  meta: const SourceMeta(
+                    id: 'test-anime',
+                    name: 'Test Anime',
+                    script: '',
+                    kind: 'anime',
+                  ),
+                  animeId: 'anime-1',
+                  animeTitle: '测试番剧',
+                  episodes: const [Chapter(id: 'ep-1', name: '第一集')],
+                  index: 0,
+                  dependencies: AnimePlayerDependencies(
+                    player: adapter,
+                    tracks: _PageFakeTracks(),
+                    loadTracks: (_) async => const [_track],
+                    videoBuilder: (_) => const ColoredBox(color: Colors.black),
+                  ),
+                ),
+              )),
+              child: const Text('打开播放页'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开播放页'));
+    await tester.pump();
+    // 开播前那颗转圈是永动的,得先让它进「已开播」再 pumpAndSettle。
+    await tester.pump(const Duration(seconds: 1));
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    // 抽屉开着:先收抽屉。
+    await tester.tap(find.byTooltip('选集 / 清晰度 / 设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('字幕'), findsOneWidget);
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('字幕'), findsNothing);
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+
+    // 快捷卡开着:先收卡片。
+    await tester.tap(find.text('倍速'));
+    await tester.pumpAndSettle();
+    expect(find.text('1.5x'), findsOneWidget);
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('1.5x'), findsNothing);
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+
+    // 锁上之后返回键和别的手势一样失效 —— 兜里蹭一下不该退出播放。
+    await tester.tap(find.byTooltip('锁定屏幕'));
+    await tester.pumpAndSettle();
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
+    await tester.tap(find.byTooltip('解锁屏幕'));
+    await tester.pumpAndSettle();
+
+    // 都收干净了才真的离开。
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(AnimePlayerPage), findsNothing);
+    expect(find.text('打开播放页'), findsOneWidget);
+  });
+
+  // 播放页当栈底时(没有可退的路由)不能去 pop 栈底 —— 那会留下空白一屏。
+  testWidgets('back at the bottom of the stack leaves the route alone',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(adapter));
+    await tester.pump();
+    adapter.durationController.add(const Duration(minutes: 24));
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await _pressSystemBack(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AnimePlayerPage), findsOneWidget);
   });
 
   // 改倍速不该盖住半个画面:右下角那颗按钮弹的是一张贴着底栏的小卡片,
@@ -558,6 +824,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip('还原画面'), findsNothing);
     expect(wrappers().evaluate().length, before);
+  });
+
+  // 选集原来是一格格的数字方阵:横屏拿着手机点不中,也看不出哪一集是什么。
+  // 排成一竖列、每行带上集名之后,才是能扫一眼就找到那一集的样子(#34)。
+  testWidgets('the episode picker is a list of named rows, not a grid',
+      (tester) async {
+    final adapter = _PageFakeAdapter();
+    await tester.pumpWidget(_playerHost(
+      adapter,
+      episodes: const [
+        Chapter(id: 'ep-1', name: '第一集 出发'),
+        Chapter(id: 'ep-2', name: '第二集 抵达'),
+      ],
+    ));
+    await tester.pump();
+    adapter.playingController.add(true);
+    await tester.pump();
+
+    await tester.tap(find.text('选集'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GridView), findsNothing);
+    expect(find.text('第一集 出发'), findsOneWidget);
+    expect(find.text('第二集 抵达'), findsOneWidget);
+
+    // 每一行都够一根手指点。
+    for (final name in const ['第一集 出发', '第二集 抵达']) {
+      final row = find.ancestor(
+        of: find.text(name),
+        matching: find.byType(InkWell),
+      );
+      expect(tester.getSize(row.first).height, greaterThanOrEqualTo(44.0));
+    }
   });
 
   testWidgets('complete offline episode bypasses online track resolution',
@@ -803,6 +1102,71 @@ void main() {
     expect(find.textContaining('第二集'), findsWidgets);
   });
 
+  // 后端在换流/重开时可能再报一次 completed。那道闸原来在 _load 第一行就松了,
+  // 于是「下一集还没开起来」的那段窗口里,第二发 completed 又跳一集。
+  testWidgets('a second completed during the switch does not skip an episode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(const {});
+    final adapter = _PageFakeAdapter();
+    final loaded = <String>[];
+    final gate = Completer<List<VideoTrack>>();
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: ThemeData(extensions: const [
+        AppTokens(palette: AppPalette.dark),
+      ]),
+      home: AnimePlayerPage(
+        meta: const SourceMeta(
+          id: 'test-anime',
+          name: 'Test Anime',
+          script: '',
+          kind: 'anime',
+        ),
+        animeId: 'anime-1',
+        animeTitle: '测试番剧',
+        episodes: const [
+          Chapter(id: 'ep-1', name: '第一集'),
+          Chapter(id: 'ep-2', name: '第二集'),
+          Chapter(id: 'ep-3', name: '第三集'),
+        ],
+        index: 0,
+        dependencies: AnimePlayerDependencies(
+          player: adapter,
+          tracks: _PageFakeTracks(),
+          loadTracks: (episodeId) {
+            loaded.add(episodeId);
+            return episodeId == 'ep-2'
+                ? gate.future
+                : Future.value(const [_track]);
+          },
+          videoBuilder: (_) => const ColoredBox(color: Colors.black),
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(loaded, ['ep-1']);
+
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+
+    // 第二集还卡在取轨道上,这时候再来一发 completed。
+    adapter.completedController.add(true);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+
+    gate.complete(const [_track]);
+    await tester.pump();
+    await tester.pump();
+    expect(loaded, ['ep-1', 'ep-2']);
+    expect(find.textContaining('第二集'), findsWidgets);
+  });
+
   testWidgets('single loop reopens the current episode', (tester) async {
     SharedPreferences.setMockInitialValues(const {});
     final adapter = _PageFakeAdapter();
@@ -984,6 +1348,15 @@ void main() {
   });
 }
 
+/// 安卓返回键:平台往框架发一条 popRoute,和真机上按下去走的是同一条路。
+Future<void> _pressSystemBack(WidgetTester tester) =>
+    tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'flutter/navigation',
+      const JSONMethodCodec()
+          .encodeMethodCall(const MethodCall('popRoute')),
+      (_) {},
+    );
+
 Widget _playerHost(
   _PageFakeAdapter adapter, {
   List<Chapter> episodes = const [Chapter(id: 'ep-1', name: '第一集')],
@@ -1102,4 +1475,24 @@ class _PageFakeTracks implements PlaybackTrackProvider {
       refreshed.firstOrNull;
   @override
   Future<List<VideoTrack>> refresh() async => const [_track];
+}
+
+class _FakeWindowFullscreen extends PlayerWindowFullscreen {
+  _FakeWindowFullscreen();
+
+  @override
+  bool isOn = false;
+  int exits = 0;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void toggle() => isOn = !isOn;
+
+  @override
+  void exit() {
+    exits++;
+    isOn = false;
+  }
 }

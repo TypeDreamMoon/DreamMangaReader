@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
@@ -53,12 +54,18 @@ class NovelReaderPage extends StatefulWidget {
     this.readerDataStore,
     this.searchIndex,
     this.loadCachedDocument,
+    this.resumeFromHistory = false,
   }) : assert(initialIndex >= 0 && initialIndex < chapters.length);
 
   final Novel novel;
   final List<NovelChapter> chapters;
   final int initialIndex;
   final String libraryKey;
+
+  /// 「继续阅读」类入口(书架/历史点书、详情页继续按钮)传 true:开哪一章由
+  /// 保存的进度说了算。目录/下载列表点某一章传 false —— 那是明确的跳转指令,
+  /// 不能被历史进度覆盖成别的章(点第 5 章却开了第 30 章)。
+  final bool resumeFromHistory;
   final NovelDocumentLoader loadDocument;
   final NovelDocumentController? controller;
   final NovelDocumentViewBuilder? documentViewBuilder;
@@ -74,6 +81,9 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     with WidgetsBindingObserver {
   static int _wakeCount = 0;
 
+  /// 正文缓存保留的半径:当前章前后各这么多章。
+  static const int _documentCacheRadius = 2;
+
   late final NovelDocumentController _controller =
       widget.controller ?? NovelNativeDocumentController();
   late final NovelReaderDataStore _readerDataStore =
@@ -83,6 +93,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   late NovelReaderBookData _readerData =
       NovelReaderBookData.empty(widget.libraryKey);
   final Map<String, NovelDocument> _loadedDocuments = {};
+
+  /// 在途的正文请求:同一章同时只允许一个,预取和换章共用同一个 future。
+  final Map<String, Future<NovelDocument>> _inFlightDocuments = {};
+
   /// 已经发过预取请求的章节 id,避免滚动时对同一章反复发请求。
   final Set<String> _warmedChapterIds = {};
   late final NovelLibraryStore _library = NovelLibraryScope.read(context);
@@ -99,6 +113,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   int _settingsGeneration = 0;
   Timer? _controlsTimer;
   Timer? _statusTimer;
+  Timer? _metricsDebounce;
   bool _showControls = false;
   bool _controlsPaused = false;
   bool _loading = true;
@@ -111,14 +126,19 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   NovelSelection? _selection;
   Set<String> _unresolvedAnnotationIds = const {};
   NovelPageMetrics? _pageMetrics;
+  bool _paginationRefreshPending = false;
   NovelPageFrame? _previousFrame;
   NovelPageFrame? _currentFrame;
   NovelPageFrame? _nextFrame;
   NovelTurnState _turnState = const NovelTurnState.idle();
   NovelTurnDecision? _settlement;
   int _pageGeneration = 0;
+
+  /// 章节加载的代际,和页帧代际分开数:改设置只作废页帧,不该把在途的换章作废。
+  int _chapterLoadGeneration = 0;
   DateTime _statusNow = DateTime.now();
   int? _batteryLevel;
+  Object? _volumeKeyToken;
 
   NovelChapter get _chapter => widget.chapters[_chapterIndex];
 
@@ -132,8 +152,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
         (chapter) => chapter.id == saved.chapterId,
       );
       if (index >= 0) {
-        _chapterIndex = index;
-        _chapterFraction = saved.fraction;
+        if (widget.resumeFromHistory) {
+          _chapterIndex = index;
+          _chapterFraction = saved.fraction;
+        } else if (index == widget.initialIndex) {
+          // 点的正好是上次读的那一章:章还是这一章,章内位置照旧接着读。
+          _chapterFraction = saved.fraction;
+        }
       }
     }
     _controller.onCommand = _onCommand;
@@ -147,11 +172,18 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onFontFallback = _onFontFallback;
       webController.onBackgroundFallback = _onBackgroundFallback;
       webController.onRecoverableError = _showRecoverableReaderError;
+    } else if (webController is NovelNativeDocumentController) {
+      webController.onBackgroundFallback = _onBackgroundFallback;
     }
     _setWakeLock(_preferences.keepScreenOn);
     _startStatusUpdates();
-    if (Platform.isAndroid) {
-      ReaderKeys.setHandler((direction) {
+    // 音量键翻页是全局开关(和漫画阅读器同一个),老实现无条件抢走音量键。
+    // 这里不注册依赖(阅读器不该因为库变更重建),小说页也可能挂在没有
+    // LibraryScope 的树上(测试/独立入口),所以取不到就当没开。
+    final library =
+        context.getInheritedWidgetOfExactType<LibraryScope>()?.notifier;
+    if (library?.volumeKeyPaging ?? false) {
+      _volumeKeyToken = ReaderKeys.setHandler((direction) {
         if (!mounted) return;
         _requestDiscrete(
           direction > 0 ? NovelTurnDirection.next : NovelTurnDirection.previous,
@@ -191,6 +223,36 @@ class _NovelReaderPageState extends State<NovelReaderPage>
   }
 
   @override
+  void didChangeMetrics() {
+    // 旋转 / 改窗口大小 = 版面全变了,页帧和页码都得跟着重排。拖窗口会连报几十次
+    // 尺寸变化,所以去抖到停手之后再排一次。
+    _metricsDebounce?.cancel();
+    _metricsDebounce = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_relayoutAfterViewportChange()),
+    );
+  }
+
+  Future<void> _relayoutAfterViewportChange() async {
+    if (!mounted || _loading || _error != null) return;
+    NovelLocator? locator;
+    try {
+      locator = await _controller.captureLocator();
+    } catch (_) {
+      locator = null;
+    }
+    if (!mounted) return;
+    if (locator != null && locator.chapterId == _chapter.id) {
+      try {
+        // 版面换了,但读到哪里不该变:重排前后都拿同一个 locator 定位。
+        await _controller.restoreLocator(locator);
+      } catch (_) {}
+      if (!mounted) return;
+    }
+    _refreshPageFramesAfterLayout();
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshReaderStatus());
@@ -219,11 +281,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     NovelLocator? restore,
     bool retainCurrentFrame = false,
   }) async {
+    final loadGeneration = ++_chapterLoadGeneration;
     final pageGeneration = ++_pageGeneration;
     // 换章 = 邻章换了一批,预取闸门跟着重置。
     _warmedChapterIds
       ..clear()
       ..add(_chapter.id);
+    _trimLoadedDocuments();
     _turnController.cancel();
     final retainFrame = retainCurrentFrame && _currentFrame != null;
     if (mounted) {
@@ -243,9 +307,14 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     }
     final chapter = _chapter;
     try {
-      final document = await widget.loadDocument(chapter);
-      if (!mounted || chapter.id != _chapter.id) return false;
-      _loadedDocuments[chapter.id] = document;
+      final document = await _documentFor(chapter);
+      // 只比 chapter.id 挡不住 A→B→A:回到 A 时第一次 A 的请求还在路上,它一落地
+      // 就会再 loadChapter + restoreLocator 一遍,把刚定位好的位置冲掉。
+      if (!mounted ||
+          loadGeneration != _chapterLoadGeneration ||
+          chapter.id != _chapter.id) {
+        return false;
+      }
       await _controller.loadChapter(chapter.id, document, _preferences);
       await _applyChapterAnnotations();
       final locator = restore ?? _library.progressFor(widget.libraryKey);
@@ -286,7 +355,10 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       return;
     }
     final metrics = await _waitForPageMetrics(chapterId, generation);
-    if (metrics == null) return;
+    if (metrics == null) {
+      _refreshWhenPaginationCompletes(chapterId, generation);
+      return;
+    }
     final current = await _controller.capturePage(metrics.currentPageIndex);
     if (!_pageRequestIsCurrent(chapterId, generation) || current == null) {
       return;
@@ -318,10 +390,26 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _prefetchBoundaryDocuments(metrics);
   }
 
+  NovelPaginationSignals? get _paginationSignals {
+    final controller = _controller;
+    return controller is NovelPaginationSignals ? controller : null;
+  }
+
+  /// 等排版的上限。它只是兜底 —— 正常情况下控制器排完就会直接告诉我们。
+  static const Duration _paginationWait = Duration(seconds: 20);
+
   Future<NovelPageMetrics?> _waitForPageMetrics(
     String chapterId,
     int generation,
   ) async {
+    final signals = _paginationSignals;
+    if (signals != null) {
+      // 老实现是 20×50ms 固定轮询：超大章节排一秒都排不完，一秒后返回 null，
+      // 于是 _pageMetrics / _currentFrame 长期为空。现在等真正的完成信号。
+      await signals.paginationReady
+          .timeout(_paginationWait, onTimeout: () {})
+          .catchError((_) {});
+    }
     for (var attempt = 0; attempt < 20; attempt++) {
       if (!_pageRequestIsCurrent(chapterId, generation)) return null;
       final metrics = await _controller.pageMetrics();
@@ -333,6 +421,23 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     return null;
+  }
+
+  /// 排版真的完成以后再刷一次页帧。
+  ///
+  /// 等到超时只能说明排版还在跑（或者视口还没落地），不该把阅读器永久留在
+  /// 「没有页码、没有翻页动画」的状态里。
+  void _refreshWhenPaginationCompletes(String chapterId, int generation) {
+    final signals = _paginationSignals;
+    if (signals == null) return;
+    // 已经排完了还拿不到 metrics，再等也是白等 —— 同时这道门卡住了递归。
+    if (signals.hasPagination || _paginationRefreshPending) return;
+    _paginationRefreshPending = true;
+    unawaited(signals.paginationReady.whenComplete(() {
+      _paginationRefreshPending = false;
+      if (!_pageRequestIsCurrent(chapterId, generation)) return;
+      unawaited(_primePageFrames(chapterId, generation));
+    }));
   }
 
   bool _pageRequestIsCurrent(String chapterId, int generation) {
@@ -351,16 +456,52 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       if (index < 0 || index >= widget.chapters.length) return;
       // 滚动模式一秒能报好几十次位置,没有这道闸就是对着同一章反复发请求。
       if (!_warmedChapterIds.add(widget.chapters[index].id)) return;
+      // 老实现 .then((_) {}) 把结果丢了 —— 预取白跑一趟,翻过去还得再拉一次。
       unawaited(
-        widget
-            .loadDocument(widget.chapters[index])
-            .then<void>((_) {})
-            .catchError((_) {}),
+        _documentFor(widget.chapters[index])
+            .then<void>((_) {}, onError: (Object _) {}),
       );
     }
 
     if (previous) warm(_chapterIndex - 1);
     if (next) warm(_chapterIndex + 1);
+  }
+
+  /// 取章节正文:命中缓存直接给,同一章在途只发一次请求,结果留给后面复用。
+  Future<NovelDocument> _documentFor(NovelChapter chapter) {
+    final cached = _loadedDocuments[chapter.id];
+    if (cached != null) return Future.value(cached);
+    final pending = _inFlightDocuments[chapter.id];
+    if (pending != null) return pending;
+    final request = _fetchDocument(chapter);
+    _inFlightDocuments[chapter.id] = request;
+    return request;
+  }
+
+  Future<NovelDocument> _fetchDocument(NovelChapter chapter) async {
+    try {
+      final document = await widget.loadDocument(chapter);
+      _loadedDocuments[chapter.id] = document;
+      _trimLoadedDocuments();
+      return document;
+    } finally {
+      _inFlightDocuments.remove(chapter.id);
+    }
+  }
+
+  /// 正文缓存只留当前章 ±[_documentCacheRadius] 章。长篇一路读下去时,只增不删
+  /// 的缓存等于把整本书都攒在内存里。
+  void _trimLoadedDocuments() {
+    final keep = <String>{};
+    for (var offset = -_documentCacheRadius;
+        offset <= _documentCacheRadius;
+        offset++) {
+      final index = _chapterIndex + offset;
+      if (index >= 0 && index < widget.chapters.length) {
+        keep.add(widget.chapters[index].id);
+      }
+    }
+    _loadedDocuments.removeWhere((id, _) => !keep.contains(id));
   }
 
   void _onSelectionChanged(NovelSelection? selection) {
@@ -490,21 +631,33 @@ class _NovelReaderPageState extends State<NovelReaderPage>
           _turnState = _turnController.state;
           _settlement = null;
         });
+        // 拖到章内尽头:和点击路径(_requestDiscrete)一样回落到跨章翻页,
+        // 老实现只是 cancel —— 拖拽永远翻不出这一章。
+        if (decision.commit) unawaited(_legacyTurn(decision.direction));
         return;
       }
-      setState(() {
-        _turnState = _turnController.state;
-        _settlement = decision;
-      });
-      return;
     }
     setState(() {
       _turnState = _turnController.state;
       _settlement = decision;
     });
-    if (decision.commit && _targetFrame(decision.direction) == null) {
+    // 目标页帧缺席时先补拍:NovelPageTurnSurface 没有目标帧就不会启动收尾动画,
+    // 状态机会一直卡在 settling(内存告警清掉相邻帧之后最容易踩到)。
+    if (decision.commit &&
+        _usesFrameTurnSurface &&
+        _targetFrame(decision.direction) == null) {
       unawaited(_prepareMissingTarget(decision.direction));
     }
+  }
+
+  /// 由 [NovelPageTurnSurface] 合成页帧来收尾的翻页模式:仿真翻页有自己的原生
+  /// 翻页层,滚动模式压根没有翻页动画。
+  bool get _usesFrameTurnSurface {
+    if (_controller is NovelNativeDocumentController) {
+      return _preferences.turnMode != NovelPageTurnMode.curl &&
+          _preferences.turnMode != NovelPageTurnMode.scroll;
+    }
+    return true;
   }
 
   void _requestDiscrete(NovelTurnDirection direction) {
@@ -580,8 +733,13 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final current = _currentFrame;
     final metrics = _pageMetrics;
     if (current == null || metrics == null) return;
+    // 旋转/改窗口之后版面换了一套:手上这张页帧的页码属于旧版面,拿它去和新的
+    // pageCount 比会错判边界,该以新版面的当前页为准。
+    final baseIndex = current.key.layoutFingerprint == metrics.layoutFingerprint
+        ? current.key.pageIndex
+        : metrics.currentPageIndex;
     final targetIndex =
-        current.key.pageIndex + (direction == NovelTurnDirection.next ? 1 : -1);
+        baseIndex + (direction == NovelTurnDirection.next ? 1 : -1);
     if (targetIndex < 0 || targetIndex >= metrics.pageCount) {
       _turnController.cancel();
       if (mounted) {
@@ -1597,180 +1755,188 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       ),
       child: Scaffold(
         backgroundColor: Color(profile.backgroundArgb),
-        body: Focus(
-          focusNode: _focusNode,
-          autofocus: true,
-          onKeyEvent: _onKeyEvent,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              NovelReaderInput(
-                controller: _turnController,
-                blocked: _controlsPaused ||
-                    _selection != null ||
-                    _loading ||
-                    _error != null,
-                dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
-                singleHandNext: _preferences.singleHandNext,
-                onStateChanged: _onInputStateChanged,
-                onDecision: _onTurnDecision,
-                onDiscrete: _requestDiscrete,
-                onToggleControls: _toggleReaderControls,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _documentView(),
-                    if (_showTurnSurface)
-                      NovelPageTurnSurface(
-                        key: const Key('novel-page-turn-surface'),
-                        mode: _preferences.turnMode,
-                        state: _turnState,
-                        settlement: _settlement,
-                        previousFrame: _previousFrame,
-                        currentFrame: _currentFrame!,
-                        nextFrame: _nextFrame,
-                        pageBackColor: _themeColor(_preferences.theme),
-                        onCommitted: (direction) =>
-                            unawaited(_onSurfaceCommitted(direction)),
-                        onSettled: _onSurfaceSettled,
-                      ),
-                    if (_showNativeTurnSurface)
-                      NovelNativePageTurnSurface(
-                        pagination: nativeController!.pagination!,
-                        currentSpreadIndex: nativeController.spreadIndex,
-                        state: _turnState,
-                        settlement: _settlement,
-                        canvasColor: Color(
-                          blendNovelReaderArgb(
-                            profile.backgroundArgb,
-                            profile.foregroundArgb,
-                            .045,
-                          ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            NovelReaderInput(
+              controller: _turnController,
+              blocked: _controlsPaused ||
+                  _selection != null ||
+                  _loading ||
+                  _error != null,
+              dragEnabled: _preferences.turnMode != NovelPageTurnMode.scroll,
+              singleHandNext: _preferences.singleHandNext,
+              // 整页焦点交给 NovelReaderInput 内部那层 Focus:快捷键只对
+              // 「持焦点节点的祖先」生效,焦点留在外面时整页按键全部失效。
+              focusNode: _focusNode,
+              onKeyEvent: _onKeyEvent,
+              onStateChanged: _onInputStateChanged,
+              onDecision: _onTurnDecision,
+              onDiscrete: _requestDiscrete,
+              onToggleControls: _toggleReaderControls,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _documentView(),
+                  if (_showTurnSurface)
+                    NovelPageTurnSurface(
+                      key: const Key('novel-page-turn-surface'),
+                      mode: _preferences.turnMode,
+                      state: _turnState,
+                      settlement: _settlement,
+                      previousFrame: _previousFrame,
+                      currentFrame: _currentFrame!,
+                      nextFrame: _nextFrame,
+                      pageBackColor: _themeColor(_preferences.theme),
+                      onCommitted: (direction) =>
+                          unawaited(_onSurfaceCommitted(direction)),
+                      onSettled: _onSurfaceSettled,
+                    ),
+                  if (_showNativeTurnSurface)
+                    NovelNativePageTurnSurface(
+                      pagination: nativeController!.pagination!,
+                      currentSpreadIndex: nativeController.spreadIndex,
+                      state: _turnState,
+                      settlement: _settlement,
+                      canvasColor: Color(
+                        blendNovelReaderArgb(
+                          profile.backgroundArgb,
+                          profile.foregroundArgb,
+                          .045,
                         ),
-                        pageColor: Color(profile.backgroundArgb),
-                        textColor: Color(profile.foregroundArgb),
-                        previousPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex - 1),
-                        currentPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex),
-                        nextPageImage: nativeController
-                            .pageImageFor(nativeController.spreadIndex + 1),
-                        onCommitted: (direction) =>
-                            unawaited(_onNativeSurfaceCommitted(direction)),
-                        onSettled: _onSurfaceSettled,
                       ),
-                  ],
-                ),
+                      pageColor: Color(profile.backgroundArgb),
+                      textColor: Color(profile.foregroundArgb),
+                      previousPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex - 1),
+                      currentPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex),
+                      nextPageImage: nativeController
+                          .pageImageFor(nativeController.spreadIndex + 1),
+                      onCommitted: (direction) =>
+                          unawaited(_onNativeSurfaceCommitted(direction)),
+                      onSettled: _onSurfaceSettled,
+                    ),
+                ],
               ),
-              if (_loading && !_retainFrameWhileLoading)
-                const ColoredBox(
-                  color: Color(0x55000000),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              if (_retainFrameWhileLoading)
-                const SafeArea(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: SizedBox(
-                        key: Key('novel-reader-edge-loading'),
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
-                      ),
+            ),
+            if (_loading && !_retainFrameWhileLoading)
+              const ColoredBox(
+                color: Color(0x55000000),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_retainFrameWhileLoading)
+              const SafeArea(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: SizedBox(
+                      key: Key('novel-reader-edge-loading'),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
                     ),
                   ),
                 ),
-              if (_error != null)
-                ColoredBox(
-                  // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
-                  // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
-                  color: Colors.black.withValues(alpha: 0.86),
-                  child: AppErrorView(
-                    onDark: true,
-                    message: context.l10n.novel_readerLoadFailed('$_error'),
-                    onRetry: _loadChapter,
-                  ),
-                ),
-              NovelReaderStatusOverlay(
-                visible: !_showControls && !_loading && _error == null,
-                chapterTitle: _chapter.title,
-                currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
-                pageCount: _pageMetrics?.pageCount ?? 1,
-                bookProgress: _bookProgress,
-                now: _statusNow,
-                batteryLevel: _batteryLevel,
-                showChapterName: _preferences.showChapterName,
-                showPageNumber: _preferences.showPageNumber,
-                showBookProgress: _preferences.showBookProgress,
-                showTime: _preferences.showTime,
-                showBattery: _preferences.showBattery,
-                foregroundColor: Color(profile.foregroundArgb),
               ),
-              NovelReaderChrome(
-                visible: _showControls,
-                bookTitle: widget.novel.title,
-                chapterTitle: _chapter.title,
-                progress: _progressPreview ?? _bookProgress,
-                previewLabel: _progressLabel(context),
-                canPreviousChapter: _chapterIndex > 0,
-                canNextChapter: _chapterIndex < widget.chapters.length - 1,
-                onBack: () => unawaited(_exitReader()),
-                onBookmark: () => unawaited(_createBookmark()),
-                onMore: () => unawaited(
-                  _openReaderTools(NovelReaderToolsTab.bookmarks),
+            if (_error != null)
+              ColoredBox(
+                // onDark:错误页盖在阅读画布上,读者可能正用夜间底色 —— 与漫画
+                // 阅读器/播放器同款,用固定亮色而不是 palette 文字色。
+                color: Colors.black.withValues(alpha: 0.86),
+                child: AppErrorView(
+                  onDark: true,
+                  message: context.l10n.novel_readerLoadFailed('$_error'),
+                  onRetry: _loadChapter,
                 ),
-                onPreviousChapter: () => unawaited(_jumpChapter(-1)),
-                onNextChapter: () => unawaited(_jumpChapter(1)),
-                onDirectory: () => unawaited(_openDirectory()),
-                onSearch: () => unawaited(_openSearch()),
-                onTheme: () => unawaited(_openTheme()),
-                onSettings: () => unawaited(_openSettings()),
-                onProgressChanged: _onProgressChanged,
-                onProgressChangeEnd: _onProgressChangeEnd,
-                onInteraction: _scheduleControlsHide,
-                backgroundColor: Color(profile.chromeArgb),
-                foregroundColor: Color(profile.chromeForegroundArgb),
               ),
-              if (_selection case final selection?)
-                Positioned.fill(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final rect = selection.rect;
-                      final left = rect == null
-                          ? (constraints.maxWidth - 208) / 2
-                          : rect.left.clamp(8, constraints.maxWidth - 216);
-                      final top = rect == null
-                          ? 72.0
-                          : (rect.top - 56)
-                              .clamp(8, constraints.maxHeight - 56);
-                      return Stack(
-                        children: [
-                          Positioned(
-                            left: left.toDouble(),
-                            top: top.toDouble(),
-                            child: NovelReaderSelectionBar(
-                              selection: selection,
-                              onCopy: () => unawaited(_copySelection()),
-                              onHighlight: () => unawaited(_createHighlight()),
-                              onNote: () =>
-                                  unawaited(_createNoteFromSelection()),
-                              onSearch: () => unawaited(
-                                _openSearch(initialQuery: selection.text),
-                              ),
-                              backgroundColor: Color(profile.chromeArgb),
-                              foregroundColor:
-                                  Color(profile.chromeForegroundArgb),
-                            ),
+            NovelReaderStatusOverlay(
+              visible: !_showControls && !_loading && _error == null,
+              chapterTitle: _chapter.title,
+              currentPage: (_pageMetrics?.currentPageIndex ?? 0) + 1,
+              // 滚动模式没有分页,分页模式在排版回来前也没有 —— 两种情况都交给
+              // 状态栏改显示章内百分比,而不是拿 1/1 充数。
+              pageCount: _pageMetrics?.pageCount,
+              chapterProgress: _chapterFraction,
+              bookProgress: _bookProgress,
+              now: _statusNow,
+              batteryLevel: _batteryLevel,
+              showChapterName: _preferences.showChapterName,
+              showPageNumber: _preferences.showPageNumber,
+              showBookProgress: _preferences.showBookProgress,
+              showTime: _preferences.showTime,
+              showBattery: _preferences.showBattery,
+              foregroundColor: Color(profile.foregroundArgb),
+            ),
+            NovelReaderChrome(
+              visible: _showControls,
+              bookTitle: widget.novel.title,
+              chapterTitle: _chapter.title,
+              progress: _progressPreview ?? _bookProgress,
+              previewLabel: _progressLabel(context),
+              canPreviousChapter: _chapterIndex > 0,
+              canNextChapter: _chapterIndex < widget.chapters.length - 1,
+              onBack: () => unawaited(_exitReader()),
+              onBookmark: () => unawaited(_createBookmark()),
+              onMore: () => unawaited(
+                _openReaderTools(NovelReaderToolsTab.bookmarks),
+              ),
+              onPreviousChapter: () => unawaited(_jumpChapter(-1)),
+              onNextChapter: () => unawaited(_jumpChapter(1)),
+              onDirectory: () => unawaited(_openDirectory()),
+              onSearch: () => unawaited(_openSearch()),
+              onTheme: () => unawaited(_openTheme()),
+              onSettings: () => unawaited(_openSettings()),
+              onProgressChanged: _onProgressChanged,
+              onProgressChangeEnd: _onProgressChangeEnd,
+              onInteraction: _scheduleControlsHide,
+              backgroundColor: Color(profile.chromeArgb),
+              foregroundColor: Color(profile.chromeForegroundArgb),
+            ),
+            if (_selection case final selection?)
+              Positioned.fill(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final rect = selection.rect;
+                    final left = rect == null
+                        ? (constraints.maxWidth - 208) / 2
+                        : rect.left.clamp(8, constraints.maxWidth - 216);
+                    final top = rect == null
+                        ? 72.0
+                        : (rect.top - 56).clamp(8, constraints.maxHeight - 56);
+                    return Stack(
+                      children: [
+                        // 选区开着的时候 NovelReaderInput 是阻断的，没这层的话读者点哪里都退不出选择。
+                        Positioned.fill(
+                          child: GestureDetector(
+                            key: const Key('novel-selection-dismiss'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => unawaited(_clearSelection()),
                           ),
-                        ],
-                      );
-                    },
-                  ),
+                        ),
+                        Positioned(
+                          left: left.toDouble(),
+                          top: top.toDouble(),
+                          child: NovelReaderSelectionBar(
+                            selection: selection,
+                            onCopy: () => unawaited(_copySelection()),
+                            onHighlight: () => unawaited(_createHighlight()),
+                            onNote: () => unawaited(_createNoteFromSelection()),
+                            onSearch: () => unawaited(
+                              _openSearch(initialQuery: selection.text),
+                            ),
+                            backgroundColor: Color(profile.chromeArgb),
+                            foregroundColor:
+                                Color(profile.chromeForegroundArgb),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -1782,6 +1948,7 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     _settingsGeneration++;
     _controlsTimer?.cancel();
     _statusTimer?.cancel();
+    _metricsDebounce?.cancel();
     _controller.onCommand = null;
     _controller.onLocatorChanged = null;
     _controller.onSelectionChanged = null;
@@ -1792,6 +1959,8 @@ class _NovelReaderPageState extends State<NovelReaderPage>
       webController.onFontFallback = null;
       webController.onBackgroundFallback = null;
       webController.onRecoverableError = null;
+    } else if (webController is NovelNativeDocumentController) {
+      webController.onBackgroundFallback = null;
     }
     if (widget.controller == null &&
         webController is NovelNativeDocumentController) {
@@ -1800,9 +1969,12 @@ class _NovelReaderPageState extends State<NovelReaderPage>
     final readerFlush = _readerDataStore.flushPending();
     unawaited(_library.flushPending());
     unawaited(readerFlush);
-    if (Platform.isAndroid) {
+    final volumeKeyToken = _volumeKeyToken;
+    if (volumeKeyToken != null) {
+      // 只注销自己那一个:栈式回调会把音量键还给底下的阅读器,而不是全局清空。
+      _volumeKeyToken = null;
       unawaited(ReaderKeys.setActive(false));
-      ReaderKeys.clearHandler();
+      ReaderKeys.clearHandler(volumeKeyToken);
     }
     _setWakeLock(false);
     _focusNode.dispose();

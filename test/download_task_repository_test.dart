@@ -46,7 +46,6 @@ void main() {
   test('stored bytes contain no signed URL or authorization value', () async {
     final failure = const DownloadFailure(
       code: DownloadFailureCode.network,
-      message: '网络错误',
       detail: 'Authorization: Bearer secret\nhttps://cdn.test/a?token=secret',
       retryCount: 1,
     );

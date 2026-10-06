@@ -1,5 +1,8 @@
+import 'package:meta/meta.dart';
+
 import 'source.dart';
 import '../novel/novel_source.dart';
+import '../script/js_engine.dart';
 import 'source_registry.dart';
 
 typedef MangaHealthSourceBuilder = MangaSource Function(SourceMeta);
@@ -8,12 +11,12 @@ typedef NovelHealthSourceBuilder = NovelSource Function(SourceMeta);
 class _HealthSummary {
   const _HealthSummary({
     required this.count,
-    required this.sample,
+    required this.samples,
     required this.withCover,
   });
 
   final int count;
-  final String sample;
+  final List<String> samples;
   final int withCover;
 }
 
@@ -24,7 +27,7 @@ _HealthSummary _summarizeHealthItems<T>(
 }) =>
     _HealthSummary(
       count: items.length,
-      sample: items.take(5).map(titleOf).join('、'),
+      samples: items.take(5).map(titleOf).toList(),
       withCover: items.where((item) => (coverOf(item) ?? '').isNotEmpty).length,
     );
 
@@ -37,23 +40,116 @@ enum SourceHealthStatus {
   fail, // 失败(网络 / 解析异常)
 }
 
-/// 一次可用性检测的结果:状态 + 供弹窗展示的日志。
+/// 检测失败的原因分类。核心层只给码,文案由 UI 层按 l10n 映射。
+enum SourceHealthFailure {
+  /// 脚本同步执行吃满了预算(死循环 / 退化正则),引擎已被熔断。
+  /// 这类失败**不是网络问题**,重试也没用,得换/修脚本。
+  scriptStuck,
+
+  /// 其它:网络、解析、契约不符…
+  other,
+}
+
+/// 源的传输方式(检测日志里要说清楚走的哪条路)。
+enum SourceTransport { dio, webView }
+
+/// 一次检测的**事实**:谁、怎么测的、结果如何。
+///
+/// 这里刻意不含任何成句的文案——源管理页拿它按当前语言渲染检测日志
+/// (以前核心层直接拼中文,英/日界面照样弹一整屏中文)。
+@immutable
+class SourceHealthReport {
+  const SourceHealthReport({
+    required this.sourceName,
+    required this.sourceId,
+    required this.transport,
+    required this.experimental,
+    required this.timeoutSeconds,
+    this.discoveryFn,
+    this.elapsedMs = 0,
+    this.count,
+    this.withCover = 0,
+    this.samples = const [],
+    this.errorDetail,
+  });
+
+  final String sourceName;
+  final String sourceId;
+  final SourceTransport transport;
+  final bool experimental;
+  final int timeoutSeconds;
+
+  /// 被调用的发现接口名(未知内容类型时为 null)。
+  final String? discoveryFn;
+
+  final int elapsedMs;
+
+  /// 发现到的条目数(还没跑到结果时为 null)。
+  final int? count;
+
+  /// 其中带封面的条目数。
+  final int withCover;
+
+  /// 前几条的标题,给人肉眼确认解析对不对。
+  final List<String> samples;
+
+  /// 失败时的底层原因(异常 toString);成功时为 null。
+  final String? errorDetail;
+
+  SourceHealthReport copyWith({
+    int? elapsedMs,
+    int? count,
+    int? withCover,
+    List<String>? samples,
+    String? errorDetail,
+  }) =>
+      SourceHealthReport(
+        sourceName: sourceName,
+        sourceId: sourceId,
+        transport: transport,
+        experimental: experimental,
+        timeoutSeconds: timeoutSeconds,
+        discoveryFn: discoveryFn,
+        elapsedMs: elapsedMs ?? this.elapsedMs,
+        count: count ?? this.count,
+        withCover: withCover ?? this.withCover,
+        samples: samples ?? this.samples,
+        errorDetail: errorDetail ?? this.errorDetail,
+      );
+}
+
+/// 一次可用性检测的结果:状态 + 供弹窗渲染的结构化报告。
+@immutable
 class SourceHealthResult {
-  const SourceHealthResult(this.status, this.log,
-      {this.elapsedMs = 0, this.count});
+  const SourceHealthResult(
+    this.status, {
+    this.report,
+    this.elapsedMs = 0,
+    this.count,
+    this.failure,
+  });
 
   final SourceHealthStatus status;
-  final String log;
+
+  /// 检测事实(unknown / checking 时为 null——还没测过,没什么可报告的)。
+  final SourceHealthReport? report;
+
   final int elapsedMs;
   final int? count; // 发现到的条目数(成功时)
 
-  static const unknown = SourceHealthResult(SourceHealthStatus.unknown, '未检测');
-  static const checking =
-      SourceHealthResult(SourceHealthStatus.checking, '检测中…（联网）');
+  /// 仅在 [status] 为 fail 时有值。
+  final SourceHealthFailure? failure;
+
+  static const unknown = SourceHealthResult(SourceHealthStatus.unknown);
+  static const checking = SourceHealthResult(SourceHealthStatus.checking);
 }
 
-/// 联网检测一个源的可用性:按内容类型构建源 → 跑发现接口(带超时)→ 归纳状态 + 生成日志。
+/// 联网检测一个源的可用性:按内容类型构建源 → 跑发现接口(带超时)→ 归纳状态 + 结构化报告。
 /// 纯诊断,不改任何状态;检测结束会释放源(JS 引擎)。
+///
+/// 注意 [timeout] 只管得住**异步**部分(网络):脚本的同步求值一旦跑起来就没人能打断它,
+/// 那条线由 [JsEngine] 自己的执行预算兜底(超预算抛 [JsExecutionOverrun],
+/// 在这里归为 [SourceHealthFailure.scriptStuck])。
 Future<SourceHealthResult> checkSourceHealth(
   SourceMeta meta, {
   Duration timeout = const Duration(seconds: 25),
@@ -66,14 +162,15 @@ Future<SourceHealthResult> checkSourceHealth(
       : meta.isNovel
           ? 'getNovelDiscovery'
           : null;
-  final b = StringBuffer()
-    ..writeln('源:${meta.name}  (id: ${meta.id})')
-    ..writeln('传输:${meta.useWebView ? 'WebView' : 'dio'}'
-        '${meta.experimental ? ' · 实验性' : ''}');
-  if (discoveryName != null) {
-    b.writeln('测试:$discoveryName(1)  超时 ${timeout.inSeconds}s');
-  }
-  b.writeln('──────────');
+  final base = SourceHealthReport(
+    sourceName: meta.name,
+    sourceId: meta.id,
+    transport:
+        meta.useWebView ? SourceTransport.webView : SourceTransport.dio,
+    experimental: meta.experimental,
+    timeoutSeconds: timeout.inSeconds,
+    discoveryFn: discoveryName,
+  );
   void Function()? dispose;
   try {
     late final _HealthSummary summary;
@@ -103,28 +200,33 @@ Future<SourceHealthResult> checkSourceHealth(
       );
     }
     sw.stop();
-    b.writeln('耗时:${sw.elapsedMilliseconds} ms');
-    if (summary.count > 0) {
-      b
-        ..writeln('结果:✓ 发现 ${summary.count} 部(其中 ${summary.withCover} 部带封面)')
-        ..writeln('示例:${summary.sample}');
-      return SourceHealthResult(SourceHealthStatus.ok, b.toString().trimRight(),
-          elapsedMs: sw.elapsedMilliseconds, count: summary.count);
-    }
-    b
-      ..writeln('结果:⚠ 发现 0 部')
-      ..writeln('可能:被限流 / 需登录 / 站点结构变动导致解析为空。');
+    final report = base.copyWith(
+      elapsedMs: sw.elapsedMilliseconds,
+      count: summary.count,
+      withCover: summary.withCover,
+      samples: summary.samples,
+    );
     return SourceHealthResult(
-        SourceHealthStatus.empty, b.toString().trimRight(),
-        elapsedMs: sw.elapsedMilliseconds, count: 0);
+      summary.count > 0 ? SourceHealthStatus.ok : SourceHealthStatus.empty,
+      report: report,
+      elapsedMs: sw.elapsedMilliseconds,
+      count: summary.count,
+    );
   } catch (e) {
     sw.stop();
-    b
-      ..writeln('耗时:${sw.elapsedMilliseconds} ms')
-      ..writeln('结果:✗ 失败')
-      ..writeln('$e');
-    return SourceHealthResult(SourceHealthStatus.fail, b.toString().trimRight(),
-        elapsedMs: sw.elapsedMilliseconds);
+    // 脚本把 isolate 占满了预算(死循环 / 退化正则):不是网络问题,单独归一类,
+    // 让 UI 说清楚「换/修脚本」而不是让用户一遍遍重试。
+    final stuck = e is JsExecutionOverrun;
+    return SourceHealthResult(
+      SourceHealthStatus.fail,
+      report: base.copyWith(
+        elapsedMs: sw.elapsedMilliseconds,
+        errorDetail: '$e',
+      ),
+      elapsedMs: sw.elapsedMilliseconds,
+      failure:
+          stuck ? SourceHealthFailure.scriptStuck : SourceHealthFailure.other,
+    );
   } finally {
     dispose?.call();
   }

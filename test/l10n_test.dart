@@ -169,8 +169,9 @@ void main() {
     for (final l in AppLocale.values) {
       expect(AppLocale.fromCode(l.code), l);
     }
-    expect(AppLocale.fromCode(null), AppLocale.zhHans); // 缺省=简体
-    expect(AppLocale.fromCode('xx_YY'), AppLocale.zhHans);
+    // 没存过 / 认不出的旧值 → 跟随系统(不再硬回落简体)。
+    expect(AppLocale.fromCode(null), AppLocale.systemDefault());
+    expect(AppLocale.fromCode('xx_YY'), AppLocale.systemDefault());
     expect(AppLocale.fromLocale(const Locale('en')), AppLocale.en);
     expect(AppLocale.fromLocale(const Locale('ja')), AppLocale.ja);
     expect(AppLocale.fromLocale(const Locale('zh')), AppLocale.zhHans);
@@ -182,6 +183,43 @@ void main() {
         AppLocale.fromLocale(
             const Locale.fromSubtags(languageCode: 'zh', countryCode: 'TW')),
         AppLocale.zhHant);
+  });
+
+  // 回归:界面语言过去恒等于持久化值,缺省写死简体,fromLocale 一次都没被调用 ——
+  // 日语 / 英语用户第一次打开是一整屏中文。
+  test('没手动选过时按系统语言优先级挑', () {
+    expect(AppLocale.systemDefault([const Locale('ja')]), AppLocale.ja);
+    expect(AppLocale.systemDefault([const Locale('en', 'US')]), AppLocale.en);
+    expect(
+      AppLocale.systemDefault(
+          [const Locale.fromSubtags(languageCode: 'zh', countryCode: 'TW')]),
+      AppLocale.zhHant,
+    );
+
+    // 系统偏好是一个有序列表:第一个支持的胜出,前面不支持的跳过。
+    expect(
+      AppLocale.systemDefault([
+        const Locale('ko'),
+        const Locale('de'),
+        const Locale('ja'),
+        const Locale('en'),
+      ]),
+      AppLocale.ja,
+    );
+
+    // 一个都不支持 → 回落简体中文(源语言)。
+    expect(
+      AppLocale.systemDefault([const Locale('ko'), const Locale('fr')]),
+      AppLocale.zhHans,
+    );
+    expect(AppLocale.systemDefault(const []), AppLocale.zhHans);
+  });
+
+  test('手动选过的语言压过系统语言', () {
+    // 设置页存下的 code 必须原样生效,哪怕系统是别的语言。
+    for (final l in AppLocale.values) {
+      expect(AppLocale.fromCode(l.code), l);
+    }
   });
 
   test('AppLocale.toLocale 与生成的 supportedLocales 一一对应', () {

@@ -111,8 +111,9 @@ class _FakeCoordinator implements UpdateTransferCoordinator {
 Future<void> _openDialog(
   WidgetTester tester,
   UpdateCandidate candidate,
-  UpdateDialogDependencies dependencies,
-) async {
+  UpdateDialogDependencies dependencies, {
+  void Function(String version)? onSkipVersion,
+}) async {
   late BuildContext hostContext;
   await tester.pumpWidget(
     MaterialApp(
@@ -135,6 +136,7 @@ Future<void> _openDialog(
       hostContext,
       candidate,
       dependencies: dependencies,
+      onSkipVersion: onSkipVersion,
     ),
   );
   await tester.pumpAndSettle();
@@ -152,6 +154,61 @@ void main() {
 
   tearDown(() async {
     if (await temp.exists()) await temp.delete(recursive: true);
+  });
+
+  testWidgets('自动检查弹的框可以点外面关掉,并能跳过此版本', (tester) async {
+    final skipped = <String>[];
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies(
+        download: (asset, {required cancelToken, required onProgress}) async =>
+            package,
+        install: (file, {onBeforeExit}) async {},
+        openManual: (_) async {},
+      ),
+      onSkipVersion: skipped.add,
+    );
+
+    expect(find.byKey(const Key('update-skip-version')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('update-skip-version')));
+    await tester.pumpAndSettle();
+
+    expect(skipped, ['1.3.1']);
+    expect(find.byType(AlertDialog), findsNothing, reason: '跳过后应关闭对话框');
+  });
+
+  testWidgets('点对话框外面就能关掉,不再是一堵墙', (tester) async {
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies(
+        download: (asset, {required cancelToken, required onProgress}) async =>
+            package,
+        install: (file, {onBeforeExit}) async {},
+        openManual: (_) async {},
+      ),
+    );
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+  });
+
+  testWidgets('手动检查不给「跳过此版本」', (tester) async {
+    await _openDialog(
+      tester,
+      _candidate(),
+      UpdateDialogDependencies(
+        download: (asset, {required cancelToken, required onProgress}) async =>
+            package,
+        install: (file, {onBeforeExit}) async {},
+        openManual: (_) async {},
+      ),
+    );
+
+    expect(find.byKey(const Key('update-skip-version')), findsNothing);
   });
 
   testWidgets('shows Gitee source and starts in-app download', (tester) async {

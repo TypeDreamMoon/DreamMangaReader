@@ -70,6 +70,129 @@ void main() {
     expect(document.content, '第二章\n丙丁');
   });
 
+  test('local TXT loader returns a title-only page for an empty chapter',
+      () async {
+    final directory = Directory(
+      '${sandbox.path}${Platform.pathSeparator}local-txt-empty',
+    );
+    await directory.create();
+    const content = '第一章\n甲乙';
+    final bytes = utf8.encode(content);
+    await File('${directory.path}${Platform.pathSeparator}content.txt')
+        .writeAsBytes(bytes);
+    await File('${directory.path}${Platform.pathSeparator}index.json')
+        .writeAsString(jsonEncode({
+      'origin': 'localTxt',
+      'title': '空章节',
+      'authors': <String>[],
+      'chapters': [
+        {
+          'id': 'c1',
+          'title': '第一章',
+          'contentOffset': 0,
+          'endOffset': bytes.length,
+        },
+        {
+          'id': 'c2',
+          'title': '第二章',
+          'contentOffset': bytes.length,
+          'endOffset': bytes.length,
+        },
+      ],
+    }));
+
+    final book = await LocalNovelBook.open(directory);
+    final document = await book.loadDocument(book.chapters.last);
+
+    expect(document.format, NovelDocumentFormat.text);
+    expect(document.content, '第二章');
+  });
+
+  test('a placeholder chapter title is filled in by the caller', () async {
+    final directory = Directory(
+      '${sandbox.path}${Platform.pathSeparator}local-txt-placeholder',
+    );
+    await directory.create();
+    final bytes = utf8.encode('只有一章的短篇。');
+    await File('${directory.path}${Platform.pathSeparator}content.txt')
+        .writeAsBytes(bytes);
+    await File('${directory.path}${Platform.pathSeparator}index.json')
+        .writeAsString(jsonEncode({
+      'origin': 'localTxt',
+      'title': '',
+      'authors': <String>[],
+      'chapters': [
+        {
+          'id': 'c1',
+          'title': '',
+          'contentOffset': 0,
+          'endOffset': bytes.length,
+        },
+      ],
+    }));
+
+    final book = await LocalNovelBook.open(
+      directory,
+      untitledTitle: '未命名小说',
+      untitledChapterTitle: '正文',
+    );
+
+    expect(book.novel.title, '未命名小说');
+    expect(book.chapters.single.title, '正文');
+  });
+
+  test('local book failures carry an error code, not a baked-in sentence',
+      () async {
+    final directory = Directory(
+      '${sandbox.path}${Platform.pathSeparator}local-txt-broken',
+    );
+    await directory.create();
+    await File('${directory.path}${Platform.pathSeparator}index.json')
+        .writeAsString(jsonEncode({'origin': 'somethingElse'}));
+
+    await expectLater(
+      LocalNovelBook.open(directory),
+      throwsA(
+        isA<LocalNovelException>().having(
+          (error) => error.error,
+          'error',
+          LocalNovelError.indexUnknownOrigin,
+        ),
+      ),
+    );
+  });
+
+  testWidgets('a local book error is shown in the reader language',
+      (tester) async {
+    late String english;
+    late String japanese;
+    for (final locale in const [Locale('en'), Locale('ja')]) {
+      await tester.pumpWidget(MaterialApp(
+        locale: locale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: Builder(
+          builder: (context) {
+            final text = localNovelErrorText(
+              context,
+              const LocalNovelException(LocalNovelError.textOffsetInvalid),
+            );
+            if (locale.languageCode == 'en') {
+              english = text;
+            } else {
+              japanese = text;
+            }
+            return const SizedBox();
+          },
+        ),
+      ));
+    }
+
+    expect(english, 'The TXT chapter offset is invalid');
+    expect(japanese, isNot(english));
+    expect(english, isNot(contains('LocalNovelException')));
+  });
+
   test('local EPUB loader uses the chapter file as its file base URL',
       () async {
     final directory = Directory(

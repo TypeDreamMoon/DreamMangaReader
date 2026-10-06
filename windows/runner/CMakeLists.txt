@@ -41,6 +41,9 @@ endif()
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "shell32.lib")
+# 从托盘恢复后要显式把输入上下文关联回窗口(ImmAssociateContextEx),否则中文输入法
+# 打不出字(issue #25)。
+target_link_libraries(${BINARY_NAME} PRIVATE "imm32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

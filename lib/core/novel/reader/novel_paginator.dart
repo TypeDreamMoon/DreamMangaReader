@@ -137,6 +137,23 @@ class NovelPaginationResult {
 class NovelPaginator {
   NovelPaginator._();
 
+  /// 排版期间创建过、以及已经 `dispose()` 掉的 [TextPainter] 计数。
+  ///
+  /// `TextPainter` 持有 engine 侧的 `Paragraph`,不 dispose 就是原生内存泄漏 ——
+  /// 排版一章会造上千个探测用的 painter,所以这里用一对计数器把「创建 = 释放」
+  /// 变成可断言的事实(见 test/novel_paginator_test.dart)。
+  static int debugCreatedTextPainters = 0;
+  static int debugDisposedTextPainters = 0;
+
+  /// 排版期间送进 `TextPainter.layout()` 的字符总数。分页复杂度的直接度量。
+  static int debugLayoutCharacters = 0;
+
+  static void debugResetCounters() {
+    debugCreatedTextPainters = 0;
+    debugDisposedTextPainters = 0;
+    debugLayoutCharacters = 0;
+  }
+
   static NovelPaginationResult paginate({
     required NovelRenderDocument document,
     required Size viewport,
@@ -160,6 +177,9 @@ class NovelPaginator {
 
     final pages = <NovelPageLayout>[];
     var builder = _PageBuilder(index: 0, contentHeight: contentHeight);
+    // 已经见过的「一片正文最多能装多少字」。探测窗口以它的 1.5 倍为上限，所以每页
+    // 的测量代价正比于这一页装得下的字数，而不是剩余全文的长度。
+    var observedCapacity = 0;
 
     void finishPage() {
       pages.add(builder.build());
@@ -239,14 +259,28 @@ class NovelPaginator {
           finishPage();
         }
         final availableHeight = builder.remainingHeight;
-        var count = _largestFittingCodeUnitCount(
-          source.substring(sourceOffset),
-          prefix: prefix,
-          width: contentWidth,
-          maxHeight: availableHeight,
-          style: textStyle,
-          align: _alignmentFor(block, style),
+        final remaining = source.length - sourceOffset;
+        // 只把「上一页容量 × 1.5」这一小段送去二分，装满了才翻倍重来。老实现把
+        // 剩余全文整段 substring 再从中点起二分 —— 每页都要给半章正文做一次
+        // layout，一章下来就是 O(N²)，20 万字改个字号足够卡出 ANR。
+        var window = math.min(
+          remaining,
+          math.max(_minimumProbeWindow, (observedCapacity * 3) ~/ 2),
         );
+        var count = 0;
+        while (true) {
+          count = _largestFittingCodeUnitCount(
+            source.substring(sourceOffset, sourceOffset + window),
+            prefix: prefix,
+            width: contentWidth,
+            maxHeight: availableHeight,
+            style: textStyle,
+            align: _alignmentFor(block, style),
+          );
+          if (count < window || window == remaining) break;
+          window = math.min(remaining, window * 2);
+        }
+        if (count > observedCapacity) observedCapacity = count;
         if (count == 0) {
           if (builder.fragments.isNotEmpty) {
             finishPage();
@@ -263,6 +297,8 @@ class NovelPaginator {
           contentWidth,
           _alignmentFor(block, style),
         );
+        final fragmentHeight = painter.height;
+        _disposeLayout(painter);
         builder.add(NovelPageFragment(
           blockId: block.id,
           blockKind: block.kind,
@@ -275,7 +311,7 @@ class NovelPaginator {
             style.pagePadding.top + builder.y,
           ),
           width: contentWidth,
-          height: painter.height,
+          height: fragmentHeight,
           textStyle: textStyle,
           textAlign: _alignmentFor(block, style),
           headingLevel: block.headingLevel,
@@ -336,6 +372,9 @@ class NovelPaginator {
       layoutFingerprint: fingerprint,
     );
   }
+
+  /// 探测窗口的下限：小段落一次就量完，不用为了几十个字反复翻倍。
+  static const int _minimumProbeWindow = 256;
 
   static TextStyle _textStyle(
     NovelRenderBlock block,
@@ -407,7 +446,9 @@ class NovelPaginator {
         width,
         align,
       );
-      if (painter.height <= maxHeight + .01) {
+      final fits = painter.height <= maxHeight + .01;
+      _disposeLayout(painter);
+      if (fits) {
         best = middle;
         low = middle + 1;
       } else {
@@ -428,12 +469,19 @@ class NovelPaginator {
     double width,
     TextAlign align,
   ) {
+    debugCreatedTextPainters++;
+    debugLayoutCharacters += text.length;
     return TextPainter(
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.ltr,
       textAlign: align,
       textScaler: TextScaler.noScaling,
     )..layout(maxWidth: width);
+  }
+
+  static void _disposeLayout(TextPainter painter) {
+    debugDisposedTextPainters++;
+    painter.dispose();
   }
 
   static int _firstCodePointLength(String source, int offset) {

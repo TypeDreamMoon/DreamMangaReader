@@ -71,6 +71,24 @@ void main() {
     expect(await unrelated.readAsString(), 'keep');
   });
 
+  // 网关在回环上开着一个 HttpServer,宿主退出时得放掉。只把 gateway 置空的话,
+  // 记忆下来的 initialize future 会让下一次初始化直接返回,取 gateway 只剩 StateError。
+  test('closing the controller releases the gateway and can start over',
+      () async {
+    final settings = HlsCacheController(
+      directoryProvider: () async => temp,
+    );
+    await settings.initialize();
+    final first = settings.gateway;
+
+    await settings.close();
+    expect(() => settings.gateway, throwsStateError);
+
+    await settings.initialize();
+    expect(settings.gateway, isNot(same(first)));
+    await settings.close();
+  });
+
   testWidgets('video cache panel changes the quota and clears cached bytes',
       (tester) async {
     final settings = _FakeVideoCacheController(bytes: 4);

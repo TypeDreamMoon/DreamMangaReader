@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app/theme/app_colors.dart';
+import '../core/log/app_log.dart';
 
 /// 轻量 **Markdown** 渲染(自包含,不引第三方包;完全跟随 [AppPalette] 配色)。
 ///
@@ -244,9 +247,7 @@ class _MarkdownViewState extends State<MarkdownView> {
         if (m != null) {
           flush();
           final url = m.group(2)!;
-          final rec = TapGestureRecognizer()
-            ..onTap = () => launchUrl(Uri.parse(url),
-                mode: LaunchMode.externalApplication);
+          final rec = TapGestureRecognizer()..onTap = () => _openLink(url);
           _recognizers.add(rec);
           spans.add(TextSpan(
             text: m.group(1),
@@ -438,6 +439,38 @@ class _MarkdownViewState extends State<MarkdownView> {
     if (t.endsWith('|')) t = t.substring(0, t.length - 1);
     return t.split('|');
   }
+}
+
+/// 外链白名单。`[文字](链接)` 里的链接不是我们写死的常量 —— Release Note 从 GitHub
+/// 拉回来,别处复用本控件时输入还可能来自源脚本。`launchUrl` 对 scheme 一视同仁,
+/// 交给系统的 `javascript:` / `file:` / `intent:` / `ms-settings:` 都会被真的打开,
+/// 等于把一个远程可控的「打开任意深链」接口摆在更新弹窗上。
+///
+/// 只放行 http / https / mailto;其余(含无 scheme 的相对路径)返回 null。
+@visibleForTesting
+Uri? markdownLinkTarget(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  if (uri == null) return null;
+  const allowed = {'http', 'https', 'mailto'};
+  if (!allowed.contains(uri.scheme.toLowerCase())) return null;
+  return uri;
+}
+
+/// 点链接:不放行的 scheme 只记日志、什么都不做。
+void _openLink(String raw) {
+  final target = markdownLinkTarget(raw);
+  if (target == null) {
+    AppLog.i.warn(LogCat.app, '忽略不受支持的链接协议', detail: raw);
+    return;
+  }
+  unawaited(() async {
+    try {
+      await launchUrl(target, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      // 没有可处理该 URL 的应用时 url_launcher 会抛,别让它变成未捕获异步错误。
+      AppLog.i.warn(LogCat.app, '打开链接失败', detail: '$target\n$e');
+    }
+  }());
 }
 
 // ---- 块模型 ----

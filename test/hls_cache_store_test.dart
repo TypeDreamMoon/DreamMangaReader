@@ -70,6 +70,65 @@ void main() {
     await hit.release();
   });
 
+  // 索引坏了就 _entries.clear(),盘上的 .bin 却一个没动 —— 它们从此不计上限、
+  // 不参与淘汰,缓存目录只涨不落。
+  test('adopts orphaned blobs when the index is unreadable', () async {
+    final store = HlsCacheStore(directory: temp, limitBytes: 1024);
+    for (var index = 0; index < 2; index++) {
+      final lease = await store.acquire(
+        HlsCacheRequest(
+          url: 'https://media.example.test/$index.ts',
+          authScope: 'public',
+        ),
+        (file) => _write(file, List<int>.filled(100, index)),
+      );
+      await lease.release();
+    }
+    expect(await store.sizeBytes(), 200);
+    await File('${temp.path}${Platform.pathSeparator}index.json')
+        .writeAsString('{ this is not json');
+
+    final reopened = HlsCacheStore(directory: temp, limitBytes: 1024);
+    expect(await reopened.sizeBytes(), 200);
+
+    await reopened.clear();
+    expect(await reopened.sizeBytes(), 0);
+    expect(
+      temp
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+  });
+
+  test('evicts adopted orphans down to the limit on startup', () async {
+    final store = HlsCacheStore(directory: temp, limitBytes: 1024, now: () => now);
+    for (var index = 0; index < 2; index++) {
+      now = now.add(const Duration(minutes: 1));
+      final lease = await store.acquire(
+        HlsCacheRequest(
+          url: 'https://media.example.test/$index.ts',
+          authScope: 'public',
+        ),
+        (file) => _write(file, List<int>.filled(100, index)),
+      );
+      await lease.release();
+    }
+    await File('${temp.path}${Platform.pathSeparator}index.json').delete();
+
+    // 上限只放得下一片:重建出来的孤儿要照常参与淘汰。
+    final reopened = HlsCacheStore(directory: temp, limitBytes: 150);
+    expect(await reopened.sizeBytes(), 100);
+    expect(
+      temp
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      hasLength(1),
+    );
+  });
+
   test('cleans temporary files and rejects incomplete downloads', () async {
     await File('${temp.path}/orphan.tmp').writeAsBytes([9]);
     final store = HlsCacheStore(directory: temp, limitBytes: 1024);

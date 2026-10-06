@@ -151,6 +151,10 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
       bufferTimeout: l10n.player_bufferTimeout,
       recovering: l10n.player_recovering,
       recoverFailed: l10n.player_recoverFailed,
+      // 本地播放走的是同一个 mpv 后端,网络参数照样要落上去,失败文案复用。
+      configureFailed: l10n.player_configureFailed,
+      // 本地文件不过 HLS 网关,这条永远不会真的冒出来,凑齐必填而已。
+      gatewayFallbackFailed: l10n.player_gatewayFallbackFailed,
     );
     _session?.messages = _messages!;
     if (_bootstrapped) return;
@@ -273,7 +277,7 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
       final controller = VideoController(player);
       _player = player;
       _adapter = LocalPlayerAdapter(
-        NativeMediaKitBackend(player),
+        NativeMediaKitBackend(player, messages: _messages!),
         track: track,
       );
       _videoBuilder = (fit) => Video(

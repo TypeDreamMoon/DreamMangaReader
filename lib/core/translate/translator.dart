@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:meta/meta.dart';
 
 /// 搜索词翻译:简体 / 繁体 / 英 / 日 / 韩 互译。服务商可选谷歌(免费)/ 微软(免费)/ 大模型 API。
 ///
@@ -55,14 +58,66 @@ final Set<int> _tradChars =
         .runes
         .toSet();
 
-/// 翻译服务商。
-enum TranslateProvider {
-  google('谷歌翻译 · 免费'),
-  microsoft('微软翻译 · 免费'),
-  llm('大模型 API');
+/// 翻译服务商。名字由 UI 层按语言映射(见 features/settings/translate_messages.dart)。
+enum TranslateProvider { google, microsoft, llm }
 
-  const TranslateProvider(this.label);
-  final String label;
+/// 翻译失败的原因分类。核心层不拼文案,只给码 + 必要的参数。
+enum TranslateErrorCode {
+  /// 大模型服务商没配全(地址 / 密钥 / 模型)。
+  llmNotConfigured,
+
+  /// 一个配好的服务商都没有。
+  noProvider,
+
+  /// 连不上翻译服务(网络 / 代理)。
+  connectFailed,
+
+  /// 服务响应超时。
+  timeout,
+
+  /// 其它传输层错误,[TranslateException.detail] 是 Dio 的错误类型名。
+  requestError,
+
+  /// HTTP 200 但响应体不是预期格式(常见于被门户/代理劫持)。
+  badResponse,
+
+  /// 服务商返回了错误状态码,见 [TranslateException.status]。
+  httpError,
+
+  /// 服务商没返回任何译文。
+  emptyResult,
+
+  /// 微软免费端点取临时令牌失败。
+  tokenFailed,
+
+  /// 兜底:链上所有服务商都失败,且拿不到更具体的原因。
+  failed,
+}
+
+/// 翻译失败。带码不带中文串——文案在 UI 层按当前语言生成。
+class TranslateException implements Exception {
+  const TranslateException(
+    this.code, {
+    this.provider,
+    this.status,
+    this.detail,
+  });
+
+  final TranslateErrorCode code;
+
+  /// 出问题的服务商(说得清是谁时)。
+  final TranslateProvider? provider;
+
+  /// HTTP 状态码(有的话)。
+  final int? status;
+
+  /// 附加细节(如 Dio 的错误类型名)。
+  final String? detail;
+
+  @override
+  String toString() => 'TranslateException(${code.name}'
+      '${provider == null ? '' : ' provider=${provider!.name}'}'
+      '${status == null ? '' : ' status=$status'})';
 }
 
 /// 大模型翻译配置(OpenAI 兼容)。
@@ -91,21 +146,25 @@ final Dio _dio = Dio(BaseOptions(
   validateStatus: (_) => true,
 ));
 
-/// 把 Dio 的网络异常翻成人话(连不上 / 超时 / 其它),避免把 DioException 原样弹给用户。
-Exception _friendlyDio(DioException e) {
+/// 把 Dio 的网络异常归类(连不上 / 超时 / 其它),避免把 DioException 原样弹给用户。
+TranslateException _friendlyDio(DioException e, TranslateProvider provider) {
   switch (e.type) {
     case DioExceptionType.connectionError:
     case DioExceptionType.connectionTimeout:
-      return Exception('连不上翻译服务(检查网络 / 代理)');
+      return TranslateException(TranslateErrorCode.connectFailed,
+          provider: provider);
     case DioExceptionType.receiveTimeout:
     case DioExceptionType.sendTimeout:
-      return Exception('翻译服务响应超时');
+      return TranslateException(TranslateErrorCode.timeout,
+          provider: provider);
     default:
       // unknown 且带底层传输错误(握手/Socket 失败,如该服务在本网络不可达)→ 归为连不上。
       if (e.type == DioExceptionType.unknown && e.error != null) {
-        return Exception('连不上翻译服务(检查网络 / 代理)');
+        return TranslateException(TranslateErrorCode.connectFailed,
+            provider: provider);
       }
-      return Exception('翻译请求出错(${e.type.name})');
+      return TranslateException(TranslateErrorCode.requestError,
+          provider: provider, detail: e.type.name);
   }
 }
 
@@ -121,7 +180,8 @@ abstract class Translator {
         return _MicrosoftTranslator();
       case TranslateProvider.llm:
         if (llm == null || !llm.isReady) {
-          throw Exception('大模型翻译未配置(到设置 · 翻译里填 API 地址 / 密钥 / 模型)');
+          throw const TranslateException(TranslateErrorCode.llmNotConfigured,
+              provider: TranslateProvider.llm);
         }
         return _LlmTranslator(llm);
     }
@@ -130,10 +190,117 @@ abstract class Translator {
   /// 按**优先级** [order] 依次尝试:前一个失败(抛错/无结果)就降级到下一个;
   /// 全失败才抛最后一个错。未配置好的服务商(如大模型缺参数)自动跳过。
   /// [order] 为空时退回谷歌。
-  factory Translator.chain(List<TranslateProvider> order, {LlmConfig? llm}) =>
-      _ChainTranslator(
-          order.isEmpty ? const [TranslateProvider.google] : order, llm);
+  ///
+  /// 结果走进程内缓存 + 并发闸([Translator.cached]):详情页每开一本书都会把
+  /// 书名翻成 3~4 种语言,返回再进来又翻一遍 —— 不缓存就是对免费端点的重复轰炸,
+  /// 很快被限流,用户看到的是「翻译服务响应超时」。
+  factory Translator.chain(List<TranslateProvider> order, {LlmConfig? llm}) {
+    final providers =
+        order.isEmpty ? const [TranslateProvider.google] : order;
+    return _CachedTranslator(
+      _ChainTranslator(providers, llm),
+      _scopeOf(providers, llm),
+    );
+  }
+
+  /// 给任意 [Translator] 套上进程内缓存 + 并发闸。
+  @visibleForTesting
+  factory Translator.cached(Translator inner, {String scope = ''}) =>
+      _CachedTranslator(inner, scope);
+
+  /// 缓存作用域:服务商顺序 + 大模型配置。配置一变 key 就变,不会拿旧服务商的
+  /// 译文冒充新服务商的。
+  static String _scopeOf(List<TranslateProvider> order, LlmConfig? llm) =>
+      '${order.map((p) => p.name).join(',')}'
+      '|${llm == null ? '' : '${llm.baseUrl}\u0000${llm.model}'}';
 }
+
+/// 清空翻译缓存。
+@visibleForTesting
+void clearTranslationCache() => _TranslationCache.clear();
+
+/// 翻译结果的进程内 LRU 缓存 + 并发闸(全局共享,与 [Translator] 实例无关 ——
+/// 每次搜索都会 new 一条链,缓存挂实例上等于没有)。
+class _TranslationCache {
+  _TranslationCache._();
+
+  /// 缓存条数上限。词条只是书名,几百条也就几十 KB。
+  static const _capacity = 256;
+
+  /// 同时在途的翻译请求上限。免费端点对突发并发很敏感,详情页一次能并排 4~5 个
+  /// 目标语言 × 多个源,不限速就会整片超时。
+  static const _maxInFlight = 4;
+
+  static final LinkedHashMap<String, String> _entries = LinkedHashMap();
+  static final Map<String, Future<String>> _pending = {};
+  static final Queue<Completer<void>> _waiting = Queue();
+  static int _active = 0;
+
+  static Future<String> run(String key, Future<String> Function() body) {
+    final hit = _entries.remove(key);
+    if (hit != null) {
+      _entries[key] = hit; // 命中即刷新 LRU 位次
+      return Future.value(hit);
+    }
+    // 同一个词的并发请求共享同一次翻译,不发两遍。
+    final inFlight = _pending[key];
+    if (inFlight != null) return inFlight;
+
+    final tracked = _gated(body).then((value) {
+      _put(key, value);
+      return value;
+    });
+    _pending[key] = tracked;
+    // 失败不入缓存(下次可重试);无论成败都要从在途表里摘掉。
+    tracked.whenComplete(() {
+      if (identical(_pending[key], tracked)) _pending.remove(key);
+    }).ignore();
+    return tracked;
+  }
+
+  static void _put(String key, String value) {
+    _entries.remove(key);
+    _entries[key] = value;
+    while (_entries.length > _capacity) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  static Future<String> _gated(Future<String> Function() body) async {
+    if (_active >= _maxInFlight) {
+      final gate = Completer<void>();
+      _waiting.add(gate);
+      await gate.future;
+    }
+    _active++;
+    try {
+      return await body();
+    } finally {
+      _active--;
+      if (_waiting.isNotEmpty) _waiting.removeFirst().complete();
+    }
+  }
+
+  static void clear() {
+    _entries.clear();
+    _pending.clear();
+  }
+}
+
+class _CachedTranslator implements Translator {
+  _CachedTranslator(this._inner, this._scope);
+  final Translator _inner;
+  final String _scope;
+
+  @override
+  Future<String> translate(String text, TranslateLang target) =>
+      _TranslationCache.run(
+        '$_scope\u0000${target.name}\u0000$text',
+        () => _inner.translate(text, target),
+      );
+}
+
+/// 优先级链式翻译:见 [Translator.chain]。
 
 /// 优先级链式翻译:见 [Translator.chain]。
 class _ChainTranslator implements Translator {
@@ -143,7 +310,7 @@ class _ChainTranslator implements Translator {
 
   @override
   Future<String> translate(String text, TranslateLang target) async {
-    Exception? lastErr;
+    TranslateException? lastErr;
     var tried = 0;
     for (final p in _order) {
       final Translator tr;
@@ -155,12 +322,14 @@ class _ChainTranslator implements Translator {
       tried++;
       try {
         return await tr.translate(text, target);
-      } on Exception catch (e) {
+      } on TranslateException catch (e) {
         lastErr = e; // 记下,降级到下一个服务商
       }
     }
-    if (tried == 0) throw Exception('没有可用的翻译服务商(到设置 · 翻译里配置)');
-    throw lastErr ?? Exception('翻译失败');
+    if (tried == 0) {
+      throw const TranslateException(TranslateErrorCode.noProvider);
+    }
+    throw lastErr ?? const TranslateException(TranslateErrorCode.failed);
   }
 }
 
@@ -188,7 +357,8 @@ class _GoogleTranslator implements Translator {
         },
       );
       if (r.statusCode != 200) {
-        throw Exception('谷歌翻译请求失败(${r.statusCode})');
+        throw TranslateException(TranslateErrorCode.httpError,
+            provider: TranslateProvider.google, status: r.statusCode);
       }
       // data = [ [ ["译文","原文",...], ... ], ... ]
       final data = r.data is String ? jsonDecode(r.data as String) : r.data;
@@ -200,13 +370,17 @@ class _GoogleTranslator implements Translator {
         if (s is List && s.isNotEmpty && s[0] is String) buf.write(s[0]);
       }
       final out = buf.toString().trim();
-      if (out.isEmpty) throw Exception('谷歌翻译无结果');
+      if (out.isEmpty) {
+        throw const TranslateException(TranslateErrorCode.emptyResult,
+            provider: TranslateProvider.google);
+      }
       return out;
     } on DioException catch (e) {
-      throw _friendlyDio(e);
+      throw _friendlyDio(e, TranslateProvider.google);
     } on FormatException {
       // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
-      throw Exception('翻译服务返回异常(检查网络 / 代理)');
+      throw const TranslateException(TranslateErrorCode.badResponse,
+          provider: TranslateProvider.google);
     }
   }
 }
@@ -235,7 +409,8 @@ class _MicrosoftTranslator implements Translator {
     );
     final body = r.data;
     if (r.statusCode != 200 || body is! String || body.trim().isEmpty) {
-      throw Exception('微软翻译取令牌失败(${r.statusCode})');
+      throw TranslateException(TranslateErrorCode.tokenFailed,
+          provider: TranslateProvider.microsoft, status: r.statusCode);
     }
     _token = body.trim();
     _tokenExpMs = now + 8 * 60 * 1000;
@@ -259,7 +434,8 @@ class _MicrosoftTranslator implements Translator {
       );
       if (r.statusCode == 401) _token = null; // 令牌失效:清缓存,下次重取
       if (r.statusCode != 200) {
-        throw Exception('微软翻译请求失败(${r.statusCode})');
+        throw TranslateException(TranslateErrorCode.httpError,
+            provider: TranslateProvider.microsoft, status: r.statusCode);
       }
       // data = [ { "translations": [ {"text":"...","to":"xx"} ] } ]
       final data = r.data is String ? jsonDecode(r.data as String) : r.data;
@@ -270,12 +446,14 @@ class _MicrosoftTranslator implements Translator {
           if (t is String && t.trim().isNotEmpty) return t.trim();
         }
       }
-      throw Exception('微软翻译无结果');
+      throw const TranslateException(TranslateErrorCode.emptyResult,
+          provider: TranslateProvider.microsoft);
     } on DioException catch (e) {
-      throw _friendlyDio(e);
+      throw _friendlyDio(e, TranslateProvider.microsoft);
     } on FormatException {
       // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
-      throw Exception('翻译服务返回异常(检查网络 / 代理)');
+      throw const TranslateException(TranslateErrorCode.badResponse,
+          provider: TranslateProvider.microsoft);
     }
   }
 }
@@ -323,7 +501,8 @@ class _LlmTranslator implements Translator {
         }),
       );
       if (r.statusCode != 200) {
-        throw Exception('大模型翻译失败(${r.statusCode})');
+        throw TranslateException(TranslateErrorCode.httpError,
+            provider: TranslateProvider.llm, status: r.statusCode);
       }
       final data = r.data is String ? jsonDecode(r.data as String) : r.data;
       final choices = (data is Map) ? data['choices'] : null;
@@ -334,12 +513,14 @@ class _LlmTranslator implements Translator {
           return content.trim();
         }
       }
-      throw Exception('大模型翻译无结果');
+      throw const TranslateException(TranslateErrorCode.emptyResult,
+          provider: TranslateProvider.llm);
     } on DioException catch (e) {
-      throw _friendlyDio(e);
+      throw _friendlyDio(e, TranslateProvider.llm);
     } on FormatException {
       // HTTP 200 但响应体不是 JSON(如被门户/代理劫持返回 HTML)→ 别把 FormatException 原样弹出。
-      throw Exception('翻译服务返回异常(检查网络 / 代理)');
+      throw const TranslateException(TranslateErrorCode.badResponse,
+          provider: TranslateProvider.llm);
     }
   }
 }

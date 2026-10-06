@@ -49,7 +49,8 @@ void main() {
   test('falls back to one chapter when confidence is insufficient', () {
     final result = TxtChapterParser.parse('没有目录的短篇正文。');
 
-    expect(result.chapters.single.title, '正文');
+    // 占位标题留空 —— 展示用的「正文」由 UI 按读者语言回填,不写进索引。
+    expect(result.chapters.single.title, '');
     expect(result.chapters.single.offset, 0);
     expect(result.chapters.single.contentOffset, 0);
     expect(
@@ -99,5 +100,75 @@ $longLine
       '尾声',
     ]);
     expect(result.volumes, isEmpty);
+  });
+
+  test('drops a table-of-contents block instead of emitting empty chapters',
+      () {
+    final result = TxtChapterParser.parse('''
+测试书
+作者：某人
+
+目录
+第一章 起航
+第二章 远行
+第三章 归途
+
+第一章 起航
+正文一。
+
+第二章 远行
+正文二。
+
+第三章 归途
+正文三。
+''');
+
+    expect(result.chapters.map((chapter) => chapter.title), [
+      '第一章 起航',
+      '第二章 远行',
+      '第三章 归途',
+    ]);
+    for (final chapter in result.chapters) {
+      expect(chapter.endOffset, greaterThan(chapter.contentOffset));
+    }
+    final first = result.chapters.first;
+    expect(
+      utf8.decode(
+        utf8
+            .encode(result.normalizedText)
+            .sublist(first.contentOffset, first.endOffset),
+      ),
+      contains('正文一。'),
+    );
+  });
+
+  test('merges an isolated empty chapter into the following one', () {
+    final result = TxtChapterParser.parse('''
+第一章 开始
+正文一。
+
+第二章 空的
+第三章 继续
+正文三。
+''');
+
+    expect(result.chapters.map((chapter) => chapter.title), [
+      '第一章 开始',
+      '第三章 继续',
+    ]);
+  });
+
+  test('keeps a trailing heading that has no body', () {
+    final result = TxtChapterParser.parse('''
+第一章 开始
+正文一。
+
+第二章 继续
+''');
+
+    expect(result.chapters.map((chapter) => chapter.title), [
+      '第一章 开始',
+      '第二章 继续',
+    ]);
   });
 }

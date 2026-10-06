@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'download_executor.dart';
 import 'download_failure.dart';
+import 'download_failure_classifier.dart';
 import 'download_policy.dart';
 import 'download_task.dart';
 import 'download_task_repository.dart';
@@ -14,17 +15,46 @@ final class DownloadCoordinator extends ChangeNotifier {
     required this.environment,
     required this.settings,
     int Function()? clock,
-  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
+    Future<void> Function(Duration)? retryDelay,
+    int Function()? progressClock,
+  })  : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
+        _retryDelay = retryDelay ?? Future<void>.delayed,
+        _progressClock =
+            progressClock ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// 进度落盘的最小间隔。进度本身只改内存里的任务表,写盘按这个节流 ——
+  /// 状态迁移([_commit])与 [DownloadExecutionContext.checkpoint] 仍然立即写。
+  static const progressPersistInterval = Duration(seconds: 2);
+
+  /// 进度通知监听者的最小间隔:UI 与 Android 前台通知都挂在 notifyListeners 上,
+  /// 每收到一个字节就刷一次纯属自找卡顿。
+  static const progressNotifyInterval = Duration(milliseconds: 500);
+
+  /// 可重试错误码自动重试的次数上限,超过才真正判定为 failed。
+  static const maxAutomaticRetries = 3;
+
+  /// 退避基数:第 n 次重试等 `1s * 4^(n-1)` —— 1s / 4s / 16s。
+  static const retryBackoffBase = Duration(seconds: 1);
 
   final DownloadTaskRepository repository;
   final Future<DownloadEnvironment> Function() environment;
   final DownloadPolicySettings Function() settings;
   final int Function() _clock;
+  final Future<void> Function(Duration) _retryDelay;
+
+  /// 墙上时钟(毫秒),只用来做节流。与 [_clock] 分开:后者是任务的逻辑时间戳,
+  /// 测试里常做成「每取一次 +1」的计数器,拿它算时间间隔会得到荒唐的结果。
+  final int Function() _progressClock;
 
   Map<String, DownloadTask> _tasks = const {};
   final Map<DownloadContentKind, DownloadExecutor> _executors = {};
   final Map<String, _ActiveDownload> _active = {};
   final Map<String, int> _generations = {};
+  final Map<String, int> _retryAttempts = {};
+  int _pendingRetries = 0;
+  int _lastProgressSaveAt = 0;
+  int _lastProgressNotifyAt = 0;
+  bool _progressDirty = false;
   Future<void> _mutationTail = Future.value();
   Completer<void>? _idleCompleter;
   bool _pumpRequested = false;
@@ -36,9 +66,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   DownloadTask? task(String id) => _tasks[id];
 
   Future<void> get idle {
-    if (_active.isEmpty && !_pumpRequested && !_pumpRunning) {
-      return Future.value();
-    }
+    if (_settled) return Future.value();
     return (_idleCompleter ??= Completer<void>()).future;
   }
 
@@ -118,6 +146,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> resume(String id) async {
+    _retryAttempts.remove(id);
     await _serialize(() async {
       final current = _requiredTask(id);
       if (current.state != DownloadTaskState.paused) {
@@ -135,20 +164,26 @@ final class DownloadCoordinator extends ChangeNotifier {
     _requestPump();
   }
 
-  Future<void> pauseAll() => _serialize(() async {
-        final next = <String, DownloadTask>{};
-        for (final entry in _tasks.entries) {
-          final task = entry.value;
-          next[entry.key] = _canPause(task.state)
-              ? task.copyWith(
-                  state: DownloadTaskState.paused,
-                  pauseReason: DownloadPauseReason.user,
-                  updatedAt: _clock(),
-                )
-              : task;
-        }
-        await _commit(next);
-      });
+  Future<void> pauseAll() {
+    // 与 pause 对齐:先取消在途下载,否则任务标成 paused 但执行器还在写盘。
+    for (final active in _active.values) {
+      active.cancellation.cancel();
+    }
+    return _serialize(() async {
+      final next = <String, DownloadTask>{};
+      for (final entry in _tasks.entries) {
+        final task = entry.value;
+        next[entry.key] = _canPause(task.state)
+            ? task.copyWith(
+                state: DownloadTaskState.paused,
+                pauseReason: DownloadPauseReason.user,
+                updatedAt: _clock(),
+              )
+            : task;
+      }
+      await _commit(next);
+    });
+  }
 
   Future<void> resumeAll() async {
     await _serialize(() async {
@@ -171,6 +206,7 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> retry(String id) async {
     _generations[id] = (_generations[id] ?? 0) + 1;
+    _retryAttempts.remove(id);
     await _serialize(() async {
       final current = _requiredTask(id);
       if (current.state != DownloadTaskState.failed &&
@@ -201,6 +237,7 @@ final class DownloadCoordinator extends ChangeNotifier {
   Future<void> remove(String id) async {
     _active[id]?.cancellation.cancel();
     _generations[id] = (_generations[id] ?? 0) + 1;
+    _retryAttempts.remove(id);
     await _serialize(() async {
       if (!_tasks.containsKey(id)) return;
       final next = {..._tasks}..remove(id);
@@ -223,12 +260,20 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> _applyPolicy() async {
     final decision = evaluateDownloadPolicy(settings(), await environment());
+    if (!decision.allowed) {
+      // 策略变得不允许时,在途任务也要停:先发取消,执行器抛
+      // DownloadCancelledException 退出,已下载的字节数留在任务上供续传。
+      for (final entry in _active.entries) {
+        if (_tasks[entry.key]?.state != DownloadTaskState.running) continue;
+        entry.value.cancellation.cancel();
+      }
+    }
     await _serialize(() async {
       var changed = false;
       final next = <String, DownloadTask>{};
       for (final entry in _tasks.entries) {
         final task = entry.value;
-        if (!decision.allowed && task.state == DownloadTaskState.queued) {
+        if (!decision.allowed && _policyPausable(task.state)) {
           changed = true;
           next[entry.key] = task.copyWith(
             state: DownloadTaskState.paused,
@@ -356,9 +401,9 @@ final class DownloadCoordinator extends ChangeNotifier {
     int completedBytes,
     int totalBytes,
   ) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(id, generation);
-      await _commit({
+      _tasks = Map<String, DownloadTask>.unmodifiable({
         ..._tasks,
         id: current.copyWith(
           completedBytes: completedBytes,
@@ -366,18 +411,41 @@ final class DownloadCoordinator extends ChangeNotifier {
           updatedAt: _clock(),
         ),
       });
+      _progressDirty = true;
+      final now = _progressClock();
+      if (now - _lastProgressSaveAt >= progressPersistInterval.inMilliseconds) {
+        await _persistTasks(now);
+      }
+      if (now - _lastProgressNotifyAt >=
+          progressNotifyInterval.inMilliseconds) {
+        _lastProgressNotifyAt = now;
+        notifyListeners();
+      }
     });
   }
 
+  /// 执行器显式要求「把目前的进度立刻落盘」(例如刚写完一个大分片,
+  /// 此刻崩溃也不想从头再来)。绕过节流写一次,并把攒着的进度刷给 UI。
   Future<void> _checkpoint(String id, int generation) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       _currentExecutionTask(id, generation);
-      await repository.save(tasks);
+      final pending = _progressDirty;
+      await _persistTasks(_progressClock());
+      if (pending) {
+        _lastProgressNotifyAt = _progressClock();
+        notifyListeners();
+      }
     });
+  }
+
+  Future<void> _persistTasks(int now) async {
+    await repository.save(tasks);
+    _progressDirty = false;
+    _lastProgressSaveAt = now;
   }
 
   Future<void> _setVerifying(String id, int generation) {
-    return _serialize(() async {
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(id, generation);
       await _commit({
         ..._tasks,
@@ -390,7 +458,8 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _setCompleted(String id, int generation) {
-    return _serialize(() async {
+    _retryAttempts.remove(id);
+    return _serializeExecution(() async {
       final current = _currentExecutionTask(
         id,
         generation,
@@ -412,13 +481,13 @@ final class DownloadCoordinator extends ChangeNotifier {
 
   Future<void> _setCancelledIfRunning(String id, int generation) async {
     try {
-      await _serialize(() async {
+      await _serializeExecution(() async {
         final current = _currentExecutionTask(id, generation);
         await _commit({
           ..._tasks,
           id: current.copyWith(
             state: DownloadTaskState.cancelled,
-            failure: DownloadFailure.fromMessage(
+            failure: DownloadFailure.fromDetail(
               DownloadFailureCode.cancelled,
               'cancelled',
             ),
@@ -432,16 +501,27 @@ final class DownloadCoordinator extends ChangeNotifier {
   }
 
   Future<void> _setFailed(String id, int generation, Object error) async {
+    final code = classifyDownloadFailureCode(error);
+    final attempts = _retryAttempts[id] ?? 0;
+    final retrying = code.isRetryable && attempts < maxAutomaticRetries;
+    final retryCount = retrying ? attempts + 1 : attempts;
+    if (retrying) {
+      _retryAttempts[id] = retryCount;
+    } else {
+      _retryAttempts.remove(id);
+    }
     try {
-      await _serialize(() async {
+      await _serializeExecution(() async {
         final current = _currentExecutionTask(id, generation);
         await _commit({
           ..._tasks,
           id: current.copyWith(
             state: DownloadTaskState.failed,
-            failure: DownloadFailure.fromMessage(
-              DownloadFailureCode.unknown,
+            failure: DownloadFailure.fromDetail(
+              code,
               error.toString(),
+              retryCount: retryCount,
+              httpStatus: downloadFailureHttpStatus(error),
             ),
             updatedAt: _clock(),
           ),
@@ -449,6 +529,60 @@ final class DownloadCoordinator extends ChangeNotifier {
       });
     } on DownloadCancelledException {
       // A newer task generation owns this identifier.
+      _retryAttempts.remove(id);
+      return;
+    }
+    if (retrying) _scheduleAutomaticRetry(id, generation, retryCount);
+  }
+
+  /// 可重试的失败:任务先停在 failed(带 retryCount,UI 能看出在重试),
+  /// 退避到点后自己回到队列;期间用户手动 retry / remove 会顶掉这一代任务。
+  void _scheduleAutomaticRetry(String id, int generation, int attempt) {
+    if (_disposed) return;
+    _pendingRetries++;
+    unawaited(_runAutomaticRetry(id, generation, attempt));
+  }
+
+  Future<void> _runAutomaticRetry(
+    String id,
+    int generation,
+    int attempt,
+  ) async {
+    try {
+      await _retryDelay(retryBackoffFor(attempt));
+      if (_disposed || (_generations[id] ?? 0) != generation) return;
+      await _serializeExecution(() async {
+        final current = _tasks[id];
+        if (current == null || current.state != DownloadTaskState.failed) {
+          return;
+        }
+        await _commit({
+          ..._tasks,
+          id: current.copyWith(
+            state: DownloadTaskState.queued,
+            clearPauseReason: true,
+            updatedAt: _clock(),
+          ),
+        });
+      });
+    } finally {
+      _pendingRetries--;
+      _requestPump();
+      _completeIdleIfSettled();
+    }
+  }
+
+  /// 执行期(executor 回调与收尾)专用的串行写入。
+  ///
+  /// [_serialize] 在 dispose 之后以 StateError 完成 —— 那是给外部调用方的信号,
+  /// 但在途任务的收尾没有人 await,抛出去就成了未捕获的异步异常。协调器已经
+  /// 销毁时这些写入本就无处可去,静默丢弃即可。
+  Future<void> _serializeExecution(Future<void> Function() action) async {
+    if (_disposed) return;
+    try {
+      await _serialize(action);
+    } on StateError {
+      if (!_disposed) rethrow;
     }
   }
 
@@ -469,8 +603,15 @@ final class DownloadCoordinator extends ChangeNotifier {
     return current;
   }
 
+  /// 没有在途任务、没有待跑的调度、也没有排队等退避的自动重试。
+  bool get _settled =>
+      _active.isEmpty &&
+      !_pumpRequested &&
+      !_pumpRunning &&
+      _pendingRetries == 0;
+
   void _completeIdleIfSettled() {
-    if (_active.isNotEmpty || _pumpRequested || _pumpRunning) return;
+    if (!_settled) return;
     final completer = _idleCompleter;
     _idleCompleter = null;
     if (completer != null && !completer.isCompleted) completer.complete();
@@ -480,6 +621,11 @@ final class DownloadCoordinator extends ChangeNotifier {
     final frozen = Map<String, DownloadTask>.unmodifiable(next);
     await repository.save(_ordered(frozen.values));
     _tasks = frozen;
+    // 状态迁移不节流:攒着的进度随这次写盘一起落地,节流窗口重新计时。
+    _progressDirty = false;
+    final now = _progressClock();
+    _lastProgressSaveAt = now;
+    _lastProgressNotifyAt = now;
     notifyListeners();
   }
 
@@ -527,6 +673,12 @@ final class _ActiveDownload {
   final DownloadCancellation cancellation;
 }
 
+/// 第 [attempt] 次自动重试的退避时长:1s、4s、16s……
+Duration retryBackoffFor(int attempt) {
+  final steps = attempt < 1 ? 0 : attempt - 1;
+  return DownloadCoordinator.retryBackoffBase * (1 << (2 * steps));
+}
+
 List<DownloadTask> _ordered(Iterable<DownloadTask> tasks) {
   final ordered = tasks.toList(growable: false)
     ..sort((left, right) {
@@ -538,6 +690,11 @@ List<DownloadTask> _ordered(Iterable<DownloadTask> tasks) {
     });
   return ordered;
 }
+
+/// 策略不允许下载时可被自动暂停的状态:排队中与下载中。
+/// `verifying` 已经写完盘、只差校验,让它跑完比中断更省事。
+bool _policyPausable(DownloadTaskState state) =>
+    state == DownloadTaskState.queued || state == DownloadTaskState.running;
 
 bool _canPause(DownloadTaskState state) => switch (state) {
       DownloadTaskState.resolving ||

@@ -61,6 +61,12 @@ class HlsMediaRewriter {
     var segmentDuration = 0.0;
     HlsByteRange? pendingRange;
     int? previousRangeEnd;
+    var mediaSequence = 0;
+    var sourceSegmentIndex = 0;
+    var droppedSegments = 0;
+    // 当前生效的 AES-128 密钥行(已改写成本地 URI),仅在**没有**显式 IV 时非空 ——
+    // 那种情况下 IV 是隐式的,等于分片的媒体序号,删片会把它错开。
+    String? implicitIvKeyLine;
 
     bool filteringAd() => cueActive || timedAdRemaining > 0;
 
@@ -98,9 +104,26 @@ class HlsMediaRewriter {
         continue;
       }
 
+      if (upper.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+        mediaSequence =
+            int.tryParse(trimmed.substring(trimmed.indexOf(':') + 1).trim()) ??
+                0;
+        if (!filteringAd()) emit(original);
+        continue;
+      }
+
       if (upper.startsWith('#EXTINF:')) {
         segmentDuration = _parseExtInf(trimmed);
-        if (!filteringAd()) emit(original);
+        if (!filteringAd()) {
+          // 已经删过片:留下来的分片在输出清单里的序号往前挪了,而隐式 IV 用的是
+          // **原始**媒体序号。原样透传 EXT-X-MEDIA-SEQUENCE + 无 IV 的 EXT-X-KEY,
+          // 播放器就会拿错 IV 去解密,整段解不出来(而不是少一段广告)。
+          final keyLine = implicitIvKeyLine;
+          if (droppedSegments > 0 && keyLine != null) {
+            emit('$keyLine,IV=${_ivOf(mediaSequence + sourceSegmentIndex)}');
+          }
+          emit(original);
+        }
         continue;
       }
 
@@ -142,6 +165,7 @@ class HlsMediaRewriter {
               _attributes(trimmed.substring(trimmed.indexOf(':') + 1));
           final method = (attributes['METHOD'] ?? '').toUpperCase();
           if (method == 'NONE') {
+            implicitIvKeyLine = null;
             emit(original);
             continue;
           }
@@ -157,7 +181,10 @@ class HlsMediaRewriter {
             HlsUriKind.key,
             null,
           );
-          emit(_replaceUriAttribute(original, local.toString()));
+          final rewritten = _replaceUriAttribute(original, local.toString());
+          implicitIvKeyLine =
+              attributes.containsKey('IV') ? null : rewritten.trim();
+          emit(rewritten);
         }
         continue;
       }
@@ -176,6 +203,8 @@ class HlsMediaRewriter {
             }
           }
           segmentDuration = 0;
+          droppedSegments++;
+          sourceSegmentIndex++;
           continue;
         }
         final local = register(
@@ -188,6 +217,7 @@ class HlsMediaRewriter {
             (segmentDuration * Duration.microsecondsPerSecond).round();
         segmentDuration = 0;
         keptSegments++;
+        sourceSegmentIndex++;
         continue;
       }
 
@@ -299,6 +329,10 @@ class HlsMediaRewriter {
   double? _durationAttribute(Map<String, String> attributes) => double.tryParse(
         attributes['DURATION'] ?? attributes['PLANNED-DURATION'] ?? '',
       );
+
+  /// AES-128 的隐式 IV = 分片媒体序号的 128 位大端表示。
+  String _ivOf(int sequence) =>
+      '0x${sequence.toRadixString(16).padLeft(32, '0')}';
 
   double _parseExtInf(String line) {
     final value = line.substring(line.indexOf(':') + 1).split(',').first;

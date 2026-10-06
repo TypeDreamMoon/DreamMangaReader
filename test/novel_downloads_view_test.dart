@@ -114,6 +114,31 @@ void main() {
     expect(find.textContaining('B'), findsOneWidget);
   });
 
+  testWidgets('a downloaded novel opens its offline chapters first',
+      (tester) async {
+    // 源还装着 —— 以前这就够把用户推去在线详情页,没网时是条死路。
+    final previous = registeredSources;
+    registeredSources = const [meta];
+    addTearDown(() => registeredSources = previous);
+    await tester.runAsync(() async {
+      store.enqueue(
+        meta,
+        novel,
+        const NovelChapter(id: 'c1', title: '第一章'),
+      );
+      await store.idle;
+    });
+
+    await tester.pumpWidget(_harness(store));
+    await tester.tap(find.text('小说下载甲').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.offline_pin_rounded), findsOneWidget);
+    expect(find.text('第一章'), findsOneWidget);
+    // 想找新章节还有一个跳回在线目录的出口。
+    expect(find.byKey(const Key('novel-offline-open-online')), findsOneWidget);
+  });
+
   testWidgets('failed novel download exposes retry', (tester) async {
     source = _Source(error: Exception('network'));
     await tester.runAsync(() async {

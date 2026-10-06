@@ -229,26 +229,28 @@ class DownloadStore extends ChangeNotifier implements DownloadExecutor {
         '$root/${job.meta.id}/${_safe(job.manga.id)}/${_safe(job.chapter.id)}',
       );
       await dir.create(recursive: true);
-      for (var i = 0; i < pages.length; i++) {
-        if (_disposed) throw const DownloadCancelledException();
-        context?.cancellation.throwIfCancelled();
-        final headers = {...job.headers, ...?pages[i].headers};
-        try {
+      try {
+        for (var i = 0; i < pages.length; i++) {
+          if (_disposed) throw const DownloadCancelledException();
+          context?.cancellation.throwIfCancelled();
+          final headers = {...job.headers, ...?pages[i].headers};
           await writePageImage(
             image: pages[i],
             output: File('${dir.path}/$i.img'),
             headers: headers,
             fetchNetwork: _pageFetcher,
           );
-        } catch (_) {
-          try {
-            await dir.delete(recursive: true);
-          } catch (_) {}
-          rethrow;
+          _progress[job.key] = (i + 1) / pages.length;
+          if (!_disposed) notifyListeners();
+          await context?.reportProgress(i + 1, pages.length);
         }
-        _progress[job.key] = (i + 1) / pages.length;
-        if (!_disposed) notifyListeners();
-        await context?.reportProgress(i + 1, pages.length);
+      } catch (_) {
+        // 取消也要清:章节没写完就进不了 _done,留在盘上的半截目录既读不到、
+        // 也没有任何入口能删掉它 —— 只剩占空间。
+        try {
+          await dir.delete(recursive: true);
+        } catch (_) {}
+        rethrow;
       }
       final completed = DownloadedChapter(
         sourceId: job.meta.id,

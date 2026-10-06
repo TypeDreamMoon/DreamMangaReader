@@ -134,7 +134,8 @@ NovelSource buildNovelSource(SourceMeta meta) {
 }
 
 ScriptSource _buildScriptSource(SourceMeta meta) => ScriptSource(
-      engine: JsEngine(),
+      // label 进日志/看门狗:脚本卡住时能指名道姓地说是哪个源。
+      engine: JsEngine(label: meta.id),
       http: meta.useWebView
           ? WebViewHttpService(userAgent: _mobileUa)
           : DioHttpService(),

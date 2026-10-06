@@ -159,6 +159,14 @@ class NovelDocumentSanitizer {
     }
     try {
       final parsed = Uri.parse(trimmed);
+      // 协议相对地址(`//host/x.png`)只在 http(s) 下有意义:跟着 baseUrl 的协议
+      // 走,没有 baseUrl(或 baseUrl 是本地文件)时补成 https,别把没有 scheme
+      // 的地址原样留在正文里 —— 那种地址离线阅读器解析不了,也进不了资源缓存。
+      if (!parsed.hasScheme && parsed.hasAuthority) {
+        return parsed
+            .replace(scheme: baseUrl?.scheme == 'http' ? 'http' : 'https')
+            .toString();
+      }
       final resolved = baseUrl?.resolveUri(parsed) ?? parsed;
       if (!resolved.hasScheme) return resolved.toString();
       if (resolved.scheme == 'http' || resolved.scheme == 'https') {

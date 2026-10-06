@@ -254,6 +254,7 @@ class NovelBrowserState extends State<NovelBrowser> {
               );
         if (!mounted || generation != _loadGeneration) return;
         setState(() {
+          final start = _results.length;
           for (final novel in result.items) {
             _addResult(novel, _meta!);
           }
@@ -261,13 +262,16 @@ class NovelBrowserState extends State<NovelBrowser> {
           _hasNext = result.hasNext && result.items.isNotEmpty;
           _loading = false;
           _error = null;
-          _sortResults();
+          _sortAppended(start);
         });
       } catch (error) {
         if (!mounted || generation != _loadGeneration) return;
         setState(() {
           _loading = false;
           _error = error;
+          // 不停下来的话滚动监听会一直重试同一页,而且结果非空时错误
+          // 根本不显示 —— 用户只看到一个永远转不完的页脚。
+          _hasNext = false;
         });
       }
     }
@@ -285,6 +289,7 @@ class NovelBrowserState extends State<NovelBrowser> {
           : await cursor.source.getNovelSearch(_query, cursor.page);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        final start = _results.length;
         for (final novel in result.items) {
           _addResult(novel, cursor.meta);
         }
@@ -292,7 +297,7 @@ class NovelBrowserState extends State<NovelBrowser> {
         cursor.hasNext = result.hasNext && result.items.isNotEmpty;
         cursor.failed = false;
         _failedSources.remove(cursor.meta.id);
-        _sortResults();
+        _sortAppended(start);
       });
     } catch (_) {
       if (!mounted || generation != _loadGeneration) return;
@@ -306,8 +311,25 @@ class NovelBrowserState extends State<NovelBrowser> {
     }
   }
 
+  /// 页脚上的「重试」。翻页失败会把自动加载停掉,得由读者按一下再继续。
+  void _retryLoadMore() {
+    if (_loading) return;
+    setState(() {
+      _error = null;
+      _hasNext = true;
+      for (final cursor in _mixedSources) {
+        if (cursor.failed) {
+          cursor
+            ..failed = false
+            ..hasNext = true;
+        }
+      }
+    });
+    unawaited(_loadMore());
+  }
+
   void _addResult(Novel novel, SourceMeta meta) {
-    final key = ChineseFold.dedupKey(novel.title);
+    final key = _dedupKey(novel);
     if (key.isEmpty) return;
     final current = _byTitle[key];
     if (current != null) {
@@ -320,12 +342,27 @@ class NovelBrowserState extends State<NovelBrowser> {
     _results.add(result);
   }
 
-  void _sortResults() {
-    if (_originalQuery.isEmpty) return;
-    _results.sort((a, b) => searchRelevance(
-          b.novel.title,
-          _originalQuery,
-        ).compareTo(searchRelevance(a.novel.title, _originalQuery)));
+  /// 去重键 = 标题 + 作者。只看标题的话《长夜》这种大众书名会被并成一条,
+  /// 读者再也翻不到另一位作者的那本。
+  String _dedupKey(Novel novel) {
+    final title = ChineseFold.dedupKey(novel.title);
+    if (title.isEmpty) return '';
+    final author = novel.authors.isEmpty
+        ? ''
+        : ChineseFold.dedupKey(novel.authors.first);
+    return author.isEmpty ? title : '$title\u0000$author';
+  }
+
+  /// 只把这一页新来的排一排,再接在后面。整表重排会让读者正看着的卡片
+  /// 突然换位置 —— 翻一页跳一次,还得把所有 Hero tag 重算一遍。
+  void _sortAppended(int start) {
+    if (_originalQuery.isEmpty || start >= _results.length - 1) return;
+    final appended = _results.sublist(start)
+      ..sort((a, b) => searchRelevance(
+            b.novel.title,
+            _originalQuery,
+          ).compareTo(searchRelevance(a.novel.title, _originalQuery)));
+    _results.replaceRange(start, _results.length, appended);
   }
 
   Future<void> _maybeUseTranslatedQuery(int generation) async {
@@ -485,6 +522,39 @@ class NovelBrowserState extends State<NovelBrowser> {
     );
   }
 
+  /// 列表底部:加载中转圈,翻页失败就把错误和重试摆在这儿 —— 结果非空时
+  /// 整页错误视图不会出现,不放页脚读者就完全看不到失败。
+  Widget? _footer() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    final error = _error;
+    if (error == null) return null;
+    final p = context.palette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+      child: Column(
+        children: [
+          Text(
+            context.l10n.novel_browserLoadFailed('$error'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: p.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('novel-browser-retry-more'),
+            onPressed: _retryLoadMore,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: Text(context.l10n.retry),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _content() {
     if (_results.isEmpty) {
       if (_loading) return const Center(child: CircularProgressIndicator());
@@ -504,12 +574,7 @@ class NovelBrowserState extends State<NovelBrowser> {
       columns: library.gridColumns,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       itemCount: _results.length,
-      footer: _loading
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          : null,
+      footer: _footer(),
       cardBuilder: (context, index) {
         final result = _results[index];
         final tag = _heroTag(result, index);

@@ -23,6 +23,76 @@ void main() {
     if (await sandbox.exists()) await sandbox.delete(recursive: true);
   });
 
+  group('NovelFontRegistry', () {
+    test('registers an imported font as its own family exactly once', () async {
+      final source = await _writeFixture(
+        sandbox,
+        'Imported Reader.ttf',
+        _minimalFont('ttf'),
+      );
+      final record = await store.importFont(source);
+      final registered = <String, int>{};
+      final registry = NovelFontRegistry(
+        store: store,
+        registerFace: (family, bytes) async {
+          registered[family] = bytes.length;
+        },
+      );
+
+      expect(await registry.register(record.id), record.id);
+      // 第二次必须复用,不能把同一份字体再灌一遍引擎。
+      expect(await registry.register(record.id), record.id);
+
+      expect(registered.keys, [record.id]);
+      expect(registered[record.id], _minimalFont('ttf').length);
+      expect(registry.familyFor(record.id), record.id);
+      expect(registry.failed(record.id), isFalse);
+    });
+
+    test('reports a vanished imported font as a load failure', () async {
+      final registry = NovelFontRegistry(
+        store: store,
+        registerFace: (family, bytes) async {},
+      );
+      final id = '${NovelFontIds.importedPrefix}${'a' * 64}';
+
+      expect(await registry.register(id), isNull);
+
+      expect(registry.familyFor(id), isNull);
+      expect(registry.failed(id), isTrue);
+    });
+
+    test('reports an engine rejection as a load failure', () async {
+      final source = await _writeFixture(
+        sandbox,
+        'Broken.ttf',
+        _minimalFont('ttf'),
+      );
+      final record = await store.importFont(source);
+      final registry = NovelFontRegistry(
+        store: store,
+        registerFace: (family, bytes) async =>
+            throw StateError('unsupported font'),
+      );
+
+      expect(await registry.register(record.id), isNull);
+
+      expect(registry.failed(record.id), isTrue);
+    });
+
+    test('built-in ids map to the bundled Flutter families', () {
+      final registry = NovelFontRegistry(
+        store: store,
+        registerFace: (family, bytes) async {},
+      );
+
+      expect(registry.familyFor(NovelFontIds.notoSerifSc), 'DMRNotoSerifSC');
+      expect(registry.familyFor(NovelFontIds.lxgwWenKai), 'DMRLXGWWenKai');
+      expect(registry.failed(NovelFontIds.notoSerifSc), isFalse);
+    });
+
+  });
+
   test('imports valid TTF and OTF signatures under application support',
       () async {
     final ttf = await _writeFixture(

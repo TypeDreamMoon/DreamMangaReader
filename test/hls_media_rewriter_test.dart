@@ -72,6 +72,73 @@ b.m4s
     expect(result.duration, const Duration(seconds: 8));
   });
 
+  // AES-128 不带 IV= 时,IV 就是分片的媒体序号。删掉中间的广告片会让留下来的分片
+  // 在输出里往前挪 —— 序号变了,隐式 IV 就错了,播放器解出来是一堆花屏。
+  test('pins an explicit IV on segments kept after an ad break', () {
+    final result = rewrite('''#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MEDIA-SEQUENCE:10
+#EXT-X-KEY:METHOD=AES-128,URI="a.key"
+#EXTINF:4,
+content-a.ts
+#EXT-X-CUE-OUT:8
+#EXTINF:4,
+ad-a.ts
+#EXTINF:4,
+ad-b.ts
+#EXT-X-CUE-IN
+#EXTINF:4,
+content-b.ts
+#EXTINF:4,
+content-c.ts
+#EXT-X-ENDLIST
+''');
+
+    expect(result.text, contains('/segment/content-b.ts'));
+    expect(result.text, isNot(contains('/segment/ad-a.ts')));
+    // 广告之前那片没挪位置,不该被补 IV。
+    final lines = result.text.split('\n');
+    final firstKey =
+        lines.indexWhere((line) => line.startsWith('#EXT-X-KEY:'));
+    expect(lines[firstKey], isNot(contains('IV=')));
+    // content-b 原本是第 13 片(10 + 3),content-c 是第 14 片。
+    expect(
+      result.text,
+      contains('#EXT-X-KEY:METHOD=AES-128,URI="http://127.0.0.1/key/a.key",'
+          'IV=0x0000000000000000000000000000000d'),
+    );
+    expect(
+      result.text,
+      contains('#EXT-X-KEY:METHOD=AES-128,URI="http://127.0.0.1/key/a.key",'
+          'IV=0x0000000000000000000000000000000e'),
+    );
+    // 序号本身照旧透传:显式 IV 已经把偏移问题接管了。
+    expect(result.text, contains('#EXT-X-MEDIA-SEQUENCE:10'));
+  });
+
+  test('leaves an explicit IV and an unfiltered playlist untouched', () {
+    final result = rewrite('''#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MEDIA-SEQUENCE:10
+#EXT-X-KEY:METHOD=AES-128,URI="a.key",IV=0x00000000000000000000000000000001
+#EXTINF:4,
+content-a.ts
+#EXT-X-CUE-OUT:4
+#EXTINF:4,
+ad-a.ts
+#EXT-X-CUE-IN
+#EXTINF:4,
+content-b.ts
+#EXT-X-ENDLIST
+''');
+
+    // 上游自己给了 IV,序号错位跟它无关 —— 一行都不该多。
+    expect(
+      '#EXT-X-KEY:'.allMatches(result.text),
+      hasLength(1),
+    );
+  });
+
   test('removes only a paired cue-out VOD range', () {
     final result = rewrite('''#EXTM3U
 #EXT-X-PLAYLIST-TYPE:VOD

@@ -74,9 +74,11 @@ class EpubNovelImporter {
 
   Future<EpubNovelImportPreview> previewBytes(List<int> input) async {
     final bytes = Uint8List.fromList(input);
+    String? encryption;
     try {
       final archive = ZipDecoder().decodeBytes(bytes);
       EpubPreflight.validate(archive.files);
+      encryption = _encryptionManifest(archive);
     } catch (error) {
       if (error is FormatException) rethrow;
       throw FormatException('Invalid EPUB archive: $error');
@@ -163,6 +165,11 @@ class EpubNovelImporter {
     if (chapters.isEmpty) {
       throw const FormatException('EPUB has an empty readable spine');
     }
+    // 正文被加密 = 有 DRM,解不开,导进来也只是一堆读不了的章节。
+    if (encryption != null &&
+        chapterResources.values.any(_drmProtectedPaths(encryption).contains)) {
+      throw const LocalNovelException(LocalNovelError.epubDrmProtected);
+    }
 
     final title = (book.title ?? '').trim();
     final authors = book.authors
@@ -174,7 +181,8 @@ class EpubNovelImporter {
 
     return EpubNovelImportPreview(
       sha256: sha256.convert(bytes).toString(),
-      title: title.isEmpty ? '未命名 EPUB' : title,
+      // 书名为空就留空:占位文案是给人看的,由 UI 按语言回填,别写死进索引。
+      title: title,
       authors: List.unmodifiable(authors),
       chapters: List.unmodifiable(chapters),
       hasCover: hasCover,
@@ -198,7 +206,10 @@ class EpubNovelImporter {
     await local.create(recursive: true);
 
     final destination = Directory(_join(local.path, preview.sha256));
-    if (await destination.exists()) {
+    final index = jsonEncode(_buildIndex(preview));
+    // 目录名仍旧是 sha256(书架条目与阅读进度都挂在它上面),但改了书名/作者再
+    // 导一次就得把索引重写,不能拿旧目录糊弄用户。
+    if (await _isInstalled(destination, index)) {
       return ImportedEpubNovel(directory: destination, preview: preview);
     }
 
@@ -220,15 +231,11 @@ class EpubNovelImporter {
         await file.writeAsBytes(resource.value, flush: true);
       }
       await File(_join(temporary.path, 'index.json')).writeAsString(
-        jsonEncode(_buildIndex(preview)),
+        index,
         encoding: utf8,
         flush: true,
       );
-      if (await destination.exists()) {
-        await temporary.delete(recursive: true);
-        return ImportedEpubNovel(directory: destination, preview: preview);
-      }
-      final installed = await temporary.rename(destination.path);
+      final installed = await _replace(temporary, destination, novels);
       return ImportedEpubNovel(directory: installed, preview: preview);
     } catch (_) {
       if (await temporary.exists()) await temporary.delete(recursive: true);
@@ -238,6 +245,107 @@ class EpubNovelImporter {
       rethrow;
     }
   }
+
+  /// 目标目录里已经是同一份索引吗?是的话重复导入就是个空操作。
+  Future<bool> _isInstalled(Directory destination, String index) async {
+    try {
+      if (!await File(_join(destination.path, 'original.epub')).exists()) {
+        return false;
+      }
+      final file = File(_join(destination.path, 'index.json'));
+      return await file.exists() && await file.readAsString() == index;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 原子替换:先把旧目录挪走,装好新的再删旧的;装不上就把旧的放回去。
+  Future<Directory> _replace(
+    Directory temporary,
+    Directory destination,
+    Directory novels,
+  ) async {
+    Directory? stale;
+    if (await destination.exists()) {
+      stale = Directory(_join(
+        novels.path,
+        '.stale-$pid-${DateTime.now().microsecondsSinceEpoch}',
+      ));
+      await destination.rename(stale.path);
+    }
+    try {
+      final installed = await temporary.rename(destination.path);
+      if (stale != null && await stale.exists()) {
+        await stale.delete(recursive: true);
+      }
+      return installed;
+    } catch (_) {
+      if (stale != null &&
+          await stale.exists() &&
+          !await destination.exists()) {
+        await stale.rename(destination.path);
+      }
+      rethrow;
+    }
+  }
+}
+
+/// EPUB 的加密清单。有它不等于有 DRM —— 字体混淆也写在这里。
+String? _encryptionManifest(Archive archive) {
+  for (final file in archive.files) {
+    if (!file.isFile) continue;
+    if (file.name.replaceAll('\\', '/').toLowerCase() !=
+        'meta-inf/encryption.xml') {
+      continue;
+    }
+    final content = file.content;
+    if (content is List<int>) {
+      return utf8.decode(content, allowMalformed: true);
+    }
+  }
+  return null;
+}
+
+final RegExp _encryptedDataPattern = RegExp(
+  r'<[a-zA-Z0-9_.\-]*:?EncryptedData\b[\s\S]*?'
+  r'</[a-zA-Z0-9_.\-]*:?EncryptedData\s*>',
+  caseSensitive: false,
+);
+final RegExp _algorithmPattern = RegExp(
+  r'Algorithm\s*=\s*["\x27]([^"\x27]+)["\x27]',
+  caseSensitive: false,
+);
+final RegExp _cipherReferencePattern = RegExp(
+  r'<[a-zA-Z0-9_.\-]*:?CipherReference[^>]*?'
+  r'URI\s*=\s*["\x27]([^"\x27]+)["\x27]',
+  caseSensitive: false,
+);
+
+/// 字体混淆用的两个算法。IDPF 和 Adobe 的字体打散不是 DRM,正文照样能读。
+const Set<String> _fontObfuscationAlgorithms = {
+  'http://www.idpf.org/2008/embedding',
+  'http://ns.adobe.com/pdf/enc#rc4sha1',
+};
+
+/// 加密清单里真正被锁住的资源路径(相对 zip 根,已规范化)。
+Set<String> _drmProtectedPaths(String manifest) {
+  final result = <String>{};
+  for (final match in _encryptedDataPattern.allMatches(manifest)) {
+    final block = match.group(0)!;
+    final algorithm = _algorithmPattern.firstMatch(block)?.group(1);
+    if (algorithm != null &&
+        _fontObfuscationAlgorithms.contains(algorithm.trim().toLowerCase())) {
+      continue;
+    }
+    final uri = _cipherReferencePattern.firstMatch(block)?.group(1);
+    if (uri == null || uri.isEmpty) continue;
+    try {
+      result.add(EpubPreflight.normalizeRelativePath(Uri.decodeFull(uri)));
+    } catch (_) {
+      // 路径都解不开的条目,轮不到它来决定这本书能不能读。
+    }
+  }
+  return result;
 }
 
 Future<EpubBook> _readBookCompat(Uint8List bytes) async {

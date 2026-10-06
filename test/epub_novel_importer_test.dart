@@ -42,6 +42,45 @@ void main() {
     expect(await supportDirectory.exists(), isFalse);
   });
 
+  test('an untitled EPUB keeps an empty title instead of a baked-in label',
+      () async {
+    final preview = await importer.previewBytes(
+      epub2Fixture(includeTitle: false),
+    );
+
+    // 占位书名是给人看的,得按读者语言在 UI 回填,不能写死进索引。
+    expect(preview.title, isEmpty);
+  });
+
+  test('a DRM protected EPUB is refused with an error code', () async {
+    final bytes = epub2Fixture(encryption: _encryptionXml(
+      algorithm: 'http://www.w3.org/2001/04/xmlenc#aes128-cbc',
+      target: 'OEBPS/Text/chapter1.xhtml',
+    ));
+
+    await expectLater(
+      importer.previewBytes(bytes),
+      throwsA(
+        isA<LocalNovelException>().having(
+          (error) => error.error,
+          'error',
+          LocalNovelError.epubDrmProtected,
+        ),
+      ),
+    );
+  });
+
+  test('font obfuscation is not treated as DRM', () async {
+    final bytes = epub2Fixture(encryption: _encryptionXml(
+      algorithm: 'http://www.idpf.org/2008/embedding',
+      target: 'OEBPS/Fonts/book.otf',
+    ));
+
+    final preview = await importer.previewBytes(bytes);
+
+    expect(preview.chapters, hasLength(2));
+  });
+
   test('preview protects hashed source and resource bytes from mutation',
       () async {
     final preview = await importer.previewBytes(epub2Fixture());
@@ -101,6 +140,50 @@ void main() {
         book.directory.path);
   });
 
+  test('re-importing the same EPUB with an edited title rewrites the index',
+      () async {
+    final bytes = epub2Fixture();
+    final preview = await importer.previewBytes(bytes);
+    final installed = await importer.importPreview(preview);
+
+    final renamed = EpubNovelImportPreview(
+      sha256: preview.sha256,
+      title: '改过的书名',
+      authors: const ['作者乙'],
+      chapters: preview.chapters,
+      hasCover: preview.hasCover,
+      language: preview.language,
+      originalBytes: preview.originalBytes,
+      resources: preview.resources,
+      chapterResources: preview.chapterResources,
+    );
+    final reinstalled = await importer.importPreview(renamed);
+
+    // 目录名还是 sha256 —— 书架条目与阅读进度都挂在它上面,不能换。
+    expect(reinstalled.directory.path, installed.directory.path);
+    final index = jsonDecode(
+      await File(
+        '${reinstalled.directory.path}${Platform.pathSeparator}index.json',
+      ).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(index['title'], '改过的书名');
+    expect(index['authors'], ['作者乙']);
+    expect(
+      await File(
+        '${reinstalled.directory.path}${Platform.pathSeparator}original.epub',
+      ).exists(),
+      isTrue,
+    );
+    final novels = reinstalled.directory.parent.parent;
+    expect(
+      novels.listSync().where(
+            (entry) =>
+                entry.path.contains('.tmp-') || entry.path.contains('.stale-'),
+          ),
+      isEmpty,
+    );
+  });
+
   test('accepts EPUB 2 cover metadata that uses href instead of manifest id',
       () async {
     final preview = await importer.previewBytes(
@@ -143,15 +226,28 @@ void main() {
   });
 }
 
+
+String _encryptionXml({required String algorithm, required String target}) {
+  return '''<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <enc:EncryptedData xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+    <enc:EncryptionMethod Algorithm="$algorithm" />
+    <enc:CipherData><enc:CipherReference URI="$target" /></enc:CipherData>
+  </enc:EncryptedData>
+</encryption>''';
+}
+
 Uint8List epub2Fixture({
   bool includeSpine = true,
   bool coverMetaUsesHref = false,
+  bool includeTitle = true,
+  String? encryption,
 }) {
   final opf = '''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">book-2</dc:identifier>
-    <dc:title>测试 EPUB 2</dc:title>
+    ${includeTitle ? '<dc:title>测试 EPUB 2</dc:title>' : ''}
     <dc:creator>作者甲</dc:creator>
     <dc:language>zh-CN</dc:language>
     <meta name="cover" content="${coverMetaUsesHref ? 'cover.png' : 'cover-image'}" />
@@ -178,6 +274,7 @@ Uint8List epub2Fixture({
     'OEBPS/Text/chapter2.xhtml': _xhtml('第二页'),
     'OEBPS/Text/chapter1.xhtml': _xhtml('第一页'),
     'META-INF/container.xml': _container,
+    if (encryption != null) 'META-INF/encryption.xml': encryption,
     'OEBPS/content.opf': opf,
     'OEBPS/toc.ncx': toc,
     'OEBPS/Images/cover.png': _onePixelPng,

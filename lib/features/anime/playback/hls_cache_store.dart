@@ -113,29 +113,56 @@ class HlsCacheStore {
 
   Future<void> _initialize() async {
     await directory.create(recursive: true);
+    // 先看盘上到底有什么。索引只是一份可能落后、可能损坏的快照,以它为准的话,
+    // 一次损坏就能把满盘分片变成谁也数不到的孤儿:不计上限、不参与淘汰、只增不减。
+    final onDisk = <String, FileStat>{};
     await for (final entity in directory.list()) {
-      if (entity is File && entity.path.endsWith('.tmp')) {
+      if (entity is! File) continue;
+      if (entity.path.endsWith('.tmp')) {
         await entity.delete();
+        continue;
+      }
+      final key = _keyOfFile(entity);
+      if (key != null) onDisk[key] = await entity.stat();
+    }
+    if (await _indexFile.exists()) {
+      try {
+        final root =
+            jsonDecode(await _indexFile.readAsString()) as Map<String, dynamic>;
+        final entries = (root['entries'] as List?) ?? const [];
+        for (final value in entries) {
+          final json = value as Map<String, dynamic>;
+          final entry = _CacheEntry.fromJson(json);
+          // 大小对不上 = 写到一半崩了,当没有这条(下面按盘上的实际大小重建)。
+          if (onDisk[entry.key]?.size == entry.size) {
+            _entries[entry.key] = entry;
+          }
+        }
+      } on Object {
+        _entries.clear();
       }
     }
-    if (!await _indexFile.exists()) return;
-    try {
-      final root =
-          jsonDecode(await _indexFile.readAsString()) as Map<String, dynamic>;
-      final entries = (root['entries'] as List?) ?? const [];
-      for (final value in entries) {
-        final json = value as Map<String, dynamic>;
-        final entry = _CacheEntry.fromJson(json);
-        final file = _fileFor(entry.key);
-        if (await file.exists() && await file.length() == entry.size) {
-          _entries[entry.key] = entry;
-        }
-      }
-    } on Object {
-      _entries.clear();
+    for (final entry in onDisk.entries) {
+      if (_entries.containsKey(entry.key)) continue;
+      // 索引里没有的 .bin:按文件信息补一条,内容类型退回二进制(上游没给时本来
+      // 也是这个),至少让它重新算进上限、排得进淘汰队列。
+      _entries[entry.key] = _CacheEntry(
+        key: entry.key,
+        size: entry.value.size,
+        lastAccessMs: entry.value.modified.millisecondsSinceEpoch,
+        contentType: 'application/octet-stream',
+      );
     }
     await _evict();
     await _persist();
+  }
+
+  /// 缓存文件名 = sha256 十六进制 + `.bin`。不合这个形状的文件不是我们写的,别碰。
+  String? _keyOfFile(File file) {
+    final name = file.uri.pathSegments.last;
+    if (!name.endsWith('.bin')) return null;
+    final key = name.substring(0, name.length - 4);
+    return RegExp(r'^[0-9a-f]{64}$').hasMatch(key) ? key : null;
   }
 
   Future<HlsCacheLease> acquire(

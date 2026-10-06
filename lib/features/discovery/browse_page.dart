@@ -16,16 +16,19 @@ import '../library/manga_cover.dart';
 /// 每个板块分页拉取漫画卡片。板块由源脚本声明([MangaSource.sections]),
 /// 无板块的源会显示占位。后续新源实现 sections 即可复用此页。
 class BrowsePage extends StatefulWidget {
-  const BrowsePage({super.key, required this.meta});
+  const BrowsePage({super.key, required this.meta, this.sourceBuilder = buildSource});
 
   final SourceMeta meta;
+
+  /// 测试注入用;正式代码走 [buildSource]。
+  final MangaSource Function(SourceMeta meta) sourceBuilder;
 
   @override
   State<BrowsePage> createState() => _BrowsePageState();
 }
 
 class _BrowsePageState extends State<BrowsePage> {
-  late final MangaSource _source = buildSource(widget.meta);
+  late final MangaSource _source = widget.sourceBuilder(widget.meta);
   late final List<SourceSection> _sections = _source.sections;
 
   int _sel = 0;
@@ -35,6 +38,11 @@ class _BrowsePageState extends State<BrowsePage> {
   bool _loading = false;
   bool _end = false;
   String? _error;
+
+  /// 请求代际:每次换板块自增。在途的旧请求回来时代际已经变了 —— 结果直接丢弃,
+  /// 而 `_loading` 由换板块那一下就地复位,新一轮不会被旧请求的「加载中」挡在门外
+  /// (这正是「在途切板块 → 永久转圈」的成因)。
+  int _gen = 0;
 
   @override
   void initState() {
@@ -50,45 +58,52 @@ class _BrowsePageState extends State<BrowsePage> {
 
   Future<void> _reload() async {
     setState(() {
+      _gen++; // 在途请求就此作废
       _items.clear();
       _seen.clear();
       _page = 1;
       _end = false;
       _error = null;
+      _loading = false; // 旧请求不再有权复位它,这里就地放行新一轮
     });
     await _loadMore();
   }
 
   Future<void> _loadMore() async {
     if (_loading || _end || _sections.isEmpty) return;
+    final gen = _gen;
     setState(() => _loading = true);
     final sec = _sections[_sel];
     final wantPage = _page;
+    Paged<Manga>? res;
+    Object? failure;
     try {
-      final res = await _source.getSection(sec.id, wantPage);
-      if (!mounted || sec.id != _sections[_sel].id) return;
+      res = await _source.getSection(sec.id, wantPage);
+    } catch (e) {
+      failure = e;
+    }
+    // 只认当前代际的结果。旧代际的成功/失败都不写状态 —— 包括 `_loading`:
+    // 那时新一轮多半已经在跑,复位它反而会让滚动到底触发重复请求。
+    if (!mounted || gen != _gen) return;
+    setState(() {
+      _loading = false;
+      if (failure != null) {
+        _error = '$failure';
+        _end = true;
+        return;
+      }
+      final page = res!;
       var added = 0;
-      for (final m in res.items) {
+      for (final m in page.items) {
         if (_seen.add(m.id)) {
           _items.add(m);
           added++;
         }
       }
-      setState(() {
-        _page = wantPage + 1;
-        _loading = false;
-        // 无新增(单页板块如最新/排行,翻页返回同一批)或源说没下一页 → 停止。
-        if (added == 0 || !res.hasNext) _end = true;
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = '$e';
-          _end = true;
-        });
-      }
-    }
+      _page = wantPage + 1;
+      // 无新增(单页板块如最新/排行,翻页返回同一批)或源说没下一页 → 停止。
+      if (added == 0 || !page.hasNext) _end = true;
+    });
   }
 
   void _select(int i) {

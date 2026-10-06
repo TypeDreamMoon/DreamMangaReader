@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../app/library_store.dart';
@@ -28,15 +29,234 @@ enum SyncCategory {
   sourceRepo, // 源仓库配置(repoUrl/localDir);访问令牌只留在设备安全存储
 }
 
+/// 一类「删得掉」的同步条目:数据键 + 墓碑键 + 所属类别。
+///
+/// 双向同步的合并是**并集**——两端都保留,谁也不会消失。这对新增是对的,对删除
+/// 就是灾难:在手机上取消收藏,下次同步电脑那份又把它并回来,用户永远删不掉。
+/// 所以删除本身也要是一条能同步的记录 = 墓碑(`key -> deletedAt`)。
+///
+/// 墓碑和「还在的那条」比时间戳:墓碑更晚 → 条目消失;条目更晚(删完又加回来)
+/// → 条目留下。[SyncData.tombstoneRetention] 之后清理,不让它无限长大。
+enum SyncTombstoneGroup {
+  favorites('library', 'favorites', 'favoritesDeleted', SyncCategory.favorites),
+  history('library', 'history', 'historyDeleted', SyncCategory.history),
+  mangaSources('library', 'disabledSourcesManga', 'disabledSourcesMangaDeleted',
+      SyncCategory.mangaSources),
+  animeSources('library', 'disabledSourcesAnime', 'disabledSourcesAnimeDeleted',
+      SyncCategory.animeSources),
+  novelSources('library', 'disabledSourcesNovel', 'disabledSourcesNovelDeleted',
+      SyncCategory.novelSources),
+  novelFavorites(
+      'novels', 'favorites', 'favoritesDeleted', SyncCategory.favorites),
+  novelHistory('novels', 'history', 'historyDeleted', SyncCategory.history);
+
+  const SyncTombstoneGroup(
+      this.section, this.dataKey, this.tombstoneKey, this.category);
+
+  /// blob 里的哪一段:`library` 或 `novels`。
+  final String section;
+  final String dataKey;
+  final String tombstoneKey;
+  final SyncCategory category;
+}
+
 /// 云同步的数据 blob:书架数据(收藏/历史/设置/源开关)+ 源仓库配置。
 /// **不含**每源登录 token 与下载文件。
 ///
 /// - [build] 只放所选类别;源开关按 source kind 分别存储,不改旧键。
-/// - [merge] 类别并集(自动双向同步用)。
+/// - [merge] 类别并集 + 墓碑裁剪(自动双向同步用)。
 /// - [overlay] 把 over 的类别盖到 base 上(上传:本地覆盖服务器对应类别,保留其余)。
 /// - [apply] 把 blob 的所选类别写回本地;`append=false` 覆盖,`append=true` 追加
 ///   (收藏/历史并集、源开关并集,设置/源仓保持本地不动)。
 class SyncData {
+  /// blob schema 版本。2 起带墓碑(见 [SyncTombstoneGroup]);读 1 不需要转换,
+  /// 没有墓碑键 = 没有墓碑,行为退回旧的纯并集。
+  static const schemaVersion = 2;
+
+  /// 墓碑保留期。过了就清掉——两端都同步过之后它已经没用了,再留只是负担。
+  static const tombstoneRetention = Duration(days: 30);
+
+  // ---------------------------------------------------------------- 墓碑 ----
+
+  /// 读一份墓碑表(`key -> deletedAt`);不是表 / 值不是数字的条目直接丢掉。
+  static Map<String, int> tombstonesOf(Object? raw) => <String, int>{
+        if (raw is Map)
+          for (final e in raw.entries)
+            if (e.value is num) e.key.toString(): _int(e.value),
+      };
+
+  /// 两份墓碑表取并集,同一个键留**更晚**的删除时间。
+  static Map<String, int> mergeTombstones(
+    Map<String, int> a,
+    Map<String, int> b,
+  ) {
+    final out = Map<String, int>.of(a);
+    b.forEach((key, at) {
+      final prev = out[key];
+      if (prev == null || at > prev) out[key] = at;
+    });
+    return out;
+  }
+
+  /// 丢掉过了保留期的墓碑。
+  static Map<String, int> pruneTombstones(
+    Map<String, int> tombstones, {
+    required int now,
+  }) =>
+      <String, int>{
+        for (final e in tombstones.entries)
+          if (now - e.value <= tombstoneRetention.inMilliseconds)
+            e.key: e.value,
+      };
+
+  /// 用「上次同步时在的键」和「现在还在的键」求差,记下这一轮新产生的删除。
+  ///
+  /// 本地各 store 不保留删除记录,所以墓碑只能这样差分出来:上次推上去时有、
+  /// 现在没了 = 用户删了。反过来,现在又在了(删完又加回来)则撤销墓碑。
+  static Map<String, int> updateTombstones({
+    required Map<String, int> previous,
+    required Set<String> lastKeys,
+    required Set<String> currentKeys,
+    required int now,
+  }) {
+    final out = Map<String, int>.of(previous);
+    for (final key in lastKeys) {
+      if (!currentKeys.contains(key)) out.putIfAbsent(key, () => now);
+    }
+    for (final key in currentKeys) {
+      out.remove(key);
+    }
+    return pruneTombstones(out, now: now);
+  }
+
+  /// blob 里各组当前还在的键。**只报 blob 真的带了那一类的组**——没带的类别
+  /// 不能当成"被删空了",否则只同步收藏的那次会把历史全判成删除。
+  static Map<SyncTombstoneGroup, Set<String>> liveKeys(
+    Map<String, dynamic> blob,
+  ) {
+    final out = <SyncTombstoneGroup, Set<String>>{};
+    for (final group in SyncTombstoneGroup.values) {
+      final section = _map(blob[group.section]);
+      if (!section.containsKey(group.dataKey)) continue;
+      final value = section[group.dataKey];
+      out[group] = switch (group) {
+        SyncTombstoneGroup.favorites => {
+            for (final x in _list(value))
+              if (x is Map) favoriteKeyOf(x),
+          },
+        SyncTombstoneGroup.novelFavorites => {
+            for (final x in _list(value))
+              if (x is Map && (x['key']?.toString() ?? '').isNotEmpty)
+                x['key'].toString(),
+          },
+        SyncTombstoneGroup.history ||
+        SyncTombstoneGroup.novelHistory =>
+          _map(value).keys.toSet(),
+        SyncTombstoneGroup.mangaSources ||
+        SyncTombstoneGroup.animeSources ||
+        SyncTombstoneGroup.novelSources =>
+          _strList(value).toSet(),
+      };
+    }
+    return out;
+  }
+
+  /// 收藏条目的键(和 [_mergeFavorites] 用的同一套)。
+  static String favoriteKeyOf(Map entry) => '${entry['s']}:${entry['m']}';
+
+  /// 墓碑是否压过一条 [at] 时刻的记录(删除不早于它就算删掉)。
+  static bool _buried(Map<String, int> tombstones, String key, int at) {
+    final deletedAt = tombstones[key];
+    return deletedAt != null && deletedAt >= at;
+  }
+
+  /// 某一段里、某个**墓碑键**对应的组。
+  static SyncTombstoneGroup? _tombstoneGroupFor(String section, String key) {
+    for (final group in SyncTombstoneGroup.values) {
+      if (group.section == section && group.tombstoneKey == key) return group;
+    }
+    return null;
+  }
+
+  static SyncTombstoneGroup? _disabledSourcesGroup(String key) =>
+      switch (key) {
+        'disabledSourcesManga' => SyncTombstoneGroup.mangaSources,
+        'disabledSourcesAnime' => SyncTombstoneGroup.animeSources,
+        'disabledSourcesNovel' => SyncTombstoneGroup.novelSources,
+        _ => null,
+      };
+
+  /// 两端某一段的墓碑合并 + 过期清理。
+  static Map<SyncTombstoneGroup, Map<String, int>> _mergedTombstones(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+    String section,
+    int now,
+  ) =>
+      <SyncTombstoneGroup, Map<String, int>>{
+        for (final group in SyncTombstoneGroup.values)
+          if (group.section == section)
+            group: pruneTombstones(
+              mergeTombstones(
+                tombstonesOf(a[group.tombstoneKey]),
+                tombstonesOf(b[group.tombstoneKey]),
+              ),
+              now: now,
+            ),
+      };
+
+  /// 从并集结果里剔掉被墓碑压过的条目([atKey] 是条目自己的时间戳字段)。
+  static List _buryFavorites(
+    List entries,
+    Map<String, int> tombstones, {
+    required String Function(Map entry) keyOf,
+    required String atKey,
+  }) {
+    if (tombstones.isEmpty) return entries;
+    return [
+      for (final entry in entries)
+        if (!(entry is Map &&
+            _buried(tombstones, keyOf(entry), _int(entry[atKey]))))
+          entry,
+    ];
+  }
+
+  static Map<String, dynamic> _buryMap(
+    Map<String, dynamic> entries,
+    Map<String, int> tombstones, {
+    required String atKey,
+  }) {
+    if (tombstones.isEmpty) return entries;
+    return <String, dynamic>{
+      for (final e in entries.entries)
+        if (!_buried(tombstones, e.key,
+            e.value is Map ? _int((e.value as Map)[atKey]) : 0))
+          e.key: e.value,
+    };
+  }
+
+  /// 源开关按 id 并集;某个 id 只有在「还留着它的那一方比墓碑新」时才存活。
+  /// 源 id 上没有自己的时间戳,只能用所在 blob 的 `syncedAt` 当近似。
+  static List<String> _mergeDisabledSources(
+    List<String> a,
+    int aTs,
+    List<String> b,
+    int bTs,
+    Map<String, int> tombstones,
+  ) {
+    final out = <String>{};
+    void add(List<String> ids, int ts) {
+      for (final id in ids) {
+        if (!_buried(tombstones, id, ts)) out.add(id);
+      }
+    }
+
+    add(a, aTs);
+    add(b, bTs);
+    final sorted = out.toList()..sort();
+    return sorted;
+  }
+
   static int _int(Object? v) => (v is num) ? v.toInt() : 0;
   static Map<String, dynamic> _map(Object? v) =>
       (v is Map) ? v.cast<String, dynamic>() : <String, dynamic>{};
@@ -44,7 +264,7 @@ class SyncData {
   static List<String> _strList(Object? v) =>
       (v is List) ? v.map((e) => e.toString()).toList() : <String>[];
 
-  /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图内容与版本标记)。
+  /// library 里属于「设置」类别的键(排除收藏/历史/源开关/背景图相关与版本标记)。
   /// 公开:变化侦测(自动上传的类别签名)也按同一套归类,别再抄一份。
   static bool isSettingsKey(String k) =>
       k != 'v' &&
@@ -52,8 +272,18 @@ class SyncData {
       k != 'history' &&
       k != 'workProgress' && // 作品级共享进度归「进度」类别,不算设置
       k != 'disabledSources' &&
-      k != 'bgImageData' &&
-      k != 'bgImageExt';
+      k != 'bgImage' && // 本机文件路径,换台机器没有意义(只传指纹,见 _bgImageFingerprint)
+      k != 'bgImageData' && // 旧版嵌进来的 base64 图片,现已不再上传
+      k != 'bgImageExt' &&
+      k != 'bgImageHash' &&
+      // 墓碑跟着自己那一类走,不是设置——漏掉的话 apply 会把它当成一条设置
+      // 塞进 LibraryStore。
+      !_libraryTombstoneKeys.contains(k);
+
+  static final Set<String> _libraryTombstoneKeys = {
+    for (final group in SyncTombstoneGroup.values)
+      if (group.section == 'library') group.tombstoneKey,
+  };
 
   // ---- 设置键 → 细分类别 ----
   // 阅读器行为(含每本书的模式覆盖 mangaModes)。
@@ -92,7 +322,6 @@ class SyncData {
     'controlRadius',
     'uiScale',
     'uiFont',
-    'bgImage',
     'bgBlur',
     'bgTintColor',
     'bgTintAlpha',
@@ -120,41 +349,50 @@ class SyncData {
     SyncCategory.appSettings,
   ];
 
-  /// 背景图:设置里只存本地路径,跨设备无意义;上传时把图片内容(base64)也带上,
-  /// 有 3MB 上限(免撑爆 blob;更大就只同步路径,目标机自行处理)。
-  static void _embedBgImage(Map<String, dynamic> outLib, Object? bgPath) {
-    final p = (bgPath is String) ? bgPath.trim() : '';
-    if (p.isEmpty) return;
-    try {
-      final f = File(p);
-      if (!f.existsSync()) return;
-      final len = f.lengthSync();
-      if (len <= 0 || len > 3 * 1024 * 1024) return;
-      outLib['bgImageData'] = base64Encode(f.readAsBytesSync());
-      final dot = p.lastIndexOf('.');
-      outLib['bgImageExt'] = (dot >= 0 && p.length - dot <= 6)
-          ? p.substring(dot + 1).toLowerCase()
-          : 'png';
-    } catch (_) {}
+  /// 背景图**只传指纹**(sha256),不传图片本身。
+  ///
+  /// 旧实现把整张图 base64 塞进 blob(上限 3MB),勾了「界面与外观」的用户每次
+  /// 自动上传都在推几 MB;README 也明说过备份/同步不传二进制。现在只写一个
+  /// 64 字符的哈希:对端据此知道「是不是同一张图」,图片本身留在各自机器上。
+  static void _bgImageFingerprint(Map<String, dynamic> outLib, Object? bgPath) {
+    outLib['bgImageHash'] = _fileHash(bgPath);
   }
 
-  /// 应用背景图:带了内容就落到本机再指过去;没带则清掉本机不存在的悬空路径(免坏图)。
+  /// 文件的 sha256(十六进制);路径为空/文件不在/读不动都返回空串。
+  static String _fileHash(Object? path) {
+    final p = (path is String) ? path.trim() : '';
+    if (p.isEmpty) return '';
+    try {
+      final f = File(p);
+      if (!f.existsSync()) return '';
+      return sha256.convert(f.readAsBytesSync()).toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 应用背景图。**不会**把对端的图片路径或图片内容搬过来:
+  /// - 指纹一致 → 两边就是同一张图,什么都不用做;
+  /// - 指纹不同/对端没图 → 本机的图照旧,只清掉指向已不存在文件的悬空路径。
+  ///
+  /// 仍读一次旧版的 `bgImageData`,让升级期间的混版设备(对端还在传 base64)
+  /// 不至于突然失去这个功能;本机自己永远不再写这个键。
   static Future<void> _applyBgImage(
       Map<String, dynamic> blib, LibraryStore lib) async {
     try {
-      final data = blib['bgImageData'] as String?;
-      if (data != null && data.isNotEmpty) {
+      final legacy = blib['bgImageData'] as String?;
+      if (legacy != null && legacy.isNotEmpty) {
         final ext = (blib['bgImageExt'] as String?)
             ?.replaceAll(RegExp(r'[^a-z0-9]'), '');
         final dir = await getApplicationSupportDirectory();
         final file = File(
             '${dir.path}/synced_bg.${ext == null || ext.isEmpty ? 'png' : ext}');
-        await file.writeAsBytes(base64Decode(data));
+        await file.writeAsBytes(base64Decode(legacy));
         lib.bgImage = file.path;
-      } else {
-        final cur = lib.bgImage.trim();
-        if (cur.isNotEmpty && !File(cur).existsSync()) lib.bgImage = '';
+        return;
       }
+      final cur = lib.bgImage.trim();
+      if (cur.isNotEmpty && !File(cur).existsSync()) lib.bgImage = '';
     } catch (_) {}
   }
 
@@ -194,10 +432,11 @@ class SyncData {
     SourceRepository repo, {
     required Set<SyncCategory> categories,
     Map<String, dynamic>? readerNotes,
+    Map<SyncTombstoneGroup, Map<String, int>>? tombstones,
   }) {
     final full = lib.exportData();
     final fullNovels = novels.exportData();
-    final outLib = <String, dynamic>{'v': 1};
+    final outLib = <String, dynamic>{'v': schemaVersion};
     if (categories.contains(SyncCategory.favorites)) {
       outLib['favorites'] = full['favorites'];
     }
@@ -211,12 +450,11 @@ class SyncData {
       if (cat != null && categories.contains(cat)) outLib[e.key] = e.value;
     }
     if (categories.contains(SyncCategory.uiSettings)) {
-      // 先放墓碑再嵌图:本机没有可嵌的背景图(没设/超 3MB)时,空串会经
-      // overlay/LWW 盖掉云端残留的旧 bgImageData——否则清掉的背景图会在
-      // 别的设备上复活。_applyBgImage 对空串按「无图」处理。
+      // 墓碑:空串会经 overlay/LWW 盖掉云端残留的旧 base64 图,
+      // 否则老版本传上去的几 MB 会一直赖在 blob 里。
       outLib['bgImageData'] = '';
       outLib['bgImageExt'] = '';
-      _embedBgImage(outLib, full['bgImage']); // 背景图内容随「界面与外观」走
+      _bgImageFingerprint(outLib, full['bgImage']); // 只带指纹,不带图
     }
     final allDisabled = _strList(full['disabledSources']);
     if (categories.contains(SyncCategory.mangaSources)) {
@@ -257,8 +495,25 @@ class SyncData {
       outNovels['readerNotes'] = sanitizePortableNovelReaderData(readerNotes);
     }
 
+    // 墓碑跟着它所属那一类走:选了收藏就带收藏的墓碑,没选就不带
+    // (不带 = 对端合并时这一类没有删除信息,退回并集,不会误删)。
+    if (tombstones != null) {
+      for (final group in SyncTombstoneGroup.values) {
+        final marks = tombstones[group];
+        if (marks == null ||
+            marks.isEmpty ||
+            !categories.contains(group.category)) {
+          continue;
+        }
+        final target = group.section == 'novels' ? outNovels : outLib;
+        if (target.containsKey(group.dataKey)) {
+          target[group.tombstoneKey] = marks;
+        }
+      }
+    }
+
     final blob = <String, dynamic>{
-      'v': 1,
+      'v': schemaVersion,
       'syncedAt': DateTime.now().millisecondsSinceEpoch,
       'library': outLib,
       if (outNovels.length > 1) 'novels': outNovels,
@@ -272,9 +527,15 @@ class SyncData {
     return blob;
   }
 
-  /// 合并两个 blob——**按类别取并集**(只有一方有的类别原样保留)。自动双向同步用。
+  /// 合并两个 blob——**按类别取并集,再用墓碑裁掉已删的条目**。自动双向同步用。
+  ///
+  /// [nowMs] 只为测试可控(墓碑过期)。
   static Map<String, dynamic> merge(
-      Map<String, dynamic> local, Map<String, dynamic> remote) {
+    Map<String, dynamic> local,
+    Map<String, dynamic> remote, {
+    int? nowMs,
+  }) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
     final lTs = _int(local['syncedAt']);
     final rTs = _int(remote['syncedAt']);
     final lLib = _map(local['library']);
@@ -282,13 +543,29 @@ class SyncData {
     final lNovels = _map(local['novels']);
     final rNovels = _map(remote['novels']);
 
-    final outLib = <String, dynamic>{'v': 1};
+    final libTombs = _mergedTombstones(lLib, rLib, 'library', now);
+    final outLib = <String, dynamic>{'v': schemaVersion};
     final keys = {...lLib.keys, ...rLib.keys}..remove('v');
     for (final k in keys) {
+      final tombGroup = _tombstoneGroupFor('library', k);
+      if (tombGroup != null) {
+        final marks = libTombs[tombGroup] ?? const <String, int>{};
+        if (marks.isNotEmpty) outLib[tombGroup.tombstoneKey] = marks;
+        continue; // 墓碑本身在这里落盘,数据键下面照常合并
+      }
       if (k == 'favorites') {
-        outLib[k] = _mergeFavorites(_list(lLib[k]), _list(rLib[k]));
+        outLib[k] = _buryFavorites(
+          _mergeFavorites(_list(lLib[k]), _list(rLib[k])),
+          libTombs[SyncTombstoneGroup.favorites] ?? const {},
+          keyOf: favoriteKeyOf,
+          atKey: 'a',
+        );
       } else if (k == 'history') {
-        outLib[k] = _mergeHistory(_map(lLib[k]), _map(rLib[k]));
+        outLib[k] = _buryMap(
+          _mergeHistory(_map(lLib[k]), _map(rLib[k])),
+          libTombs[SyncTombstoneGroup.history] ?? const {},
+          atKey: 'u',
+        );
       } else if (k == 'workProgress') {
         outLib[k] = _mergeWorkProgress(_map(lLib[k]), _map(rLib[k]));
       } else if (k == 'searchHistory') {
@@ -296,6 +573,16 @@ class SyncData {
         // 较新的一方在前,大小写不敏感去重,截断上限(免一端清掉另一端的历史)。
         outLib[k] =
             _mergeSearchHistory(_strList(lLib[k]), lTs, _strList(rLib[k]), rTs);
+      } else if (_disabledSourcesGroup(k) != null) {
+        // 源开关以前是整份 LWW:一端禁用漫画源、另一端启用番剧源,后同步的
+        // 那份把对方整个盖掉。改成按 id 并集 + 墓碑(墓碑 = 被重新启用)。
+        outLib[k] = _mergeDisabledSources(
+          _strList(lLib[k]),
+          lTs,
+          _strList(rLib[k]),
+          rTs,
+          libTombs[_disabledSourcesGroup(k)!] ?? const {},
+        );
       } else {
         outLib[k] = _lww(lLib.containsKey(k), lLib[k], lTs, rLib.containsKey(k),
             rLib[k], rTs);
@@ -303,12 +590,12 @@ class SyncData {
     }
 
     final out = <String, dynamic>{
-      'v': 1,
+      'v': schemaVersion,
       'syncedAt': DateTime.now().millisecondsSinceEpoch,
       'library': outLib,
     };
     if (lNovels.isNotEmpty || rNovels.isNotEmpty) {
-      out['novels'] = _mergeNovels(lNovels, rNovels, lTs, rTs);
+      out['novels'] = _mergeNovels(lNovels, rNovels, lTs, rTs, now);
     }
     final sr = _lww(local.containsKey('sourceRepo'), local['sourceRepo'], lTs,
         remote.containsKey('sourceRepo'), remote['sourceRepo'], rTs);
@@ -318,14 +605,19 @@ class SyncData {
 
   /// 把 [over] 出现的类别覆盖到 [base] 上,base 其余类别原样保留(上传语义:
   /// 本地覆盖服务器对应类别,不动服务器上别的类别)。
+  ///
+  /// 墓碑是例外:它是**累积**的记录,不能被覆盖掉——别的设备记下的删除还没被
+  /// 那台设备本身同步下来,盖掉就等于那次删除白删了。两边取并集(留更晚的)。
   static Map<String, dynamic> overlay(
       Map<String, dynamic> base, Map<String, dynamic> over) {
-    final outLib = Map<String, dynamic>.from(_map(base['library']))..['v'] = 1;
+    final baseLib = _map(base['library']);
+    final outLib = Map<String, dynamic>.from(baseLib)..['v'] = schemaVersion;
     _map(over['library']).forEach((k, v) {
       if (k != 'v') outLib[k] = v;
     });
+    _overlayTombstones(baseLib, _map(over['library']), outLib, 'library');
     final out = <String, dynamic>{
-      'v': 1,
+      'v': schemaVersion,
       'syncedAt': DateTime.now().millisecondsSinceEpoch,
       'library': outLib,
     };
@@ -337,6 +629,7 @@ class SyncData {
         ...baseNovels,
         ...overNovels,
       };
+      _overlayTombstones(baseNovels, overNovels, novels, 'novels');
       if (novels.containsKey('readerNotes')) {
         novels['readerNotes'] =
             sanitizePortableNovelReaderData(novels['readerNotes']);
@@ -348,6 +641,27 @@ class SyncData {
         : base['sourceRepo'];
     if (sr != null) out['sourceRepo'] = _portableSourceRepo(sr);
     return out;
+  }
+
+  /// [overlay] 里把墓碑并起来(而不是让 over 整个盖掉 base 的那份)。
+  static void _overlayTombstones(
+    Map<String, dynamic> base,
+    Map<String, dynamic> over,
+    Map<String, dynamic> out,
+    String section,
+  ) {
+    for (final group in SyncTombstoneGroup.values) {
+      if (group.section != section) continue;
+      final marks = mergeTombstones(
+        tombstonesOf(base[group.tombstoneKey]),
+        tombstonesOf(over[group.tombstoneKey]),
+      );
+      if (marks.isEmpty) {
+        out.remove(group.tombstoneKey);
+      } else {
+        out[group.tombstoneKey] = marks;
+      }
+    }
   }
 
   static Map<String, dynamic> _portableSourceRepo(Object? value) {
@@ -518,18 +832,31 @@ class SyncData {
     Map<String, dynamic> remote,
     int localTimestamp,
     int remoteTimestamp,
+    int now,
   ) {
+    final tombs = _mergedTombstones(local, remote, 'novels', now);
+    final favTombs = tombs[SyncTombstoneGroup.novelFavorites] ?? const {};
+    final histTombs = tombs[SyncTombstoneGroup.novelHistory] ?? const {};
     final result = <String, dynamic>{'schema': 1};
     final keys = {...local.keys, ...remote.keys}..remove('schema');
     for (final key in keys) {
+      if (_tombstoneGroupFor('novels', key) != null) {
+        final marks = tombs[_tombstoneGroupFor('novels', key)!]!;
+        if (marks.isNotEmpty) result[key] = marks;
+        continue;
+      }
       result[key] = switch (key) {
-        'favorites' || 'historyEntries' => _mergeNovelEntries(
-            _list(local[key]),
-            _list(remote[key]),
+        // historyEntries 是 history 的镜像,跟着 history 的墓碑一起走。
+        'favorites' || 'historyEntries' => _buryFavorites(
+            _mergeNovelEntries(_list(local[key]), _list(remote[key])),
+            key == 'favorites' ? favTombs : histTombs,
+            keyOf: (entry) => entry['key']?.toString() ?? '',
+            atKey: 'addedAt',
           ),
-        'history' => _mergeNovelHistory(
-            _map(local[key]),
-            _map(remote[key]),
+        'history' => _buryMap(
+            _mergeNovelHistory(_map(local[key]), _map(remote[key])),
+            histTombs,
+            atKey: 'updatedAt',
           ),
         'readerNotes' => mergePortableNovelReaderData(
             local[key],

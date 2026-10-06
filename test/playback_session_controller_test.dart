@@ -131,11 +131,18 @@ const _messages = PlaybackMessages(
   bufferTimeout: 'buffer timeout',
   recovering: _recovering,
   recoverFailed: _recoverFailed,
+  configureFailed: _configureFailed,
+  gatewayFallbackFailed: _gatewayFallbackFailed,
 );
 
 String _recovering(int attempt, int total) => 'recovering $attempt/$total';
 
 String _recoverFailed(String detail) => 'recover failed: $detail';
+
+String _configureFailed(String key, String detail) =>
+    'cannot configure $key: $detail';
+
+String _gatewayFallbackFailed(String detail) => 'gateway fallback: $detail';
 
 void main() {
   test('PlaybackState copyWith can explicitly clear a pending seek', () {
@@ -467,6 +474,41 @@ void main() {
     expect(adapter.opened, [_track480]);
 
     await controller.dispose();
+  });
+
+  // 后台里系统把解码停掉,缓冲当然不往前走 —— 那不是卡顿。原来切后台完全绕过
+  // 会话层,武装着的定时器一到点就把一条好端端的会话拆了重建。
+  test('a backgrounded session does not tear itself down while buffering', () {
+    fakeAsync((async) {
+      final adapter = _FakePlayerAdapter();
+      final controller = PlaybackSessionController(
+        messages: _messages,
+        player: adapter,
+        tracks: _FakeTrackProvider(),
+        delay: (_) async {},
+      );
+      controller.start(const [_track480], _track480);
+      async.flushMicrotasks();
+      adapter.playingController.add(true);
+      adapter.positionController.add(const Duration(minutes: 3));
+
+      adapter.bufferingController.add(true);
+      controller.notifyBackgrounded(true);
+      async.elapse(const Duration(minutes: 1));
+      async.flushMicrotasks();
+
+      expect(adapter.decoderRebuilds, isEmpty);
+      expect(controller.state.phase, PlaybackPhase.buffering);
+
+      // 回到前台闸重新上上:真死流照样救得回来。
+      controller.notifyBackgrounded(false);
+      async.elapse(const Duration(seconds: 8));
+      async.flushMicrotasks();
+
+      expect(adapter.decoderRebuilds, [const Duration(minutes: 3)]);
+      controller.dispose();
+      async.flushMicrotasks();
+    });
   });
 
   test('an eight second stall reopens and resumes the saved position', () {

@@ -9,6 +9,7 @@ import '../../core/l10n/app_strings.dart';
 import '../../core/novel/import/epub_novel_importer.dart';
 import '../../core/novel/import/txt_novel_importer.dart';
 import '../../core/novel/models.dart';
+import 'novel_library_view.dart' show localNovelErrorText;
 
 typedef NovelFilePicker = Future<File?> Function();
 typedef TxtPreviewLoader = Future<TxtNovelImportPreview> Function(
@@ -157,7 +158,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
       if (!mounted || generation != _generation) return;
       setState(() {
         _preview = preview;
-        _title.text = preview.title;
+        // 导入器不写死占位文案(它会进索引),空书名在这里按语言回填。
+        _title.text =
+            preview.title.isEmpty ? context.l10n.novel_unnamed : preview.title;
         _author.text = preview.authors.join('、');
         _loading = false;
       });
@@ -190,8 +193,8 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           authors: authors,
           chapters: txt.chapters,
           encoding: txt.encoding,
-          normalizedText: txt.normalizedText,
-          parsed: txt.parsed,
+          normalizedTextPath: txt.normalizedTextPath,
+          outline: txt.outline,
         );
         directory = await widget.services.importTxt(edited);
         origin = NovelOrigin.localTxt;
@@ -260,7 +263,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           const Icon(Icons.error_outline_rounded, size: 40),
           const SizedBox(height: 12),
           Text(
-            context.l10n.novel_parseFailed('$_error'),
+            context.l10n.novel_parseFailed(
+              localNovelErrorText(context, _error!),
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -332,6 +337,8 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
               runSpacing: 8,
               children: [
                 _encodingChip('UTF-8', 'utf-8', txt.encoding),
+                _encodingChip('UTF-16 LE', 'utf-16le', txt.encoding),
+                _encodingChip('UTF-16 BE', 'utf-16be', txt.encoding),
                 _encodingChip('GB18030 / GBK', 'gb18030', txt.encoding),
                 _encodingChip('Big5', 'big5', txt.encoding),
               ],
@@ -340,7 +347,9 @@ class _NovelImportSheetState extends State<_NovelImportSheet> {
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(
-              context.l10n.novel_operationFailed('$_error'),
+              context.l10n.novel_operationFailed(
+                localNovelErrorText(context, _error!),
+              ),
               style: TextStyle(color: context.palette.statusFail),
             ),
           ],

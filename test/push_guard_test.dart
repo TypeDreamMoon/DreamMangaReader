@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dream_manga_reader/features/common/transitions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,5 +81,22 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(_detailCount(tester), 1);
+  });
+
+  // 保护只有走 pushPage/pushRoute 才生效。发现页和书架的封面入口曾经自己
+  // `Navigator.of(context).push(appRoute(...))`,于是对着封面双击照样叠出两层详情页
+  // —— 而这两页恰恰是最容易被双击的地方。钉住它们不再绕过统一入口。
+  test('封面入口不绕过 pushPage', () {
+    for (final path in const [
+      'lib/features/discovery/discovery_page.dart',
+      'lib/features/library/library_page.dart',
+    ]) {
+      final source = File(path).readAsStringSync();
+      expect(
+        source.contains('.push(appRoute('),
+        isFalse,
+        reason: '$path 直接推 appRoute,绕过了连点保护;改用 pushPage/pushRoute',
+      );
+    }
   });
 }

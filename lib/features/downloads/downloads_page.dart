@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../app/anime_download_store.dart';
 import '../../app/download_store.dart';
 import '../../app/download_coordinator_scope.dart';
 import '../../app/theme/app_colors.dart';
+import '../../core/downloads/content_download_task.dart';
 import '../../core/downloads/download_coordinator.dart';
+import '../../core/downloads/download_failure.dart';
 import '../../core/downloads/download_task.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/source/models.dart';
@@ -104,16 +107,28 @@ class _ActiveDownloadsPage extends StatelessWidget {
   }
 }
 
-class _ActiveDownloadTile extends StatelessWidget {
+class _ActiveDownloadTile extends StatefulWidget {
   const _ActiveDownloadTile({required this.task, required this.coordinator});
 
   final DownloadTask task;
   final DownloadCoordinator coordinator;
 
   @override
+  State<_ActiveDownloadTile> createState() => _ActiveDownloadTileState();
+}
+
+class _ActiveDownloadTileState extends State<_ActiveDownloadTile> {
+  bool _detailExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final task = widget.task;
+    final coordinator = widget.coordinator;
     final p = context.palette;
     final determinate = task.totalBytes > 0;
+    final detail = task.state == DownloadTaskState.failed
+        ? (task.failure?.detail.trim() ?? '')
+        : '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: AppCard(
@@ -153,7 +168,7 @@ class _ActiveDownloadTile extends StatelessWidget {
                 _TaskAction(task: task, coordinator: coordinator),
                 IconButton(
                   tooltip: context.l10n.cancel,
-                  onPressed: () => coordinator.remove(task.id),
+                  onPressed: () => _cancel(context),
                   icon: Icon(Icons.close_rounded, color: p.textMuted, size: 19),
                 ),
               ],
@@ -165,20 +180,103 @@ class _ActiveDownloadTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(2),
             ),
             const SizedBox(height: 6),
-            Text(
-              _statusText(context, task),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: task.state == DownloadTaskState.failed
-                    ? p.statusFail
-                    : p.textMuted,
-                fontSize: 11,
-              ),
+            _StatusLine(
+              text: _statusText(context, task),
+              failed: task.state == DownloadTaskState.failed,
+              // 真实错误只在用户主动展开时露出:平时一行状态,排查时能看全。
+              detail: _detailExpanded ? detail : null,
+              onToggleDetail: detail.isEmpty
+                  ? null
+                  : () => setState(() => _detailExpanded = !_detailExpanded),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 撤掉一条进行中的任务。
+  ///
+  /// 协调器的 `remove()` 只删任务记录,不回调执行器 —— 番剧任务半路取消时,已经落盘
+  /// 的 `segment-*.bin` 和包目录会一直留着。番剧走 store 的 delete,让它顺手把目录清掉。
+  Future<void> _cancel(BuildContext context) async {
+    if (widget.task.kind == DownloadContentKind.anime) {
+      final store = AnimeDownloadScope.maybeRead(context);
+      if (store != null) {
+        final request = ContentDownloadRequest.fromTask(widget.task);
+        await store.delete(
+          request.sourceId,
+          request.contentId,
+          request.chapterId,
+          coordinator: widget.coordinator,
+        );
+        return;
+      }
+    }
+    await widget.coordinator.remove(widget.task.id);
+  }
+}
+
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({
+    required this.text,
+    required this.failed,
+    required this.detail,
+    required this.onToggleDetail,
+  });
+
+  final String text;
+  final bool failed;
+  final String? detail;
+  final VoidCallback? onToggleDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    final expanded = detail != null;
+    final label = Text(
+      text,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: failed ? p.statusFail : p.textMuted,
+        fontSize: 11,
+      ),
+    );
+    if (onToggleDetail == null) {
+      return Align(alignment: Alignment.centerLeft, child: label);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: onToggleDetail,
+          child: Row(
+            children: [
+              Flexible(child: label),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: context.l10n.download_failureDetail,
+                child: Icon(
+                  expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 16,
+                  color: p.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: SelectableText(
+              detail!,
+              style: TextStyle(color: p.textMuted, fontSize: 10.5),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -510,9 +608,9 @@ IconData _kindIcon(DownloadContentKind kind) => switch (kind) {
 
 String _statusText(BuildContext context, DownloadTask task) {
   return switch (task.state) {
-    DownloadTaskState.paused => context.l10n.download_pause,
-    DownloadTaskState.failed => task.failure?.message ?? context.l10n.retry,
-    DownloadTaskState.cancelled => context.l10n.retry,
+    DownloadTaskState.paused => _pauseText(context, task.pauseReason),
+    DownloadTaskState.failed => _failureText(context, task.failure?.code),
+    DownloadTaskState.cancelled => context.l10n.download_failureCancelled,
     DownloadTaskState.resolving ||
     DownloadTaskState.queued ||
     DownloadTaskState.running ||
@@ -523,5 +621,43 @@ String _statusText(BuildContext context, DownloadTask task) {
             )
           : context.l10n.download_active,
     DownloadTaskState.completed => context.l10n.download_completed,
+  };
+}
+
+/// 失败文案按错误码取 l10n —— core 层只记码,四种语言各自成话。
+String _failureText(BuildContext context, DownloadFailureCode? code) {
+  final l10n = context.l10n;
+  return switch (code) {
+    DownloadFailureCode.network => l10n.download_failureNetwork,
+    DownloadFailureCode.authenticationRequired => l10n.download_failureAuth,
+    DownloadFailureCode.sourceRefreshRequired =>
+      l10n.download_failureSourceRefresh,
+    DownloadFailureCode.resourceMissing => l10n.download_failureMissing,
+    DownloadFailureCode.insufficientStorage => l10n.download_failureStorageFull,
+    DownloadFailureCode.storageUnavailable =>
+      l10n.download_failureStorageUnavailable,
+    DownloadFailureCode.unsafePath => l10n.download_failureUnsafePath,
+    DownloadFailureCode.corruptResource => l10n.download_failureCorrupt,
+    DownloadFailureCode.unsupportedDrm => l10n.download_failureDrm,
+    DownloadFailureCode.cancelled => l10n.download_failureCancelled,
+    DownloadFailureCode.unknown || null => l10n.download_failureUnknown,
+  };
+}
+
+/// 暂停原因本来就存在任务上,一律显示「暂停」等于把它扔了 ——
+/// 用户看不出是自己点的、还是在等 Wi-Fi / 等电 / 等空间。
+String _pauseText(BuildContext context, DownloadPauseReason? reason) {
+  final l10n = context.l10n;
+  return switch (reason) {
+    DownloadPauseReason.wifi => l10n.download_pausedWifi,
+    DownloadPauseReason.roaming => l10n.download_pausedRoaming,
+    DownloadPauseReason.battery => l10n.download_pausedBattery,
+    DownloadPauseReason.storage => l10n.download_pausedStorage,
+    DownloadPauseReason.auth => l10n.download_pausedAuth,
+    DownloadPauseReason.sourceRefresh => l10n.download_pausedSourceRefresh,
+    DownloadPauseReason.system => l10n.download_pausedSystem,
+    DownloadPauseReason.externalStorage =>
+      l10n.download_pausedExternalStorage,
+    DownloadPauseReason.user || null => l10n.download_pausedUser,
   };
 }

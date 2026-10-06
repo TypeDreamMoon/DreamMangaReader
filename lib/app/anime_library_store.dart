@@ -105,12 +105,25 @@ class AnimeHistoryEntry {
 class AnimeLibraryStore extends ChangeNotifier {
   AnimeLibraryStore({
     this.persistDelay = const Duration(milliseconds: 600),
+    this.progressPersistDelay = const Duration(seconds: 5),
   });
 
   static const _favoritesKey = 'anime.library.v1';
   static const _historyKey = 'anime.history.v1';
 
   final Duration persistDelay;
+
+  /// 「同一集里位置往前走」的落盘间隔。
+  ///
+  /// 播放中每秒都会来一次进度。按 [persistDelay] 那套走 = 每秒把整张收藏表和
+  /// 整张历史表重新序列化一遍再写进 SharedPreferences,还顺带把所有依赖方重建
+  /// 一遍。位置是「丢掉最后几秒也无所谓」的数据,所以节流;真正要紧的时刻
+  /// (暂停 / 切集 / 退出播放页 / 进后台)由 [flushPending] 立刻落盘。
+  final Duration progressPersistDelay;
+
+  /// 落盘次数。单测拿它盯住节流有没有回潮。
+  @visibleForTesting
+  int persistCount = 0;
   final Map<String, AnimeFavoriteEntry> _favorites = {};
   final Map<String, AnimeHistoryEntry> _history = {};
   final Set<Future<void>> _pendingWrites = {};
@@ -118,6 +131,9 @@ class AnimeLibraryStore extends ChangeNotifier {
   SharedPreferences? _prefs;
   Timer? _persistTimer;
   bool _dirty = false;
+
+  /// 攒着的、还没通知出去的进度变化。见 [_progressChanged]。
+  bool _progressNotifyPending = false;
   bool _disposed = false;
 
   List<AnimeFavoriteEntry> get favorites {
@@ -243,6 +259,9 @@ class AnimeLibraryStore extends ChangeNotifier {
         current.durationSeconds == durationSeconds) {
       return;
     }
+    // 还在同一集里往前走 = 只有位置变了,走节流那条路;换集 / 新开一部是
+    // 结构性变化,该立刻通知也该尽快落盘。
+    final positionOnly = current != null && current.episodeId == episodeId;
     _history[key] = AnimeHistoryEntry(
       sourceId: sourceId,
       animeId: animeId,
@@ -256,7 +275,11 @@ class AnimeLibraryStore extends ChangeNotifier {
       durationSeconds: durationSeconds,
       updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
     );
-    _changed();
+    if (positionOnly) {
+      _progressChanged();
+    } else {
+      _changed();
+    }
   }
 
   void removeHistory(String sourceId, String animeId) {
@@ -303,6 +326,8 @@ class AnimeLibraryStore extends ChangeNotifier {
     _changed();
   }
 
+  /// 立刻落盘。暂停 / 切集 / 退出播放页 / 进后台都走这里 —— 节流丢掉的那几秒
+  /// 就是在这些时刻补回来的,顺带把攒着的进度变化通知出去。
   Future<void> flushPending() async {
     _persistTimer?.cancel();
     _persistTimer = null;
@@ -310,10 +335,15 @@ class AnimeLibraryStore extends ChangeNotifier {
     if (_pendingWrites.isNotEmpty) {
       await Future.wait(_pendingWrites.toList(growable: false));
     }
+    if (_progressNotifyPending && !_disposed) {
+      _progressNotifyPending = false;
+      notifyListeners();
+    }
   }
 
   void _changed() {
     _dirty = true;
+    _progressNotifyPending = false;
     _persistTimer?.cancel();
     _persistTimer = Timer(persistDelay, () {
       _persistTimer = null;
@@ -322,9 +352,27 @@ class AnimeLibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 同一集里位置往前走。
+  ///
+  /// 内存立刻更新,写盘按 [progressPersistDelay] 节流,**不** notifyListeners:
+  /// 每秒一次的位置更新会把挂在 scope 上的整棵树重建一遍,而没有任何一个界面
+  /// 需要秒级的进度。攒下的这次变化留到 [flushPending] 时统一通知一次,
+  /// 退出播放页后「继续观看」照样是新的。
+  void _progressChanged() {
+    _dirty = true;
+    _progressNotifyPending = true;
+    // 刻意**不**重置已经排上的定时器:每来一次进度就重排一次,等于「只要还在
+    // 播就永远不写」——原来那条 600ms 的债正是反过来欠的。
+    _persistTimer ??= Timer(progressPersistDelay, () {
+      _persistTimer = null;
+      unawaited(_persistNow());
+    });
+  }
+
   Future<void> _persistNow() async {
     final prefs = _prefs;
     if (prefs == null) return;
+    persistCount++;
     _dirty = false;
     late final Future<void> write;
     write = Future.wait([

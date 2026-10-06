@@ -7,6 +7,7 @@ import '../../../core/source/models.dart';
 import 'hls_cache_gateway.dart';
 import 'hls_session.dart';
 import 'mpv_network_options.dart';
+import 'playback_messages.dart';
 import 'player_adapter.dart';
 import 'subtitle_option.dart';
 
@@ -35,9 +36,12 @@ abstract interface class MediaKitBackend {
 }
 
 class NativeMediaKitBackend implements MediaKitBackend {
-  NativeMediaKitBackend(this.player);
+  NativeMediaKitBackend(this.player, {required this.messages});
 
   final Player player;
+
+  /// 可写:语言切换后播放页会重新灌一份。
+  PlaybackMessages messages;
 
   @override
   Stream<bool> get playing => player.stream.playing;
@@ -85,7 +89,7 @@ class NativeMediaKitBackend implements MediaKitBackend {
           waitForInitialization: false,
         );
       } catch (error) {
-        throw StateError('无法配置播放器网络参数 $key: $error');
+        throw StateError(messages.configureFailed(key, '$error'));
       }
     }
 
@@ -154,6 +158,7 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     required MediaKitBackend backend,
     required HlsSessionGateway gateway,
     required this.authScope,
+    required this.messages,
   })  : _backend = backend,
         _gateway = gateway {
     _subscriptions.add(_backend.errors.listen(_onBackendError));
@@ -170,6 +175,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   final MediaKitBackend _backend;
   final HlsSessionGateway _gateway;
   final String authScope;
+
+  /// 可写:语言切换后播放页会重新灌一份。
+  PlaybackMessages messages;
   final _errorController = StreamController<Object>.broadcast(sync: true);
   final List<StreamSubscription<Object?>> _subscriptions = [];
   HlsSession? _session;
@@ -202,8 +210,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
   @override
   Future<void> open(VideoTrack track, {Duration startAt = Duration.zero}) async {
     if (_originalTrack != null) await _resetAudioAttachment();
-    await _session?.clearCache();
-    await _closeSession();
+    // 换一集/换一部就把上一集的分片丢掉;离开播放页、关掉应用都走 dispose,
+    // 那条路留着缓存 —— 回来接着看不用重下。
+    await _closeSession(discardCache: true);
     _position = startAt;
     // 换集就把字幕选择清掉:上一集的轨道号在新的一集里指向别的东西。
     _subtitle = null;
@@ -286,7 +295,9 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     } catch (error) {
       if (!_disposed) {
         _errorController.add(
-          StateError('HLS 网关回退失败: $originalError; $error'),
+          StateError(
+            messages.gatewayFallbackFailed('$originalError; $error'),
+          ),
         );
       }
     }
@@ -318,7 +329,15 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     });
   }
 
-  void _onBuffer(Duration buffer) => _session?.reportBuffer(buffer);
+  /// media_kit 报的 buffer 是缓冲末端的**绝对位置**,而网关要的是「缓冲还领先播放头
+  /// 多少」。直接把绝对位置递过去,开播十五秒后这个数就永远够大,预取刹车再也踩不下去 ——
+  /// 上行被整批预读占满,正在播的那一片一直排在后面,表现就是分片频繁超时。
+  void _onBuffer(Duration buffer) {
+    final session = _session;
+    if (session == null) return;
+    final lead = buffer - _position;
+    session.reportBuffer(lead.isNegative ? Duration.zero : lead);
+  }
 
   void _onPosition(Duration position) {
     if (_position - position > _timelineResetTolerance) return;
@@ -355,10 +374,10 @@ class MediaKitPlayerAdapter implements PlayerAdapter {
     return _backend.setSubtitle(option);
   }
 
-  Future<void> _closeSession() async {
+  Future<void> _closeSession({bool discardCache = false}) async {
     final session = _session;
     _session = null;
-    await session?.close();
+    await session?.close(discardCache: discardCache);
   }
 
   @override

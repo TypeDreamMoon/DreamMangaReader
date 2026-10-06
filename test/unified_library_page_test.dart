@@ -3,8 +3,10 @@ import 'package:dream_manga_reader/app/library_store.dart';
 import 'package:dream_manga_reader/app/novel_library_store.dart';
 import 'package:dream_manga_reader/app/source_controller.dart';
 import 'package:dream_manga_reader/app/theme/app_theme.dart';
+import 'package:dream_manga_reader/core/library/update_tracker.dart';
 import 'package:dream_manga_reader/core/novel/models.dart';
 import 'package:dream_manga_reader/features/library/library_page.dart';
+import 'package:dream_manga_reader/features/library/shelf_item.dart';
 import 'package:dream_manga_reader/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,6 +81,107 @@ void main() {
     expect(find.text('历史漫画'), findsNothing);
     expect(find.text('历史小说'), findsNothing);
     expect(find.text('历史番剧'), findsNothing);
+  });
+
+  testWidgets('搜索框每敲一个字不重算书架投影', (tester) async {
+    final fixture = await _LibraryFixture.create();
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1200, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(const LibraryPage()));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byIcon(Icons.search_rounded));
+    await tester.pump();
+
+    ShelfProjector.debugBuildCount = 0;
+    for (final q in ['共', '共同', '共同漫']) {
+      await tester.enterText(find.byType(TextField), q);
+      await tester.pump();
+    }
+
+    // 跨源去重不便宜,收藏没变就不该为了一个字重跑一遍。
+    expect(ShelfProjector.debugBuildCount, 0);
+    expect(find.text('共同漫画'), findsWidgets);
+  });
+
+  testWidgets('收藏变化会让缓存失效', (tester) async {
+    final fixture = await _LibraryFixture.create();
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1200, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(const LibraryPage()));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    fixture.manga.toggleFavorite(FavoriteEntry(
+      sourceId: 'manga-source',
+      mangaId: 'manga-new',
+      title: '新来的漫画',
+      addedAt: 999,
+    ));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('新来的漫画'), findsWidgets);
+    expect(find.text('收藏 · 4'), findsOneWidget);
+  });
+
+
+  // 「全部标为已看」四种语言都译好了,却一直没有入口 —— 攒了一屏角标只能一本本
+  // 点开详情页消掉。这两条钉住入口本身,以及「没有未读时不该能点」。
+  group('全部标为已看', () {
+    tearDown(() => LibraryUpdateTracker.instance.debugSeed(const {}));
+
+    testWidgets('menu item clears every pending badge', (tester) async {
+      final fixture = await _LibraryFixture.create();
+      addTearDown(fixture.dispose);
+      await tester.binding.setSurfaceSize(const Size(1200, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      LibraryUpdateTracker.instance.debugSeed(const {
+        'manga:manga-source:manga-favorite':
+            UpdateMark(seen: 1, latest: 4, checkedAt: 1),
+        'anime:anime-source:anime-favorite':
+            UpdateMark(seen: 2, latest: 3, checkedAt: 1),
+      });
+      expect(LibraryUpdateTracker.instance.pendingWorks, 2);
+
+      await tester.pumpWidget(fixture.host(const LibraryPage()));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(const Key('shelf-menu')));
+      await tester.pumpAndSettle();
+      final item = tester.widget<PopupMenuItem<Object?>>(
+        find.byKey(const Key('shelf-mark-all-seen')),
+      );
+      expect(item.enabled, isTrue);
+
+      await tester.tap(find.byKey(const Key('shelf-mark-all-seen')));
+      await tester.pumpAndSettle();
+
+      expect(LibraryUpdateTracker.instance.pendingWorks, 0);
+      expect(find.text('追更角标已清空'), findsOneWidget);
+    });
+
+    testWidgets('menu item stays disabled with nothing unread', (tester) async {
+      final fixture = await _LibraryFixture.create();
+      addTearDown(fixture.dispose);
+      await tester.binding.setSurfaceSize(const Size(1200, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      LibraryUpdateTracker.instance.debugSeed(const {
+        'manga:manga-source:manga-favorite':
+            UpdateMark(seen: 4, latest: 4, checkedAt: 1),
+      });
+
+      await tester.pumpWidget(fixture.host(const LibraryPage()));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.tap(find.byKey(const Key('shelf-menu')));
+      await tester.pumpAndSettle();
+      final item = tester.widget<PopupMenuItem<Object?>>(
+        find.byKey(const Key('shelf-mark-all-seen')),
+      );
+      expect(item.enabled, isFalse);
+    });
   });
 }
 

@@ -7,6 +7,24 @@ import 'package:flutter_test/flutter_test.dart';
 const _headers = {'Authorization': 'Bearer fixture-token'};
 
 void main() {
+  // 播放页自带的取清单通道背后是一条 HttpClient 连接池。原来它跟着播放页一起
+  // 被丢掉却从没关过 —— 看一晚上番就攒下几十条闲着的连接。
+  test('the playlist client closes its own connection pool', () async {
+    final client = DioPlaylistClient();
+    expect(client.isClosed, isFalse);
+
+    client.close();
+    expect(client.isClosed, isTrue);
+    // 关过之后再取就该炸:证明底下那条池子真的关了,不是只翻了个标志位。
+    await expectLater(
+      client.fetch(Uri.parse('https://media.example.test/master.m3u8'), const {}),
+      throwsA(anything),
+    );
+
+    client.close(); // 幂等,dispose 跑两遍也不该出事
+    expect(client.isClosed, isTrue);
+  });
+
   test('resolves master variants with declared metadata and headers', () async {
     final resolver = TrackResolver(
       fetchPlaylist: (uri, headers) async {

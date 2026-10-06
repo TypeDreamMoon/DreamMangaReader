@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -41,6 +40,28 @@ import 'playback/track_resolver.dart';
 /// 播放诊断开关。开着时播放全程往控制台打 `[AV]` 日志(开播/取流/卡顿/位置/mpv 报错)。
 /// 平时关闭(避免刷屏);排查番剧播放问题时置 true 复现即可。
 const bool kAvDiag = false;
+
+/// 播放页对「把窗口切成无边框全屏」的唯一入口。
+///
+/// 本身只是 [WindowFullscreen] 单例的一层转发。单独抽出来是为了能测:那套是
+/// Win32 调用,单测里既没有窗口也没有 `GetActiveWindow`,真身永远报「没在全屏」,
+/// 「退出播放页要把全屏还回去」这条就无从验证。
+class PlayerWindowFullscreen {
+  const PlayerWindowFullscreen();
+
+  /// 仅 Windows 有实现,别的平台隐藏全屏按钮。
+  bool get supported => WindowFullscreen.supported;
+
+  bool get isOn => WindowFullscreen.instance.isFullscreen;
+
+  void toggle() => WindowFullscreen.instance.toggle();
+
+  void exit() => WindowFullscreen.instance.exit();
+}
+
+/// 测试里换成假的即可。
+@visibleForTesting
+PlayerWindowFullscreen playerWindowFullscreen = const PlayerWindowFullscreen();
 
 class AnimePlaybackSurface extends StatelessWidget {
   const AnimePlaybackSurface({
@@ -220,7 +241,8 @@ class AnimePlayerPage extends StatefulWidget {
   State<AnimePlayerPage> createState() => _AnimePlayerPageState();
 }
 
-class _AnimePlayerPageState extends State<AnimePlayerPage> {
+class _AnimePlayerPageState extends State<AnimePlayerPage>
+    with WidgetsBindingObserver {
   late int _i = widget.index;
   List<VideoTrack> _tracks = const [];
   VideoTrack? _current;
@@ -241,6 +263,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   bool _disposed = false;
   AnimeLibraryStore? _library;
   Duration _lastPosition = Duration.zero;
+
+  /// 会话当前**真正在播**的那一集(下标)。切集期间它落后于 [_i] —— 旧流还没停、
+  /// 新流还没开,这段时间报上来的位置属于旧集,不能算进新集的历史。
+  int? _progressEpisode;
   bool _initialResumePending = true;
   bool _playing = false;
   bool _buffering = false;
@@ -325,8 +351,23 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _enterImmersiveLandscape();
     unawaited(_loadPlaybackPreferences());
+  }
+
+  /// 进后台要做两件事:把攒着的进度落盘(安卓随时可能在后台把进程收走),
+  /// 以及告诉会话层「接下来缓冲不动是正常的」——否则卡顿检测会把一条好端端的
+  /// 会话拆了重建。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final backgrounded = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+    _session?.notifyBackgrounded(backgrounded);
+    if (!backgrounded) return;
+    final library = _library;
+    if (library != null) unawaited(library.flushPending());
   }
 
   Future<void> _loadPlaybackPreferences() async {
@@ -365,9 +406,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       bufferTimeout: l10n.player_bufferTimeout,
       recovering: l10n.player_recovering,
       recoverFailed: l10n.player_recoverFailed,
+      configureFailed: l10n.player_configureFailed,
+      gatewayFallbackFailed: l10n.player_gatewayFallbackFailed,
     );
-    // 语言切换会把这里再跑一遍,顺手把已开的会话换成新文案。
+    // 语言切换会把这里再跑一遍,顺手把已开的会话和适配器换成新文案。
     _session?.messages = _messages!;
+    _nativeAdapter?.messages = _messages!;
+    _nativeBackend?.messages = _messages!;
     if (_bootstrapped) return;
     _bootstrapped = true;
     unawaited(_initBrightness());
@@ -387,6 +432,14 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   PlaybackMessages? _messages;
+
+  /// 原生那条链路自己也要出文案(网络参数配失败、网关回退失败),语言切换时
+  /// 和会话一起换掉。注入依赖的测试路径下这两个都是 null。
+  MediaKitPlayerAdapter? _nativeAdapter;
+  NativeMediaKitBackend? _nativeBackend;
+
+  /// 取 HLS 清单用的那条自带通道。它自己拿着一条连接池,退出播放页要关掉。
+  DioPlaylistClient? _playlist;
   bool _bootstrapped = false;
 
   /// 进播放页即横屏 + 沉浸式全屏(仅移动端)。桌面窗口不动方向。
@@ -408,11 +461,16 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _loadGeneration++;
     _controlsTimer?.cancel();
     _adjustTimer?.cancel();
     _focus.dispose();
     _exitImmersiveLandscape();
+    // 桌面全屏动的是**操作系统窗口**的样式和位置,是全局状态。播放页是唯一
+    // 会开它的地方,离开就得还回去 —— 否则整个 app 卡在一个没有标题栏、
+    // 也没有任何退出入口的无边框窗口里。
+    if (playerWindowFullscreen.isOn) playerWindowFullscreen.exit();
     // 亮度是「应用级」的,退出播放页要还回去,否则整个 app 都留在这个亮度上。
     if (_brightness != null) {
       unawaited(ScreenBrightnessPlatform.instance
@@ -432,6 +490,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       unawaited(_nativePlayer?.dispose());
     }
     _source?.dispose();
+    _playlist?.close();
     unawaited(_library?.flushPending());
     super.dispose();
   }
@@ -452,43 +511,46 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       final cache = HlsCacheController.instance;
       await cache.initialize();
       if (_disposed) return;
-      final dio = Dio();
+      // 自带的取清单通道:开在这儿,dispose 时跟着关掉。
+      final playlist = DioPlaylistClient();
+      _playlist = playlist;
       Future<List<VideoTrack>> loadTracks(String episodeId) async {
         final source = _source ??= buildSource(widget.meta);
         return source.getVideo(widget.animeId, episodeId);
       }
 
       VideoTrack? localTrackForEpisode(String episodeId) {
-        final manifest = AnimeDownloadScope.maybeRead(context)?.localManifest(
+        final record = AnimeDownloadScope.maybeRead(context)?.recordFor(
           widget.meta.id,
           widget.animeId,
           episodeId,
         );
-        if (manifest == null) return null;
+        if (record == null) return null;
+        // 直链包(DASH)的音轨是单独一个文件,和在线播放一样交给播放器合流。
+        final audio = record.audioPath;
         return VideoTrack(
-          url: Uri.file(manifest, windows: Platform.isWindows).toString(),
+          url: Uri.file(record.mediaPath, windows: Platform.isWindows)
+              .toString(),
+          audioUrl: audio == null
+              ? null
+              : Uri.file(audio, windows: Platform.isWindows).toString(),
           quality: context.l10n.anime_offline,
         );
       }
 
       final resolver = TrackResolver(
-        fetchPlaylist: (uri, headers) async {
-          final response = await dio.get<String>(
-            uri.toString(),
-            options: Options(
-              headers: headers,
-              responseType: ResponseType.plain,
-            ),
-          );
-          return response.data ?? '';
-        },
+        fetchPlaylist: playlist.fetch,
         refreshTracks: () => loadTracks(_ep.id),
       );
+      final backend = NativeMediaKitBackend(player, messages: _messages!);
       final adapter = MediaKitPlayerAdapter(
-        backend: NativeMediaKitBackend(player),
+        backend: backend,
         gateway: cache.gateway,
         authScope: 'source:${widget.meta.id}',
+        messages: _messages!,
       );
+      _nativeBackend = backend;
+      _nativeAdapter = adapter;
       _configurePlayback(
         adapter: adapter,
         tracks: resolver,
@@ -578,10 +640,13 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
         return;
       }
       _autoAdvanced = true;
-      if (_loopMode == _LoopMode.single) {
+      final last = _i >= widget.episodes.length - 1;
+      // 列表循环走到末集就回第一集。只有一集时「回第一集」= 留在原地,_goTo 会
+      // 因为同集直接返回 —— 那就重开这一集,否则选了循环却停住了。
+      if (_loopMode == _LoopMode.single || (last && _i == 0)) {
         unawaited(_load());
       } else {
-        _go(_i >= widget.episodes.length - 1 ? -_i : 1);
+        _go(last ? -_i : 1);
       }
     });
   }
@@ -863,8 +928,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   /// 路由」—— 那个路由里 controls 是 NoVideoControls,键盘监听又留在下面那层,
   /// 进去就没有任何退出的办法。这样切,本页的 chrome 全程都在。
   void _toggleFullscreen() {
-    if (!WindowFullscreen.supported) return;
-    setState(() => WindowFullscreen.instance.toggle());
+    if (!playerWindowFullscreen.supported) return;
+    setState(playerWindowFullscreen.toggle);
     _showControls();
   }
 
@@ -927,23 +992,37 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.escape) {
-      // Esc 一层层往外退,不要一步踢出播放页:先收面板,再退全屏,最后才离开。
-      final scaffold = _scaffoldKey.currentState;
-      if (scaffold?.isEndDrawerOpen ?? false) {
-        scaffold!.closeEndDrawer();
-      } else if (WindowFullscreen.instance.isFullscreen) {
-        _toggleFullscreen();
-      } else {
-        Navigator.of(context).maybePop();
-      }
+      if (!_popOneLayer()) Navigator.of(context).maybePop();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
 
+  /// 「往外退一层」:先收抽屉,再收快捷卡,再退桌面全屏,都没有才轮到离开播放页。
+  /// 桌面 Esc 和安卓返回键共用它 —— 两边一步就把人踢出播放页都是同一种恼人。
+  /// 锁屏时一律吃掉:锁的就是「别再响应任何东西」。
+  ///
+  /// 返回 true = 这一层已经消化掉了这次返回,调用方不要再往外退。
+  bool _popOneLayer() {
+    if (_locked) return true;
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold?.isEndDrawerOpen ?? false) {
+      scaffold!.closeEndDrawer();
+      return true;
+    }
+    if (_quick != _QuickPanel.none) {
+      setState(() => _quick = _QuickPanel.none);
+      return true;
+    }
+    if (playerWindowFullscreen.isOn) {
+      _toggleFullscreen();
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _load() async {
     final generation = ++_loadGeneration;
-    _autoAdvanced = false;
     if (mounted) {
       setState(() {
         _playback = PlaybackState(phase: PlaybackPhase.resolving);
@@ -960,15 +1039,26 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
       _tracks = tracks;
       final pick =
           tracks.firstWhere((track) => track.hls, orElse: () => tracks.first);
-      final initialPosition =
-          _initialResumePending ? widget.initialPosition : Duration.zero;
-      _initialResumePending = false;
+      // 断点要等这一次 start 真的成功了才算「用掉」。原来在 start 之前就置了
+      // false,于是开流失败之后点重试就从零开始播 —— 断点在第一次失败里丢了。
+      // 已经播过一段再失败的,以播到的位置为准。
+      final initialPosition = _initialResumePending
+          ? (_lastPosition > widget.initialPosition
+              ? _lastPosition
+              : widget.initialPosition)
+          : Duration.zero;
+      // 从这一刻起会话播的是这一集,进度回调才重新算数。
+      _progressEpisode = _i;
       await _session!.start(
         tracks,
         pick,
         initialPosition: initialPosition,
       );
       if (_disposed || generation != _loadGeneration) return;
+      _initialResumePending = false;
+      // 连播闸到这儿才松开。开在 _load 的第一行就等于没开:取轨道要等一次网络
+      // 往返,那段时间旧流还能再报一次 completed,一口气跳过两集。
+      _autoAdvanced = false;
       if (_rate != 1.0 && _session!.state.selectedTrack != null) {
         await _adapter!.setRate(_rate);
       }
@@ -990,6 +1080,10 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     _scaffoldKey.currentState?.closeEndDrawer();
     if (index == _i) return;
     setState(() => _quick = _QuickPanel.none);
+    // 先把旧的一集停下来并解绑它的进度回调:_load 要等一次取轨道的网络往返,
+    // 这段窗口里旧流还在播、还在每秒报位置,不解绑就会拿旧位置去写新集的历史。
+    _progressEpisode = null;
+    _session?.setUserPaused(true);
     await _library?.flushPending();
     if (_disposed) return;
     setState(() => _i = index);
@@ -998,6 +1092,9 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   }
 
   void _recordProgress(Duration position, Duration duration) {
+    // 进度属于**开出这条流的那一集**,不是「当前选中的那一集」。切集时两者会有
+    // 一段不一致(新集还没开起来,旧流还在报位置),对不上就直接丢掉。
+    if (_progressEpisode != _i) return;
     _lastPosition = position;
     final library = _library;
     if (library == null) return;
@@ -1063,74 +1160,98 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: Colors.black,
-      endDrawer: _controlPanel(p),
-      // 抽屉会把焦点抢走,收回来时得还给播放页,否则开过一次面板之后快捷键就哑了。
-      onEndDrawerChanged: (opened) {
-        if (!opened && mounted) _focus.requestFocus();
+    // 安卓返回键和桌面 Esc 走同一套逐层退出:抽屉 → 快捷卡 → 全屏 → 离开。
+    // canPop 恒 false + 自己 pop:抽屉开没开不是 build 期能读到的状态,
+    // 拿它去算 canPop 只会算出一个过期的答案。
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _popOneLayer()) return;
+        final navigator = Navigator.of(context);
+        // canPop 为假 = 播放页就是栈底。那种情况下框架本来会把返回键交给系统去
+        // 收掉这个 activity;拦下之后得自己把这一步补上,不然 pop 栈底是空一屏。
+        if (navigator.canPop()) {
+          navigator.pop();
+        } else {
+          unawaited(SystemNavigator.pop());
+        }
       },
-      // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
-      // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
-      body: Focus(
-        focusNode: _focus,
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: LayoutBuilder(
-          builder: (context, constraints) => Stack(
-            fit: StackFit.expand,
-            children: [
-              AnimePlaybackSurface(
-                state: _playback,
-                video: _videoLayer(),
-                onRetry: _load,
-              ),
-              Positioned.fill(
-                child: Listener(
-                  onPointerSignal: _onPointerSignal,
-                  // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
-                  // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
-                  // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
-                  // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _onSurfaceTap,
-                    onDoubleTap: _locked ? null : _togglePlay,
-                    onLongPressStart: (_) => _startBoost(),
-                    onLongPressEnd: (_) => _stopBoost(),
-                    onLongPressCancel: _stopBoost,
-                    onScaleStart: (details) =>
-                        _onScaleStart(details, constraints.maxWidth),
-                    onScaleUpdate: (details) => _onScaleUpdate(
-                        details, constraints.maxWidth, constraints.maxHeight),
-                    onScaleEnd: (_) => _onScaleEnd(),
-                  ),
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: Colors.black,
+        endDrawer: _controlPanel(p),
+        // 抽屉会把焦点抢走,收回来时得还给播放页,否则开过一次面板之后快捷键就哑了。
+        onEndDrawerChanged: (opened) {
+          if (!opened && mounted) _focus.requestFocus();
+        },
+        // 手机上画面直接占满整屏:不再顶一条 AppBar、底下再压一条集导航条,
+        // 所有 chrome 都浮在画面上,点一下出现、几秒后自动隐去。
+        body: Focus(
+          focusNode: _focus,
+          autofocus: true,
+          onKeyEvent: _onKey,
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimePlaybackSurface(
+                  state: _playback,
+                  video: _videoLayer(),
+                  onRetry: _load,
                 ),
-              ),
-              _centreBadge(),
-              if (!_locked) ...[
-                _chrome(top: true, child: _topBar()),
-                _chrome(top: false, child: _bottomBar()),
-                _quickPanelSlot(),
-              ],
-              Positioned.fill(
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: AnimatedSlide(
-                    offset: _controlsVisible ? Offset.zero : const Offset(.25, 0),
-                    duration: _chromeMotion,
-                    curve: _chromeCurve,
-                    child: AnimatedOpacity(
-                      opacity: _controlsVisible ? 1 : 0,
-                      duration: _chromeMotion,
-                      curve: _chromeCurve,
-                      child: _sideTools(),
+                Positioned.fill(
+                  // 播放失败时整层让开:它是 opaque 的,盖住的正是失败框中间
+                  // 那颗「重试」—— 手势层在上、按钮在下,怎么点都点不着,开流
+                  // 失败于是成了死路。没有画面可以定位 / 调音量的时候,这一层
+                  // 本来也没有什么要做的。
+                  child: IgnorePointer(
+                    ignoring: _playback.phase == PlaybackPhase.failed,
+                    child: Listener(
+                      onPointerSignal: _onPointerSignal,
+                      // 一个 scale 识别器管所有拖动。GestureDetector 不许 scale
+                      // 和横竖两个 drag 并存(scale 会把它们全吃掉),而双指缩放
+                      // 又只有 scale 报得出 pointerCount —— 那就由这里按手指数
+                      // 自己分发:一根手指还是定位 / 音量 / 亮度,两根才是变换画面。
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _onSurfaceTap,
+                        onDoubleTap: _locked ? null : _togglePlay,
+                        onLongPressStart: (_) => _startBoost(),
+                        onLongPressEnd: (_) => _stopBoost(),
+                        onLongPressCancel: _stopBoost,
+                        onScaleStart: (details) =>
+                            _onScaleStart(details, constraints.maxWidth),
+                        onScaleUpdate: (details) => _onScaleUpdate(details,
+                            constraints.maxWidth, constraints.maxHeight),
+                        onScaleEnd: (_) => _onScaleEnd(),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+                _centreBadge(),
+                if (!_locked) ...[
+                  _chrome(top: true, child: _topBar()),
+                  _chrome(top: false, child: _bottomBar()),
+                  _quickPanelSlot(),
+                ],
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: !_controlsVisible,
+                    child: AnimatedSlide(
+                      offset: _controlsVisible ? Offset.zero : const Offset(.25, 0),
+                      duration: _chromeMotion,
+                      curve: _chromeCurve,
+                      child: AnimatedOpacity(
+                        opacity: _controlsVisible ? 1 : 0,
+                        duration: _chromeMotion,
+                        curve: _chromeCurve,
+                        child: _sideTools(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1290,8 +1411,8 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
               // 移动端的播放页本来就是沉浸式横屏、已经占满整屏,再给一个全屏键
               // 只会让人点了没反应 —— 干脆不显示。
               onFullscreen:
-                  WindowFullscreen.supported ? _toggleFullscreen : null,
-              fullscreen: WindowFullscreen.instance.isFullscreen,
+                  playerWindowFullscreen.supported ? _toggleFullscreen : null,
+              fullscreen: playerWindowFullscreen.isOn,
             ),
           ),
         ),
@@ -1473,24 +1594,30 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     );
   }
 
-  Widget _quickQualities() => ListView(
-        shrinkWrap: true,
-        children: [
-          for (var i = 0; i < _tracks.length; i++)
-            _quickRow(
-              label: _tracks[i].quality.isEmpty
-                  ? context.l10n.player_routeN(i + 1)
-                  : _tracks[i].quality,
-              selected: _tracks[i].url == _current?.url,
-              onTap: _tracks.length == 1
-                  ? null
-                  : () {
-                      unawaited(_switchTrack(_tracks[i]));
-                      _toggleQuick(_QuickPanel.quality);
-                    },
-            ),
-        ],
-      );
+  Widget _quickQualities() {
+    // 只有一档时那一行点了没反应。不说一句「就这一种」,它看着就像坏了 ——
+    // 那正是 #31 里「线路只有一条 608p」给人的观感。
+    final fixed = _tracks.length == 1;
+    return ListView(
+      shrinkWrap: true,
+      children: [
+        for (var i = 0; i < _tracks.length; i++)
+          _quickRow(
+            label: _tracks[i].quality.isEmpty
+                ? context.l10n.player_routeN(i + 1)
+                : _tracks[i].quality,
+            hint: fixed ? context.l10n.player_qualityOnlyOne : null,
+            selected: _tracks[i].url == _current?.url,
+            onTap: fixed
+                ? null
+                : () {
+                    unawaited(_switchTrack(_tracks[i]));
+                    _toggleQuick(_QuickPanel.quality);
+                  },
+          ),
+      ],
+    );
+  }
 
   Widget _quickEpisodes() => SizedBox(
         width: 280,
@@ -1507,18 +1634,31 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     required String label,
     required bool selected,
     required VoidCallback? onTap,
+    String? hint,
   }) =>
       InkWell(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? _accent : Colors.white,
-              fontSize: 13.5,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? _accent : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              if (hint != null) ...[
+                const SizedBox(height: 2),
+                Text(hint,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 11.5)),
+              ],
+            ],
           ),
         ),
       );
@@ -1802,7 +1942,7 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
                     SizedBox(
                       width: 58,
                       child: Text(
-                        '第${_epShort(i)}集',
+                        context.l10n.player_episodeN(_epShort(i)),
                         style: TextStyle(
                           color: on ? _accent : Colors.white70,
                           fontSize: 13,
@@ -1933,25 +2073,26 @@ class _AnimePlayerPageState extends State<AnimePlayerPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        _PanelLabel('循环播放'),
+        _PanelLabel(context.l10n.player_loop),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            _chip('单集循环', _loopMode == _LoopMode.single,
+            _chip(context.l10n.player_loopSingle,
+                _loopMode == _LoopMode.single,
                 () => _setLoopMode(_LoopMode.single)),
-            _chip('列表循环', _loopMode == _LoopMode.list,
+            _chip(context.l10n.player_loopList, _loopMode == _LoopMode.list,
                 () => _setLoopMode(_LoopMode.list)),
-            _chip('不循环', _loopMode == _LoopMode.none,
+            _chip(context.l10n.player_loopOff, _loopMode == _LoopMode.none,
                 () => _setLoopMode(_LoopMode.none)),
           ],
         ),
         const SizedBox(height: 20),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
-          title: const Text('自动连播'),
-          subtitle: const Text('当前集结束后自动播放下一集'),
+          title: Text(context.l10n.player_autoPlay),
+          subtitle: Text(context.l10n.player_autoPlayHint),
           value: _autoPlay,
           onChanged: _setAutoPlay,
         ),

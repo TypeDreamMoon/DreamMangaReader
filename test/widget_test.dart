@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dream_manga_reader/app/app.dart';
 import 'package:dream_manga_reader/app/content_kind.dart';
+import 'package:dream_manga_reader/core/l10n/app_strings.dart';
 
 void main() {
   test('novel discovery content kind is available', () {
@@ -20,9 +21,11 @@ void main() {
     await tester.pumpWidget(const App());
     await tester.pump();
 
-    // 底部导航 + 书架标题/标签。
+    // 底部导航 + 书架标题/标签。界面语言默认跟随系统,所以标签文案得从 l10n 取,
+    // 不能写死简体。
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.text('书架'), findsWidgets);
+    final l10n = AppLocalizations.of(tester.element(find.byType(NavigationBar)));
+    expect(find.text(l10n.navBookshelf), findsWidgets);
 
     // 拆掉 App(触发 dispose,取消启动更新计时器),避免遗留待触发 Timer 让测试失败。
     await tester.pumpWidget(const SizedBox());

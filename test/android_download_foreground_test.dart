@@ -74,4 +74,32 @@ void main() {
 
     expect(calls.map((call) => call.method), ['start', 'update', 'stop']);
   });
+
+  test('a failing stop still resets the bridge so the next run starts',
+      () async {
+    const channel = MethodChannel('test/content_download_foreground_failing');
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'stop') {
+        throw PlatformException(code: 'service_dead');
+      }
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null));
+    final bridge = AndroidDownloadForegroundBridge(
+      channel: channel,
+      enabled: true,
+    );
+    final running = taskFixture(state: DownloadTaskState.running);
+
+    await bridge.sync([running]);
+    await bridge.sync(const []);
+    await bridge.sync([running]);
+
+    expect(calls.map((call) => call.method), ['start', 'stop', 'start']);
+  });
 }

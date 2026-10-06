@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../net/url_redaction.dart';
 
 /// 日志级别:决定条目主色(圆点/错误行文字)。
 enum LogLevel { debug, info, success, warning, error }
@@ -113,7 +114,11 @@ Color logLevelColor(LogLevel l, AppPalette p) => switch (l) {
     };
 
 /// 一条网络请求日志(dio / webview 共用格式)。正常 2xx/3xx 记 debug(灰,可筛掉),
-/// 4xx 记警告、5xx/0 记错误;完整 URL 折进 detail。
+/// 4xx 记警告、5xx/0 记错误;**脱敏后**的地址折进 detail。
+///
+/// detail 之前放的是原样 URL,而源站/CDN 的地址常带 `token`、`sign`、`X-Amz-Signature`
+/// 这类凭据,甚至 `user:pass@host` 形式的 userinfo。日志页能整份复制出去(反馈问题时
+/// 用户就是这么发出来的),等于把可重放的凭据一起发了。统一过 [redactUrlCredentials]。
 void logHttp(String method, String url, int status, int bytes, int ms) {
   final size = bytes >= 1024 ? '${(bytes / 1024).round()}KB' : '${bytes}B';
   final level = (status >= 500 || status == 0)
@@ -121,19 +126,25 @@ void logHttp(String method, String url, int status, int bytes, int ms) {
       : (status >= 400 ? LogLevel.warning : LogLevel.debug);
   AppLog.i.log(LogCat.network,
       '$method ${shortUrl(url)} · $status · $size · ${ms}ms',
-      level: level, detail: url);
+      level: level, detail: redactUrlCredentials(url));
 }
 
-/// 网络请求异常(连不上 / 超时 / 握手失败等)。
+/// 网络请求异常(连不上 / 超时 / 握手失败等)。异常文本自己也常把请求 URL 原样
+/// 带出来(dio 就会),所以地址和异常都得脱敏。
 void logHttpError(String method, String url, int ms, Object err) {
   AppLog.i.err(LogCat.network, '$method ${shortUrl(url)} · 失败 · ${ms}ms',
-      detail: '$url\n$err');
+      detail: '${redactUrlCredentials(url)}\n${redactUrlCredentials('$err')}');
 }
 
-/// 去掉 scheme 与 query、超长截断,给日志主行用(完整地址进 detail)。
+/// 去掉 scheme、userinfo 与 query、超长截断,给日志主行用(脱敏后的完整地址进 detail)。
 String shortUrl(String url) {
   var s = url.replaceFirst(RegExp(r'^https?://'), '');
   final q = s.indexOf('?');
   if (q >= 0) s = s.substring(0, q);
+  // `user:pass@host/...`:@ 之前整段是凭据,砍掉(只在首段里找,避免误伤路径里的 @)。
+  final slash = s.indexOf('/');
+  final authority = slash >= 0 ? s.substring(0, slash) : s;
+  final at = authority.lastIndexOf('@');
+  if (at >= 0) s = s.substring(at + 1);
   return s.length > 56 ? '${s.substring(0, 55)}…' : s;
 }

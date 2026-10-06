@@ -29,6 +29,7 @@ import '../novel/novel_browser.dart';
 import 'manga_identity_tracker.dart';
 import 'recommend_controller.dart';
 import 'recommend_strip.dart';
+import '../settings/translate_messages.dart';
 
 /// 混合模式下每个结果记住自己的源(卡片角标 + 打开详情用)。
 /// [rank] = 与当前搜索词的相关度层级(3 同名 > 2 同作品 > 1 包含 > 0 其它);
@@ -46,9 +47,19 @@ class _MixedCursor {
   bool errored = false; // 最近一次拉取是「抛错」(而非成功返回空页)—— 区分失败与真没结果
 }
 
-/// 「混合(全部源)」占位源。
+/// 「混合(全部源)」占位源。展示名不放这里:界面上一律走
+/// `disc_mixedAllSources`,免得中文字面量漏进英文/日文界面。
 const _mixedMetaId = '__all__';
-const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '混合 · 全部源', script: '');
+const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '', script: '');
+
+/// 内容类型 → 展示名。与书架的 `shelfKindLabel` 同一套口径:名字归 l10n,
+/// 枚举只留图标和可用性。
+String contentKindLabel(BuildContext context, ContentKind kind) =>
+    switch (kind) {
+      ContentKind.manga => context.l10n.content_manga,
+      ContentKind.anime => context.l10n.content_anime,
+      ContentKind.novel => context.l10n.content_novel,
+    };
 
 /// 发现:按当前源的筛选维度(地区/剧情/受众/进度/排序)浏览,分页无限加载。
 /// 源未声明筛选时,退化为纯分页浏览。**混合模式**:并发查全部启用源、合并结果。
@@ -56,10 +67,17 @@ const _mixedMeta = SourceMeta(id: _mixedMetaId, name: '混合 · 全部源', scr
 /// 漫画档顶部还有一条据书架口味算的「为你推荐」(见 [RecommendStrip])——
 /// 找新内容都归发现页,书架只留「我的收藏与历史」。
 class DiscoveryPage extends StatefulWidget {
-  const DiscoveryPage({super.key, this.recommendController});
+  const DiscoveryPage({
+    super.key,
+    this.recommendController,
+    this.sourceBuilder = buildSource,
+  });
 
   /// 测试注入用;不传则本页自建自管(dispose 时释放)。
   final RecommendController? recommendController;
+
+  /// 测试注入用;正式代码走 [buildSource]。
+  final MangaSource Function(SourceMeta meta) sourceBuilder;
 
   @override
   State<DiscoveryPage> createState() => _DiscoveryPageState();
@@ -162,7 +180,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final store = LibraryScope.read(context);
       for (final s in registeredSources) {
         if (s.isManga && store.isSourceEnabled(s.id)) {
-          _mixedSources.add(_MixedCursor(s, buildSource(s)));
+          _mixedSources.add(_MixedCursor(s, widget.sourceBuilder(s)));
         }
       }
       _reset();
@@ -178,7 +196,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       return;
     }
     _meta = cur;
-    _source = buildSource(cur);
+    _source = widget.sourceBuilder(cur);
     _filters = _source!.filters;
     for (final f in _filters) {
       if (f.type == 'sort' && f.options.isNotEmpty) {
@@ -277,6 +295,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _hasNext = page.hasNext && page.items.isNotEmpty && freshItems.isNotEmpty;
         _page++;
         _loading = false;
+        // 上一页失败、这一页成功 → 错误态到此为止。不清的话页脚会一直挂着
+        // 「加载失败」,_maybeFallback 也会被 `_error != null` 一直挡在门外。
+        _error = null;
       });
       _fillViewportIfNeeded();
       _maybeFallback(); // 首页零结果 → 尝试译名回退
@@ -315,6 +336,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       c.page++;
       c.hasNext = r.hasNext && r.items.isNotEmpty;
       c.errored = false; // 成功返回(哪怕空页)—— 不是失败
+      // 没有源还挂着错时把上一轮的错误消息也丢掉,免得它被后面的错误视图复用。
+      if (!_mixedSources.any((m) => m.errored)) _mixedError = null;
     } catch (e) {
       if (gen == _loadGen) {
         c.hasNext = false; // 某源失败:停掉它
@@ -381,6 +404,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         _mixedSources.isNotEmpty &&
         _mixedSources.every((c) => c.errored)) {
       _error = _mixedError ?? context.l10n.disc_allSourcesFailed;
+    } else {
+      // 重试成功 / 又有源开始加载 → 错误态跟着消失(它只描述「此刻全挂了」)。
+      _error = null;
     }
   }
 
@@ -467,8 +493,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           if (!_mixed && _meta != null && (_source?.sections.isNotEmpty ?? false))
             IconButton(
               tooltip: context.l10n.disc_browseSections,
-              onPressed: () => Navigator.of(context)
-                  .push(appRoute(BrowsePage(meta: _meta!))),
+              onPressed: () => pushPage(context, BrowsePage(meta: _meta!)),
               icon: const Icon(Icons.dashboard_rounded),
             ),
           if (_filters.isNotEmpty || _mixed)
@@ -565,7 +590,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         trailing: _sourceTrailing(),
         tabs: [
           for (final k in ContentKind.values)
-            AppUnderlineTab(value: k, label: k.label),
+            AppUnderlineTab(value: k, label: contentKindLabel(context, k)),
         ],
       );
 
@@ -588,7 +613,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     if (!LibraryScope.of(context).showSourcePicker) return null;
     final (SourceSelection? selection, VoidCallback onTap) = switch (_kind) {
       ContentKind.manga => (
-          SourceSelection(mixed: _mixed, sourceName: _meta?.name),
+          SourceSelection(mixed: _mixed, sourceName: _mixed ? null : _meta?.name),
           _pickSource
         ),
       ContentKind.anime => (
@@ -630,7 +655,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           children: [
             Icon(kind.icon, size: 56, color: p.textMuted),
             const SizedBox(height: 16),
-            Text(context.l10n.disc_comingSoonKind(kind.label),
+            Text(context.l10n.disc_comingSoonKind(contentKindLabel(context, kind)),
                 style: TextStyle(
                     color: p.textPrimary,
                     fontSize: 16,
@@ -693,10 +718,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           style: TextStyle(color: p.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            hintText: context.l10n.disc_searchHint(_kind == ContentKind.anime
-                ? '番剧'
-                : _kind == ContentKind.novel
-                    ? '小说'
+            // 番剧/小说档搜的是「那一类」,漫画档搜的是「当前源」。
+            hintText: context.l10n.disc_searchHint(
+                _kind != ContentKind.manga
+                    ? contentKindLabel(context, _kind)
                     : (_mixed
                         ? context.l10n.disc_mixedAllSources
                         : (_meta?.name ?? ''))),
@@ -769,7 +794,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _searchCtrl.selection = TextSelection.collapsed(offset: out.length);
       _search(out); // 翻好即用译文搜(方便换语种源)
     } catch (e) {
-      if (mounted) showAppNotify(context, '$e', kind: AppNotifyKind.error);
+      if (mounted) {
+        showAppNotify(context, translateErrorText(context.l10n, e),
+            kind: AppNotifyKind.error);
+      }
     } finally {
       if (mounted) setState(() => _translating = false);
     }
@@ -1115,8 +1143,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     // 混合去重后,这本书被几个源命中(≥2 时显示「N源」角标)。
     int srcCountOf(Manga m) =>
         _mixed ? (_titleSrcIds[ChineseFold.dedupKey(m.title)]?.length ?? 1) : 1;
-    void open(Manga m, SourceMeta meta, String tag) => Navigator.of(context)
-        .push(appRoute(DetailPage(manga: m, meta: meta, heroTag: tag)));
+    void open(Manga m, SourceMeta meta, String tag) =>
+        pushPage(context, DetailPage(manga: m, meta: meta, heroTag: tag));
 
     return FeedView(
       layout: layout,

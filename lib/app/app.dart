@@ -9,7 +9,8 @@ import 'package:path_provider/path_provider.dart';
 import '../l10n/app_localizations.dart';
 import '../core/downloads/download_coordinator.dart';
 import '../core/downloads/android_download_foreground.dart';
-import '../core/downloads/download_policy.dart';
+import '../core/downloads/download_environment_platform.dart';
+import '../core/downloads/download_environment_provider.dart';
 import '../core/downloads/download_task_repository.dart';
 import '../core/library/update_checker.dart';
 import '../core/library/update_tracker.dart';
@@ -27,10 +28,12 @@ import 'local_media_store.dart';
 import 'novel_library_store.dart';
 import 'novel_download_store.dart';
 import 'source_controller.dart';
+import 'startup_guard.dart';
 import '../core/source/source_repository.dart';
 import '../core/sync/sync_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import '../features/anime/playback/hls_cache_settings.dart';
 import '../features/common/ui_scale.dart';
 import '../features/library/shelf_item.dart';
 import '../features/shell/home_shell.dart';
@@ -59,6 +62,8 @@ class _AppState extends State<App> {
   final NovelDownloadStore _novelDownloads = NovelDownloadStore();
   final AnimeDownloadStore _animeDownloads = AnimeDownloadStore();
   final DownloadSettings _downloadSettings = DownloadSettings();
+  final DownloadEnvironmentProvider _downloadEnvironment =
+      createDownloadEnvironmentProvider(storageRoot: _downloadManagerRoot);
   final AuthStore _auth = AuthStore();
   late final DownloadCoordinator _downloadCoordinator;
   late final bool _ownsDownloadCoordinator;
@@ -75,43 +80,62 @@ class _AppState extends State<App> {
           repository: FileDownloadTaskRepository(
             rootProvider: _downloadManagerRoot,
           ),
-          environment: _initialDownloadEnvironment,
+          environment: _downloadEnvironment.read,
           settings: () => _downloadSettings.policy,
         );
     unawaited(_loadDownloadState());
     _library.closeToTrayVN.addListener(_syncWindowsCloseBehavior);
-    _theme.load(); // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
-    _source.load(); // 读回上次选中的漫画源,否则重启回到默认第一个源
+    // 读回保存的主题变体(OLED/Dark/Light),否则每次重启回到默认
+    unawaited(guardedStartupLoad('主题', _theme.load));
+    // 读回上次选中的漫画源,否则重启回到默认第一个源
+    unawaited(guardedStartupLoad('当前源', _source.load));
     // 书架读档完成后:先挂「变化后自动上传」的监听(基线=上次持久化的,
     // 能补传上次退出前漏掉的变化),再跑启动自动同步(源仓已在 main 里 load 好)。
     // 原生窗口在收到关闭偏好之前会吞掉 WM_CLOSE。读档抛错时也必须同步一次
     // (此时用的是默认值),否则关闭按钮和 Alt+F4 会在整个进程生命周期内失效。
-    final libraryLoad = _library.load().whenComplete(() {
+    //
+    // 每一步都单独兜底(见 [guardedStartupLoad])。这条链既是 `Future.wait` 又接了
+    // 个没有 catchError 的 `.then`:三本书架里坏一本,`.then` 整个不跑 —— 自动上传
+    // 的监听挂不上、启动同步不跑、追更也不查,而且错误没人接。链里三步同理,
+    // 前一步抛了后两步就没了。
+    final libraryLoad =
+        guardedStartupLoad('漫画书架', _library.load).whenComplete(() {
       if (mounted) _syncWindowsCloseBehavior();
     });
     Future.wait([
       libraryLoad,
-      _novelLibrary.load(),
-      _animeLibrary.load(),
-      _localMedia.load(),
+      guardedStartupLoad('小说书架', _novelLibrary.load),
+      guardedStartupLoad('番剧书架', _animeLibrary.load),
     ]).then((_) async {
       if (!mounted) return;
       final sync = SyncController.instance;
-      await sync.attachAutoUpload(
-        _library,
-        _novelLibrary,
-        SourceRepository.instance,
+      await guardedStartupLoad(
+        '自动上传监听',
+        () => sync.attachAutoUpload(
+          _library,
+          _novelLibrary,
+          SourceRepository.instance,
+        ),
       );
       if (!mounted) return;
-      await sync.autoSyncOnStart(
-        _library,
-        _novelLibrary,
-        SourceRepository.instance,
+      await guardedStartupLoad(
+        '启动自动同步',
+        () => sync.autoSyncOnStart(
+          _library,
+          _novelLibrary,
+          SourceRepository.instance,
+        ),
       );
       if (!mounted) return;
-      await _autoCheckUpdates();
+      await guardedStartupLoad('启动追更检查', _autoCheckUpdates);
     });
-    _auth.load(); // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+    // 本地库读档走自己一条线,不进上面那条 wait:它的索引落在应用支持目录
+    // (path_provider),而平台通道拿不到回应时那个 Future 会一直挂着 —— 排进 wait
+    // 就等于把「自动上传监听 → 启动同步 → 追更检查」一起卡死。它跟首帧无关,
+    // 读完自己 notify,本地库页面照常刷新。
+    unawaited(guardedStartupLoad('本地库', _localMedia.load));
+    // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
+    unawaited(guardedStartupLoad('源登录态', _auth.load));
   }
 
   /// 启动时的追更检查。三重闸门:设置里开着、距上次扫描已过
@@ -129,7 +153,8 @@ class _AppState extends State<App> {
       anime: _animeLibrary,
     );
     if (targets.isEmpty) return;
-    await LibraryUpdateChecker(tracker: tracker).sweep(targets, now: now);
+    // 全局那一个扫描器:书架上手点「检查更新」用的也是它,两边互斥。
+    await LibraryUpdateChecker.instance.sweep(targets, now: now);
   }
 
   Future<void> _loadDownloadState() async {
@@ -170,6 +195,9 @@ class _AppState extends State<App> {
     _downloadCoordinator.addListener(_syncAndroidDownloadForeground);
     _syncAndroidDownloadForeground();
     _downloadSettings.addListener(_reevaluateDownloads);
+    // 网络/电量/空间变了就重新评估策略 —— 在这之前只有启动和改设置会触发。
+    _downloadEnvironment.addListener(_reevaluateDownloads);
+    await _downloadEnvironment.start();
     await _downloadCoordinator.reevaluate();
   }
 
@@ -312,10 +340,14 @@ class _AppState extends State<App> {
     _novelDownloads.dispose();
     _animeDownloads.dispose();
     _downloadSettings.removeListener(_reevaluateDownloads);
+    _downloadEnvironment.removeListener(_reevaluateDownloads);
+    _downloadEnvironment.dispose();
     _downloadCoordinator.removeListener(_syncAndroidDownloadForeground);
     _downloadSettings.dispose();
     if (_ownsDownloadCoordinator) _downloadCoordinator.dispose();
     _auth.dispose();
+    // 播放网关在回环上开了一个 HttpServer,谁都没关过它。
+    unawaited(HlsCacheController.instance.close());
     super.dispose();
   }
 }
@@ -323,16 +355,4 @@ class _AppState extends State<App> {
 Future<String> _downloadManagerRoot() async {
   final support = await getApplicationSupportDirectory();
   return '${support.path}${Platform.pathSeparator}download-manager';
-}
-
-Future<DownloadEnvironment> _initialDownloadEnvironment() async {
-  return const DownloadEnvironment(
-    connected: true,
-    wifi: true,
-    metered: false,
-    roaming: false,
-    batteryLow: false,
-    storageAvailable: true,
-    freeBytes: 0x3FFFFFFFFFFFFFFF,
-  );
 }

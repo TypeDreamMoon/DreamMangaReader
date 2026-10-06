@@ -9,11 +9,13 @@ import '../../app/novel_library_store.dart';
 import '../log/app_log.dart';
 import '../net/iam_auth.dart';
 import '../novel/reader/novel_reader_data_store.dart';
+import '../storage/secret_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
 import 'hertz_backend.dart';
 import 'sync_backend.dart';
 import 'sync_data.dart';
+import 'sync_messages.dart';
 import 'webdav_backend.dart';
 
 /// 云同步控制器。两个可切换后端:
@@ -30,7 +32,14 @@ class SyncController extends ChangeNotifier {
   // WebDAV
   static const _kUrl = 'sync.webdav.url';
   static const _kUser = 'sync.webdav.user';
-  static const _kPass = 'sync.webdav.pass';
+
+  /// 旧版本把 WebDAV 密码明文存在这个 SharedPreferences 键里(Windows 上就是
+  /// 一个谁都能打开的 JSON 文件)。现在只当**迁移来源**读一次,读到就搬进
+  /// [SecretStore] 并删掉。
+  static const _kLegacyPass = 'sync.webdav.pass';
+
+  /// WebDAV 密码在安全存储里的键。
+  static const _secretPass = 'sync.webdav.password';
   // 通用
   static const _kAuto = 'sync.auto';
   static const _kAutoUpFav =
@@ -46,6 +55,12 @@ class SyncController extends ChangeNotifier {
   static const _kHPreset = 'sync.hertz.preset';
   static const _kCategories = 'sync.categories';
   static const _kReaderNotesMigrated = 'sync.readerNotesMigrationV1';
+
+  /// 墓碑表(JSON:组名 → {条目键 → 删除时刻})。
+  static const _kTombstones = 'sync.tombstones';
+
+  /// 上次推上去时各组还在的条目键(JSON:组名 → [键])。和当前状态求差 = 这轮的删除。
+  static const _kSyncedKeys = 'sync.syncedKeys';
 
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
@@ -81,7 +96,9 @@ class SyncController extends ChangeNotifier {
 
   bool _syncing = false;
   bool get syncing => _syncing;
-  String status = '';
+
+  /// 最近一次同步动作的**结果码**(null = 还没动作过)。文案由设置页按语言渲染。
+  SyncNotice? status;
 
   IamAuth get auth => IamAuth.instance;
 
@@ -93,7 +110,15 @@ class SyncController extends ChangeNotifier {
       : url.trim().isNotEmpty;
 
   SharedPreferences? _prefs;
+  SecretStore _secrets = const FlutterSecretStore();
   final NovelReaderDataStore _readerDataStore = NovelReaderDataStore.instance;
+
+  /// 测试注入用(单例没有构造参数可传);[preferences] 给 null 表示下次现取。
+  @visibleForTesting
+  void debugConfigure({SecretStore? secrets, SharedPreferences? preferences}) {
+    if (secrets != null) _secrets = secrets;
+    _prefs = preferences;
+  }
 
   Future<SharedPreferences> get _p async =>
       _prefs ??= await SharedPreferences.getInstance();
@@ -126,7 +151,14 @@ class SyncController extends ChangeNotifier {
     backendKind = p.getString(_kBackend) ?? 'webdav';
     url = p.getString(_kUrl) ?? '';
     username = p.getString(_kUser) ?? '';
-    password = p.getString(_kPass) ?? '';
+    // 密码走安全存储;旧版本的明文键读到就搬走并删掉(见 [_kLegacyPass])。
+    password = await readMigratingSecret(
+          secrets: _secrets,
+          preferences: p,
+          secureKey: _secretPass,
+          legacyKeys: const [_kLegacyPass],
+        ) ??
+        '';
     await _migrateOffCustomIam(p);
     auto = p.getBool(_kAuto) ?? false;
     // 旧配置只在首次升级时迁移 readerNotes；之后用户可独立关闭它。
@@ -218,16 +250,25 @@ class SyncController extends ChangeNotifier {
   /// 首次变化后 20 秒——保证检查照样跑,阅读中进度照样按节流间隔上传。
   static const _upMaxWaitMs = 20000;
 
-  /// 高频类别的最小上传间隔:阅读进度逐页更新,阅读中最快每 2 分钟传一次;
-  /// 设置类(亮度/缩放等滑条逐 tick 通知)最快每 1 分钟——每次上传都是
-  /// 整包 pull+push(可能带 3MB 背景图),不能跟着滑条跑。停止操作后由
-  /// 去抖/节流补查兜底把最终值传上去。其余类别变化即传。
-  static const _upMinGapMs = {
-    SyncCategory.history: 120000,
-    SyncCategory.readerNotes: 60000,
-    SyncCategory.readerSettings: 60000,
-    SyncCategory.uiSettings: 60000,
-    SyncCategory.appSettings: 60000,
+  /// 高频类别的最小上传间隔。这些类别会被「用着用着就变」的动作反复弄脏
+  /// ——阅读逐页推进进度、亮度/缩放滑条逐 tick 通知、每搜一次就多一条搜索历史——
+  /// 而每次自动上传都是一整包 pull + push。之前 1~2 分钟一次太密,现在统一压到
+  /// [autoUploadMinGap]。停手之后由去抖/节流补查兜底把最终值传上去,不会漏。
+  ///
+  /// 不在表里的类别(收藏、源开关、源仓库)是明确的用户动作、频率很低,
+  /// 仍然「变了就传」——手机上收藏一本,桌面端马上能看见。
+  static const autoUploadMinGap = Duration(minutes: 5);
+
+  static final _upMinGapMs = {
+    for (final c in const [
+      SyncCategory.history,
+      SyncCategory.readerNotes,
+      SyncCategory.searchHistory,
+      SyncCategory.readerSettings,
+      SyncCategory.uiSettings,
+      SyncCategory.appSettings,
+    ])
+      c: autoUploadMinGap.inMilliseconds,
   };
 
   /// app 启动(书架读档完成后)挂上变化监听。基线优先用上次持久化的(能接着传
@@ -338,7 +379,7 @@ class SyncController extends ChangeNotifier {
       } catch (e) {
         // 失败退避 1 分钟(uploadNow 已记日志);之后本地变化/补查会自然重试。
         _upFailAt = DateTime.now().millisecondsSinceEpoch;
-        status = '自动上传失败:$e';
+        status = SyncNotice(SyncMessage.autoUploadFailed, detail: '$e');
         notifyListeners();
       }
     }
@@ -478,9 +519,33 @@ class SyncController extends ChangeNotifier {
     final p = await _p;
     await p.setString(_kUrl, this.url);
     await p.setString(_kUser, this.username);
-    await p.setString(_kPass, this.password);
+    await _savePassword(p, this.password);
     await p.setBool(_kAuto, this.auto);
     notifyListeners();
+  }
+
+  /// 密码落到安全存储,并清掉旧的明文键。
+  ///
+  /// 安全存储偶尔整个不可用(部分 Linux 桌面没有 keyring、个别 Android ROM 的
+  /// keystore 坏了)。那种情况下宁可退回旧的明文键,也不要让用户的配置凭空消失
+  /// ——[readMigratingSecret] 会在安全存储恢复后的下一次启动把它搬走并删掉。
+  Future<void> _savePassword(SharedPreferences p, String value) async {
+    if (value.isEmpty) {
+      await _secrets.delete(_secretPass);
+      await p.remove(_kLegacyPass);
+      return;
+    }
+    try {
+      await writeVerifiedSecret(
+        secrets: _secrets,
+        key: _secretPass,
+        value: value,
+      );
+      await p.remove(_kLegacyPass);
+    } catch (e) {
+      await p.setString(_kLegacyPass, value);
+      AppLog.i.warn(LogCat.sync, 'WebDAV 密码写安全存储失败,暂存本地', detail: '$e');
+    }
   }
 
   /// 一次性迁移:把「Custom 自建 IAM」时代留下的地址存档清掉。
@@ -503,25 +568,133 @@ class SyncController extends ChangeNotifier {
     await p.remove(_kHPreset);
   }
 
+  // ------------------------------------------------------------ 墓碑 ------
+  //
+  // 本地各 store 不记「谁被删了」,所以删除只能靠差分推出来:把上次推上去时
+  // 各类还在的条目键存一份,下次同步比一比,少掉的就是这轮删掉的。没有这一步,
+  // 合并的并集会把删掉的条目从对端原样并回来 —— 用户在手机上取消的收藏,
+  // 下次同步又冒出来,永远删不干净。
+
+  Map<SyncTombstoneGroup, Map<String, int>> _decodeTombstones(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final group in SyncTombstoneGroup.values)
+          if (decoded[group.name] != null)
+            group: SyncData.tombstonesOf(decoded[group.name]),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Map<SyncTombstoneGroup, Set<String>> _decodeKeys(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final group in SyncTombstoneGroup.values)
+          if (decoded[group.name] is List)
+            group: {
+              for (final k in decoded[group.name] as List) k.toString(),
+            },
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// 按 [snapshot] 里带的类别更新墓碑与「上次还在的键」,返回这次要一起推上去的墓碑。
+  ///
+  /// 只处理 snapshot 真的带了的组:只同步收藏的那一次,不能把没带的历史当成清空了。
+  Future<Map<SyncTombstoneGroup, Map<String, int>>> _refreshTombstones(
+    Map<String, dynamic> snapshot,
+  ) async {
+    final p = await _p;
+    final stored = _decodeTombstones(p.getString(_kTombstones));
+    final lastKeys = _decodeKeys(p.getString(_kSyncedKeys));
+    final live = SyncData.liveKeys(snapshot);
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final out = <SyncTombstoneGroup, Map<String, int>>{};
+    for (final group in SyncTombstoneGroup.values) {
+      final current = live[group];
+      if (current == null) {
+        // 这次没带这一类:墓碑与基线都原样留着,等带上它的那次同步再算。
+        final kept = SyncData.pruneTombstones(
+          stored[group] ?? const {},
+          now: now,
+        );
+        if (kept.isNotEmpty) out[group] = kept;
+        continue;
+      }
+      final marks = SyncData.updateTombstones(
+        previous: stored[group] ?? const {},
+        lastKeys: lastKeys[group] ?? const {},
+        currentKeys: current,
+        now: now,
+      );
+      if (marks.isNotEmpty) out[group] = marks;
+    }
+
+    await p.setString(_kTombstones, jsonEncode({
+      for (final e in out.entries) e.key.name: e.value,
+    }));
+    await p.setString(_kSyncedKeys, jsonEncode({
+      for (final group in SyncTombstoneGroup.values)
+        group.name: [...?(live[group] ?? lastKeys[group])],
+    }));
+    return out;
+  }
+
+  /// 打一份本地快照并附上墓碑(所有推送路径共用)。
+  Future<Map<String, dynamic>> _snapshot(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo, {
+    required Set<SyncCategory> categories,
+    Map<String, dynamic>? readerNotes,
+  }) async {
+    final bare = SyncData.build(
+      lib,
+      novels,
+      repo,
+      categories: categories,
+      readerNotes: readerNotes,
+    );
+    final tombstones = await _refreshTombstones(bare);
+    return SyncData.build(
+      lib,
+      novels,
+      repo,
+      categories: categories,
+      readerNotes: readerNotes,
+      tombstones: tombstones,
+    );
+  }
+
   SyncBackend _backend() => isHertz
       ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
       : WebDavBackend(baseUrl: url, username: username, password: password);
 
-  Future<(bool, String)> testConnection() => _backend().test();
+  Future<SyncTestResult> testConnection() => _backend().test();
 
   /// 双向同步一次。成功返回合并后条目概况;失败抛异常(带人话信息)。
-  Future<String> syncNow(
+  Future<SyncNotice> syncNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo,
   ) async {
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (syncCategories.isEmpty) {
+      throw SyncException.of(SyncMessage.noCategoriesChosen);
     }
-    if (syncCategories.isEmpty) throw Exception('至少选择一项要同步的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '同步中…';
+    status = const SyncNotice(SyncMessage.syncing);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始同步 · ${_catLabel(syncCategories)}');
     final sw = Stopwatch()..start();
@@ -534,7 +707,7 @@ class SyncController extends ChangeNotifier {
       final readerNotes = sel.contains(SyncCategory.readerNotes)
           ? await _readerDataStore.exportPortableData()
           : null;
-      final local = SyncData.build(
+      final local = await _snapshot(
         lib,
         novels,
         repo,
@@ -602,9 +775,12 @@ class SyncController extends ChangeNotifier {
       final hisN =
           (((merged['library'] as Map)['history'] as Map?)?.length ?? 0) +
               ((mergedNovels?['history'] as Map?)?.length ?? 0);
-      status = '已同步 · 收藏 $favN · 进度 $hisN';
-      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done =
+          SyncNotice(SyncMessage.synced, favorites: favN, history: hisN);
+      status = done;
+      AppLog.i.success(LogCat.sync,
+          '已同步 · 收藏 $favN · 进度 $hisN · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '同步失败', detail: '$e');
       rethrow;
@@ -616,20 +792,18 @@ class SyncController extends ChangeNotifier {
 
   /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
   /// [categories] 不传 = 用设置里勾选的 [syncCategories];自动上传只传变化的类别。
-  Future<String> uploadNow(
+  Future<SyncNotice> uploadNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo, {
     Set<SyncCategory>? categories,
   }) async {
     final cats = categories ?? syncCategories;
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
-    }
-    if (cats.isEmpty) throw Exception('至少选择一项要同步的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (cats.isEmpty) throw SyncException.of(SyncMessage.noCategoriesChosen);
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '上传中…';
+    status = const SyncNotice(SyncMessage.uploading);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始上传 · ${_catLabel(cats)}');
     final sw = Stopwatch()..start();
@@ -640,7 +814,7 @@ class SyncController extends ChangeNotifier {
       final readerNotes = cats.contains(SyncCategory.readerNotes)
           ? await _readerDataStore.exportPortableData()
           : null;
-      final local = SyncData.build(
+      final local = await _snapshot(
         lib,
         novels,
         repo,
@@ -665,7 +839,9 @@ class SyncController extends ChangeNotifier {
               attempt == 0 ? '已覆盖上传到远端' : '重试上传成功(第 ${attempt + 1} 次)');
           break;
         } on SyncConflict catch (c) {
-          if (++attempt > 3) throw Exception('上传冲突,多次重试仍失败,请稍后再试');
+          if (++attempt > 3) {
+            throw SyncException.of(SyncMessage.uploadConflictRetries);
+          }
           AppLog.i.warn(LogCat.sync, '上传遇并发冲突,重叠加后重试(第 $attempt 次)');
           toPush =
               c.remote == null ? local : SyncData.overlay(c.remote!, local);
@@ -673,9 +849,11 @@ class SyncController extends ChangeNotifier {
       }
       await _stampSynced();
       _rebaselineWith(preSigs); // 云端此刻 = 快照时刻的本地态
-      status = '已上传 · ${_catLabel(cats)}';
-      AppLog.i.success(LogCat.sync, '$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done = SyncNotice(SyncMessage.uploaded, count: cats.length);
+      status = done;
+      AppLog.i.success(LogCat.sync,
+          '已上传 · ${_catLabel(cats)} · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '上传失败', detail: '$e');
       rethrow;
@@ -686,19 +864,17 @@ class SyncController extends ChangeNotifier {
   }
 
   /// 下载:服务器 → 本地。[modes] 逐类别指定方式(false=覆盖 · true=追加;不在 map=不下载)。
-  Future<String> downloadNow(
+  Future<SyncNotice> downloadNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo, {
     required Map<SyncCategory, bool> modes,
   }) async {
-    if (!configured) {
-      throw Exception(isHertz ? '账号同步未就绪(先配地址并登录)' : '还没配置 WebDAV 地址');
-    }
-    if (modes.isEmpty) throw Exception('至少选择一项要下载的内容');
-    if (_syncing) throw Exception('正在同步中…');
+    if (!configured) throw SyncException.of(_notConfigured);
+    if (modes.isEmpty) throw SyncException.of(SyncMessage.noDownloadChosen);
+    if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
     _syncing = true;
-    status = '下载中…';
+    status = const SyncNotice(SyncMessage.downloading);
     notifyListeners();
     AppLog.i.info(LogCat.sync, '开始从云端下载 · ${modes.length} 项');
     final sw = Stopwatch()..start();
@@ -711,9 +887,10 @@ class SyncController extends ChangeNotifier {
           detail: modeText);
       final remote = await backend.pull();
       if (remote == null) {
-        status = '服务器暂无数据';
-        AppLog.i.warn(LogCat.sync, '云端下载:$status');
-        return status;
+        const empty = SyncNotice(SyncMessage.serverEmpty);
+        status = empty;
+        AppLog.i.warn(LogCat.sync, '云端下载:服务器暂无数据');
+        return empty;
       }
       AppLog.i.debug(LogCat.sync, '拉取远端 · ${_dataSummary(remote)},开始写入本地');
       await SyncData.apply(
@@ -728,9 +905,11 @@ class SyncController extends ChangeNotifier {
       final preSigs = _localSigs(modes.keys.toSet()); // 写回完成时刻的签名
       await _stampSynced();
       _rebaselineWith(preSigs); // 下载写回的内容不算「本地新变化」
-      status = '已下载 · ${modes.length} 项';
-      AppLog.i.success(LogCat.sync, '云端$status · ${sw.elapsedMilliseconds}ms');
-      return status;
+      final done = SyncNotice(SyncMessage.downloaded, count: modes.length);
+      status = done;
+      AppLog.i.success(
+          LogCat.sync, '云端已下载 · ${modes.length} 项 · ${sw.elapsedMilliseconds}ms');
+      return done;
     } catch (e) {
       AppLog.i.err(LogCat.sync, '云端下载失败', detail: '$e');
       rethrow;
@@ -744,6 +923,11 @@ class SyncController extends ChangeNotifier {
     lastSyncedAt = DateTime.now().millisecondsSinceEpoch;
     await (await _p).setInt(_kLastAt, lastSyncedAt);
   }
+
+  /// 当前后端「还没配好」对应的码。
+  SyncMessage get _notConfigured => isHertz
+      ? SyncMessage.notConfiguredAccount
+      : SyncMessage.notConfiguredWebDav;
 
   static String _catLabel(Set<SyncCategory> c) => '${c.length} 项';
 
@@ -787,7 +971,7 @@ class SyncController extends ChangeNotifier {
     try {
       await syncNow(lib, novels, repo);
     } catch (e) {
-      status = '自动同步失败:$e';
+      status = SyncNotice(SyncMessage.autoSyncFailed, detail: '$e');
       notifyListeners();
     }
   }

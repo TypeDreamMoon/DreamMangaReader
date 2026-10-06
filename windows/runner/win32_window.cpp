@@ -211,7 +211,10 @@ Win32Window::MessageHandler(HWND hwnd,
       if (child_content_ != nullptr) {
         SetFocus(child_content_);
       }
-      return 0;
+      // 不能 return 0 吞掉:激活的默认处理(其中就有 IME 输入上下文的激活/停用)
+      // 全在 DefWindowProc 里。吞掉之后从托盘恢复的窗口拿得到焦点却没有可用的输入
+      // 上下文,中文输入法打不出字(issue #25)。落到下面的 DefWindowProc。
+      break;
 
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);

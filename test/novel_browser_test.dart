@@ -71,6 +71,73 @@ class _SearchSource implements NovelSource {
   }
 }
 
+class _PagedSource implements NovelSource {
+  _PagedSource(
+    this.meta, {
+    required this.firstPage,
+    this.secondPage,
+    this.error,
+  });
+
+  final SourceMeta meta;
+  final List<Novel> firstPage;
+  final List<Novel>? secondPage;
+  final Object? error;
+  int calls = 0;
+
+  @override
+  String get id => meta.id;
+
+  @override
+  String get name => meta.name;
+
+  @override
+  List<FilterDef> get filters => const [];
+
+  @override
+  List<SourceSection> get sections => const [];
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<Paged<NovelChapter>> getNovelChapters(String novelId, {int? page}) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Paged<Novel>> getNovelDiscovery(
+    int page, {
+    Map<String, Object?>? filters,
+  }) async {
+    calls++;
+    if (page == 1) return Paged(firstPage, hasNext: true);
+    final next = secondPage;
+    if (next != null) return Paged(next, hasNext: true);
+    throw error!;
+  }
+
+  @override
+  Future<Paged<Novel>> getNovelSearch(String query, int page,
+          {Map<String, Object?>? filters}) =>
+      getNovelDiscovery(page);
+
+  @override
+  Future<Novel> getNovelDetail(String novelId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<NovelDocument> getNovelDocument(String novelId, String chapterId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Paged<Novel>> getNovelSection(String sectionId, int page) {
+    throw UnimplementedError();
+  }
+}
+
 Future<({LibraryStore library, SourceController controller})>
     _pumpBrowserHarness(
   WidgetTester tester, {
@@ -231,6 +298,198 @@ void main() {
 
     expect(find.text('诡秘之主'), findsOneWidget);
     expect(find.text('2 个来源'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    library.dispose();
+    controller.dispose();
+    registeredSources = [];
+  });
+
+  testWidgets('a failed extra page stops auto-loading and offers a retry',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    SharedPreferences.setMockInitialValues({});
+    const source = SourceMeta(
+      id: 'a',
+      name: '来源 A',
+      script: '',
+      kind: 'novel',
+    );
+    registeredSources = const [source];
+    final library = LibraryStore();
+    await library.load();
+    library.feedLayout = FeedLayout.list;
+    library.showSourcePicker = true;
+    final controller = SourceController(source);
+    await controller.load();
+    final paged = _PagedSource(
+      source,
+      firstPage: [
+        for (var index = 0; index < 30; index++)
+          Novel(id: 'n$index', title: '小说 $index'),
+      ],
+      error: Exception('timeout'),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: NovelBrowser(
+              sourceCatalog: const [source],
+              sourceBuilder: (_) => paged,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(paged.calls, 1);
+
+    // 滚到底触发翻页,第二页失败。
+    await tester.drag(find.byType(FeedView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    expect(paged.calls, 2);
+    expect(find.byKey(const Key('novel-browser-retry-more')), findsOneWidget);
+    expect(find.textContaining('timeout'), findsOneWidget);
+
+    // 再怎么滚也不该偷偷重试。
+    await tester.drag(find.byType(FeedView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(FeedView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    expect(paged.calls, 2);
+
+    await tester.tap(find.byKey(const Key('novel-browser-retry-more')));
+    await tester.pumpAndSettle();
+    expect(paged.calls, 3);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.binding.setSurfaceSize(null);
+    library.dispose();
+    controller.dispose();
+    registeredSources = [];
+  });
+
+  testWidgets('a new page is appended instead of reshuffling the whole list',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    SharedPreferences.setMockInitialValues({});
+    const source = SourceMeta(
+      id: 'a',
+      name: '来源 A',
+      script: '',
+      kind: 'novel',
+    );
+    registeredSources = const [source];
+    final library = LibraryStore();
+    await library.load();
+    library.feedLayout = FeedLayout.list;
+    library.showSourcePicker = true;
+    final controller = SourceController(source);
+    await controller.load();
+    final key = GlobalKey<NovelBrowserState>();
+    final paged = _PagedSource(
+      source,
+      firstPage: [
+        for (var index = 0; index < 30; index++)
+          Novel(id: 'n$index', title: '小说 $index'),
+      ],
+      // 第二页是「完全同名」的最高相关度结果:整表重排会把它顶到第一位。
+      secondPage: const [Novel(id: 'exact', title: '诡秘之主')],
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: NovelBrowser(
+              key: key,
+              sourceCatalog: const [source],
+              sourceBuilder: (_) => paged,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    key.currentState!.runSearch('诡秘之主');
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(FeedView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    expect(paged.calls, greaterThan(1));
+    expect(find.text('诡秘之主'), findsOneWidget);
+
+    await tester.drag(find.byType(FeedView), const Offset(0, 8000));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('小说 '), findsWidgets);
+    expect(find.text('诡秘之主'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.binding.setSurfaceSize(null);
+    library.dispose();
+    controller.dispose();
+    registeredSources = [];
+  });
+
+  testWidgets('same title by a different author stays a separate book',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await ChineseFold.load();
+    const sources = [
+      SourceMeta(id: 'a', name: '来源 A', script: '', kind: 'novel'),
+      SourceMeta(id: 'b', name: '来源 B', script: '', kind: 'novel'),
+    ];
+    registeredSources = [...sources];
+    final library = LibraryStore();
+    await library.load();
+    final controller = SourceController(sources.first);
+    await controller.load();
+
+    NovelSource build(SourceMeta meta) => switch (meta.id) {
+          'a' => _SearchSource(
+              meta,
+              const [Novel(id: 'a1', title: '长夜', authors: ['甲'])],
+            ),
+          _ => _SearchSource(
+              meta,
+              const [Novel(id: 'b1', title: '长夜', authors: ['乙'])],
+            ),
+        };
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(AppThemeVariant.light),
+      locale: const Locale('zh'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      home: LibraryScope(
+        store: library,
+        child: SourceScope(
+          controller: controller,
+          child: Scaffold(
+            body: NovelBrowser(sourceBuilder: build, sourceCatalog: sources),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('长夜'), findsNWidgets(2));
+    expect(find.text('2 个来源'), findsNothing);
 
     await tester.pumpWidget(const SizedBox());
     library.dispose();

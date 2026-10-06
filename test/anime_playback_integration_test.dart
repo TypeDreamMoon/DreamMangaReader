@@ -7,11 +7,30 @@ import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_store.dart';
 import 'package:dream_manga_reader/features/anime/playback/media_kit_player_adapter.dart';
+import 'package:dream_manga_reader/features/anime/playback/playback_messages.dart';
 import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hls/hls.dart';
 
 import 'support/fault_http_server.dart';
+
+const _messages = PlaybackMessages(
+  noRoute: 'no route',
+  bufferTimeout: 'buffer timeout',
+  recovering: _recovering,
+  recoverFailed: _recoverFailed,
+  configureFailed: _configureFailed,
+  gatewayFallbackFailed: _gatewayFallbackFailed,
+);
+
+String _recovering(int attempt, int total) => 'recovering $attempt/$total';
+
+String _recoverFailed(String detail) => 'recover failed: $detail';
+
+String _configureFailed(String key, String detail) =>
+    'cannot configure $key: $detail';
+
+String _gatewayFallbackFailed(String detail) => 'gateway fallback: $detail';
 
 class _IntegrationBackend implements MediaKitBackend {
   final playingController = StreamController<bool>.broadcast(sync: true);
@@ -116,6 +135,7 @@ void main() {
       backend: backend,
       gateway: gateway,
       authScope: 'source:xiaojie-anime',
+      messages: _messages,
     );
     addTearDown(() async {
       await adapter.dispose();

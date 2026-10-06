@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:dream_manga_reader/core/source/models.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_gateway.dart';
 import 'package:dream_manga_reader/features/anime/playback/hls_cache_store.dart';
+import 'package:dream_manga_reader/features/anime/playback/hls_session.dart';
+import 'package:dream_manga_reader/features/anime/playback/hls_stream_response.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hls/hls.dart';
@@ -122,22 +124,23 @@ void main() {
     final first = await _get(media.segments.first.uri);
     expect(first.bytes, [0, 0, 0]);
 
-    // VOD 会继续预读后续分片,不因初始缓冲较小而停在一片。
+    // 缓冲还没起来:只预读紧邻的一片,别把上行从正在播的那片手里抢走。
     await _waitUntil('预读 /360/001.ts',
         () => upstream.requestCount('/360/001.ts') == 1);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    await _waitUntil('预读 /360/002.ts',
-        () => upstream.requestCount('/360/002.ts') == 1);
-    await _waitUntil('预读 /360/003.ts',
-        () => upstream.requestCount('/360/003.ts') == 1);
-    expect(upstream.requestCount('/360/002.ts'), 1);
-    expect(upstream.requestCount('/360/003.ts'), 1);
+    expect(upstream.requestCount('/360/002.ts'), 0);
+    expect(upstream.requestCount('/360/003.ts'), 0);
+
+    // 缓冲起来了才往前铺 —— 暂停之后能一直缓下去,靠的是这一步。
+    session.reportBuffer(const Duration(seconds: 20));
     // 预读过的那片直接走缓存,不会再回源第二遍。
     expect((await _get(media.segments[1].uri)).bytes, [1, 1, 1]);
     expect(upstream.requestCount('/360/001.ts'), 1);
-    await _waitUntil('预读 /360/002.ts',
-        () => upstream.requestCount('/360/002.ts') == 1);
-    expect(upstream.requestCount('/360/002.ts'), 1);
+    await _waitUntil(
+        '预读 /360/002.ts /360/003.ts',
+        () =>
+            upstream.requestCount('/360/002.ts') == 1 &&
+            upstream.requestCount('/360/003.ts') == 1);
     expect(
       upstream.requests.every(
         (request) => request.authorization == 'Bearer fixture-token',
@@ -148,6 +151,46 @@ void main() {
     await session.close();
     expect((await _get(session.localUri)).status, HttpStatus.notFound);
     expect(await cache.sizeBytes(), greaterThan(0));
+  });
+
+  // 退出播放器、关掉应用都走普通 close:缓存留着,回来接着看不用重下。换一集
+  // 才丢 —— 而且必须等会话关完再丢,不然正在用的条目会被跳过,删了个寂寞。
+  test('closing keeps the cache and only a discarding close clears it',
+      () async {
+    upstream.addText('/media.m3u8', """#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXTINF:4,
+0.ts
+#EXTINF:4,
+1.ts
+#EXT-X-ENDLIST
+""");
+    for (var index = 0; index < 2; index++) {
+      upstream.addBytes('/$index.ts', List<int>.filled(64, index));
+    }
+
+    Future<HlsSession> play() async {
+      final session = await gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('media.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      );
+      final media = HlsParser.parse((await _get(session.localUri)).text)
+          as HlsMediaPlaylist;
+      await _get(media.segments.first.uri);
+      await _waitUntil('预读 /1.ts', () => upstream.requestCount('/1.ts') == 1);
+      return session;
+    }
+
+    final kept = await play();
+    await kept.close();
+    expect(await cache.sizeBytes(), greaterThan(0));
+
+    final discarded = await play();
+    await discarded.close(discardCache: true);
+    expect(await cache.sizeBytes(), 0);
   });
 
   test('preserves map and byte ranges and keeps AES keys in session memory',
@@ -296,6 +339,40 @@ b.m4s
 
     expect((await _get(session.localUri)).status, HttpStatus.ok);
     expect(upstream.requestCount('/retry.m3u8'), 2);
+  });
+
+  // 一律 502 会把「票据过期」「这一段没了」「源站抽风」压成同一句网络错误,
+  // 上层再也分不出该重登、该换源还是该重试。
+  test('passes upstream status codes through instead of a blanket 502',
+      () async {
+    upstream.addText('/status.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+missing.ts
+#EXTINF:4,
+broken.ts
+#EXT-X-ENDLIST
+''');
+    // missing.ts 压根没注册 → 上游 404;broken.ts 每次都 500(含预读那几次)。
+    upstream.addBytes('/broken.ts', const [9], failuresBeforeSuccess: 99);
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('status.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+
+    final missing = await _get(media.segments.first.uri);
+    expect(missing.status, HttpStatus.notFound);
+    expect(missing.text, contains('upstream-http-404'));
+
+    final broken = await _get(media.segments[1].uri);
+    expect(broken.status, HttpStatus.internalServerError);
+    expect(broken.text, contains('upstream-http-500'));
   });
 
   test('dio upstream exposes a chunk before the response completes', () async {
@@ -476,6 +553,258 @@ b.m4s
     await _waitUntil('预读 /4.ts', () => upstream.requestCount('/4.ts') == 1);
     expect(upstream.requestCount('/4.ts'), 1);
     session.notifySeek();
+  });
+
+  // 上游没有 Content-Length(chunked)时,老实现拿「收到多少」当「本该多少」——
+  // 完整性检查自证成立,截断的分片照样进缓存,之后每次命中都放这半截。
+  test('a truncated segment never reaches the cache', () async {
+    final fake = _ScriptedUpstream(
+      segmentChunks: const [
+        [1, 2, 3, 4]
+      ],
+      // 206 没给 Content-Length,但 Content-Range 写着这一段应该有 10 字节。
+      segmentHeaders: {
+        HttpHeaders.contentRangeHeader: const ['bytes 0-9/10'],
+      },
+      segmentStatus: HttpStatus.partialContent,
+    );
+    final probe = await _openScripted(fake);
+
+    await _getIgnoringErrors(probe.segment);
+    expect(fake.segmentRequests, 1);
+    await _getIgnoringErrors(probe.segment);
+
+    expect(fake.segmentRequests, 2, reason: '半截分片不该被当成缓存命中');
+    expect(
+      probe.directory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+  });
+
+  test('a segment whose upstream stream fails midway is discarded', () async {
+    final fake = _ScriptedUpstream(
+      segmentChunks: const [
+        [1, 2, 3, 4]
+      ],
+      failAfterChunks: true,
+    );
+    final probe = await _openScripted(fake);
+
+    await _getIgnoringErrors(probe.segment);
+    await _getIgnoringErrors(probe.segment);
+
+    expect(fake.segmentRequests, 2, reason: '异常结束的分片不该入缓存');
+    expect(
+      probe.directory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.bin')),
+      isEmpty,
+    );
+  });
+
+  // 两次 open 撞在一起时,老实现两边都看到 `_server == null` 各绑一个端口,后绑的
+  // 覆盖前一个 —— 前一个再也没人关得掉,整个进程期间白占着一个回环端口。
+  test('concurrent opens share one loopback server that close() releases',
+      () async {
+    const playlist = '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+0.ts
+#EXT-X-ENDLIST
+''';
+    upstream.addText('/one.m3u8', playlist);
+    upstream.addText('/two.m3u8', playlist);
+    upstream.addBytes('/0.ts', const [0]);
+
+    final opened = await Future.wait([
+      gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('one.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      ),
+      gateway.open(
+        VideoTrack(
+          url: upstream.baseUri.resolve('two.m3u8').toString(),
+          hls: true,
+        ),
+        authScope: 'public',
+      ),
+    ]);
+
+    final port = opened.first.localUri.port;
+    expect(opened.last.localUri.port, port);
+    expect((await _get(opened.first.localUri)).status, HttpStatus.ok);
+    expect((await _get(opened.last.localUri)).status, HttpStatus.ok);
+
+    await gateway.close();
+    await expectLater(
+      Socket.connect(InternetAddress.loopbackIPv4, port),
+      throwsA(isA<SocketException>()),
+    );
+  });
+
+  // 正文已经发出去之后再想写错误头,dart:io 直接抛 StateError;它是从 unawaited 的
+  // 请求处理里逃出来的,没人接,一路打穿宿主 zone。
+  test('an error raised after the body started closes the connection quietly',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('dmr-hls-late-error-test-');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final store = _IndexBreakingStore(
+      directory: directory,
+      limitBytes: 1024 * 1024,
+    );
+    final escaped = <Object>[];
+    final local = HlsCacheGateway(
+      cache: store,
+      upstream: DioHlsUpstreamClient(Dio(),
+          policy: const HlsUpstreamPolicy(allowLoopback: true)),
+      allowLoopbackUpstream: true,
+      onRequestError: (error, _) => escaped.add(error),
+    );
+    addTearDown(local.close);
+
+    upstream.addText('/late.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+late.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/late.ts', const [1, 2, 3, 4]);
+    final session = await local.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('late.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    expect((await _get(media.segments.single.uri)).bytes, [1, 2, 3, 4]);
+
+    // 命中缓存:正文发完、租约归还时索引落盘才失败 —— 错误炸在响应已经开始之后。
+    store.breakIndexOnNextLookup = true;
+    final second = await _get(media.segments.single.uri);
+    expect(second.bytes, [1, 2, 3, 4]);
+
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(escaped, isEmpty);
+    // 网关还站着,同一个会话继续能服务。
+    expect((await _get(session.localUri)).status, HttpStatus.ok);
+  });
+
+  // 预读窗口按「当前片的下标 + 深度」现算,而不是给每片各存一份「其后所有 id」。
+  // 窗口边界(最多 30 片、清单末尾自动收口)必须和原来一致。
+  test('the prefetch window follows the playing segment and stops at the end',
+      () async {
+    const count = 35;
+    final playlist = StringBuffer('#EXTM3U\n#EXT-X-TARGETDURATION:4\n'
+        '#EXT-X-PLAYLIST-TYPE:VOD\n');
+    for (var index = 0; index < count; index++) {
+      playlist.write('#EXTINF:4,\n$index.ts\n');
+      upstream.addBytes('/$index.ts', [index]);
+    }
+    playlist.write('#EXT-X-ENDLIST\n');
+    upstream.addText('/window.m3u8', playlist.toString());
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('window.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    session.reportBuffer(const Duration(seconds: 20));
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    await _get(media.segments.first.uri);
+
+    // 播第 0 片 → 窗口是第 1..30 片,第 31 片起要等播放位置往前挪。
+    await _waitUntil('预读到 /30.ts', () => upstream.requestCount('/30.ts') == 1);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(upstream.requestCount('/31.ts'), 0);
+
+    // 清单最后一片没有后继:窗口收口成空,不越界也不空转。
+    await _get(media.segments.last.uri);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(upstream.requestCount('/${count - 1}.ts'), 1);
+  });
+
+  // 缓冲从健康掉下来 = 上行不够用了。整批预读必须当场作废,把带宽还给正在播的
+  // 那一片,否则「像是要等全部分片下完才开播」就会回来。
+  test('a buffer falling below the threshold cancels the deep prefetch batch',
+      () async {
+    upstream.addText('/brake.m3u8', '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+0.ts
+#EXTINF:4,
+1.ts
+#EXTINF:4,
+2.ts
+#EXTINF:4,
+3.ts
+#EXT-X-ENDLIST
+''');
+    upstream.addBytes('/0.ts', [0]);
+    upstream.addBytes('/2.ts', [2]);
+    upstream.addBytes('/3.ts', [3]);
+    final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
+    upstream.addChunked(
+      '/1.ts',
+      [
+        [1],
+        [1]
+      ],
+      beforeChunk: (index) async {
+        if (index == 1) await gate.future; // 预读停在半路,方便中途降级
+      },
+    );
+
+    final session = await gateway.open(
+      VideoTrack(
+        url: upstream.baseUri.resolve('brake.m3u8').toString(),
+        hls: true,
+      ),
+      authScope: 'public',
+    );
+    // 领先 20 秒:整批预读。
+    session.reportBuffer(const Duration(seconds: 20));
+    final media = HlsParser.parse((await _get(session.localUri)).text)
+        as HlsMediaPlaylist;
+    await _get(media.segments.first.uri);
+    await _waitUntil('预读 /1.ts', () => upstream.requestCount('/1.ts') == 1);
+
+    // 领先量跌到 2 秒 —— 这一批预读作废,剩下的分片不该再被拉起。
+    session.reportBuffer(const Duration(seconds: 2));
+    gate.complete();
+    await _waitUntil(
+      '/1.ts 落盘',
+      () => temp
+              .listSync()
+              .whereType<File>()
+              .where((file) => file.path.endsWith('.bin'))
+              .length >=
+          2,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(upstream.requestCount('/2.ts'), 0);
+    expect(upstream.requestCount('/3.ts'), 0);
   });
 
   test('live playlists bypass disk cache and forward prefetch', () async {
@@ -688,4 +1017,124 @@ $foreign/foreign.ts
     expect(same.authorization, 'Bearer origin-only');
     expect(cross.authorization, isNull);
   });
+}
+
+/// 租约交出去之后再让索引落盘失败:占住 index.json.tmp 的位置,`release()` 里那次
+/// `_persist` 必然抛 —— 而这一炸发生在响应正文已经发完之后,正是要覆盖的时序。
+class _IndexBreakingStore extends HlsCacheStore {
+  _IndexBreakingStore({required super.directory, required super.limitBytes});
+
+  bool breakIndexOnNextLookup = false;
+
+  @override
+  Future<HlsCacheLease?> lookup(HlsCacheRequest request) async {
+    final lease = await super.lookup(request);
+    if (breakIndexOnNextLookup && lease != null) {
+      breakIndexOnNextLookup = false;
+      await Directory(
+        '${directory.path}${Platform.pathSeparator}index.json.tmp',
+      ).create();
+    }
+    return lease;
+  }
+}
+
+/// 截断的响应会让客户端自己也报错(连接在 Content-Length 之前就断了)——
+/// 这些用例关心的是缓存里留下了什么,不是这一次请求好不好看。
+Future<void> _getIgnoringErrors(Uri uri) async {
+  try {
+    await _get(uri);
+  } on Object {
+    // 半截响应,预期之中。
+  }
+}
+
+/// 起一个只回放脚本上游的网关,返回它那唯一一片的本地地址和缓存目录。
+Future<({Uri segment, Directory directory})> _openScripted(
+  _ScriptedUpstream upstream,
+) async {
+  final directory = await Directory.systemTemp.createTemp('dmr-hls-scripted-');
+  addTearDown(() async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+  });
+  final gateway = HlsCacheGateway(
+    cache: HlsCacheStore(directory: directory, limitBytes: 1024 * 1024),
+    upstream: upstream,
+  );
+  addTearDown(gateway.close);
+  final session = await gateway.open(
+    const VideoTrack(url: 'https://media.example.test/media.m3u8', hls: true),
+    authScope: 'public',
+  );
+  final media =
+      HlsParser.parse((await _get(session.localUri)).text) as HlsMediaPlaylist;
+  return (segment: media.segments.single.uri, directory: directory);
+}
+
+/// 按脚本回放的上游:清单走 get、分片走 stream,可以精确摆出「chunked 少给了几个
+/// 字节」和「流到一半炸了」这两种收尾 —— 真实 HTTP 服务器摆不稳这个时序。
+class _ScriptedUpstream
+    implements HlsUpstreamClient, HlsStreamingUpstreamClient {
+  _ScriptedUpstream({
+    required this.segmentChunks,
+    this.segmentHeaders = const {},
+    this.segmentStatus = HttpStatus.ok,
+    this.failAfterChunks = false,
+  });
+
+  static const _playlist = '''#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:4,
+one.ts
+#EXT-X-ENDLIST
+''';
+
+  final List<List<int>> segmentChunks;
+  final Map<String, List<String>> segmentHeaders;
+  final int segmentStatus;
+  final bool failAfterChunks;
+  int segmentRequests = 0;
+
+  @override
+  Future<HlsUpstreamResponse> get(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    if (!uri.path.endsWith('.m3u8')) throw StateError('unexpected get: $uri');
+    return HlsUpstreamResponse(
+      statusCode: HttpStatus.ok,
+      bytes: utf8.encode(_playlist),
+      headers: const {
+        HttpHeaders.contentTypeHeader: ['application/vnd.apple.mpegurl'],
+      },
+    );
+  }
+
+  @override
+  Future<HlsStreamResponse> stream(
+    Uri uri, {
+    required Map<String, String> headers,
+    int? rangeStart,
+    int? rangeLength,
+  }) async {
+    segmentRequests++;
+    return HlsStreamResponse(
+      statusCode: segmentStatus,
+      stream: _body(),
+      headers: segmentHeaders,
+      cancel: () async {},
+    );
+  }
+
+  Stream<List<int>> _body() async* {
+    for (final chunk in segmentChunks) {
+      yield chunk;
+    }
+    if (failAfterChunks) {
+      throw const SocketException('upstream vanished mid-segment');
+    }
+  }
 }

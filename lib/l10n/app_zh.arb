@@ -254,6 +254,7 @@
   "reader_orientPortrait": "竖屏",
   "reader_orientLandscape": "横屏",
   "reader_brightness": "亮度",
+  "reader_nextChapterFailed": "加载下一章失败",
   "disc_searchTooltip": "搜索",
   "disc_browseSections": "浏览板块",
   "disc_collapseFilters": "收起筛选",
@@ -353,6 +354,122 @@
       "e": {}
     }
   },
+  "sync_stSyncing": "同步中…",
+  "sync_stUploading": "上传中…",
+  "sync_stDownloading": "下载中…",
+  "sync_stSynced": "已同步 · 收藏 {fav} · 进度 {his}",
+  "@sync_stSynced": {
+    "placeholders": {
+      "fav": {
+        "type": "num"
+      },
+      "his": {
+        "type": "num"
+      }
+    }
+  },
+  "sync_stUploaded": "已上传 · {n} 项",
+  "@sync_stUploaded": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_stDownloaded": "已下载 · {n} 项",
+  "@sync_stDownloaded": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_stServerEmpty": "服务器暂无数据",
+  "sync_stTestWebdavReady": "连接成功 · 同步目录就绪",
+  "sync_stTestAccountReady": "连接成功 · 账号已登录",
+  "sync_errNotConfiguredAccount": "账号同步未就绪(先登录账号)",
+  "sync_errNotConfiguredWebdav": "还没配置 WebDAV 地址",
+  "sync_errNoCategories": "至少选择一项要同步的内容",
+  "sync_errNoDownload": "至少选择一项要下载的内容",
+  "sync_errAlreadySyncing": "正在同步中…",
+  "sync_errConflictRetries": "上传冲突,多次重试仍失败,请稍后再试",
+  "sync_errNotLoggedIn": "还没登录账号(或登录已过期,请重新登录)",
+  "sync_errSessionExpired": "登录已过期,请重新登录",
+  "sync_errServiceOnlineNotLoggedIn": "服务在线,但还没登录账号",
+  "sync_errServiceDown": "同步服务无响应(HTTP {status})",
+  "@sync_errServiceDown": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errAuthFailed": "认证失败:账号或密码不对(HTTP {status})",
+  "@sync_errAuthFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errForbidden": "权限不足:该账号不能写这个目录(HTTP {status})",
+  "@sync_errForbidden": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errPullFailed": "拉取失败(HTTP {status})",
+  "@sync_errPullFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errPushFailed": "上传失败(HTTP {status})",
+  "@sync_errPushFailed": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errUnexpectedStatus": "异常响应 HTTP {status}",
+  "@sync_errUnexpectedStatus": {
+    "placeholders": {
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "sync_errUnreachable": "连不上:{detail}",
+  "@sync_errUnreachable": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "sync_errAutoSyncFailed": "自动同步失败:{detail}",
+  "@sync_errAutoSyncFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "sync_errAutoUploadFailed": "自动上传失败:{detail}",
+  "@sync_errAutoUploadFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
   "sync_neverSynced": "尚未同步",
   "sync_lastSyncedAt": "上次同步 {time}",
   "@sync_lastSyncedAt": {
@@ -428,7 +545,7 @@
   "sync_autoOnLaunch": "启动时自动同步",
   "sync_autoOnLaunchSub": "每次打开 App 后台双向合并一次(不丢本地)",
   "sync_autoUploadTitle": "变化后自动上传",
-  "sync_autoUploadSubtitle": "勾选的内容在本机变化几秒后自动上传对应类别;阅读进度最快每 2 分钟一次。",
+  "sync_autoUploadSubtitle": "勾选的内容在本机变化几秒后自动上传对应类别;进度 / 设置 / 搜索历史最快每 5 分钟一次。",
   "sync_skip": "跳过",
   "sync_overwrite": "覆盖",
   "sync_append": "追加",
@@ -652,8 +769,139 @@
     }
   },
   "srcmgmt_healthFail": "不可用 · 点圆点看详情",
+  "srcmgmt_healthScriptStuck": "脚本卡死 · 已停用该源",
   "srcmgmt_healthChecking": "检测中…（联网）",
   "srcmgmt_healthUnknown": "未检测",
+  "srcmgmt_logSource": "源:{name}  (id: {id})",
+  "@srcmgmt_logSource": {
+    "placeholders": {
+      "name": {},
+      "id": {}
+    }
+  },
+  "srcmgmt_logTransport": "传输:{transport}",
+  "@srcmgmt_logTransport": {
+    "placeholders": {
+      "transport": {}
+    }
+  },
+  "srcmgmt_logTransportDio": "dio",
+  "srcmgmt_logTransportWebView": "WebView",
+  "srcmgmt_logExperimental": "实验性",
+  "srcmgmt_logTest": "测试:{fn}(1)  超时 {seconds}s",
+  "@srcmgmt_logTest": {
+    "placeholders": {
+      "fn": {},
+      "seconds": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logElapsed": "耗时:{ms} ms",
+  "@srcmgmt_logElapsed": {
+    "placeholders": {
+      "ms": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logResultOk": "结果:✓ 发现 {count} 部(其中 {withCover} 部带封面)",
+  "@srcmgmt_logResultOk": {
+    "placeholders": {
+      "count": {
+        "type": "num",
+        "format": "compact"
+      },
+      "withCover": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_logSamples": "示例:{samples}",
+  "@srcmgmt_logSamples": {
+    "placeholders": {
+      "samples": {}
+    }
+  },
+  "srcmgmt_logResultEmpty": "结果:⚠ 发现 0 部",
+  "srcmgmt_logEmptyHint": "可能:被限流 / 需登录 / 站点结构变动导致解析为空。",
+  "srcmgmt_logResultFail": "结果:✗ 失败",
+  "srcmgmt_logStuckHint": "脚本执行超时:该源的脚本卡住了(死循环 / 退化正则),引擎已停用它。重试无用,需要换或修脚本。",
+  "srcmgmt_logNotChecked": "未检测",
+  "srcmgmt_repoStNotConfigured": "未配置源仓库",
+  "srcmgmt_repoStRemote": "已从仓库加载 {n} 个源",
+  "@srcmgmt_repoStRemote": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStLocalDir": "已从本地目录加载 {n} 个源",
+  "@srcmgmt_repoStLocalDir": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStCache": "已从缓存加载 {n} 个源",
+  "@srcmgmt_repoStCache": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStDevDir": "已从开发目录加载 {n} 个源",
+  "@srcmgmt_repoStDevDir": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStCacheAfterFailure": "加载失败,已用缓存({n} 个源)",
+  "@srcmgmt_repoStCacheAfterFailure": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStFailed": "加载失败:{detail}",
+  "@srcmgmt_repoStFailed": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "srcmgmt_repoStNotLoaded": "未加载",
+  "srcmgmt_repoStLocalExtra": " · +{n} 本地源",
+  "@srcmgmt_repoStLocalExtra": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "srcmgmt_repoStHidden": " · 隐藏 {n}",
+  "@srcmgmt_repoStHidden": {
+    "placeholders": {
+      "n": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
   "srcmgmt_checkLogTitle": "{name} · 检测日志",
   "@srcmgmt_checkLogTitle": {
     "placeholders": {
@@ -798,7 +1046,7 @@
   "proxy_modeNone": "不使用代理",
   "proxy_modeNoneSub": "直连,不走任何代理。国内可能访问不了被墙的源。",
   "proxy_modeSystem": "使用系统代理",
-  "proxy_modeSystemSub": "跟随 Windows 系统代理 / 环境变量。开了 FlClash 系统代理就能用(推荐)。",
+  "proxy_modeSystemSub": "跟随系统代理 / 环境变量。Windows 读注册表,Android 读系统与 VPN 下发的代理(推荐)。",
   "proxy_modeCustom": "自定义代理",
   "proxy_modeCustomSub": "手动指定 host:port。",
   "proxy_customHint": "host:port,如 127.0.0.1:7890",
@@ -839,14 +1087,56 @@
   "about_hl9": "普通 / 日漫 / 竖翻 / 滚动 四种阅读模式 · 缩放适配 · 色彩滤镜",
   "about_hl10": "每漫画模式记忆 + 高瘦条漫自动识别 · 条漫自动滚动 · 保存/分享页",
   "about_hl11": "OLED / Dark / Light 三套主题",
+  "splash_tagline": "漫画阅读器",
+  "@splash_tagline": {
+    "description": "启动页品牌名后面那句说明,前面的「梦漫」是品牌名不翻译"
+  },
   "proxy_srcForcedDirect": "强制直连",
   "proxy_srcManual": "手动设置",
   "proxy_srcEnvVar": "环境变量",
-  "proxy_srcSystemProxy": "Windows 系统代理",
+  "proxy_srcSystemProxy": "系统代理",
   "proxy_srcDirectNoProxy": "直连(未检测到代理)",
   "trans_provGoogle": "谷歌翻译 · 免费",
   "trans_provMicrosoft": "微软翻译 · 免费",
   "trans_provLlm": "大模型 API",
+  "trans_errLlmNotConfigured": "大模型翻译未配置(到设置 · 翻译里填 API 地址 / 密钥 / 模型)",
+  "trans_errNoProvider": "没有可用的翻译服务商(到设置 · 翻译里配置)",
+  "trans_errConnectFailed": "连不上翻译服务(检查网络 / 代理)",
+  "trans_errTimeout": "翻译服务响应超时",
+  "trans_errRequest": "翻译请求出错({detail})",
+  "@trans_errRequest": {
+    "placeholders": {
+      "detail": {}
+    }
+  },
+  "trans_errBadResponse": "翻译服务返回异常(检查网络 / 代理)",
+  "trans_errHttp": "{provider} 请求失败(HTTP {status})",
+  "@trans_errHttp": {
+    "placeholders": {
+      "provider": {},
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "trans_errEmptyResult": "{provider} 没有返回译文",
+  "@trans_errEmptyResult": {
+    "placeholders": {
+      "provider": {}
+    }
+  },
+  "trans_errToken": "{provider} 取临时令牌失败(HTTP {status})",
+  "@trans_errToken": {
+    "placeholders": {
+      "provider": {},
+      "status": {
+        "type": "num",
+        "format": "compact"
+      }
+    }
+  },
+  "trans_errFailed": "翻译失败",
   "proxy_testOk": "✓ 连通 · HTTP {status} · {ms}ms · 经 {via}",
   "@proxy_testOk": {
     "placeholders": {
@@ -881,6 +1171,13 @@
       "error": {}
     }
   },
+  "proxy_errEmpty": "请先填写代理地址",
+  "proxy_errInvalid": "代理地址无效。写成 host:port,例如 127.0.0.1:7890;要带账号则 用户名:密码@host:port",
+  "proxy_errPort": "端口不对,应在 1–65535 之间",
+  "proxy_errSocks": "暂不支持 SOCKS 代理,请填 HTTP / HTTPS 代理",
+  "proxy_noProxyLabel": "不走代理的地址",
+  "proxy_noProxySub": "名单里的主机直连。逗号分隔;`.corp.com` 连子域一起匹配;`*` 全部直连。",
+  "proxy_noProxyHint": "localhost, .corp.com, 192.168.1.10",
   "fontpick_countN": "{n} 个",
   "@fontpick_countN": {
     "placeholders": {
@@ -891,6 +1188,15 @@
   },
   "detail_orderAsc": "正序",
   "detail_orderDesc": "倒序",
+  "detail_bangumiSearchHint": "输入条目名",
+  "detail_bangumiNoResults": "没有搜到相关条目",
+  "detail_bangumiNoResultsHint": "原文和译名都没搜到 · 换个关键词再试试",
+  "detail_bangumiViaTranslation": "原文没搜到,用译名「{name}」搜到",
+  "@detail_bangumiViaTranslation": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "set_preloadPages": "预加载后续页",
   "set_doublePage": "双页并排",
   "set_doublePageSub": "横屏翻页模式下左右并排显示两页",
@@ -992,6 +1298,7 @@
   "update_noNotes": "暂无更新说明。",
   "update_noCompatibleAsset": "没有适用于当前设备的自动更新包，可前往发布页手动下载。",
   "update_primary": "一键更新",
+  "update_skipVersion": "跳过此版本",
   "update_background": "后台下载",
   "update_backgroundHint": "下载将在系统通知中继续",
   "update_retrying": "连接中断，正在重试 {attempt} / 3",
@@ -1056,6 +1363,27 @@
   "download_concurrencySub": "可同时处理的漫画、小说或番剧数量",
   "download_reserveSpace": "预留存储空间",
   "download_reserveSpaceSub": "剩余空间低于此值前暂停下载",
+  "download_failureNetwork": "网络连接失败",
+  "download_failureAuth": "需要重新登录",
+  "download_failureSourceRefresh": "等待源刷新",
+  "download_failureMissing": "资源不存在",
+  "download_failureStorageFull": "存储空间不足",
+  "download_failureStorageUnavailable": "下载目录不可用",
+  "download_failureUnsafePath": "下载路径不安全",
+  "download_failureCorrupt": "下载文件已损坏",
+  "download_failureDrm": "不支持此 DRM 离线内容",
+  "download_failureCancelled": "下载已取消",
+  "download_failureUnknown": "下载失败",
+  "download_failureDetail": "错误详情",
+  "download_pausedUser": "已暂停",
+  "download_pausedWifi": "等待 Wi-Fi",
+  "download_pausedRoaming": "漫游中已暂停",
+  "download_pausedBattery": "电量过低已暂停",
+  "download_pausedStorage": "存储空间不足已暂停",
+  "download_pausedAuth": "需要重新登录后继续",
+  "download_pausedSourceRefresh": "等待源刷新",
+  "download_pausedSystem": "系统已暂停下载",
+  "download_pausedExternalStorage": "下载目录不可用已暂停",
   "novel_browserNoSources": "还没有可用的小说源",
   "novel_browserAllSourcesFailed": "所有小说源均加载失败",
   "novel_browserTranslatedQuery": "「{original}」没搜到，已用译名「{query}」",
@@ -1237,6 +1565,20 @@
   "novel_readerSearchCancelled": "已取消",
   "novel_readerSearchFailed": "搜索失败：{error}",
   "@novel_readerSearchFailed": {"placeholders":{"error":{}}},
+  "novel_wholeText": "正文",
+  "novel_errorIndexUnreadable": "小说索引格式无效",
+  "novel_errorIndexOrigin": "小说索引缺少有效格式",
+  "novel_errorIndexChapters": "小说索引缺少章节目录",
+  "novel_errorNoChapters": "小说没有可读章节",
+  "novel_errorUnknownChapter": "章节不存在",
+  "novel_errorTextOffset": "TXT 章节偏移无效",
+  "novel_errorTextRange": "TXT 章节超出正文范围",
+  "novel_errorEpubResourceMissing": "EPUB 章节资源缺失",
+  "novel_errorEpubResourcePath": "EPUB 资源路径无效",
+  "novel_errorEpubResourceEscape": "EPUB 资源越过私有目录",
+  "novel_errorEpubDrm": "这本 EPUB 有 DRM 保护，无法导入",
+  "novel_errorDeleteOutsideRoot": "拒绝删除 App 小说目录之外的路径",
+  "novel_openOnlineDetail": "查看在线目录",
   "libraryUnifiedHistory": "历史记录",
   "libraryMangaFavorites": "漫画收藏",
   "libraryNovelFavorites": "小说收藏",
@@ -1293,6 +1635,8 @@
     }
   },
   "shelf_markAllSeen": "全部标为已看",
+  "shelf_markAllSeenDone": "追更角标已清空",
+  "shelf_menuMore": "更多",
   "set_autoCheckUpdates": "启动时检查追更",
   "set_autoCheckUpdatesSub": "收藏出现新章节时在封面标出;最多每 6 小时查一次",
   "@shelf_sourceGone": {
@@ -1369,6 +1713,12 @@
   "player_noQuality": "暂无清晰度信息",
   "player_qualityOnlyOne": "这条流只提供这一种清晰度",
   "player_routeN": "线路 {n}",
+  "player_episodeN": "第 {n} 集",
+  "@player_episodeN": {
+    "placeholders": {
+      "n": { "type": "String" }
+    }
+  },
   "@player_routeN": {
     "placeholders": {
       "n": {}
@@ -1379,6 +1729,12 @@
   "player_fitStretch": "拉伸",
   "player_speed": "倍速播放",
   "player_speedShort": "倍速",
+  "player_loop": "循环播放",
+  "player_loopSingle": "单集循环",
+  "player_loopList": "列表循环",
+  "player_loopOff": "不循环",
+  "player_autoPlay": "自动连播",
+  "player_autoPlayHint": "当前集结束后自动播放下一集",
   "player_aspect": "画面比例",
   "player_boosting": "{rate}x 快进中",
   "@player_boosting": {
@@ -1410,6 +1766,19 @@
   "@player_subtitleN": {
     "placeholders": {
       "n": {}
+    }
+  },
+  "player_configureFailed": "无法配置播放器网络参数 {key}:{error}",
+  "@player_configureFailed": {
+    "placeholders": {
+      "key": {},
+      "error": {}
+    }
+  },
+  "player_gatewayFallbackFailed": "HLS 网关回退失败:{error}",
+  "@player_gatewayFallbackFailed": {
+    "placeholders": {
+      "error": {}
     }
   },
   "bili_generatingQr": "正在生成二维码…",
@@ -1446,6 +1815,45 @@
       "n": {}
     }
   },
+  "anime_downloadAllConfirm": "将 {n} 集加入下载队列。",
+  "@anime_downloadAllConfirm": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "anime_downloadQueuedN": "已加入 {n} 个下载任务",
+  "@anime_downloadQueuedN": {
+    "placeholders": {
+      "n": {}
+    }
+  },
+  "anime_biliLoggedInAs": "已登录 · {name}",
+  "@anime_biliLoggedInAs": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "anime_noSourcesHint": "在「设置 › 漫画源」里启用番剧源(如 AllAnime)后即可浏览。",
+  "anime_searchBangumi": "搜索 Bangumi",
+  "anime_deleteSeries": "删除整部下载",
+  "anime_deleteSeriesConfirm": "删除《{title}》的 {n} 集本地缓存?",
+  "@anime_deleteSeriesConfirm": {
+    "placeholders": {
+      "title": {},
+      "n": {
+        "type": "num"
+      }
+    }
+  },
+  "anime_deleteEpisodeConfirm": "删除《{title}》的「{episode}」本地缓存?",
+  "@anime_deleteEpisodeConfirm": {
+    "placeholders": {
+      "title": {},
+      "episode": {}
+    }
+  },
+  "anime_downloadDeleted": "已删除本地缓存",
+  "anime_noDownloadableTrack": "这一集没有可下载的视频轨道",
   "animeUnfavorite": "取消收藏番剧",
   "animeHistoryProgress": "{episode} · {position} / {duration}",
   "@animeHistoryProgress": {"placeholders":{"episode":{},"position":{},"duration":{}}},

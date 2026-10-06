@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../../app/anime_library_store.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
@@ -87,6 +89,14 @@ class ShelfItem {
 }
 
 abstract final class ShelfProjector {
+  /// 分组时做过多少次 [sameCoreKey] 比较。测试用它守住「别再退回平方级」。
+  @visibleForTesting
+  static int debugWorkKeyComparisons = 0;
+
+  /// [build] 真正跑了多少次。书架页会缓存结果,测试用它守住缓存别白建。
+  @visibleForTesting
+  static int debugBuildCount = 0;
+
   /// 三类收藏合并成一条按**收藏时间倒序**的列表。
   /// [kind] 非空则只出该类;[query] 非空则按标题/作者过滤。
   static List<ShelfItem> build({
@@ -96,6 +106,7 @@ abstract final class ShelfProjector {
     ShelfKind? kind,
     String query = '',
   }) {
+    debugBuildCount++;
     final items = <ShelfItem>[
       if (kind == null || kind == ShelfKind.manga)
         for (final group in dedupMangaFavorites(manga))
@@ -155,11 +166,12 @@ abstract final class ShelfProjector {
   /// (没有则最近收藏的)。返回顺序 = [LibraryStore.favorites] 的顺序(最近在前)。
   static List<({FavoriteEntry rep, int sources})> dedupMangaFavorites(
       LibraryStore store) {
-    final srcMap = _sourcesByWork(store); // 权威分组 key
+    final (:sources, :index) = _sourcesByWork(store); // 权威分组 key + 索引
     final groups = <String, List<FavoriteEntry>>{}; // 插入序 = 收藏序(最近在前)
     for (final f in store.favorites) {
       final core = coreTitle(f.title);
-      final key = core.isEmpty ? 'raw:${f.key}' : _canonKey(core, srcMap.keys);
+      // 索引已由 _sourcesByWork 建好,这一遍纯查表(以前是又一次全表线性扫)。
+      final key = core.isEmpty ? 'raw:${f.key}' : index.lookup(core);
       (groups[key] ??= []).add(f);
     }
     final out = <({FavoriteEntry rep, int sources})>[];
@@ -174,7 +186,7 @@ abstract final class ShelfProjector {
           }
         }
       }
-      out.add((rep: rep, sources: srcMap[key]?.length ?? 1));
+      out.add((rep: rep, sources: sources[key]?.length ?? 1));
     });
     return out;
   }
@@ -218,21 +230,16 @@ abstract final class ShelfProjector {
     );
   }
 
-  /// 把标题解析成「作品分组 key」:优先复用已出现的同作品 key(sameCoreKey 容繁简/副标题)。
-  static String _canonKey(String core, Iterable<String> existing) {
-    for (final k in existing) {
-      if (k == core || sameCoreKey(core, k)) return k;
-    }
-    return core;
-  }
-
-  /// 作品分组 key → 拥有该作品的源集合(收藏 ∪ 历史)。是分组的**权威 key 来源**。
-  static Map<String, Set<String>> _sourcesByWork(LibraryStore store) {
+  /// 作品分组 key → 拥有该作品的源集合(收藏 ∪ 历史)。是分组的**权威 key 来源**;
+  /// 一并返回建好的索引,给第二遍(按收藏分组)查表用。
+  static ({Map<String, Set<String>> sources, _WorkKeyIndex index})
+      _sourcesByWork(LibraryStore store) {
     final m = <String, Set<String>>{};
+    final index = _WorkKeyIndex();
     void add(String title, String sid) {
       final core = coreTitle(title);
       if (core.isEmpty) return;
-      (m[_canonKey(core, m.keys)] ??= <String>{}).add(sid);
+      (m[index.canonical(core)] ??= <String>{}).add(sid);
     }
 
     for (final f in store.favorites) {
@@ -241,6 +248,62 @@ abstract final class ShelfProjector {
     for (final h in store.history) {
       add(h.title, h.sourceId);
     }
-    return m;
+    return (sources: m, index: index);
   }
+}
+
+/// 「标题 → 作品分组 key」的索引。
+///
+/// 以前是拿每个新标题去跟**所有**已出现的 key 逐个 [sameCoreKey] —— 书架一大就是
+/// 平方级,而书架每次 build、搜索框每敲一个字都要重算一遍。
+///
+/// 这里按 [sameCoreKey] 的两条硬条件建倒排桶把候选集压到个位数:
+/// 1. 长度必须相同(变体是逐字替换,续作/卷号是加后缀,长度就变了);
+/// 2. 至少共用一个字(判定要求 ≥70% 字符重叠,非空标题必有交集)。
+/// 再叠一层 [_canon] 缓存:跨源同一本书(最常见的情况)直接命中,一次比较都不做。
+///
+/// 语义与旧实现逐字一致 —— 候选集是旧实现扫描集合的超集里唯一可能命中的部分,
+/// 并按登记先后取第一个命中的 key。
+class _WorkKeyIndex {
+  final Map<String, String> _canon = {}; // core → 权威 key(含已判定的变体)
+  final Map<String, List<String>> _buckets = {}; // '长度|字' → 该桶里的权威 key
+  final Map<String, int> _order = {}; // 权威 key → 登记序(取「最早命中的那个」)
+
+  static Iterable<String> _bucketsOf(String core) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final ch in core.split('')) {
+      if (seen.add(ch)) out.add('${core.length}|$ch');
+    }
+    return out;
+  }
+
+  /// 解析 [core] 的分组 key;没见过就把它自己登记成新的权威 key。
+  String canonical(String core) {
+    final cached = _canon[core];
+    if (cached != null) return cached;
+    String? best;
+    var bestOrder = -1;
+    for (final b in _bucketsOf(core)) {
+      for (final k in _buckets[b] ?? const <String>[]) {
+        final o = _order[k]!;
+        if (best != null && o >= bestOrder) continue; // 已有更早的命中
+        ShelfProjector.debugWorkKeyComparisons++;
+        if (sameCoreKey(core, k)) {
+          best = k;
+          bestOrder = o;
+        }
+      }
+    }
+    final hit = best;
+    if (hit != null) return _canon[core] = hit;
+    _order[core] = _order.length;
+    for (final b in _bucketsOf(core)) {
+      (_buckets[b] ??= <String>[]).add(core);
+    }
+    return _canon[core] = core;
+  }
+
+  /// 索引建好之后只查不建(第二遍回填分组用)。
+  String lookup(String core) => _canon[core] ?? core;
 }

@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'bili_errors.dart';
+
 /// B站 Web 端浏览器 UA。风控对 UA 敏感,统一用一个稳定的桌面 Chrome UA。
 const String kBiliUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -52,23 +54,57 @@ class BiliAuth extends ChangeNotifier {
     notifyListeners();
   }
 
-  Dio _dio() => Dio(BaseOptions(
-        headers: {
-          'User-Agent': kBiliUa,
-          'Referer': 'https://www.bilibili.com/',
-        },
-        // 轮询 pending 时 B站返回 200 + code≠0,不该抛;放宽到全部状态自行判读。
-        validateStatus: (_) => true,
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 15),
-      ));
+  /// 测试注入点:换掉 dio 的传输层。生产恒为 null —— 走默认实现(即 App 代理)。
+  @visibleForTesting
+  static HttpClientAdapter? debugAdapter;
+
+  Dio _dio() {
+    final dio = Dio(BaseOptions(
+      headers: {
+        'User-Agent': kBiliUa,
+        'Referer': 'https://www.bilibili.com/',
+      },
+      // 轮询 pending 时 B站返回 200 + code≠0,不该抛;放宽到全部状态自行判读。
+      validateStatus: (_) => true,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ));
+    final adapter = debugAdapter;
+    if (adapter != null) dio.httpClientAdapter = adapter;
+    return dio;
+  }
 
   /// 生成登录二维码:返回 (二维码内容 url, 轮询用 qrcode_key)。
+  ///
+  /// 接口被风控/降级时会回一个没有 `data` 的信封(甚至一页 HTML)。裸 cast 到 Map
+  /// 只会抛一句 `type 'Null' is not a subtype of type 'Map'`,登录页原样贴给用户 ——
+  /// 既看不出发生了什么,也不知道该干嘛。这里按 code 归类,交给 bili_errors 出文案。
   Future<({String url, String key})> qrGenerate() async {
     final r = await _dio().get(
         'https://passport.bilibili.com/x/passport-login/web/qrcode/generate');
-    final d = (r.data as Map)['data'] as Map;
-    return (url: d['url'] as String, key: d['qrcode_key'] as String);
+    final body = r.data;
+    if (body is! Map) {
+      throw BiliException(
+        biliFailureOf(r.statusCode, null),
+        code: r.statusCode,
+        detail: '二维码接口没有返回 JSON(HTTP ${r.statusCode})',
+      );
+    }
+    final envelope = Map<String, dynamic>.from(body);
+    final raw = envelope['code'];
+    final code = raw is num ? raw.toInt() : int.tryParse('$raw');
+    if (code != null && code != 0) throw biliExceptionOf(envelope);
+    final data = envelope['data'];
+    final url = data is Map ? data['url'] : null;
+    final key = data is Map ? data['qrcode_key'] : null;
+    if (url is! String || url.isEmpty || key is! String || key.isEmpty) {
+      throw BiliException(
+        biliFailureOf(code, envelope['message']?.toString()),
+        code: code,
+        detail: '二维码接口缺少 url / qrcode_key',
+      );
+    }
+    return (url: url, key: key);
   }
 
   /// 轮询二维码状态;success 时从 Set-Cookie 落盘 Cookie。

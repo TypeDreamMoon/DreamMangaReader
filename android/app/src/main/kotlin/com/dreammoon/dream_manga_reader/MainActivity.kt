@@ -4,8 +4,10 @@ import android.content.Intent
 import android.os.Build
 import android.view.KeyEvent
 import com.dreammoon.dream_manga_reader.downloads.ContentDownloadBridge
+import com.dreammoon.dream_manga_reader.downloads.DownloadEnvironmentBridge
 import com.dreammoon.dream_manga_reader.gallery.GalleryBridge
 import com.dreammoon.dream_manga_reader.local.LocalMediaBridge
+import com.dreammoon.dream_manga_reader.net.SystemProxyBridge
 import com.dreammoon.dream_manga_reader.update.UpdateDownloadBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,8 +22,10 @@ class MainActivity : FlutterActivity() {
     private var platformChannel: MethodChannel? = null
     private var updateBridge: UpdateDownloadBridge? = null
     private var contentDownloadBridge: ContentDownloadBridge? = null
+    private var downloadEnvironmentBridge: DownloadEnvironmentBridge? = null
     private var galleryBridge: GalleryBridge? = null
     private var localMediaBridge: LocalMediaBridge? = null
+    private var systemProxyBridge: SystemProxyBridge? = null
     private var volumeKeyPaging = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -50,8 +54,10 @@ class MainActivity : FlutterActivity() {
         }
         updateBridge = UpdateDownloadBridge(this).also { it.configure(flutterEngine) }
         contentDownloadBridge = ContentDownloadBridge(this).also { it.configure(flutterEngine) }
+        downloadEnvironmentBridge = DownloadEnvironmentBridge(this).also { it.configure(flutterEngine) }
         galleryBridge = GalleryBridge(this).also { it.configure(flutterEngine) }
         localMediaBridge = LocalMediaBridge(this).also { it.configure(flutterEngine) }
+        systemProxyBridge = SystemProxyBridge(this).also { it.configure(flutterEngine) }
     }
 
     override fun onResume() {
@@ -99,10 +105,14 @@ class MainActivity : FlutterActivity() {
         updateBridge = null
         contentDownloadBridge?.dispose()
         contentDownloadBridge = null
+        downloadEnvironmentBridge?.dispose()
+        downloadEnvironmentBridge = null
         galleryBridge?.dispose()
         galleryBridge = null
         localMediaBridge?.dispose()
         localMediaBridge = null
+        systemProxyBridge?.dispose()
+        systemProxyBridge = null
         super.onDestroy()
     }
 

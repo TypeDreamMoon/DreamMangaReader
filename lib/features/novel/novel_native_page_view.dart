@@ -1,11 +1,70 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../core/novel/reader/novel_page_turn_physics.dart';
 import '../../core/novel/reader/novel_paginator.dart';
+import '../../core/novel/reader/novel_reader_theme.dart';
 import '../../core/novel/reader/novel_render_document.dart';
 import 'novel_native_document_controller.dart';
+
+/// 铺在正文下面的背景图 / 纸张纹理。
+///
+/// [opacity] 就是设置面里的「纹理强度」（与 WebView 渲染器的 CSS opacity 同义）。
+class NovelPageBackground {
+  const NovelPageBackground({
+    required this.image,
+    required this.fit,
+    required this.opacity,
+  });
+
+  final ui.Image image;
+  final NovelBackgroundFit fit;
+  final double opacity;
+}
+
+
+/// 正文里一段要涂色的区间（已保存的划线、正在选的选区、搜索命中词）。
+///
+/// [start] / [end] 是块内字符偏移，与 [NovelPageFragment.sourceStart] 同一坐标系。
+class NovelPageHighlight {
+  const NovelPageHighlight({
+    required this.blockId,
+    required this.start,
+    required this.end,
+    required this.color,
+  });
+
+  final String blockId;
+  final int start;
+  final int end;
+  final Color color;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NovelPageHighlight &&
+          blockId == other.blockId &&
+          start == other.start &&
+          end == other.end &&
+          color == other.color;
+
+  @override
+  int get hashCode => Object.hash(blockId, start, end, color);
+}
+
+/// 亮度遮罩。小于 1 压暗，大于 1 提亮；刚好是 1 就不需要遮罩。
+Color? novelReaderBrightnessMask(double brightness) {
+  final value =
+      brightness.isFinite ? brightness.clamp(.5, 1.5).toDouble() : 1.0;
+  if ((value - 1).abs() < .001) return null;
+  return value < 1
+      ? const Color(0xff000000).withValues(alpha: (1 - value).clamp(0, .8))
+      : const Color(0xffffffff)
+          .withValues(alpha: ((value - 1) * .6).clamp(0, .5));
+}
 
 class NovelNativePageView extends StatelessWidget {
   const NovelNativePageView({
@@ -16,6 +75,9 @@ class NovelNativePageView extends StatelessWidget {
     required this.pageColor,
     required this.textColor,
     this.showPageNumbers = true,
+    this.background,
+    this.brightness = 1,
+    this.highlights = const [],
   });
 
   final NovelPaginationResult pagination;
@@ -24,6 +86,9 @@ class NovelNativePageView extends StatelessWidget {
   final Color pageColor;
   final Color textColor;
   final bool showPageNumbers;
+  final NovelPageBackground? background;
+  final double brightness;
+  final List<NovelPageHighlight> highlights;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +122,15 @@ class NovelNativePageView extends StatelessWidget {
               page: spread.rightPage!,
               innerEdge:
                   pagination.pagesPerSpread == 2 ? Alignment.centerLeft : null,
+            ),
+          if (novelReaderBrightnessMask(brightness) case final mask?)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ColoredBox(
+                  key: const Key('novel-page-brightness-mask'),
+                  color: mask,
+                ),
+              ),
             ),
         ],
       ),
@@ -122,14 +196,14 @@ class NovelNativePageView extends StatelessWidget {
             child: ColoredBox(
               key: const Key('novel-page-paper-color'),
               color: pageColor,
-              child: CustomPaint(
-                painter: NovelNativePagePainter(
-                  page: page,
-                  pageColor: pageColor,
-                  textColor: textColor,
-                  showPageNumber: showPageNumbers,
-                  innerEdge: innerEdge,
-                ),
+              child: NovelNativePageCanvas(
+                page: page,
+                pageColor: pageColor,
+                textColor: textColor,
+                showPageNumber: showPageNumbers,
+                innerEdge: innerEdge,
+                background: background,
+                highlights: highlights,
               ),
             ),
           ),
@@ -152,6 +226,9 @@ class NovelNativeScrollView extends StatefulWidget {
     required this.canvasColor,
     required this.pageColor,
     required this.textColor,
+    this.background,
+    this.brightness = 1,
+    this.highlights = const [],
     this.onReachedEnd,
   });
 
@@ -160,6 +237,9 @@ class NovelNativeScrollView extends StatefulWidget {
   final Color canvasColor;
   final Color pageColor;
   final Color textColor;
+  final NovelPageBackground? background;
+  final double brightness;
+  final List<NovelPageHighlight> highlights;
 
   /// 已经滚到底还继续往下拉 → 交给上层翻到下一章。
   final ValueChanged<NovelTurnDirection>? onReachedEnd;
@@ -240,44 +320,55 @@ class _NovelNativeScrollViewState extends State<NovelNativeScrollView> {
   Widget build(BuildContext context) {
     final leaf = widget.pagination.leafRects.first;
     final slices = widget.controller.scrollSlices;
+    final mask = novelReaderBrightnessMask(widget.brightness);
     return ColoredBox(
       key: const Key('novel-page-canvas-color'),
       color: widget.canvasColor,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: _onNotification,
-        child: SingleChildScrollView(
-          key: const Key('novel-native-scroll-view'),
-          controller: widget.controller.scrollController,
-          physics: const ClampingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+      child: _masked(
+        mask,
+        NotificationListener<ScrollNotification>(
+          onNotification: _onNotification,
           child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: math.max(0, leaf.left),
-            ),
+            padding: EdgeInsets.symmetric(horizontal: math.max(0, leaf.left)),
             child: ColoredBox(
               key: const Key('novel-page-paper-color'),
               color: widget.pageColor,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final slice in slices)
-                    RepaintBoundary(
-                      child: SizedBox(
-                        width: leaf.width,
-                        height: slice.height,
-                        child: CustomPaint(
-                          painter: NovelNativePagePainter(
-                            page: slice.page,
-                            pageColor: widget.pageColor,
-                            textColor: widget.textColor,
-                            showPageNumber: false,
-                            innerEdge: null,
-                          ),
-                        ),
-                      ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final bands = novelScrollBands(
+                    slices,
+                    bandExtent: constraints.hasBoundedHeight
+                        ? constraints.maxHeight
+                        : novelScrollFallbackBandExtent,
+                  );
+                  return ListView.builder(
+                    key: const Key('novel-native-scroll-view'),
+                    controller: widget.controller.scrollController,
+                    physics: const ClampingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
                     ),
-                ],
+                    itemCount: bands.length,
+                    // 带高就是真实高度，相加仍然等于切片总高。定位用的是绝对偏移
+                    // (NovelScrollSlice.top)，不能交给 ListView 按平均子高去估算。
+                    itemExtentBuilder: (index, _) =>
+                        index < bands.length ? bands[index].height : 0,
+                    itemBuilder: (context, index) {
+                      final band = bands[index];
+                      // 用 NovelNativePageCanvas 而不是裸 CustomPaint：TextPainter
+                      // 缓存挂在这一带自己的 State 上，带被 ListView 回收时一起释放。
+                      return NovelNativePageCanvas(
+                        page: band.page,
+                        pageColor: widget.pageColor,
+                        textColor: widget.textColor,
+                        showPageNumber: false,
+                        innerEdge: null,
+                        bandTop: band.top,
+                        background: widget.background,
+                        highlights: widget.highlights,
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ),
@@ -285,6 +376,190 @@ class _NovelNativeScrollViewState extends State<NovelNativeScrollView> {
       ),
     );
   }
+
+  /// 亮度遮罩盖在整块阅读画布上，而不是只盖正文。
+  Widget _masked(Color? mask, Widget child) {
+    if (mask == null) return child;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        IgnorePointer(
+          child: ColoredBox(
+            key: const Key('novel-page-brightness-mask'),
+            color: mask,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 拿不到有界高度时的带高。
+const double novelScrollFallbackBandExtent = 720;
+
+/// 一屏高的正文带：属于 [page]，从页内 [top] 开始，高 [height]。
+class NovelScrollBand {
+  const NovelScrollBand({
+    required this.page,
+    required this.top,
+    required this.height,
+  });
+
+  final NovelPageLayout page;
+  final double top;
+  final double height;
+}
+
+/// 把排版切片再切成一屏高的带。
+///
+/// 滚动模式的排版是「整章一页」，切片通常就一个，高度是整章的高度。老实现
+/// 把它一次性放进 SingleChildScrollView + Column：一个几万像素高的 RepaintBoundary，
+/// 每帧把整章所有 fragment 重画一遍 —— 大章节直接爆内存、掉帧。切成带以后，
+/// [ListView] 只构建可见的那几带，painter 也只画落在带内的 fragment，而滚动偏移
+/// 与 locator 语义一点没变。
+///
+/// [bandExtent] 只是上限：一个切片内的带高均分到一样，而不是“前面满格、最后一带留
+/// 零头”。因为 `SliverVariedExtentList` 估算可滚总长时把子项当成等高，留了零头就会把
+/// maxScrollExtent 多算一截 —— 滚动到底会多出一块空白，进度也永远到不了 100%。
+List<NovelScrollBand> novelScrollBands(
+  List<NovelScrollSlice> slices, {
+  required double bandExtent,
+}) {
+  final extent = bandExtent.isFinite && bandExtent > 1
+      ? bandExtent
+      : novelScrollFallbackBandExtent;
+  final bands = <NovelScrollBand>[];
+  for (final slice in slices) {
+    if (slice.height <= 0) continue;
+    final count = math.max(1, (slice.height / extent).ceil());
+    final height = slice.height / count;
+    for (var index = 0; index < count; index++) {
+      bands.add(NovelScrollBand(
+        page: slice.page,
+        top: index * height,
+        height: height,
+      ));
+    }
+  }
+  return List.unmodifiable(bands);
+}
+
+/// 一页正文的画布。
+///
+/// [TextPainter] 缓存挂在 State 上：翻页、列表回收或页面离开视图时随 State 一起
+/// `dispose()`。此前 painter 每帧给每个 fragment 新建一个 TextPainter 又从不释放，
+/// 而 TextPainter 背后是 engine 侧的 Paragraph —— 滚一章就是几千个句柄的原生泄漏。
+class NovelNativePageCanvas extends StatefulWidget {
+  const NovelNativePageCanvas({
+    super.key,
+    required this.page,
+    required this.pageColor,
+    required this.textColor,
+    required this.showPageNumber,
+    required this.innerEdge,
+    this.bandTop = 0,
+    this.background,
+    this.highlights = const [],
+  });
+
+  final NovelPageLayout page;
+  final Color pageColor;
+  final Color textColor;
+  final bool showPageNumber;
+  final Alignment? innerEdge;
+
+  /// 只画页内从 [bandTop] 起、高度为画布高度的那一段，坐标随之上移。
+  ///
+  /// 分页模式总是 0（一页就是一屏）；滚动模式把整章排成一页，靠它把一页拆成
+  /// 多带懒渲染。
+  final double bandTop;
+
+  /// 铺在正文下面的背景图 / 纸张纹理。
+  final NovelPageBackground? background;
+
+  /// 要涂在正文下面的高亮区间。
+  final List<NovelPageHighlight> highlights;
+
+  @override
+  State<NovelNativePageCanvas> createState() => _NovelNativePageCanvasState();
+}
+
+class _NovelNativePageCanvasState extends State<NovelNativePageCanvas> {
+  final NovelPageTextCache _textCache = NovelPageTextCache();
+
+  @override
+  void dispose() {
+    _textCache.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: NovelNativePagePainter(
+        page: widget.page,
+        pageColor: widget.pageColor,
+        textColor: widget.textColor,
+        showPageNumber: widget.showPageNumber,
+        innerEdge: widget.innerEdge,
+        bandTop: widget.bandTop,
+        background: widget.background,
+        highlights: widget.highlights,
+        textCache: _textCache,
+      ),
+    );
+  }
+}
+
+/// 页内 [TextPainter] 的生命周期容器。
+///
+/// 一个缓存只服务一页：换页或换文字色就整批释放重建，所以既不会无限增长，也不会
+/// 把上一页的 Paragraph 留在内存里。
+class NovelPageTextCache {
+  final Map<NovelPageFragment, TextPainter> _painters = Map.identity();
+  NovelPageLayout? _page;
+  Color? _color;
+
+  int get length => _painters.length;
+
+  TextPainter painterFor({
+    required NovelPageLayout page,
+    required NovelPageFragment fragment,
+    required Color color,
+  }) {
+    if (!identical(_page, page) || _color != color) {
+      _releaseAll();
+      _page = page;
+      _color = color;
+    }
+    return _painters[fragment] ??= novelFragmentTextPainter(fragment, color);
+  }
+
+  void dispose() {
+    _releaseAll();
+    _page = null;
+    _color = null;
+  }
+
+  void _releaseAll() {
+    for (final painter in _painters.values) {
+      painter.dispose();
+    }
+    _painters.clear();
+  }
+}
+
+TextPainter novelFragmentTextPainter(NovelPageFragment fragment, Color color) {
+  return TextPainter(
+    text: TextSpan(
+      text: fragment.displayText,
+      style: fragment.textStyle.copyWith(color: color),
+    ),
+    textAlign: fragment.textAlign,
+    textDirection: TextDirection.ltr,
+    textScaler: TextScaler.noScaling,
+  )..layout(maxWidth: fragment.width);
 }
 
 class NovelNativePagePainter extends CustomPainter {
@@ -294,6 +569,10 @@ class NovelNativePagePainter extends CustomPainter {
     required this.textColor,
     required this.showPageNumber,
     required this.innerEdge,
+    this.bandTop = 0,
+    this.background,
+    this.highlights = const [],
+    this.textCache,
   });
 
   final NovelPageLayout page;
@@ -302,10 +581,33 @@ class NovelNativePagePainter extends CustomPainter {
   final bool showPageNumber;
   final Alignment? innerEdge;
 
+  /// 只画页内从 [bandTop] 起、高度为画布高度的那一段，坐标随之上移。
+  ///
+  /// 分页模式总是 0（一页就是一屏）；滚动模式把整章排成一页，靠它把一页拆成
+  /// 多带懒渲染。
+  final double bandTop;
+
+  /// 铺在正文下面的背景图 / 纸张纹理。
+  final NovelPageBackground? background;
+
+  /// 要涂在正文下面的高亮区间。
+  final List<NovelPageHighlight> highlights;
+
+  /// 由 [NovelNativePageCanvas] 提供的页级缓存；为空时 painter 自建自释放。
+  final NovelPageTextCache? textCache;
+
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = pageColor);
+    _paintBackground(canvas, size);
+    final visibleBottom = bandTop + size.height;
+    canvas.save();
+    canvas.translate(0, -bandTop);
     for (final fragment in page.fragments) {
+      if (fragment.offset.dy + fragment.height < bandTop ||
+          fragment.offset.dy > visibleBottom) {
+        continue;
+      }
       switch (fragment.blockKind) {
         case NovelRenderBlockKind.image:
           _paintImagePlaceholder(canvas, fragment);
@@ -314,24 +616,115 @@ class NovelNativePagePainter extends CustomPainter {
         case NovelRenderBlockKind.spacer:
           break;
         default:
+          _paintHighlights(canvas, fragment);
           _paintText(canvas, fragment);
       }
     }
+    canvas.restore();
     if (innerEdge != null) _paintInnerEdge(canvas, size);
     if (showPageNumber) _paintPageNumber(canvas, size);
   }
 
+  /// 按 [NovelBackgroundFit] 把背景铺在底色之上、正文之下。
+  ///
+  /// 这五项设置原本只有已废弃的 WebView 渲染器消费，原生渲染器只画主题纯色 ——
+  /// 设置面里选了背景图也看不到任何变化。
+  void _paintBackground(Canvas canvas, Size size) {
+    final background = this.background;
+    if (background == null || size.isEmpty) return;
+    final image = background.image;
+    if (image.width <= 0 || image.height <= 0) return;
+    final paint = Paint()
+      ..filterQuality = FilterQuality.medium
+      ..color = const Color(0xffffffff)
+          .withValues(alpha: background.opacity.clamp(0, 1).toDouble());
+    final width = image.width.toDouble();
+    final height = image.height.toDouble();
+    final destination = Offset.zero & size;
+    switch (background.fit) {
+      case NovelBackgroundFit.fill:
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, width, height),
+          destination,
+          paint,
+        );
+      case NovelBackgroundFit.crop:
+        final scale = math.max(size.width / width, size.height / height);
+        final sourceWidth = math.min(width, size.width / scale);
+        final sourceHeight = math.min(height, size.height / scale);
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(
+            (width - sourceWidth) / 2,
+            (height - sourceHeight) / 2,
+            sourceWidth,
+            sourceHeight,
+          ),
+          destination,
+          paint,
+        );
+      case NovelBackgroundFit.tile:
+        canvas
+          ..save()
+          ..clipRect(destination);
+        // 用 bandTop 当纵向相位，滚动模式把一页切成多带以后瓷砖仍然接得上。
+        for (var y = -(bandTop % height); y < size.height; y += height) {
+          for (var x = 0.0; x < size.width; x += width) {
+            canvas.drawImage(image, Offset(x, y), paint);
+          }
+        }
+        canvas.restore();
+    }
+  }
+
+  /// 把划线 / 选区 / 搜索命中词涂在文字下面。
+  ///
+  /// 原生渲染器以前根本不画高亮：`applyAnnotations` 只把注记存进一个没人读的
+  /// 字段，于是存下来的划线在正文里看不见。这里用排版结果把 locator 区间
+  /// 映回矩形：片段自己知道自己盖了块内哪一段，剩下的交给 TextPainter。
+  void _paintHighlights(Canvas canvas, NovelPageFragment fragment) {
+    if (highlights.isEmpty || fragment.sourceText.isEmpty) return;
+    final prefix = fragment.displayText.length - fragment.sourceText.length;
+    final cache = textCache;
+    // 选区矩形只看排版，跟文字颜色无关，所以直接借正文那只缓存的 TextPainter ——
+    // 不然每帧每个被划线的片段都要多造一个 Paragraph。
+    TextPainter? owned;
+    TextPainter? painter;
+    for (final highlight in highlights) {
+      if (highlight.blockId != fragment.blockId) continue;
+      final start = math.max(highlight.start, fragment.sourceStart);
+      final end = math.min(highlight.end, fragment.sourceEnd);
+      if (end <= start) continue;
+      painter ??= cache?.painterFor(
+            page: page,
+            fragment: fragment,
+            color: textColor,
+          ) ??
+          (owned = novelFragmentTextPainter(fragment, textColor));
+      final boxes = painter.getBoxesForSelection(TextSelection(
+        baseOffset: prefix + start - fragment.sourceStart,
+        extentOffset: prefix + end - fragment.sourceStart,
+      ));
+      final paint = Paint()..color = highlight.color;
+      for (final box in boxes) {
+        canvas.drawRect(box.toRect().shift(fragment.offset), paint);
+      }
+    }
+    owned?.dispose();
+  }
+
   void _paintText(Canvas canvas, NovelPageFragment fragment) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: fragment.displayText,
-        style: fragment.textStyle.copyWith(color: textColor),
-      ),
-      textAlign: fragment.textAlign,
-      textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
-    )..layout(maxWidth: fragment.width);
+    final cache = textCache;
+    if (cache != null) {
+      cache
+          .painterFor(page: page, fragment: fragment, color: textColor)
+          .paint(canvas, fragment.offset);
+      return;
+    }
+    final painter = novelFragmentTextPainter(fragment, textColor);
     painter.paint(canvas, fragment.offset);
+    painter.dispose();
   }
 
   void _paintImagePlaceholder(Canvas canvas, NovelPageFragment fragment) {
@@ -364,6 +757,7 @@ class NovelNativePagePainter extends CustomPainter {
         rect.center.dy - painter.height / 2,
       ),
     );
+    painter.dispose();
   }
 
   void _paintSeparator(Canvas canvas, NovelPageFragment fragment) {
@@ -404,6 +798,7 @@ class NovelNativePagePainter extends CustomPainter {
       Offset(
           (size.width - painter.width) / 2, size.height - painter.height - 9),
     );
+    painter.dispose();
   }
 
   @override
@@ -412,6 +807,10 @@ class NovelNativePagePainter extends CustomPainter {
         oldDelegate.pageColor != pageColor ||
         oldDelegate.textColor != textColor ||
         oldDelegate.showPageNumber != showPageNumber ||
-        oldDelegate.innerEdge != innerEdge;
+        oldDelegate.innerEdge != innerEdge ||
+        oldDelegate.bandTop != bandTop ||
+        oldDelegate.background != background ||
+        oldDelegate.textCache != textCache ||
+        !listEquals(oldDelegate.highlights, highlights);
   }
 }

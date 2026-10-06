@@ -42,6 +42,7 @@ class UpdateService {
     UpdateSource preferredSource = UpdateSource.gitee,
   }) async {
     AppLog.i.info(LogCat.update, '检查更新…${includeBeta ? '(含测试版)' : ''}');
+    unawaited(sweepStaleUpdateCache());
     try {
       final candidate = await UpdateResolver(
         gitee: GiteeReleaseClient(),
@@ -69,6 +70,19 @@ class UpdateService {
     } on UpdateResolutionException catch (error) {
       AppLog.i.err(LogCat.update, '检查更新失败', detail: '$error');
       return UpdateCheckResult(UpdateCheckState.failed, error: error);
+    }
+  }
+
+  /// 清掉更新缓存里放了一周还没人管的残留(断网留下的半包与分片)。
+  /// 挂在检查更新上:启动后的自动检查和设置页的手动检查都会顺手跑一次。
+  /// best-effort——清不掉(文件被占用/目录不在)不影响检查本身。
+  static Future<void> sweepStaleUpdateCache() async {
+    try {
+      await UpdateCacheCleaner.sweepStale(
+        await UpdateDownloader.defaultCacheDirectory(),
+      );
+    } catch (_) {
+      // 缓存清理失败没有用户可见后果,下次检查更新再来。
     }
   }
 
@@ -175,26 +189,37 @@ class UpdateDialogDependencies {
   static Future<UpdateCandidate?> _noRefresh(UpdateSource _) async => null;
 }
 
+/// 弹出更新对话框。
+///
+/// [onSkipVersion] 非空时多一个「跳过此版本」按钮(自动检查才给,手动检查不给——
+/// 用户是主动来找更新的)。对话框本身**可以点外面关掉**:启动时弹的东西不该是道墙。
 Future<void> showUpdateDialog(
   BuildContext context,
   UpdateCandidate info, {
   UpdateDialogDependencies? dependencies,
+  void Function(String version)? onSkipVersion,
 }) {
   return showDialog<void>(
     context: context,
-    barrierDismissible: false,
+    barrierDismissible: true,
     builder: (ctx) => _UpdateDialog(
       info: info,
       dependencies: dependencies ?? UpdateDialogDependencies.production(),
+      onSkipVersion: onSkipVersion,
     ),
   );
 }
 
 class _UpdateDialog extends StatefulWidget {
-  const _UpdateDialog({required this.info, required this.dependencies});
+  const _UpdateDialog({
+    required this.info,
+    required this.dependencies,
+    this.onSkipVersion,
+  });
 
   final UpdateCandidate info;
   final UpdateDialogDependencies dependencies;
+  final void Function(String version)? onSkipVersion;
 
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
@@ -599,11 +624,21 @@ class _UpdateDialogState extends State<_UpdateDialog>
         ),
       ];
     }
+    final skip = widget.onSkipVersion;
     return [
       TextButton(
         onPressed: () => Navigator.of(context).pop(),
         child: Text(l10n.later),
       ),
+      if (skip != null)
+        TextButton(
+          key: const Key('update-skip-version'),
+          onPressed: () {
+            skip(_active.version);
+            Navigator.of(context).pop();
+          },
+          child: Text(l10n.update_skipVersion),
+        ),
       if (_transfer.stage == UpdateTransferStage.error ||
           (!_preparing && _asset == null))
         TextButton(

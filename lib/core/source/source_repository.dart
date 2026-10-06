@@ -14,6 +14,66 @@ import '../script/script_source.dart' show ScriptSource;
 import '../storage/secret_store.dart';
 import 'source_registry.dart';
 
+/// 源清单这一轮是从哪儿来的。核心层只给码,文案由设置页按当前语言渲染
+/// (以前 status 是拼好的中文串,英/日界面照样显示中文)。
+enum SourceRepoOrigin {
+  notLoaded, // 还没跑过 load()
+  notConfigured, // 没配仓库地址,也没有缓存
+  remote, // 从配置的仓库 URL 拉到
+  localDir, // 从用户选的本地目录读到
+  cache, // 没配仓库,用上次缓存
+  devDir, // 桌面开发目录 sources_local/
+  cacheAfterFailure, // 拉取失败,退回缓存
+  failed, // 拉取失败且没有缓存可用
+}
+
+/// 最近一次源加载的结果。
+@immutable
+class SourceRepoStatus {
+  const SourceRepoStatus(
+    this.origin, {
+    this.repoCount = 0,
+    this.localCount = 0,
+    this.hiddenCount = 0,
+    this.error,
+  });
+
+  final SourceRepoOrigin origin;
+
+  /// 来自仓库/缓存/目录的源数量。
+  final int repoCount;
+
+  /// 用户手动添加的本地单文件源数量。
+  final int localCount;
+
+  /// 被用户删除、这轮过滤掉的源数量。
+  final int hiddenCount;
+
+  /// [SourceRepoOrigin.failed] 时的底层原因。
+  final String? error;
+
+  bool get isFailure =>
+      origin == SourceRepoOrigin.failed ||
+      origin == SourceRepoOrigin.cacheAfterFailure;
+
+  /// **仅日志/诊断用**的中文摘要。要给用户看的地方走 UI 层的 l10n 映射。
+  String get debugText {
+    final head = switch (origin) {
+      SourceRepoOrigin.notLoaded => '未加载',
+      SourceRepoOrigin.notConfigured => '未配置源仓库',
+      SourceRepoOrigin.remote => '已从仓库加载 $repoCount 个源',
+      SourceRepoOrigin.localDir => '已从本地目录加载 $repoCount 个源',
+      SourceRepoOrigin.cache => '已从缓存加载 $repoCount 个源',
+      SourceRepoOrigin.devDir => '已从开发目录加载 $repoCount 个源',
+      SourceRepoOrigin.cacheAfterFailure => '加载失败,已用缓存($repoCount 个源)',
+      SourceRepoOrigin.failed => '加载失败:${error ?? ''}',
+    };
+    final local = localCount == 0 ? '' : ' · +$localCount 本地源';
+    final hidden = hiddenCount == 0 ? '' : ' · 隐藏 $hiddenCount';
+    return '$head$local$hidden';
+  }
+}
+
 /// 运行时漫画源仓库。
 ///
 /// 引擎**不内置任何源脚本**。启动时按优先级从外部清单(`index.json` + 若干脚本文件)
@@ -42,9 +102,11 @@ class SourceRepository {
     required SharedPreferences preferences,
     required SecretStore secrets,
     required Directory cacheDirectory,
+    Directory? devDirectory,
   }) =>
       SourceRepository._(preferences: preferences, secrets: secrets)
-        .._cacheDirectory = cacheDirectory;
+        .._cacheDirectory = cacheDirectory
+        .._devDirectory = devDirectory;
 
   static const _kUrl = 'sources.repoUrl';
   static const _kLocal = 'sources.localDir';
@@ -64,11 +126,15 @@ class SourceRepository {
   final SecretStore _secrets;
   Directory? _cacheDirectory;
 
+  /// 桌面开发目录。默认是仓库根下的 `sources_local/`(见 [_resolve]);测试注入一个
+  /// 不存在的路径,免得跑在开发机上时把真实的本地源当成被测数据读进来。
+  Directory? _devDirectory;
+
   Future<SharedPreferences> _prefs() async =>
       _preferences ??= await SharedPreferences.getInstance();
 
-  /// 最近一次加载的人类可读状态(设置页展示)。
-  String status = '未加载';
+  /// 最近一次加载的状态(结构化;设置页按当前语言渲染)。
+  SourceRepoStatus status = const SourceRepoStatus(SourceRepoOrigin.notLoaded);
 
   /// 当前 registeredSources 里哪些是「本地单文件源」(用户手动加的),供 UI 标注/移除。
   Set<String> localIds = {};
@@ -114,13 +180,21 @@ class SourceRepository {
   Future<void> load() async {
     try {
       await _resolve();
+    } catch (e) {
+      // `_resolve` 内部已按路径分别兜底,这里兜的是**兜底路径自己抛**的情况:
+      // 缓存里少一个脚本、prefs 打不开、磁盘满……旧代码只有 finally,
+      // 一个 PathNotFoundException 就能从 load() 逃出去把启动带崩。
+      registeredSources = const <SourceMeta>[];
+      localIds = <String>{};
+      status = SourceRepoStatus(SourceRepoOrigin.failed, error: '$e');
     } finally {
-      debugPrint('[sources] $status · ${registeredSources.length} 个');
+      debugPrint('[sources] ${status.debugText} · ${registeredSources.length} 个');
       final n = registeredSources.length;
-      final lvl = status.contains('失败')
+      final lvl = status.isFailure
           ? LogLevel.error
           : (n == 0 ? LogLevel.warning : LogLevel.success);
-      AppLog.i.log(LogCat.source, '加载源 · $n 个 · $status', level: lvl);
+      AppLog.i.log(LogCat.source, '加载源 · $n 个 · ${status.debugText}',
+          level: lvl);
       onChanged?.call();
     }
   }
@@ -139,25 +213,26 @@ class SourceRepository {
 
     // 1) 仓库源(URL / 本地目录 / 缓存 / 开发目录)。
     var repo = <SourceMeta>[];
-    var repoStatus = '未配置源仓库';
+    var origin = SourceRepoOrigin.notConfigured;
+    String? loadError;
     try {
       if (repoUrl != null && repoUrl!.trim().isNotEmpty) {
         repo = await _loadFromUrl(repoUrl!.trim());
-        repoStatus = '已从仓库加载 ${repo.length} 个源';
+        origin = SourceRepoOrigin.remote;
       } else if (localDir != null && localDir!.trim().isNotEmpty) {
         repo = await _loadFromDir(Directory(localDir!.trim()));
-        repoStatus = '已从本地目录加载 ${repo.length} 个源';
+        origin = SourceRepoOrigin.localDir;
       } else {
         final cached = await _loadFromCache();
         if (cached != null) {
           repo = cached;
-          repoStatus = '已从缓存加载 ${repo.length} 个源';
+          origin = SourceRepoOrigin.cache;
         } else if (!Platform.isAndroid && !Platform.isIOS) {
           // 桌面开发便利:仓库根下 sources_local/(已 gitignore)。
-          final dev = Directory('sources_local');
+          final dev = _devDirectory ?? Directory('sources_local');
           if (await File('${dev.path}/index.json').exists()) {
             repo = await _loadFromDir(dev);
-            repoStatus = '已从开发目录加载 ${repo.length} 个源';
+            origin = SourceRepoOrigin.devDir;
           }
         }
       }
@@ -166,9 +241,10 @@ class SourceRepository {
       final cached = await _loadFromCache();
       if (cached != null) {
         repo = cached;
-        repoStatus = '加载失败,已用缓存(${repo.length} 个源)';
+        origin = SourceRepoOrigin.cacheAfterFailure;
       } else {
-        repoStatus = '加载失败:$e';
+        origin = SourceRepoOrigin.failed;
+        loadError = '$e';
       }
     }
 
@@ -188,36 +264,84 @@ class SourceRepository {
         combined.where((e) => !removedIds.contains(e.id)).toList();
     localIds =
         localKept.where((e) => !removedIds.contains(e.id)).map((e) => e.id).toSet();
-    final hidden = removedIds.isEmpty ? '' : ' · 隐藏 ${removedIds.length}';
-    status = (localKept.isEmpty
-            ? repoStatus
-            : '$repoStatus · +${localKept.length} 本地源') +
-        hidden;
+    status = SourceRepoStatus(
+      origin,
+      repoCount: repo.length,
+      localCount: localKept.length,
+      hiddenCount: removedIds.length,
+      error: loadError,
+    );
   }
 
+  /// 拉整套仓库。**先把清单和全部脚本下到暂存目录,全部成功后再原子替换缓存**——
+  /// 旧代码先写 index.json 再逐个下脚本,某个脚本 404 就在缓存里留下一份
+  /// 「清单指向不存在的脚本」的坏缓存,此后每次离线启动都从缓存里抛出来。
   Future<List<SourceMeta>> _loadFromUrl(String base) async {
     final dio = Dio();
     final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
     final idxText = await _fetch(dio, '$root/index.json');
     final cache = await _cacheDir();
-    await File('${cache.path}/index.json').writeAsString(idxText);
-    final metas = <SourceMeta>[];
-    for (final e in _entries(idxText)) {
-      final scriptFile = e['script'] as String;
-      final scriptText = await _fetch(dio, '$root/$scriptFile');
-      await File('${cache.path}/$scriptFile').writeAsString(scriptText);
-      metas.add(SourceMeta.fromJson(e, script: scriptText));
+    final staging = Directory('${cache.path}.staging');
+    if (await staging.exists()) await staging.delete(recursive: true);
+    await staging.create(recursive: true);
+    try {
+      await File('${staging.path}/index.json').writeAsString(idxText);
+      final metas = <SourceMeta>[];
+      for (final e in _entries(idxText)) {
+        final scriptFile = _scriptNameOf(e);
+        if (scriptFile == null) continue;
+        final scriptText = await _fetch(dio, '$root/$scriptFile');
+        final f = File('${staging.path}/$scriptFile');
+        await f.parent.create(recursive: true);
+        await f.writeAsString(scriptText);
+        metas.add(SourceMeta.fromJson(e, script: scriptText));
+      }
+      // 全下完了才动缓存:中途任何一步抛出,旧缓存原封不动。
+      if (await cache.exists()) await cache.delete(recursive: true);
+      await staging.rename(cache.path);
+      return metas;
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
     }
-    return metas;
   }
 
+  /// 清单条目里的脚本文件名。缺失、非字符串、或试图跳出目录(`../`、绝对路径)
+  /// 的条目一律跳过 —— 清单来自远程仓库,不能让它决定往哪写文件。
+  static String? _scriptNameOf(Map<String, dynamic> e) {
+    final raw = e['script'];
+    if (raw is! String || raw.isEmpty) return null;
+    final parts = raw.split(RegExp(r'[/\\]'));
+    if (parts.any((p) => p == '..') || raw.startsWith('/') || raw.contains(':')) {
+      return null;
+    }
+    return raw;
+  }
+
+  /// 从一个目录(缓存 / 用户指定的本地目录)读一套源。
+  /// **少了某个脚本就跳过那一条**,不是让整套源都读不出来。
   Future<List<SourceMeta>> _loadFromDir(Directory dir) async {
     final idxText = await File('${dir.path}/index.json').readAsString();
     final metas = <SourceMeta>[];
+    var skipped = 0;
     for (final e in _entries(idxText)) {
-      final scriptFile = e['script'] as String;
-      final script = await File('${dir.path}/$scriptFile').readAsString();
-      metas.add(SourceMeta.fromJson(e, script: script));
+      final scriptFile = _scriptNameOf(e);
+      if (scriptFile == null) {
+        skipped++;
+        continue;
+      }
+      final f = File('${dir.path}/$scriptFile');
+      if (!await f.exists()) {
+        skipped++; // 缓存半残 / 用户删了个脚本:跳过这一条,别拖垮其余的源
+        continue;
+      }
+      try {
+        metas.add(SourceMeta.fromJson(e, script: await f.readAsString()));
+      } catch (_) {
+        skipped++; // 条目本身畸形(缺 id 等)
+      }
+    }
+    if (skipped > 0) {
+      AppLog.i.warn(LogCat.source, '跳过 $skipped 个读不出来的源 · ${dir.path}');
     }
     return metas;
   }
@@ -260,9 +384,17 @@ class SourceRepository {
     return r.data!;
   }
 
+  /// 清单里的源条目。清单来自远程仓库 / 用户目录,结构不对时给空表而不是抛 ——
+  /// 抛出来会顺着 `_loadFromCache` 一路逃到 `load()` 外面。
   List<Map<String, dynamic>> _entries(String jsonText) {
-    final m = jsonDecode(jsonText) as Map<String, dynamic>;
-    return (m['sources'] as List).cast<Map<String, dynamic>>();
+    final decoded = jsonDecode(jsonText);
+    if (decoded is! Map) return const [];
+    final list = decoded['sources'];
+    if (list is! List) return const [];
+    return [
+      for (final e in list)
+        if (e is Map) e.cast<String, dynamic>(),
+    ];
   }
 
   // ---- 本地单文件源(用户手动加的单个 .js,不需要整套仓库/清单) ----

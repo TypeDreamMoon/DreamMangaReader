@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/library_store.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/bangumi/bangumi_api.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../ui/ui.dart';
 
 /// 可复用的 Bangumi 评分卡:加载中 / 未匹配(可手动搜索)/ 已匹配(评分·星级·排名·
@@ -52,7 +53,7 @@ class _BangumiCardState extends State<BangumiCard> {
               child:
                   CircularProgressIndicator(strokeWidth: 2, color: p.bangumi)),
           const SizedBox(width: 10),
-          Text('匹配 Bangumi 中…',
+          Text(context.l10n.detail_matchingBangumi,
               style: TextStyle(color: p.textMuted, fontSize: 12)),
         ],
       ));
@@ -65,14 +66,14 @@ class _BangumiCardState extends State<BangumiCard> {
           Icon(Icons.search_off_rounded, size: 18, color: p.textMuted),
           const SizedBox(width: 8),
           Expanded(
-            child: Text('未匹配到 Bangumi 条目',
+            child: Text(context.l10n.detail_bangumiNoMatch,
                 style: TextStyle(color: p.textMuted, fontSize: 12.5)),
           ),
           if (widget.onRematch != null)
             TextButton.icon(
               onPressed: widget.onRematch,
               icon: const Icon(Icons.search_rounded, size: 16),
-              label: const Text('手动搜索'),
+              label: Text(context.l10n.detail_manualSearch),
               style: TextButton.styleFrom(
                   foregroundColor: p.bangumi,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -87,7 +88,7 @@ class _BangumiCardState extends State<BangumiCard> {
     final half = (b.score / 2 - filled) >= 0.5;
     final metaBits = <String>[
       if (b.date.isNotEmpty) b.date,
-      if (b.eps > 0) '${b.eps} 话',
+      if (b.eps > 0) context.l10n.detail_epsN(b.eps),
     ];
     return shell(Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -102,9 +103,10 @@ class _BangumiCardState extends State<BangumiCard> {
                     letterSpacing: 1.0)),
             const Spacer(),
             if (widget.onRematch != null)
-              _icon(p, Icons.search_rounded, '重新匹配', widget.onRematch!),
+              _icon(p, Icons.search_rounded, context.l10n.detail_rematch,
+                  widget.onRematch!),
             const SizedBox(width: 2),
-            _icon(p, Icons.open_in_new_rounded, '在 Bangumi 打开',
+            _icon(p, Icons.open_in_new_rounded, context.l10n.detail_openInBangumi,
                 () => launchUrl(Uri.parse(b.url),
                     mode: LaunchMode.externalApplication)),
           ],

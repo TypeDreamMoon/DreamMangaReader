@@ -149,6 +149,7 @@ class HistoryPage extends StatelessWidget {
                     DetailPage(manga: manga, meta: meta, heroTag: heroTag),
               )),
       removeKey: const Key('history-remove-manga'),
+      removeTooltip: context.l10n.hist_remove,
       onRemove: () => store.removeHistory(history.sourceId, history.mangaId),
     );
   }
@@ -181,6 +182,7 @@ class HistoryPage extends StatelessWidget {
               openNovelLibraryEntry(context, entry, heroTag: heroTag))
           : null,
       removeKey: const Key('history-remove-novel'),
+      removeTooltip: context.l10n.hist_remove,
       onRemove: () => store.removeHistory(entry.key),
     );
   }
@@ -217,6 +219,7 @@ class HistoryPage extends StatelessWidget {
       ),
       onTap: () => unawaited(openAnimeHistory(context, history)),
       removeKey: const Key('history-remove-anime'),
+      removeTooltip: context.l10n.hist_remove,
       onRemove: () => store.removeHistory(history.sourceId, history.animeId),
     );
   }
@@ -229,6 +232,7 @@ class HistoryPage extends StatelessWidget {
     required Widget cover,
     required VoidCallback? onTap,
     required Key removeKey,
+    required String removeTooltip,
     required VoidCallback onRemove,
   }) {
     return Padding(
@@ -271,7 +275,7 @@ class HistoryPage extends StatelessWidget {
             ),
             IconButton(
               key: removeKey,
-              tooltip: '移除记录',
+              tooltip: removeTooltip,
               onPressed: onRemove,
               icon: Icon(
                 Icons.close_rounded,

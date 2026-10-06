@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:hls/hls.dart';
 
+import '../../../core/log/app_log.dart';
 import '../../../core/source/models.dart';
 import 'hls_cache_store.dart';
 import 'hls_media_rewriter.dart';
@@ -245,6 +246,20 @@ Map<String, String> scopeHlsCredentialHeaders(
   };
 }
 
+/// 上游明确回了一个非 2xx 状态码。
+///
+/// 播放器要靠状态码区分「票据过期该重新登录」(401/403)、「这一段没了」(404/416)
+/// 和「源站抽风、等会儿再试」(5xx);网关把它们一律拍成 502,等于把这层信息全抹掉,
+/// 上层只能统一报一句「网络错误」。
+class HlsUpstreamStatusException implements Exception {
+  const HlsUpstreamStatusException(this.statusCode);
+
+  final int statusCode;
+
+  @override
+  String toString() => 'HlsUpstreamStatusException($statusCode)';
+}
+
 abstract interface class HlsSessionGateway {
   Future<HlsSession> open(
     VideoTrack track, {
@@ -257,19 +272,34 @@ class HlsCacheGateway implements HlsSessionGateway {
     required HlsCacheStore cache,
     required HlsUpstreamClient upstream,
     this.allowLoopbackUpstream = false,
+    void Function(Object error, StackTrace stackTrace)? onRequestError,
   })  : _cache = cache,
         _upstream = upstream,
+        _onRequestError = onRequestError ?? _logRequestError,
         _policy = HlsUpstreamPolicy(allowLoopback: allowLoopbackUpstream);
+
+  /// 一次预读最多跑在播放位置前面多少片。
+  ///
+  /// 「整集全预取」听着更爽,实际是把带宽和磁盘一起赌上:一集 1080p 番剧七百多兆,
+  /// 而缓存默认上限 512 MiB —— 尾巴把头顶掉,下下来的分片在看到之前就被淘汰,
+  /// 白烧一集的流量(手机上还是蜂窝流量,那条「仅 Wi-Fi」的下载开关管不到这里)。
+  /// 三十片够暂停之后缓一两分钟,也留得住。
+  static const int _maxPrefetchDepth = 30;
 
   final HlsCacheStore _cache;
   final HlsUpstreamClient _upstream;
   final bool allowLoopbackUpstream;
   final HlsUpstreamPolicy _policy;
+  final void Function(Object error, StackTrace stackTrace) _onRequestError;
   final Random _random = Random.secure();
   final Map<String, _SessionData> _sessions = {};
   final Set<Future<void>> _activeRequests = {};
+
+  /// 已经开始往外写正文的响应。状态码和头这时已经发出去了,改不动。
+  final Set<HttpResponse> _startedResponses = Set.identity();
   HttpServer? _server;
   StreamSubscription<HttpRequest>? _subscription;
+  Completer<void>? _binding;
 
   @override
   Future<HlsSession> open(
@@ -290,25 +320,53 @@ class HlsCacheGateway implements HlsSessionGateway {
     final root = _register(data, source, _ResourceKind.playlist);
     return HlsSession(
       localUri: _localUri(id, root.id),
-      onClose: () => _closeSession(id),
-      onClearCache: () => _clearSessionCache(id),
-      onBuffer: (buffer) {
-        data.bufferHealthy = buffer >= const Duration(seconds: 15);
+      onClose: ({required bool discardCache}) =>
+          _closeSession(id, discardCache: discardCache),
+      onBuffer: (lead) {
+        // [lead] = 缓冲末端**领先播放头**多少,不是缓冲末端的绝对位置 —— 后者随播放
+        // 一直变大,判出来的「健康」开播十几秒后就永真,刹车等于没装。
+        final healthy = lead >= const Duration(seconds: 15);
+        // 缓冲从健康掉下来 = 上行不够用了。作废这一批预读,把带宽还给正在播的
+        // 那一片;下一片播出去时 _schedulePrefetch 会按新的水位重新排。
+        if (data.bufferHealthy && !healthy) data.prefetchGeneration++;
+        data.bufferHealthy = healthy;
       },
       onSeek: () => data.prefetchGeneration++,
     );
   }
 
+  /// 绑本地端口。两次 [open] 撞在一起时,两边都会看到 `_server == null` 然后各绑一个 ——
+  /// 后绑的覆盖前一个,前一个再也没人关得掉,端口就那么一直占着。用一个 Completer
+  /// 把并发的调用串到同一次绑定上。
   Future<void> _ensureServer() async {
     if (_server != null) return;
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    _server = server;
-    _subscription = server.listen(_acceptRequest);
+    final pending = _binding;
+    if (pending != null) return pending.future;
+    final binding = Completer<void>();
+    _binding = binding;
+    // 绑定失败时若没人等这个 future,它就成了未捕获异步错误;真正的错误由下面 rethrow
+    // 交给调用方。
+    unawaited(binding.future.then<void>((_) {}, onError: (_) {}));
+    try {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _server = server;
+      _subscription = server.listen(_acceptRequest);
+      binding.complete();
+    } on Object catch (error, stackTrace) {
+      binding.completeError(error, stackTrace);
+      rethrow;
+    } finally {
+      _binding = null;
+    }
   }
 
   void _acceptRequest(HttpRequest request) {
     late final Future<void> operation;
-    operation = _handleRequest(request).whenComplete(() {
+    // 逃出 [_handleRequest] 的异常没人接:unawaited 的它就是一条会打穿宿主 zone 的
+    // 未捕获异步错误(播放到一半弹个 StateError 出来)。这里兜住并记一笔;连接的收尾
+    // 由 [_respondError] 负责。兜完再进 _activeRequests,免得 close() 被它绊倒。
+    operation =
+        _handleRequest(request).catchError(_onRequestError).whenComplete(() {
       _activeRequests.remove(operation);
     });
     _activeRequests.add(operation);
@@ -343,9 +401,34 @@ class HlsCacheGateway implements HlsSessionGateway {
         HttpStatus.notImplemented,
         'unsupported-hls-encryption',
       );
+    } on HlsUpstreamStatusException catch (error) {
+      await _respondError(
+        request,
+        _passthroughStatus(error.statusCode),
+        'upstream-http-${error.statusCode}',
+      );
     } catch (_) {
       await _respondError(request, HttpStatus.badGateway, 'hls-gateway-error');
+    } finally {
+      _startedResponses.remove(request.response);
     }
+  }
+
+  /// 能原样透传给播放器的上游状态码。其余(含 3xx/2xx 这类不该走到这儿的)一律 502 ——
+  /// 那说明是网关自己没看懂,不是上游在表态。
+  static const Set<int> _transparentStatuses = {
+    HttpStatus.unauthorized,
+    HttpStatus.forbidden,
+    HttpStatus.notFound,
+    HttpStatus.gone,
+    HttpStatus.requestedRangeNotSatisfiable,
+    HttpStatus.tooManyRequests,
+  };
+
+  int _passthroughStatus(int status) {
+    if (_transparentStatuses.contains(status)) return status;
+    if (status >= 500 && status <= 599) return status;
+    return HttpStatus.badGateway;
   }
 
   Future<void> _servePlaylist(
@@ -377,6 +460,7 @@ class HlsCacheGateway implements HlsSessionGateway {
       charset: 'utf-8',
     );
     request.response.contentLength = body.length;
+    _startedResponses.add(request.response);
     request.response.add(body);
     await request.response.close();
   }
@@ -449,16 +533,21 @@ class HlsCacheGateway implements HlsSessionGateway {
       },
     );
 
-    // 每个分片记住紧随其后的几片。真正预取几片由 [_schedulePrefetch] 按缓冲健康度决定 ——
-    // 缓冲还没起来时只读 1 片,别让预读跟正在播的那一片抢带宽(那正是「像是要等全部分片
-    // 下完才开播」的由来:预读把上行队列占满,前台分片一直排在后面直到卡顿超时)。
+    // 每个分片只记住「整条顺序表 + 自己在表里的下标」,窗口由 [_schedulePrefetch]
+    // 现算。原来是给每片各存一份「其后所有 id」的副本 —— 一集上千片就是上千份
+    // 逐渐变短的列表,O(n²) 的内存和拷贝全花在永远不会用到的尾巴上。
+    // 真正预取几片由 [_schedulePrefetch] 按缓冲健康度决定 —— 缓冲还没起来时只读 1 片,
+    // 别让预读跟正在播的那一片抢带宽(那正是「像是要等全部分片下完才开播」的由来:
+    // 预读把上行队列占满,前台分片一直排在后面直到卡顿超时)。
+    final order = isLive
+        ? const <String>[]
+        : List<String>.unmodifiable(
+            segmentResources.map((resource) => resource.id),
+          );
     for (var index = 0; index < segmentResources.length; index++) {
-      segmentResources[index].prefetchIds = isLive
-          ? const []
-          : segmentResources
-              .skip(index + 1)
-              .map((resource) => resource.id)
-              .toList();
+      segmentResources[index]
+        ..prefetchOrder = order
+        ..prefetchIndex = isLive ? -1 : index;
     }
 
     return result.text;
@@ -558,6 +647,7 @@ class HlsCacheGateway implements HlsSessionGateway {
         _contentTypeOrBinary(lease.contentType);
     request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     request.response.contentLength = end - start + 1;
+    _startedResponses.add(request.response);
     await request.response.addStream(lease.file.openRead(start, end + 1));
     await request.response.close();
   }
@@ -602,10 +692,12 @@ class HlsCacheGateway implements HlsSessionGateway {
     );
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       await upstream.cancel();
-      throw HttpException('上游 HTTP ${upstream.statusCode}');
+      throw HlsUpstreamStatusException(upstream.statusCode);
     }
     var upstreamStream = upstream.stream;
-    var upstreamContentLength = upstream.contentLength;
+    // 用上游**声明**的长度当尺子(Content-Length,或 206 的 Content-Range)——
+    // 拿实际收到的字节数当预期长度,完整性检查就成了自证。
+    var upstreamContentLength = upstream.declaredLength;
     final requestedUpstreamRange = upstreamStart != null;
     if (requestedUpstreamRange && upstream.statusCode == HttpStatus.ok) {
       final fullLength = upstream.contentLength;
@@ -672,17 +764,25 @@ class HlsCacheGateway implements HlsSessionGateway {
     }
 
     HlsCacheLease? committed;
+    var written = 0;
     try {
       await for (final chunk in upstreamStream) {
         writer?.sink.add(chunk);
+        _startedResponses.add(request.response);
         request.response.add(chunk);
         await request.response.flush();
+        written += chunk.length;
       }
-      if (writer != null) {
+      // 走到这儿说明上游流是**正常结束**的(异常会被下面的 catch 接走并丢弃写入)。
+      // 长度已知就交给 commit 核对;长度未知(chunked)时唯一还能查的是「至少收到了
+      // 东西」—— 空分片一旦入缓存,之后每次命中都是这半截,还永远淘汰不到。
+      if (writer != null && (upstreamContentLength != null || written > 0)) {
         committed = await writer.commit(
           contentType: upstream.contentType,
           expectedLength: upstreamContentLength,
         );
+      } else {
+        await writer?.abort();
       }
       await request.response.close();
     } catch (_) {
@@ -722,11 +822,16 @@ class HlsCacheGateway implements HlsSessionGateway {
   }
 
   void _schedulePrefetch(_SessionData session, _Resource resource) {
-    if (resource.prefetchIds.isEmpty || session.closing) return;
-    // VOD 直接排入当前片之后的全部分片;预取器逐片下载,暂停时也继续直到本集结束。
+    if (session.closing || resource.prefetchIndex < 0) return;
+    final order = resource.prefetchOrder;
+    final start = resource.prefetchIndex + 1;
+    if (start >= order.length) return;
+    // 缓冲领先播放头不足 15s 就只预读 1 片,把上行整个留给正在播的那一片;领先够了
+    // 才往前铺。整批替换而不是追加:播放位置一动,上一批预读就作废了。
+    final depth = session.bufferHealthy ? _maxPrefetchDepth : 1;
     session.prefetchQueue
       ..clear()
-      ..addAll(resource.prefetchIds);
+      ..addAll(order.getRange(start, min(order.length, start + depth)));
     if (session.prefetchRunning) return;
     session.prefetchRunning = true;
     session.prefetch = _drainPrefetch(session, session.prefetchGeneration);
@@ -741,6 +846,10 @@ class HlsCacheGateway implements HlsSessionGateway {
             !_sessions.containsKey(session.id)) {
           return;
         }
+        // 前台正在取流:让路。播放器每隔几秒才要一片,中间那段空档就够预读跑;
+        // 真撞上的时候少下一点,总比把正在播的那一片挤到卡顿超时后面强 —— 私有源
+        // 上那正是「分片频繁超时」的成因。下一片播出去时本循环会被重新拉起。
+        if (session.foregroundRequests > 0) return;
         final id = session.prefetchQueue.removeAt(0);
         final resource = session.resources[id];
         if (resource == null ||
@@ -776,7 +885,7 @@ class HlsCacheGateway implements HlsSessionGateway {
           rangeLength: resource.rangeLength,
         );
         var stream = upstream.stream;
-        var length = upstream.contentLength;
+        var length = upstream.declaredLength;
         final start = resource.rangeStart;
         // 上游忽略 Range 直接回整个文件(私有源常见)→ 本地切,别把整段当成这一片存下来。
         if (start != null && upstream.statusCode == HttpStatus.ok) {
@@ -798,9 +907,14 @@ class HlsCacheGateway implements HlsSessionGateway {
         } finally {
           await sink.close();
         }
+        // 上游没声明长度时不能拿 written 顶上 —— 那等于宣布「收到多少就是多少」,
+        // 截断的分片照样落盘。能查的只剩「正常结束且不是空的」。
+        if (length == null && written == 0) {
+          throw const HttpException('HLS 分片为空');
+        }
         return CacheDownloadResult(
           contentType: upstream.contentType,
-          expectedLength: length ?? written,
+          expectedLength: length,
         );
       },
     );
@@ -856,13 +970,13 @@ class HlsCacheGateway implements HlsSessionGateway {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return response;
         }
-        lastError = HttpException('上游 HTTP ${response.statusCode}');
+        lastError = HlsUpstreamStatusException(response.statusCode);
         if (response.statusCode < 500) break;
       } catch (error) {
         lastError = error;
       }
     }
-    throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+    throw _upstreamFailure(lastError);
   }
 
   Future<HlsStreamResponse> _fetchStream(
@@ -892,15 +1006,22 @@ class HlsCacheGateway implements HlsSessionGateway {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return response;
         }
-        lastError = HttpException('上游 HTTP ${response.statusCode}');
+        lastError = HlsUpstreamStatusException(response.statusCode);
         await response.cancel();
         if (response.statusCode < 500) break;
       } catch (error) {
         lastError = error;
       }
     }
-    throw StateError('HLS 上游请求失败: ${lastError.runtimeType}');
+    throw _upstreamFailure(lastError);
   }
+
+  /// 上游明确表了态就把状态码带上去(由 [_handleRequest] 透传给播放器);
+  /// 连不上/超时这类没有状态码的,才退回笼统的 502。
+  Object _upstreamFailure(Object? lastError) => lastError
+          is HlsUpstreamStatusException
+      ? lastError
+      : StateError('HLS 上游请求失败: ${lastError.runtimeType}');
 
   Future<HlsStreamResponse> _streamFromBytes(
     HlsUpstreamClient client,
@@ -969,13 +1090,15 @@ class HlsCacheGateway implements HlsSessionGateway {
         (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
       ).join();
 
-  Future<void> _closeSession(String id) async {
+  Future<void> _closeSession(String id, {bool discardCache = false}) async {
     final session = _sessions[id];
     if (session == null) return;
     session.closing = true;
     session.prefetchQueue.clear();
     await session.prefetch;
     _sessions.remove(id);
+    // 先把预读停干净、租约还回去,再删条目 —— 否则 remove 会跳过正在用的那些。
+    if (discardCache) await _discardSegments(session);
     for (final bytes in session.keyBytes.values) {
       bytes.fillRange(0, bytes.length, 0);
     }
@@ -984,16 +1107,16 @@ class HlsCacheGateway implements HlsSessionGateway {
     session.signatures.clear();
   }
 
-  Future<void> _clearSessionCache(String id) async {
-    final session = _sessions[id];
-    if (session == null) return;
-    final resources = List<_Resource>.of(session.resources.values);
-    for (final resource in resources) {
-      if (!resource.live &&
-          (resource.kind == _ResourceKind.segment ||
-              resource.kind == _ResourceKind.init)) {
-        await _cache.remove(_cacheRequestFor(session, resource));
+  /// 丢掉这一集的分片。留下的是播放列表和密钥那类小条目 —— 它们不占地方,
+  /// 而分片是唯一会把缓存撑爆的东西。
+  Future<void> _discardSegments(_SessionData session) async {
+    for (final resource in List<_Resource>.of(session.resources.values)) {
+      if (resource.live) continue;
+      if (resource.kind != _ResourceKind.segment &&
+          resource.kind != _ResourceKind.init) {
+        continue;
       }
+      await _cache.remove(_cacheRequestFor(session, resource));
     }
   }
 
@@ -1017,6 +1140,7 @@ class HlsCacheGateway implements HlsSessionGateway {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = _contentTypeOrBinary(contentType);
     request.response.contentLength = bytes.length;
+    _startedResponses.add(request.response);
     request.response.add(bytes);
     await request.response.close();
   }
@@ -1029,15 +1153,45 @@ class HlsCacheGateway implements HlsSessionGateway {
     }
   }
 
+  /// 写错误响应。
+  ///
+  /// 响应一旦开始发正文,状态码和头就已经出去了 —— 再赋值 dart:io 直接抛 StateError,
+  /// 而这里跑在 [_handleRequest] 的 catch 分支上,抛出去就是一条没人接的异步异常,
+  /// 连接还半开着。已经开始的只能就地关掉,播放器按传输中断处理、自己重试那一片。
   Future<void> _respondError(
     HttpRequest request,
     int status,
     String message,
   ) async {
-    request.response.statusCode = status;
-    request.response.headers.contentType = ContentType.text;
-    request.response.write(message);
-    await request.response.close();
+    final response = request.response;
+    if (!_startedResponses.contains(response)) {
+      try {
+        response.statusCode = status;
+        response.headers.contentType = ContentType.text;
+        response.write(message);
+        await response.close();
+        return;
+      } on Object {
+        // 播放器可能已经先走了 —— 落到下面统一收尾。
+      }
+    }
+    try {
+      await response.close();
+    } on Object {
+      // 连接已经没了,没什么可关的。
+    }
+  }
+}
+
+void _logRequestError(Object error, StackTrace stackTrace) {
+  try {
+    AppLog.i.warn(
+      LogCat.network,
+      'HLS 网关请求异常: ${error.runtimeType}',
+      detail: '$error',
+    );
+  } on Object {
+    // 没有 Flutter binding 的宿主(纯 dart 测试)记不了日志 —— 别让记日志本身再炸一次。
   }
 }
 
@@ -1066,7 +1220,12 @@ class _Resource {
   final int? rangeStart;
   final int? rangeLength;
   final bool live;
-  List<String> prefetchIds = const [];
+
+  /// 本片所在清单的分片顺序表(整条清单共用同一份),配合 [prefetchIndex] 现算预读窗口。
+  List<String> prefetchOrder = const [];
+
+  /// 本片在 [prefetchOrder] 里的下标;-1 = 不参与预读(直播/非分片资源)。
+  int prefetchIndex = -1;
 }
 
 class _SessionData {

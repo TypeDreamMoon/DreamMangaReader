@@ -97,8 +97,9 @@ class _FlatPage {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  late final PageController _ctrl =
-      PageController(initialPage: widget.initialPage);
+  // 在 initState 里、读完模式/双页设置**之后**建:双页时 PageView 的槽位是
+  // `flat ~/ 2`,initialPage 若直接塞扁平页号,续读第 21 页会落到第 41/42 页。
+  late final PageController _ctrl;
   final ItemScrollController _itemCtrl = ItemScrollController();
   final ItemPositionsListener _itemPos = ItemPositionsListener.create();
   final ScrollOffsetController _webOffsetCtrl = ScrollOffsetController();
@@ -117,6 +118,8 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _loadingNext = false;
   bool _reachedEnd = false;
   String? _error;
+  // 连读接下一章失败:记住失败态,别每次滑动都重打同一个请求;末尾给显式重试入口。
+  String? _nextError;
   bool _overlay = true;
   bool _showHint = false; // 首次进入的手势提示遮罩
   bool _pageZoomed = false; // 当前页是否放大(放大时禁用点击翻页,避免误翻)
@@ -169,6 +172,8 @@ class _ReaderPageState extends State<ReaderPage> {
     _dtZoom = s.doubleTapZoom;
     _showPageNum = s.showPageNumber;
     _brightness = s.brightness;
+    // 模式/双页已定,才知道扁平页号对应哪个 PageView 槽位。
+    _ctrl = PageController(initialPage: _pageForFlat(_curFlat));
     _loadInitial();
     if (s.keepScreenOn) {
       _wakeOn = true;
@@ -235,6 +240,9 @@ class _ReaderPageState extends State<ReaderPage> {
         _curFlat = _curFlat.clamp(0, _flat.length - 1);
         if (showHint) _showHint = true;
       });
+      // 首帧后把翻页控制器对到当前页:_curFlat 可能被 clamp(续读页号超出本章),
+      // 且首次 attach 的 itemCount 到这时才确定。
+      _resyncPaged();
       _saveProgress();
       _maybeAutoDetect(); // 首次打开:高瘦条漫图自动切滚动模式
       _preload();
@@ -243,6 +251,13 @@ class _ReaderPageState extends State<ReaderPage> {
       if (mounted) setState(() => _error = '$e');
       AppLog.i.err(LogCat.reader, '打开 $label 失败', detail: '$e');
     }
+  }
+
+  /// 首章加载失败后的「重试」:清掉错误态再拉一次。
+  void _retryInitial() {
+    if (_error == null) return;
+    setState(() => _error = null);
+    _loadInitial();
   }
 
   void _rebuildFlat() {
@@ -262,8 +277,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // 读到接近末尾时,自动加载并接上下一章。
   Future<void> _maybeLoadNext() async {
-    if (_loadingNext || _reachedEnd || _flat.isEmpty) return;
-    if (_curFlat < _flat.length - 3) return; // 还没接近末尾
+    if (_loadingNext || _reachedEnd || _nextError != null || _flat.isEmpty) {
+      return;
+    }
+    // 接近末尾的阈值:双页一次跨两页,3 页的余量最少只剩一次翻页就到底,
+    // 放宽到 4(= 两对开页)才来得及在读者翻到末尾前接上下一章。
+    if (_curFlat < _flat.length - (_dualActive ? 4 : 3)) return;
     final nextIndex = _segments.last.chapterIndex + 1;
     if (nextIndex >= widget.chapters.length) {
       _reachedEnd = true;
@@ -281,11 +300,23 @@ class _ReaderPageState extends State<ReaderPage> {
       _rebuildFlat();
       setState(() {});
       _preload();
-    } catch (_) {
-      // 加载失败不致命:下次滚动/翻页再试。
+    } catch (e) {
+      // 失败要留痕:静默吞掉的话,每次滑动都会重打同一个请求,而读者只看到
+      // 内容莫名其妙断在这里。落到错误态 + 末尾的重试入口。
+      AppLog.i.err(LogCat.reader,
+          '接上《${widget.manga.title}》${widget.chapters[nextIndex].name} 失败',
+          detail: '$e');
+      if (mounted) setState(() => _nextError = '$e');
     } finally {
       _loadingNext = false;
     }
+  }
+
+  /// 末尾「重试」:清掉失败态再拉一次下一章。
+  void _retryNext() {
+    if (_nextError == null) return;
+    setState(() => _nextError = null);
+    _maybeLoadNext();
   }
 
   Map<String, String> _headers(PageImage img) =>
@@ -493,6 +524,9 @@ class _ReaderPageState extends State<ReaderPage> {
                 ),
               if (_flat.isNotEmpty) ...[
                 if (_showPageNum && !_overlay) _pageIndicator(),
+                // 连读接不上下一章:只在读到末尾附近时提示(中途翻回去不打扰)。
+                if (_nextError != null && _curFlat >= _flat.length - 3)
+                  _nextChapterErrorBar(landscape),
                 // 横屏:进度条竖排到左侧;竖屏:横排在底部。
                 landscape ? _sideBar() : _bottomBar(),
                 if (_scrubLocal != null) _scrubPreview(),
@@ -679,15 +713,24 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   DateTime _lastWheel = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 滚轮翻页。**经 [PointerSignalResolver] 仲裁**:同一次滚轮只该做一件事,
+  /// 内层若已认领(Ctrl+滚轮的缩放视图、嵌套 Scrollable),这里就不再翻页。
   void _onWheel(PointerSignalEvent event) {
     // 条漫 / 竖翻:纵向 Scrollable 自己吃滚轮,别再 _turn(否则和原生滚动打架)。
     if (_mode == ReaderMode.webtoon || _mode == ReaderMode.vertical) return;
-    if (event is PointerScrollEvent) {
-      final now = DateTime.now();
-      if (now.difference(_lastWheel).inMilliseconds < 120) return; // 防一滚翻多页
-      _lastWheel = now;
-      _turn(event.scrollDelta.dy > 0 ? 1 : -1);
-    }
+    if (event is! PointerScrollEvent || event.scrollDelta.dy == 0) return;
+    // Ctrl+滚轮是缩放,交给 _ZoomableView。
+    if (HardwareKeyboard.instance.isControlPressed) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, _handleWheel);
+  }
+
+  void _handleWheel(PointerEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final now = DateTime.now();
+    if (now.difference(_lastWheel).inMilliseconds < 120) return; // 防一滚翻多页
+    _lastWheel = now;
+    _turn(event.scrollDelta.dy > 0 ? 1 : -1);
   }
 
   // 常驻小页码(控制条收起时显示)。
@@ -716,6 +759,45 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 「加载下一章失败 · 重试」条:读到末尾接不上下一章时浮在底部。
+  Widget _nextChapterErrorBar(bool landscape) => Positioned(
+        left: 16,
+        right: 16,
+        bottom: landscape ? 22 : 108,
+        child: Center(
+          child: Material(
+            color: Colors.black.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_rounded,
+                      color: Colors.white54, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      context.l10n.reader_nextChapterFailed,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _retryNext,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: Text(context.l10n.retry),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
   // 条漫自动滚动 播放/暂停 悬浮按钮。
   Widget _autoScrollFab() => Material(
         color: Colors.black.withValues(alpha: 0.55),
@@ -736,7 +818,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _content() {
     if (_error != null) {
-      return AppErrorView(onDark: true, message: _error!);
+      // 首章加载失败要能就地重试:否则用户只能退出去再进一次。
+      return AppErrorView(
+        onDark: true,
+        message: _error!,
+        onRetry: _retryInitial,
+      );
     }
     if (_flat.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -2108,6 +2195,13 @@ class _ZoomableViewState extends State<_ZoomableView> {
   Offset _tapPos = Offset.zero;
   bool _zoomed = false;
 
+  // 滚轮缩放拦不住:InteractiveViewer 在**自己的** Listener 里直接改矩阵,不走
+  // PointerSignalResolver,所以一次滚轮既缩放又翻页。但它改矩阵**之前**会先发
+  // 一次 onInteractionStart,而指针信号触发的那次 pointerCount == 0(真手势 ≥1)。
+  // 据此在缩放前拍下矩阵,普通滚轮就在同一次事件派发内还原(尚未成帧,无闪烁),
+  // 把滚轮交回外层翻页;只有 Ctrl+滚轮才让缩放留下。双指捏合不走这条路,始终可用。
+  Matrix4? _beforeSignal;
+
   @override
   void initState() {
     super.initState();
@@ -2162,17 +2256,42 @@ class _ZoomableViewState extends State<_ZoomableView> {
     }
   }
 
+  void _onInteractionStart(ScaleStartDetails d) {
+    // pointerCount == 0 → 这次「交互」是指针信号(滚轮),不是手势。
+    _beforeSignal = d.pointerCount == 0 ? _tc.value.clone() : null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    final before = _beforeSignal;
+    _beforeSignal = null;
+    // 只管真鼠标滚轮;触控板的两指滚动在 InteractiveViewer 里是平移,别动它。
+    if (event is! PointerScrollEvent ||
+        event.kind != PointerDeviceKind.mouse) {
+      return;
+    }
+    if (HardwareKeyboard.instance.isControlPressed) {
+      // Ctrl+滚轮 = 缩放:向仲裁器认领,外层不再翻页 / 滚动。
+      GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+      return;
+    }
+    if (before != null) _tc.value = before; // 普通滚轮不缩放,还给外层翻页
+  }
+
   @override
   Widget build(BuildContext context) {
-    final viewer = InteractiveViewer(
-      transformationController: _tc,
-      constrained: widget.constrained,
-      minScale: widget.constrained ? 0.8 : 0.5,
-      maxScale: 5,
-      // 适配模式常开平移(默认零边距把平移夹在图片边缘 → 纵/横向滚动、无漂移);
-      // fitScreen 未放大不吃横拖 → PageView 能滑动翻页。
-      panEnabled: widget.panAlways || _zoomed,
-      child: widget.child,
+    final viewer = Listener(
+      onPointerSignal: _onPointerSignal,
+      child: InteractiveViewer(
+        transformationController: _tc,
+        constrained: widget.constrained,
+        minScale: widget.constrained ? 0.8 : 0.5,
+        maxScale: 5,
+        onInteractionStart: _onInteractionStart,
+        // 适配模式常开平移(默认零边距把平移夹在图片边缘 → 纵/横向滚动、无漂移);
+        // fitScreen 未放大不吃横拖 → PageView 能滑动翻页。
+        panEnabled: widget.panAlways || _zoomed,
+        child: widget.child,
+      ),
     );
     if (!widget.doubleTap) return viewer;
     if (!widget.centerBandOnly) {

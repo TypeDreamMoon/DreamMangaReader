@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import '../net/iam_auth.dart';
 import 'sync_backend.dart';
+import 'sync_messages.dart';
 
 /// 自建账号同步后端:把同步 blob 存到 `dreamreader-sync` 服务(每用户一份)。
 ///
@@ -43,12 +44,12 @@ class HertzAccountBackend implements SyncBackend {
 
   Future<String> _token() async {
     final t = await auth.validAccessToken();
-    if (t == null) throw Exception('未登录账号(或登录已过期,请重新登录)');
+    if (t == null) throw SyncException.of(SyncMessage.notLoggedIn);
     return t;
   }
 
   @override
-  Future<(bool, String)> test() async {
+  Future<SyncTestResult> test() async {
     try {
       // 先探活(无需鉴权)。
       final health = await Dio(BaseOptions(
@@ -56,17 +57,25 @@ class HertzAccountBackend implements SyncBackend {
         validateStatus: (s) => s != null && s < 500,
       )).get<dynamic>('$baseUrl/healthz');
       if ((health.statusCode ?? 0) >= 400) {
-        return (false, '同步服务无响应(HTTP ${health.statusCode})');
+        return SyncTestResult.failure(SyncMessage.serviceDown,
+            httpStatus: health.statusCode);
       }
-      if (!auth.isLoggedIn) return (false, '服务在线,但还没登录账号');
+      if (!auth.isLoggedIn) {
+        return SyncTestResult.failure(SyncMessage.serviceOnlineNotLoggedIn);
+      }
       final token = await _token();
       final r = await _client(token).get<dynamic>(_syncUrl);
       final s = r.statusCode ?? 0;
-      if (s == 401) return (false, '登录已过期,请重新登录');
-      if (s >= 400) return (false, '异常响应 HTTP $s');
-      return (true, '连接成功 · 账号已登录');
+      if (s == 401) {
+        return SyncTestResult.failure(SyncMessage.sessionExpired);
+      }
+      if (s >= 400) {
+        return SyncTestResult.failure(SyncMessage.unexpectedStatus,
+            httpStatus: s);
+      }
+      return SyncTestResult.success(SyncMessage.testAccountReady);
     } catch (e) {
-      return (false, '连不上:$e');
+      return SyncTestResult.failure(SyncMessage.unreachable, detail: '$e');
     }
   }
 
@@ -75,8 +84,10 @@ class HertzAccountBackend implements SyncBackend {
     final token = await _token();
     final r = await _client(token).get<Map<String, dynamic>>(_syncUrl);
     final s = r.statusCode ?? 0;
-    if (s == 401) throw Exception('登录已过期,请重新登录');
-    if (s >= 400) throw Exception('拉取失败(HTTP $s)');
+    if (s == 401) throw SyncException.of(SyncMessage.sessionExpired);
+    if (s >= 400) {
+      throw SyncException.of(SyncMessage.pullFailed, httpStatus: s);
+    }
     final data = r.data?['data'] as Map<String, dynamic>?;
     _etag = (data?['etag'] as String?) ?? '';
     return _asBlob(data?['doc']);
@@ -93,14 +104,16 @@ class HertzAccountBackend implements SyncBackend {
       options: Options(contentType: 'application/json', headers: headers),
     );
     final s = r.statusCode ?? 0;
-    if (s == 401) throw Exception('登录已过期,请重新登录');
+    if (s == 401) throw SyncException.of(SyncMessage.sessionExpired);
     if (s == 409) {
       // 并发写入:服务端回传当前态 → 更新 etag,抛冲突让上层重合并重试。
       final data = r.data?['data'] as Map<String, dynamic>?;
       _etag = (data?['etag'] as String?) ?? _etag;
       throw SyncConflict(_asBlob(data?['doc']));
     }
-    if (s >= 400) throw Exception('上传失败(HTTP $s)');
+    if (s >= 400) {
+      throw SyncException.of(SyncMessage.pushFailed, httpStatus: s);
+    }
     final data = r.data?['data'] as Map<String, dynamic>?;
     _etag = (data?['etag'] as String?) ?? _etag;
   }

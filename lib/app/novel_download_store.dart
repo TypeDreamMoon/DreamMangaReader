@@ -64,7 +64,7 @@ class DownloadedNovelChapter {
     );
   }
 
-  DownloadedNovelChapter withCache(CachedNovelDocument cached) {
+  DownloadedNovelChapter withCache(CachedNovelChapterStat cached) {
     return DownloadedNovelChapter(
       source: source,
       novel: novel,
@@ -93,6 +93,24 @@ class NovelDownloadFailure {
   final int failedAt;
 
   String get message => error.toString();
+
+  Map<String, Object?> toJson() => {
+        'source': _sourceToJson(source),
+        'novel': _novelToJson(novel),
+        'chapter': _chapterToJson(chapter),
+        'error': message,
+        'failedAt': failedAt,
+      };
+
+  factory NovelDownloadFailure.fromJson(Map<String, dynamic> json) {
+    return NovelDownloadFailure(
+      source: _sourceFromJson(_requiredMap(json, 'source')),
+      novel: _novelFromJson(_requiredMap(json, 'novel')),
+      chapter: _chapterFromJson(_requiredMap(json, 'chapter')),
+      error: json['error'] as String? ?? '',
+      failedAt: (json['failedAt'] as num).toInt(),
+    );
+  }
 }
 
 class NovelDownloadActivity {
@@ -135,6 +153,11 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
         _cacheFactory = cacheFactory ?? _defaultCacheFactory;
 
   static const _indexKey = 'novel.downloads.v1';
+  static const _failuresKey = 'novel.downloads.failures.v1';
+
+  /// 章节索引落盘节流:敲到这么多章、或者离上次写盘超过这么久,才真写。
+  static const Duration _persistInterval = Duration(seconds: 2);
+  static const int _persistBatch = 8;
 
   final NovelDownloadRootProvider _rootProvider;
   final NovelSourceBuilder _sourceBuilder;
@@ -149,8 +172,16 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   NovelDocumentCache? _cache;
   _NovelDownloadJob? _activeJob;
   Completer<void>? _idleCompleter;
+  Timer? _persistTimer;
+  DateTime? _persistedAt;
+  int _pendingPersists = 0;
+  int _persistCount = 0;
   bool _running = false;
   bool _disposed = false;
+
+  /// 实际写盘次数。只给测试用 —— 断言节流真的把逐章写盘按下去了。
+  @visibleForTesting
+  int get persistCount => _persistCount;
 
   List<DownloadedNovelChapter> get downloads {
     final result = _completed.values.toList(growable: false)
@@ -204,7 +235,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     _notify();
     try {
       await _download(job, context: context);
-      _failures.remove(job.key);
+      if (_failures.remove(job.key) != null) await _persistFailures();
     } catch (error) {
       if (!context.cancellation.isCancelled) {
         _failures[job.key] = NovelDownloadFailure(
@@ -214,6 +245,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
           error: error,
           failedAt: DateTime.now().millisecondsSinceEpoch,
         );
+        await _persistFailures();
       }
       rethrow;
     } finally {
@@ -253,7 +285,9 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
               final record = DownloadedNovelChapter.fromJson(
                 value.cast<String, dynamic>(),
               );
-              final cached = await cache.read(
+              // 只体检,不读正文:一本书几百章,启动时逐章 readAsString
+              // 会把整个书架卡在启动画面上。
+              final cached = await cache.stat(
                 record.sourceId,
                 record.novelId,
                 record.chapterId,
@@ -283,13 +317,56 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
         repairIndex = true;
       }
     }
+    // 失败的章节也要跨重启活下来 —— 记录丢了,用户既看不到哪一章塌了,
+    // 也没有可以重试的入口。
+    final failures = <String, NovelDownloadFailure>{};
+    var repairFailures = false;
+    final rawFailures = prefs.getString(_failuresKey);
+    if (rawFailures != null) {
+      try {
+        final decoded = jsonDecode(rawFailures);
+        if (decoded is! List) {
+          repairFailures = true;
+        } else {
+          for (final value in decoded) {
+            if (value is! Map) {
+              repairFailures = true;
+              continue;
+            }
+            try {
+              final failure = NovelDownloadFailure.fromJson(
+                value.cast<String, dynamic>(),
+              );
+              final key = _chapterKey(
+                failure.source.id,
+                failure.novel.id,
+                failure.chapter.id,
+              );
+              if (loaded.containsKey(key) || failures.containsKey(key)) {
+                repairFailures = true;
+                continue;
+              }
+              failures[key] = failure;
+            } catch (_) {
+              repairFailures = true;
+            }
+          }
+        }
+      } catch (_) {
+        repairFailures = true;
+      }
+    }
     if (_disposed) return;
     _prefs = prefs;
     _cache = cache;
     _completed
       ..clear()
       ..addAll(loaded);
-    if (repairIndex) await _persist();
+    _failures
+      ..clear()
+      ..addAll(failures);
+    if (repairIndex) await _flush();
+    if (repairFailures) await _persistFailures();
     _notify();
   }
 
@@ -319,11 +396,10 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   void enqueue(SourceMeta source, Novel novel, NovelChapter chapter) {
     _ensureReady();
     final key = _chapterKey(source.id, novel.id, chapter.id);
-    if (_completed.containsKey(key) ||
-        _progress.containsKey(key) ||
-        _failures.containsKey(key)) {
-      return;
-    }
+    if (_completed.containsKey(key) || _progress.containsKey(key)) return;
+    // 失败过的章节要能重新排队:以前碰上失败记录就静默 return,章节列表里的
+    // 重试按钮点多少下都没反应。
+    if (_failures.remove(key) != null) unawaited(_persistFailures());
     final generation = (_generations[key] ?? 0) + 1;
     _generations[key] = generation;
     final job = _NovelDownloadJob(source, novel, chapter, generation);
@@ -335,10 +411,8 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   }
 
   void retry(String sourceId, String novelId, String chapterId) {
-    final key = _chapterKey(sourceId, novelId, chapterId);
-    final failure = _failures.remove(key);
+    final failure = _failures[_chapterKey(sourceId, novelId, chapterId)];
     if (failure == null) return;
-    _notify();
     enqueue(failure.source, failure.novel, failure.chapter);
   }
 
@@ -348,7 +422,8 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     String chapterId,
   ) async {
     await _deleteChapter(sourceId, novelId, chapterId);
-    await _persist();
+    await _flush();
+    await _persistFailures();
     _notify();
   }
 
@@ -372,7 +447,8 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     for (final identity in identities) {
       await _deleteChapter(identity.$1, identity.$2, identity.$3);
     }
-    await _persist();
+    await _flush();
+    await _persistFailures();
     _notify();
   }
 
@@ -404,6 +480,10 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       _activeJob = null;
       _running = false;
       if (_queue.isEmpty || _disposed) {
+        // 队列停下来 = “完成”,此时把攒着的章节立刻落盘。
+        try {
+          await _flushPending();
+        } catch (_) {}
         final completer = _idleCompleter;
         _idleCompleter = null;
         if (completer != null && !completer.isCompleted) completer.complete();
@@ -416,7 +496,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   Future<void> _run(_NovelDownloadJob job) async {
     try {
       await _download(job);
-      _failures.remove(job.key);
+      if (_failures.remove(job.key) != null) await _persistFailures();
     } catch (error) {
       if (!_isCancelled(job)) {
         _failures[job.key] = NovelDownloadFailure(
@@ -426,6 +506,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
           error: error,
           failedAt: DateTime.now().millisecondsSinceEpoch,
         );
+        await _persistFailures();
       }
     } finally {
       if (_generations[job.key] == job.generation) {
@@ -477,7 +558,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
       );
       _completed[job.key] = record;
       try {
-        await _persist();
+        await _persistSoon();
       } catch (_) {
         _completed.remove(job.key);
         await _deleteDirectory(cached.directory);
@@ -508,7 +589,7 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     String novelId,
     String chapterId,
   ) async {
-    final cached = await _requireCache().read(sourceId, novelId, chapterId);
+    final cached = await _requireCache().stat(sourceId, novelId, chapterId);
     if (cached != null) await _deleteDirectory(cached.directory);
   }
 
@@ -517,14 +598,57 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
     if (await directory.exists()) await directory.delete(recursive: true);
   }
 
+  /// 每下完一章就重写一遍整份索引,一本书几百章就是几百次全量
+  /// 序列化 + 写盘。攒到 [_persistBatch] 章、或距上次写盘 [_persistInterval]
+  /// 以上再写;中间掉电最多丢几条索引,缓存目录还在,重进来重下就好。
+  Future<void> _persistSoon() async {
+    _pendingPersists++;
+    final last = _persistedAt;
+    if (_pendingPersists >= _persistBatch ||
+        last == null ||
+        DateTime.now().difference(last) >= _persistInterval) {
+      await _flush();
+      return;
+    }
+    _persistTimer ??= Timer(_persistInterval, () {
+      _persistTimer = null;
+      // 定时写失败就等下一次:不能因为写盘出错把已下好的章节从内存抹掉。
+      unawaited(_flush().catchError((Object _) {}));
+    });
+  }
+
+  Future<void> _flushPending() async {
+    if (_pendingPersists == 0) return;
+    await _flush();
+  }
+
+  Future<void> _flush() async {
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    _pendingPersists = 0;
+    _persistedAt = DateTime.now();
+    await _persist();
+  }
+
   Future<void> _persist() async {
     final prefs = _prefs;
     if (prefs == null) return;
+    _persistCount++;
     final stored = await prefs.setString(
       _indexKey,
       jsonEncode(_completed.values.map((value) => value.toJson()).toList()),
     );
     if (!stored) throw StateError('Failed to persist novel download index');
+  }
+
+  /// 失败清单是账面记录,写不进去也不该回滚一次成功的下载。
+  Future<void> _persistFailures() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    await prefs.setString(
+      _failuresKey,
+      jsonEncode(_failures.values.map((value) => value.toJson()).toList()),
+    );
   }
 
   bool _isCancelled(_NovelDownloadJob job) =>
@@ -555,6 +679,12 @@ class NovelDownloadStore extends ChangeNotifier implements DownloadExecutor {
   @override
   void dispose() {
     _disposed = true;
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    if (_pendingPersists > 0) {
+      _pendingPersists = 0;
+      unawaited(_persist().catchError((Object _) {}));
+    }
     _queue.clear();
     _progress.clear();
     super.dispose();
@@ -600,29 +730,32 @@ Map<String, dynamic> _requiredMap(Map<String, dynamic> json, String key) {
   return value.cast<String, dynamic>();
 }
 
+/// 只存 id 和显示名。源脚本动辄上百 KB,以前每条下载记录都塞一份,
+/// 一本书几百章就把 SharedPreferences 撑爆了 —— 脚本从源仓库现取。
+/// 名字留着是为了源被卸载后离线列表里还能写出一个人读得懂的标题。
 Map<String, Object?> _sourceToJson(SourceMeta source) => {
       'id': source.id,
       'name': source.name,
-      'script': source.script,
-      'kind': source.kind,
-      'experimental': source.experimental,
-      'useWebView': source.useWebView,
-      'imageReferer': source.imageReferer,
-      'needsLogin': source.needsLogin,
-      'authKey': source.authKey,
     };
 
-SourceMeta _sourceFromJson(Map<String, dynamic> json) => SourceMeta(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      script: json['script'] as String,
-      kind: json['kind'] as String? ?? 'novel',
-      experimental: json['experimental'] as bool? ?? false,
-      useWebView: json['useWebView'] as bool? ?? false,
-      imageReferer: json['imageReferer'] as String?,
-      needsLogin: json['needsLogin'] as bool? ?? false,
-      authKey: json['authKey'] as String?,
-    );
+SourceMeta _sourceFromJson(Map<String, dynamic> json) {
+  final id = json['id'] as String;
+  for (final source in registeredSources) {
+    if (source.id == id) return source;
+  }
+  // 旧格式把整份 meta 写进了 JSON;源已不在注册表里时兜底。
+  return SourceMeta(
+    id: id,
+    name: json['name'] as String? ?? id,
+    script: json['script'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'novel',
+    experimental: json['experimental'] as bool? ?? false,
+    useWebView: json['useWebView'] as bool? ?? false,
+    imageReferer: json['imageReferer'] as String?,
+    needsLogin: json['needsLogin'] as bool? ?? false,
+    authKey: json['authKey'] as String?,
+  );
+}
 
 Map<String, Object?> _novelToJson(Novel novel) => {
       'id': novel.id,
