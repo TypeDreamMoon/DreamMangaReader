@@ -2,9 +2,9 @@
 
 更新时间：2026-10-01
 
-分支：`codex/source-search-pagination`
+分支：`codex/local-playback`
 
-基线：`upstream/main`
+基线：`upstream/main`（2026-10-06 并入 `4c3fe03`，冲突已解）
 状态：自动化验证完成；Android、Windows 运行时验收待执行（含 Android 路线 A 真机 spike 与 Kotlin 编译）。
 
 ## 本次范围
@@ -45,7 +45,17 @@
 
 - `flutter gen-l10n`：成功（新增 39 个 `local_` 键，简中/繁中/英/日四份 arb 齐全）。
 - `flutter analyze --no-pub`：`No issues found!`
+- `flutter test --no-pub`：1457 passed（2026-10-06 并入上游 `4c3fe03` 之后的全量结果）。
 - `git diff --check`：无输出。
+
+### 并入上游时的两处非文本改动
+
+- 上游给 `PlaybackMessages` 加了必填 `configureFailed` / `gatewayFallbackFailed`、给
+  `NativeMediaKitBackend` 加了必填 `messages`：本地播放页补齐（本地不走 HLS 网关，
+  后一条不会真的出现）。
+- 本地库读档**不排进** `app.dart` 那条启动 `Future.wait`：它读应用支持目录（`path_provider`），
+  平台通道不应答时该 Future 会一直挂着，会把「自动上传监听 → 启动同步 → 追更检查」
+  一起卡死（`test/app_startup_resilience_test.dart` 覆盖了这条）。
 
 ### 尚未验证的编译环节
 
