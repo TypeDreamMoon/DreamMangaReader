@@ -17,6 +17,7 @@ String syncNoticeText(AppLocalizations l10n, SyncNotice notice) {
     SyncMessage.uploaded => l10n.sync_stUploaded(notice.count),
     SyncMessage.downloaded => l10n.sync_stDownloaded(notice.count),
     SyncMessage.serverEmpty => l10n.sync_stServerEmpty,
+    SyncMessage.localUnreadable => l10n.sync_stLocalUnreadable,
     SyncMessage.testWebDavReady => l10n.sync_stTestWebdavReady,
     SyncMessage.testAccountReady => l10n.sync_stTestAccountReady,
     SyncMessage.notConfiguredAccount => l10n.sync_errNotConfiguredAccount,
