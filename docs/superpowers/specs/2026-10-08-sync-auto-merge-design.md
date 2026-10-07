@@ -85,19 +85,40 @@
 最后两例是一组 A/B:同样的外壳、同样的等待,只有生命周期序列不同、结果不同 ——
 所以「切回前台会合并」不是碰巧被别的定时器触发的。
 
-### 3.2 回归
+### 3.2 设备上的端到端(Android,真 HTTP)
+
+`test/sync_auto_merge_test.dart` 用的是内存后端 —— 证明不了「真 WebDAV 后端 +
+真 JSON 序列化 + 真 ETag + 真 SharedPreferences」这一层。所以另有一条跑在模拟器上的:
+
+```
+node Scripts/e2e_webdav.mjs 8099          # 宿主机上的极简 WebDAV(只做 MKCOL/GET/PUT + 强 ETag)
+flutter test integration_test/sync_auto_merge_test.dart -d emulator-5554
+```
+
+一条测试讲完整个用户故事,四步都断言:
+
+| 步骤 | 断言 |
+|------|------|
+| ① 设备 A 把 3 本收藏同步上云端(真 client、真 HTTP) | 假云端上有 3 本 |
+| ② 清掉应用数据(等价重装),只把地址填回来,`SyncController.load()` | `sync.auto == true`(**真 SharedPreferences** 上验证默认开) |
+| ③ 打开真 App 外壳:启动链自己合并 | 本机 store 拿到 3 本;**云端仍然 3 本、没有 `favoritesDeleted` 墓碑** |
+| ④ 另一台设备再加 1 本 → 发 `hidden → resumed` | 本机变 4 本,云端也还是 4 本 |
+
+实测(UE_pixel_6_API_36 / API 36,`Scripts/e2e_webdav.mjs`,连跑三次都通过):
+单次干净运行 `{"mkcol":3,"gets":8,"puts":4,"rejected":0}`,云端最终 `favorites=4` 且无墓碑。
+
+⚠️ 别在**自己的手机上**跑这条:`flutter test integration_test/... -d <设备>` 装的是 debug 签名,
+和正式包同一个 `applicationId` —— 签名不匹配会先卸载再装,跑完还会把包卸掉,
+手机上的应用数据(书架、同步配置)会一起没。用模拟器。
+
+### 3.3 回归
 
 - `flutter analyze --no-pub` → No issues found
 - `flutter test --no-pub` → **1470 passed**(含本次新增 13 例)
 - `SyncMessage` 完整性由 `test/sync_messages_l10n_test.dart` 把守:新增的
   `localUnreadable` 在 zh / zh_Hant / en / ja 四种语言下都有文案,且英文界面不出现汉字。
-
-### 3.2 回归
-
-- `flutter analyze --no-pub` → No issues found
-- `flutter test --no-pub` → **1468 passed**(含本次新增 11 例)
-- `SyncMessage` 完整性由 `test/sync_messages_l10n_test.dart` 把守:新增的
-  `localUnreadable` 在 zh / zh_Hant / en / ja 四种语言下都有文案,且英文界面不出现汉字。
+- CI 只跑 `flutter analyze` + `flutter test`(见 `.github/workflows/ci.yml`),
+  `integration_test/` 不会被它跑,所以这条真机 E2E 不会把 CI 拖成需要模拟器。
 
 ## 4. 明确不做
 
@@ -105,3 +126,5 @@
   重装后本地库条目要重新导入,这是设计如此,不是这次没做。
 - **不自动下载二进制**:同步载荷仍然只有元数据(背景图只带指纹)。
 - **不改手动「上传 / 下载」的覆盖语义**:那是用户明确按下去的动作。
+- **自动合并失败仍然只在设置页显示**:目前没有全局 toast 通道(没有 `scaffoldMessengerKey`),
+  给自动路径加弹窗要动应用根。真要做的话是下一步的事 —— 现在失败会在同步设置页留一条状态。
