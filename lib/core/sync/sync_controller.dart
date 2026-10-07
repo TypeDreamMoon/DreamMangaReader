@@ -84,7 +84,13 @@ class SyncController extends ChangeNotifier {
   String get hertzIssuer => hzPresetIssuer;
   String get hertzClientId => hzPresetClientId;
 
-  bool auto = false;
+  /// 「启动/回到前台时自动双向合并」。
+  ///
+  /// **默认开**。这台设备上丢过收藏的用户,最需要的恰恰是「打开就有」——让他先去
+  /// 设置页找一个开关,等于把数据恢复押在他知不知道有这个开关上。没配过后端的
+  /// 用户不会因此有任何网络行为([configured] 挡着),配过的则本来就是为了同步。
+  /// 不想要的用户可以在设置页关掉([setAuto]),关掉后不再回来自动打开(见 [load])。
+  bool auto = true;
 
   /// 「变化后自动上传」勾选的类别:本机该类内容变化后去抖自动上传到云端。
   Set<SyncCategory> autoUploadOn = {};
@@ -119,6 +125,12 @@ class SyncController extends ChangeNotifier {
     if (secrets != null) _secrets = secrets;
     _prefs = preferences;
   }
+
+  /// 测试注入用:替换后端构造。自动同步这类**整链**行为(拉 → 合并 → 应用 → 推)
+  /// 没法只测纯函数——真后端要走网络,而这里要断言的是「本机为空时云端会不会被
+  /// 清空」。给它一个内存后端,整链就能在测试里跑完。
+  @visibleForTesting
+  SyncBackend Function()? debugBackendFactory;
 
   Future<SharedPreferences> get _p async =>
       _prefs ??= await SharedPreferences.getInstance();
@@ -160,7 +172,9 @@ class SyncController extends ChangeNotifier {
         ) ??
         '';
     await _migrateOffCustomIam(p);
-    auto = p.getBool(_kAuto) ?? false;
+    // 没写过这个键 = 从没动过开关 → 用默认(开)。写过就完全听用户的,包括
+    // 「我明确关掉了」——那也是一个值,不能被默认值盖回来。
+    auto = p.getBool(_kAuto) ?? true;
     // 旧配置只在首次升级时迁移 readerNotes；之后用户可独立关闭它。
     final migrateReaderNotes = p.getBool(_kReaderNotesMigrated) != true;
     final upCats = p.getStringList(_kAutoUpOn);
@@ -371,7 +385,10 @@ class SyncController extends ChangeNotifier {
         AppLog.i.info(
             LogCat.sync, '本地变化 · 自动上传 ${ready.map((c) => c.name).join(', ')}');
         // 基线由 uploadNow 用「打快照时刻」的签名重置,上传期间的新变化下轮还能测到。
-        await uploadNow(lib, novels, repo, categories: ready);
+        // mergeInsteadOfCover:自动上传只做并集,不整份覆盖 —— 本机这份是空的/没加载
+        // 出来时,云端不会被清掉(手动「上传」才覆盖)。
+        await uploadNow(lib, novels, repo,
+            categories: ready, mergeInsteadOfCover: true);
         _upFailAt = 0;
         for (final c in ready) {
           _upLastAt[c] = now;
@@ -650,7 +667,30 @@ class SyncController extends ChangeNotifier {
     return out;
   }
 
+  /// 这次「本机根本没读出来」的类别(某一段 JSON 烂了 / 写到一半)。
+  ///
+  /// 和「本机是空的」是两件事,但同步层看到的都是一个空表。[LibraryStore] 读档时
+  /// 是按段记失败的(getter 见 `favoritesLoadFailed` 等),这里只做映射:
+  ///   - 收藏整段没读出来 → 收藏这一类不可信(漫画与小说收藏同类,一起跳过);
+  ///   - 历史 / 作品进度任一段没读出来 → 进度这一类不可信。
+  static Set<SyncCategory> _unreadableCategories(
+    LibraryStore lib,
+    Set<SyncCategory> cats,
+  ) =>
+      {
+        if (lib.favoritesLoadFailed && cats.contains(SyncCategory.favorites))
+          SyncCategory.favorites,
+        if ((lib.historyLoadFailed || lib.workProgressLoadFailed) &&
+            cats.contains(SyncCategory.history))
+          SyncCategory.history,
+      };
+
   /// 打一份本地快照并附上墓碑(所有推送路径共用)。
+  ///
+  /// 墓碑是从「上次推上去时在的键」和「现在在的键」求差得来的(见 [_refreshTombstones])。
+  /// 某一段**根本没读出来**时,那份「现在在的键」是空表 —— 会被读成「用户把它删光了」,
+  /// 墓碑记下去,对端的收藏就跟着被删。所以这几类不参与墓碑差分(数据照常合并:
+  /// 本机这份是空的,并集结果就是云端那份,写回本地反而把书修回来)。
   Future<Map<String, dynamic>> _snapshot(
     LibraryStore lib,
     NovelLibraryStore novels,
@@ -658,11 +698,14 @@ class SyncController extends ChangeNotifier {
     required Set<SyncCategory> categories,
     Map<String, dynamic>? readerNotes,
   }) async {
+    final unreadable = _unreadableCategories(lib, categories);
     final bare = SyncData.build(
       lib,
       novels,
       repo,
-      categories: categories,
+      categories: unreadable.isEmpty
+          ? categories
+          : categories.difference(unreadable),
       readerNotes: readerNotes,
     );
     final tombstones = await _refreshTombstones(bare);
@@ -676,9 +719,11 @@ class SyncController extends ChangeNotifier {
     );
   }
 
-  SyncBackend _backend() => isHertz
-      ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
-      : WebDavBackend(baseUrl: url, username: username, password: password);
+  SyncBackend _backend() =>
+      debugBackendFactory?.call() ??
+      (isHertz
+          ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
+          : WebDavBackend(baseUrl: url, username: username, password: password));
 
   Future<SyncTestResult> testConnection() => _backend().test();
 
@@ -792,16 +837,42 @@ class SyncController extends ChangeNotifier {
 
   /// 上传:本地所选类别 → 服务器(覆盖服务器上对应类别,保留其它未选类别)。
   /// [categories] 不传 = 用设置里勾选的 [syncCategories];自动上传只传变化的类别。
+  ///
+  /// [mergeInsteadOfCover]=true 时**不整份覆盖**,改成「与远端取并集后推回」。
+  /// 自动上传(设置页那个开关)走的就是这条路:整份覆盖在「本机这份数据是空的 /
+  /// 只加载出一部分」时会把云端那一类清掉 —— 而自动上传恰恰是在用户没盯着看的
+  /// 时候跑的,清掉了也没人当场发现。并集只会让云端变多,不会变少;本机真删掉的
+  /// 条目仍然靠墓碑传播(见 [SyncTombstoneGroup]),删除照样删得掉。
+  /// 手动点「上传」不走这条路:那是用户明确要求的「用本机这份覆盖云端」。
+  ///
+  /// 两条路都不推「本机根本没读出来」的类别(见 [_unreadableCategories]):
+  /// 那种空是读档失败,不是用户删光了。
   Future<SyncNotice> uploadNow(
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo, {
     Set<SyncCategory>? categories,
+    bool mergeInsteadOfCover = false,
   }) async {
-    final cats = categories ?? syncCategories;
+    var cats = categories ?? syncCategories;
     if (!configured) throw SyncException.of(_notConfigured);
     if (cats.isEmpty) throw SyncException.of(SyncMessage.noCategoriesChosen);
     if (_syncing) throw SyncException.of(SyncMessage.alreadySyncing);
+    // 本机这一段没读出来时,「本机是空的」不是用户的意见 —— 覆盖式上传拿它当依据
+    // 会把云端这一类清掉,而且是在用户点「上传」那一秒发生的,最容易归咎成
+    // 「同步把我的数据搞没了」。读不出来的类别这次不推,云端原样保留。
+    final unreadable = _unreadableCategories(lib, cats);
+    if (unreadable.isNotEmpty) {
+      cats = cats.difference(unreadable);
+      AppLog.i.warn(LogCat.sync, '上传 · 本机数据没读出来,跳过对应类别',
+          detail: unreadable.map((c) => c.name).join(', '));
+      if (cats.isEmpty) {
+        const skipped = SyncNotice(SyncMessage.localUnreadable);
+        status = skipped;
+        notifyListeners();
+        return skipped;
+      }
+    }
     _syncing = true;
     status = const SyncNotice(SyncMessage.uploading);
     notifyListeners();
@@ -809,7 +880,10 @@ class SyncController extends ChangeNotifier {
     final sw = Stopwatch()..start();
     try {
       final backend = _backend();
-      AppLog.i.debug(LogCat.sync, '后端 $_backendLabel · 覆盖上传 ${_catLabel(cats)}',
+      AppLog.i.debug(
+          LogCat.sync,
+          '后端 $_backendLabel · '
+          '${mergeInsteadOfCover ? '并集上传' : '覆盖上传'} ${_catLabel(cats)}',
           detail: '类别:${cats.map((c) => c.name).join(', ')}');
       final readerNotes = cats.contains(SyncCategory.readerNotes)
           ? await _readerDataStore.exportPortableData()
@@ -830,7 +904,11 @@ class SyncController extends ChangeNotifier {
           remote == null
               ? '拉取远端 · 无数据'
               : '拉取远端(保留未选类别)· ${_dataSummary(remote)}');
-      var toPush = remote == null ? local : SyncData.overlay(remote, local);
+      var toPush = remote == null
+          ? local
+          : mergeInsteadOfCover
+              ? SyncData.merge(local, remote)
+              : SyncData.overlay(remote, local);
       var attempt = 0;
       while (true) {
         try {
@@ -843,8 +921,11 @@ class SyncController extends ChangeNotifier {
             throw SyncException.of(SyncMessage.uploadConflictRetries);
           }
           AppLog.i.warn(LogCat.sync, '上传遇并发冲突,重叠加后重试(第 $attempt 次)');
-          toPush =
-              c.remote == null ? local : SyncData.overlay(c.remote!, local);
+          toPush = c.remote == null
+              ? local
+              : mergeInsteadOfCover
+                  ? SyncData.merge(local, c.remote!)
+                  : SyncData.overlay(c.remote!, local);
         }
       }
       await _stampSynced();
@@ -966,10 +1047,53 @@ class SyncController extends ChangeNotifier {
     LibraryStore lib,
     NovelLibraryStore novels,
     SourceRepository repo,
+  ) =>
+      _autoSync(lib, novels, repo, trigger: '启动');
+
+  /// 两次自动合并之间的最小间隔。手机上「打开 App」多半是切回前台而不是冷启动,
+  /// 不节流的话每次切前台都要拉一整包;节流后 1 分钟里来回切几次也只合并一次。
+  static const autoSyncMinGap = Duration(minutes: 2);
+
+  int _lastAutoTryAt = 0;
+
+  /// 测试用:清掉自动合并的节流时间。单例跨用例共享,不清的话用例顺序会互相影响
+  /// (上一条跑过同步,下一条的「切回前台」就被节流吞掉)。
+  @visibleForTesting
+  void debugResetAutoSyncThrottle() {
+    _lastAutoTryAt = 0;
+    lastSyncedAt = 0;
+  }
+
+  /// 回到前台时的自动合并。和启动同步是同一件事(拉 → 并集合并 → 应用 → 推回),
+  /// 只是先过节流:刚同步过(启动同步/上一次切前台)就跳过。
+  Future<void> autoSyncOnResume(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo,
   ) async {
+    if (!auto || !configured || _syncing) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final gap = autoSyncMinGap.inMilliseconds;
+    if (now - _lastAutoTryAt < gap) return;
+    if (lastSyncedAt != 0 && now - lastSyncedAt < gap) return;
+    await _autoSync(lib, novels, repo, trigger: '回到前台');
+  }
+
+  /// 自动合并的共用实现。双向、best-effort(失败只记状态不抛):
+  /// [syncNow] 内部是「拉远端 → 与本地并集合并(含墓碑)→ 应用到本地 → 推回」,
+  /// 本机为空时云端只会原样留下,不会被执行自动合并的那台机器清掉。
+  Future<void> _autoSync(
+    LibraryStore lib,
+    NovelLibraryStore novels,
+    SourceRepository repo, {
+    required String trigger,
+  }) async {
     if (!auto || !configured) return;
+    _lastAutoTryAt = DateTime.now().millisecondsSinceEpoch;
     try {
-      await syncNow(lib, novels, repo);
+      final notice = await syncNow(lib, novels, repo);
+      AppLog.i.info(
+          LogCat.sync, '$trigger自动合并完成 · 收藏 ${notice.favorites} · 进度 ${notice.history}');
     } catch (e) {
       status = SyncNotice(SyncMessage.autoSyncFailed, detail: '$e');
       notifyListeners();

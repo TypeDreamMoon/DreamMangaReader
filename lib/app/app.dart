@@ -51,7 +51,7 @@ class App extends StatefulWidget {
   State<App> createState() => _AppState();
 }
 
-class _AppState extends State<App> {
+class _AppState extends State<App> with WidgetsBindingObserver {
   final ThemeController _theme = ThemeController(AppThemeVariant.oled);
   final SourceController _source = SourceController();
   final LibraryStore _library = LibraryStore();
@@ -71,9 +71,18 @@ class _AppState extends State<App> {
       AndroidDownloadForegroundBridge();
   final WindowsWindowBridge _windowsWindow = WindowsWindowBridge();
 
+  /// 书架读档 + 自动上传监听挂好之前,回前台的自动合并不能跑(会拿空 store 去合并)。
+  bool _autoSyncReady = false;
+
+  /// 这轮离开过 App(切后台/最小化)吗。只看 [AppLifecycleState.resumed] 会把桌面上
+  /// 每次点回窗口都算成「打开 App」;要求中间真的离开过,才和用户的直觉一致。
+  bool _wasAway = false;
+
   @override
   void initState() {
     super.initState();
+    // 回到前台也算一次「打开 App」——手机上冷启动很少,多数是切回前台。
+    WidgetsBinding.instance.addObserver(this);
     _ownsDownloadCoordinator = widget.downloadCoordinator == null;
     _downloadCoordinator = widget.downloadCoordinator ??
         DownloadCoordinator(
@@ -117,6 +126,8 @@ class _AppState extends State<App> {
           SourceRepository.instance,
         ),
       );
+      // 书架与监听都就绪了,回前台自动合并才可以跑(否则会拿空 store 去合并)。
+      _autoSyncReady = true;
       if (!mounted) return;
       await guardedStartupLoad(
         '启动自动同步',
@@ -136,6 +147,35 @@ class _AppState extends State<App> {
     unawaited(guardedStartupLoad('本地库', _localMedia.load));
     // 读回各源登录 token,注入源引擎(SourceAuth)供需登录的源用
     unawaited(guardedStartupLoad('源登录态', _auth.load));
+  }
+
+  /// 回到前台时再合并一次。手机上「打开 App」绝大多数是切回前台而不是冷启动,
+  /// 冷启动那一次由 [SyncController.autoSyncOnStart] 覆盖;这里补上另一半。
+  ///
+  /// 只在**真的离开过**之后触发(见 [_wasAway]),桌面端点回窗口不算;
+  /// 控制器那边还有最小间隔兜底,来回切几次也只会真同步一次。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        _wasAway = true;
+      case AppLifecycleState.resumed:
+        if (!_wasAway) return;
+        _wasAway = false;
+        if (!_autoSyncReady) return;
+        final sync = SyncController.instance;
+        if (!sync.auto || !sync.configured) return;
+        unawaited(sync.autoSyncOnResume(
+          _library,
+          _novelLibrary,
+          SourceRepository.instance,
+        ));
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        return;
+    }
   }
 
   /// 启动时的追更检查。三重闸门:设置里开着、距上次扫描已过
@@ -329,6 +369,7 @@ class _AppState extends State<App> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _theme.dispose();
     _source.dispose();
     _library.closeToTrayVN.removeListener(_syncWindowsCloseBehavior);
