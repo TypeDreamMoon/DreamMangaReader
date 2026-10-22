@@ -482,7 +482,8 @@ class _DebugPageState extends State<DebugPage> {
           _card2(
             p,
             '⑧ 本地播放(路线 A:fd 直读)',
-            'SAF 选目录 → openFd → 把 /proc/self/fd/N 交给 libmpv 播。'
+            'SAF 选目录 → openFd → 把 fd 交给 libmpv 播(生产用 fd://<fd>;'
+                '/proc/self/fd/N 在 Android 10+ 上会被拒,对比着看)。'
                 '结论决定 Android 走零拷贝(路线 A)还是导入(路线 B)。',
             () => pushRoute(
               context,

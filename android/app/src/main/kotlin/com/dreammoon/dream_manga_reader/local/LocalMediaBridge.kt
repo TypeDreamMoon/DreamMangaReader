@@ -27,8 +27,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * manifest 里也不需要新增 `READ_MEDIA_VIDEO`/`MANAGE_EXTERNAL_STORAGE`(规格 §7.2/§7.3)。
  *
  * 播放路径(路线 A,规格 §7.2):[openFd] 把 `ContentResolver` 打开的描述符**留在桥里不关**,
- * 交给 Dart 的是 `/proc/self/fd/<fd>`。mpv 与我们同进程,读的是同一个 fd 表,所以这条路
- * 不需要复制文件;真机是否被 mpv 的文件探测接受由单独的 spike 验证(本文件不做假设)。
+ * 交给 Dart 的是 `{fd, path}`,其中 `path` 是 `/proc/self/fd/<fd>`(只用于本进程自检)。
+ * **播放地址不用那个路径**:Dart 侧拼成 `fd://<fd>`(mpv 的 fd 协议,dup 后直接读),
+ * 因为 `/proc/self/fd/N` 会让内核按 fd 指向的真实路径再查一次权限,而 SAF 授权
+ * 不覆盖那条路径 —— 真机(Android 15)实测 mpv 报 `Cannot open file '/proc/self/fd/122':
+ * Permission denied`。
  */
 class LocalMediaBridge(private val activity: FlutterActivity) {
     private var channel: MethodChannel? = null
@@ -43,7 +46,7 @@ class LocalMediaBridge(private val activity: FlutterActivity) {
      * fd -> 打开中的描述符。
      *
      * 必须持有强引用:[ParcelFileDescriptor] 有终结器,没人引用时 GC 会把 fd 关掉,
-     * 播放器随后读到的就是一个失效路径。只有 Dart 侧 `releaseFd` 或 [dispose] 才关。
+     * mpv 读到的就是一个失效的描述符。只有 Dart 侧 `releaseFd` 或 [dispose] 才关。
      */
     private val openFds = HashMap<Int, ParcelFileDescriptor>()
 
@@ -365,6 +368,8 @@ class LocalMediaBridge(private val activity: FlutterActivity) {
                     onSuccess = { (fd, descriptor) ->
                         // 存进 map 就是「桥持有」:GC 不会关它,只有 releaseFd/dispose 才关。
                         openFds[fd] = descriptor
+                        // path 只是自检用(`/proc/self/fd/<fd>`);播放地址是 Dart 侧拼的
+                        // `fd://<fd>` —— 那个路径在 Android 10+ 上会被拒。
                         result.success(
                             mapOf("fd" to fd, "path" to "/proc/self/fd/$fd"),
                         )

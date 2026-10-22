@@ -34,15 +34,44 @@ void main() {
       expect(track.subtitles, isEmpty);
     });
 
-    test('POSIX 路径(Android 路线 A 的 /proc/self/fd)同样产出 file: URL', () {
+    test('POSIX 路径(路线 B 导入后的真实路径)同样产出 file: URL', () {
       final track = buildLocalTrack(
-        item(location: '/proc/self/fd/42'),
+        item(location: '/data/user/0/app/files/local-import/x/E01.mkv'),
         qualityLabel: '本地',
         windows: false,
       );
 
-      expect(track.url, 'file:///proc/self/fd/42');
+      expect(track.url, 'file:///data/user/0/app/files/local-import/x/E01.mkv');
       expect(track.hls, isFalse);
+    });
+
+    test('Android 的 fd:// 描述符地址原样透传,不再包 file://', () {
+      // /proc/self/fd/N 在 Android 10+ 上会被内核按真实路径再查一次权限 → EACCES;
+      // mpv 的 fd 协议直接 dup 描述符读写,所以生产用 fd://(见 OpenedLocalFd.playUrl)。
+      final track = buildLocalTrack(
+        item(location: 'fd://42'),
+        qualityLabel: '本地',
+        windows: false,
+      );
+
+      expect(track.url, 'fd://42');
+      expect(track.hls, isFalse);
+      expect(track.headers, isNull);
+    });
+
+    test('fd:// 的字幕地址同样原样透传', () {
+      final track = buildLocalTrack(
+        item(
+          location: 'fd://42',
+          subtitles: const [
+            LocalSubtitle(location: 'fd://43', label: '简体中文', language: 'zh'),
+          ],
+        ),
+        qualityLabel: '本地',
+        windows: false,
+      );
+
+      expect(track.subtitles.single.url, 'fd://43');
     });
 
     test('路径可经 Uri 还原(不手工拼字符串)', () {

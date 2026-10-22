@@ -104,11 +104,9 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
 /// 1. **播放器实例**:`PlayerConfiguration` 与番剧页一致,但 `bufferSize` 降到
 ///    8 MiB(番剧是 64 MiB)—— 本地文件不需要预读那么多,也不传
 ///    `protocolWhitelist`(那是给 HTTP/HLS 的);
-/// 2. **轨道解析**:条目 → `file:` 轨道。Android 的 `content://` 必须先用
-///    [LocalMediaBridge.openFd] 换成 `/proc/self/fd/N`(规格 §7.2 路线 A),
-///    所以解析是异步的;
-/// 3. **fd 生命周期**:同一时刻只留当前这一集的 fd,换集/退出时释放 —— 提前释放
-///    会让正在读的文件变成「已关闭的 fd」。
+/// 2. **轨道解析**:条目 → 可播轨道。Android 的 `content://` 必须先用
+///    [LocalMediaBridge.openFd] 换成 `fd://<fd>`(规格 §7.2 路线 A),所以解析是异步的;
+/// 3. **fd 生命周期**:同一时刻只留当前这一集的 fd,换集/退出时释放。
 class LocalPlaybackHost {
   LocalPlaybackHost({
     required this.library,
@@ -226,47 +224,77 @@ class LocalPlaybackHost {
     return null;
   }
 
-  /// 把条目的位置变成「现在就能播的路径」,并接管 fd。
+  /// 把条目的位置变成「现在就能播的地址」,并接管 fd。
   ///
-  /// SAF 只给出 `content://`,mpv 只认文件路径 —— 经桥换成 `/proc/self/fd/N`。
+  /// SAF 只给出 `content://`(播放层不认识这个 scheme),所以经桥换成一个
+  /// **已在本进程打开的描述符**,交给 mpv 的 `fd://<fd>` 协议
+  /// (见 [OpenedLocalFd.playUrl];`/proc/self/fd/<fd>` 在作用域存储下会被拒)。
   /// 同一个条目重复解析(会话恢复时会再问一次)复用已经开好的 fd,不重复开。
+  ///
+  /// 换集时**新的一集开成功了才放旧的**:反过来的话,下一次打开失败(文件被删、
+  /// 授权失效)会连带把正在播的那一集弄成空中楼阁。
   Future<LocalMediaItem?> _openForPlayback(LocalMediaItem item) async {
     if (!item.location.startsWith(_contentUriPrefix)) return item;
     final cached = _openedItem;
     if (cached != null && _openedItemId == item.id) return cached;
 
-    await _releaseFds();
     final bridge = _resolvedBridge ??= this.bridge ?? LocalMediaBridge();
-    final LocalMediaItem opened;
+    final openedFds = <int>[];
     try {
-      final fd = await bridge.openFd(item.location);
-      _openFds.add(fd.fd);
-      opened = item.copyWith(location: fd.path);
+      final video = await bridge.openFd(item.location);
+      openedFds.add(video.fd);
+      final subtitles = <LocalSubtitle>[];
+      for (final subtitle in item.subtitles) {
+        if (!subtitle.location.startsWith(_contentUriPrefix)) {
+          subtitles.add(subtitle);
+          continue;
+        }
+        try {
+          final fd = await bridge.openFd(subtitle.location);
+          openedFds.add(fd.fd);
+          subtitles.add(LocalSubtitle(
+            location: fd.playUrl,
+            label: subtitle.label,
+            language: subtitle.language,
+          ));
+        } on Object {
+          // 字幕打不开不该拦住正片,丢掉这一条即可。
+        }
+      }
+      if (_disposed) {
+        // 开的过程中页面被关了:这一轮开的不能留(dispose 已经清过 _openFds)。
+        await _releaseFdsOf(bridge, openedFds);
+        return null;
+      }
+      final playable = item.copyWith(
+        location: video.playUrl,
+        subtitles: subtitles,
+      );
+      // 新的都开好了,现在才可以放掉上一集那一批。
+      await _releaseFds();
+      _openFds.addAll(openedFds);
+      _openedItemId = item.id;
+      _openedItem = playable;
+      return playable;
     } on Object {
-      // 打开失败:让上层看到「这一集取不到流」,别拿旧 fd 顶上。
+      // 打开失败:把这一轮开出来的还回去,上一集的原样留着。
+      await _releaseFdsOf(bridge, openedFds);
       return null;
     }
-    final subtitles = <LocalSubtitle>[];
-    for (final subtitle in item.subtitles) {
-      if (!subtitle.location.startsWith(_contentUriPrefix)) {
-        subtitles.add(subtitle);
-        continue;
-      }
+  }
+
+  /// 释放指定的一批 fd(不碰 [_openFds] 里正在用的那些)。
+  Future<void> _releaseFdsOf(
+    LocalMediaBridge bridge,
+    List<int> fds,
+  ) async {
+    for (final fd in fds) {
       try {
-        final fd = await bridge.openFd(subtitle.location);
-        _openFds.add(fd.fd);
-        subtitles.add(LocalSubtitle(
-          location: fd.path,
-          label: subtitle.label,
-          language: subtitle.language,
-        ));
+        await bridge.releaseFd(fd);
       } on Object {
-        // 字幕打不开不该拦住正片,丢掉这一条即可。
+        // 释放失败不该拦住换集/退出。
       }
     }
-    _openedItemId = item.id;
-    _openedItem = opened.copyWith(subtitles: subtitles);
-    return _openedItem;
   }
 
   /// 释放当前这批 fd(换集、退出播放页时调)。
@@ -277,13 +305,7 @@ class LocalPlaybackHost {
     _openedItemId = null;
     _openedItem = null;
     if (bridge == null) return;
-    for (final fd in fds) {
-      try {
-        await bridge.releaseFd(fd);
-      } on Object {
-        // 释放失败不该拦住换集/退出。
-      }
-    }
+    await _releaseFdsOf(bridge, fds);
   }
 
   /// 退出播放页:关播放器 + 释放全部 fd。

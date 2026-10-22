@@ -105,12 +105,69 @@ void main() {
     await _settleIo(tester);
 
     expect(calls, contains('openFd'));
-    expect(fixture.adapter.opened.first.url, contains('proc/self/fd/42'));
+    // 播放地址是 mpv 的 fd 协议,不是 /proc/self/fd/N —— 后者在 Android 10+ 的
+    // 作用域存储下会被拒(真机报 Permission denied,见 OpenedLocalFd.playUrl)。
+    expect(fixture.adapter.opened.first.url, 'fd://42');
+    expect(fixture.adapter.opened.first.url, isNot(contains('proc/self/fd')));
 
     // 退出播放页 → 释放 fd。
     await tester.pumpWidget(const SizedBox.shrink());
     await _settleIo(tester);
     expect(calls, contains('releaseFd'));
+  });
+
+  testWidgets('a failed episode switch keeps the fd that is still playing',
+      (tester) async {
+    // 换集必须「新的一集开成功了才放旧的」:反过来的话,下一集打不开(文件被删、
+    // 授权失效)会把正在播的那一集也一起弄成空中楼阁。
+    final calls = <String>[];
+    var opens = 0;
+    const channel = MethodChannel(LocalMediaBridge.channelName);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'openFd') {
+        opens++;
+        if (opens > 1) {
+          throw PlatformException(code: 'open_fd_failed', message: 'gone');
+        }
+        return <String, Object?>{'fd': 42, 'path': '/proc/self/fd/42'};
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final fixture = await _Fixture.create(tester, itemCount: 2);
+    addTearDown(() {
+      unawaited(fixture.adapter.dispose());
+      fixture.dispose();
+    });
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(
+      bridge: LocalMediaBridge(channel: channel, isAndroid: true),
+      location: 'content://com.android.providers.media.documents/tree/x/E01.mkv',
+    ));
+    await _settleIo(tester);
+
+    expect(opens, 1);
+    expect(calls.where((call) => call == 'releaseFd'), isEmpty);
+
+    // 自动连播到第二集:这一集打不开 → 第一集的 fd 不能跟着被放掉。
+    fixture.adapter.completedController.add(true);
+    await _settleIo(tester);
+
+    expect(opens, greaterThan(1));
+    expect(calls.where((call) => call == 'releaseFd'), isEmpty);
+
+    // 退出播放页才释放。
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _settleIo(tester);
+    expect(calls.where((call) => call == 'releaseFd').length, 1);
   });
 
   testWidgets('shares the anime player gestures: double tap toggles, drag is volume',

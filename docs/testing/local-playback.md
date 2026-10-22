@@ -21,6 +21,12 @@
   手势（双击暂停、左亮度/右音量、长按倍速）、设置抽屉、锁屏、截图全部与番剧一致；
   为此把 `AnimePlayerDependencies.localTrackForEpisode` 改成异步（Android 要开 fd）。
   见 `docs/superpowers/specs/2026-10-07-local-player-reuse-design.md`。
+- **M1.3（2026-10-08）**：Android 播放地址从 `/proc/self/fd/N` 改成 mpv 的 **`fd://<fd>`**。
+  真机（Redmi / Android 15）实测旧写法全部播不了，mpv 报
+  `Cannot open file '/proc/self/fd/122': Permission denied` —— 内核打开那个魔法链接时
+  会按 fd 指向的真实路径再查一次权限，而 SAF 授权不覆盖那条路径。`fd://` 直接 dup
+  描述符读写，不经过路径。顺带把「换集时先开新的再放旧的」补上（下一集打不开
+  不再连带弄没正在播的那一集的 fd），字幕也走 `fd://`。
 - 不包含：备份/同步、封面抽帧、时长探测、`ShelfKind.local`、Windows 拖拽与文件关联（均为 M2/M3）；「移动条目 / 合并两个库」也不在本次范围。
 
 ## 自动化结果

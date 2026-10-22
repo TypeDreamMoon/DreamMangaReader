@@ -177,7 +177,7 @@ class AnimePlayerDependencies {
   /// 这一集在本地文件里(离线下载 / 本地库):给得出轨道就不去问源。
   ///
   /// **异步**是因为本地库那条路要先把 `content://` 经 SAF 桥换成
-  /// `/proc/self/fd/N`(规格 §7.2 路线 A),那是一次平台通道往返。
+  /// `fd://<fd>`(规格 §7.2 路线 A),那是一次平台通道往返。
   final Future<VideoTrack?> Function(String episodeId)? localTrackForEpisode;
 }
 
@@ -215,7 +215,8 @@ class _OfflineAwareTracks implements PlaybackTrackProvider {
   VideoTrack? alternateLine(VideoTrack current, List<VideoTrack> available) =>
       _isLocal(current) ? null : delegate.alternateLine(current, available);
 
-  bool _isLocal(VideoTrack track) => track.url.startsWith('file:');
+  bool _isLocal(VideoTrack track) =>
+      track.url.startsWith('file:') || track.url.startsWith('fd://');
 }
 
 /// 番剧播放页:media_kit(libmpv)播放一集。取源的 [MangaSource.getVideo] 拿清晰度/线路,

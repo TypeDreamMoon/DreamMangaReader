@@ -322,15 +322,21 @@ class LocalTrackProvider implements PlaybackTrackProvider {
 | `pickFiles()` | `ACTION_OPEN_DOCUMENT`（`video/*`，`allowMultiple = true`）+ 逐个持久授权 | document uri 列表 + 显示名 + size |
 | `listChildren(treeUri)` | `DocumentFile.fromTreeUri(...).listFiles()` 递归 | `[{uri, name, size, mime, lastModified}]` |
 | `stat(uri)` | `ContentResolver.query(OpenableColumns)` | name/size/mtime |
-| `openFd(uri)` | `ContentResolver.openFileDescriptor(uri, "r")`，**fd 交给播放器后由桥持有并不关闭** | `{fd, procPath: "/proc/self/fd/$fd"}` |
+| `openFd(uri)` | `ContentResolver.openFileDescriptor(uri, "r")`，**fd 交给播放器后由桥持有并不关闭** | `{fd, path: "/proc/self/fd/$fd"}`（`path` 仅自检用；播放地址由 Dart 侧拼成 `fd://<fd>`） |
 | `releaseFd(fd)` | 关闭并把 fd 记回可用池 | void |
 | `deleteTree(uri)` | `DocumentsContract.deleteDocument`（用户在应用内移除库时可选：仅解除索引，不删文件） | void |
 
 **播放路径（M1 内必须定案，见 §14 待验证 1）**：优先级
 
-- 路线 A（首选）：`openFd` → 把 `/proc/self/fd/N` 作为 mpv 的输入路径。mpv 在 Android 上是普通 Linux 进程，`/proc/self/fd/N` 是可读的常规文件描述符路径（App 自身 fd 表内），理论上 `file:` 语义可用。**必须先做真机 spike 验证**，验证页放 `lib/features/spike/local_playback_spike_page.dart`（仓库已有 `lib/features/spike/` 目录）。
+- 路线 A（首选，M1.3 起为实际实现）：`openFd` → 把**描述符**交给 mpv 的 `fd://<fd>` 协议。
+  - 早期实现用的是 `/proc/self/fd/N` 当输入路径，**真机不通**：内核打开这个魔法链接时会按 fd 指向的**真实路径**重新做一次权限检查，而 SAF 授权的 App 本来就没有那条路径的权限 —— Android 15 上 mpv 报 `Cannot open file '/proc/self/fd/122': Permission denied`（2026-10-08 用户实测，导入的视频全部无法播放）。
+  - `fd://` 直接 dup 描述符再 read/seek，不经过路径解析，作用域存储拦不到；`media_kit` 自己的 `content://` 支持走的就是同一条（`Media.normalizeURI` → `fd://$fd`），所以仓库里的 libmpv 构建一定认它。
+  - 字幕同理：外挂字幕经桥拿 fd 后也是 `fd://<fd>`。
+  - fd 生命周期：换集时**新的一集打开成功后才释放旧的**，退出播放页时全放。
 - 路线 B（回退）：`ContentResolver` 流式**导入**到应用私有目录（`<appSupport>/local-import/<uuid>/<name>`），带进度与空间检查，复用 downloads 的落盘硬化与（可选）前台服务屋风。代价是占用户额外空间，只在路线 A 不通时启用。
 - 无论 A/B，`LocalMediaBridge` 都把「怎么打开」收敛成「给 Dart 一个可播 URL」，播放层不认识 content://。
+
+> 真机自检入口：调试页 →「本地 · 探针」→ 路线 A 验证页里可以分别用 `fd://`、`/proc/self/fd/N`、`file:///proc/self/fd/N` 三种形态播同一个 fd，一眼看出哪条通（见 `lib/features/spike/local_playback_spike_page.dart`）。
 
 **权限**：使用 SAF + 持久 URI 授权，**不申请** `READ_MEDIA_VIDEO`/`MANAGE_EXTERNAL_STORAGE`（当前 manifest 里没有这些权限，也不新增；AndroidManifest.xml:14-16 只有 maxSdkVersion=28 的 WRITE_EXTERNAL_STORAGE）。
 
@@ -342,7 +348,7 @@ class LocalTrackProvider implements PlaybackTrackProvider {
 | --- | --- | --- |
 | 选择入口 | `file_picker` 原生对话框 | 自写 SAF 桥 |
 | 文件标识 | 绝对路径 | document/tree URI（持久授权） |
-| 播放输入 | `file:///` 绝对路径 | 路线 A：`/proc/self/fd/N`；路线 B：导入后的 `file:///` |
+| 播放输入 | `file:///` 绝对路径 | 路线 A：`fd://<fd>`（SAF 描述符）；路线 B：导入后的 `file:///` |
 | 扫描 | `dart:io` 递归 | 桥内 `DocumentFile` 递归 |
 | 授权持久性 | 无（文件系统即权限） | `takePersistableUriPermission`，重启后有效 |
 | 大文件 | 无额外拷贝 | 路线 A 无拷贝；路线 B 会拷贝 |

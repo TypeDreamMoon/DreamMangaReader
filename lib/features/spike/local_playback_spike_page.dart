@@ -10,11 +10,14 @@ import '../../app/theme/app_colors.dart';
 import '../../core/platform/local_media_bridge.dart';
 import '../../ui/ui.dart';
 
-/// 路线 A 真机 spike:证明「SAF 选中的 content:// 文件,经 `/proc/self/fd/N`
-/// 交给 libmpv 能播」。
+/// 路线 A 真机 spike:证明「SAF 选中的 content:// 文件,把**已打开的描述符**交给
+/// libmpv 能播」。
 ///
-/// 结论决定 M1 Android 走哪条路:
-/// - 路线 A(本页验证):零拷贝,`openFd` 拿到 fd,把 `/proc/self/fd/N` 当输入路径。
+/// 同一个 fd 有三种喂法,结论不一样(真机实测:前两种在 Android 15 上被拒):
+/// - 路线 A(本页验证):零拷贝。`openFd` 拿到 fd 后:
+///   - `fd://<fd>` —— mpv 的 fd 协议,dup 后直接读/seek,**不经过路径解析** → 可用;
+///   - `/proc/self/fd/<fd>` / `file:///proc/self/fd/<fd>` —— 内核会按 fd 指向的
+///     真实路径再查一次权限,SAF 授权不覆盖那条路径 → `Permission denied`。
 /// - 路线 B(回退):`ContentResolver` 流式导入到应用私有目录,再播本地文件。
 ///
 /// 只在 Android 上有意义;Windows 上打开会直接说明本页不适用。刻意**不复用**
@@ -47,7 +50,7 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
   @override
   void initState() {
     super.initState();
-    _line('=== 路线 A 验证(/proc/self/fd → libmpv) ===');
+    _line('=== 路线 A 验证(fd → libmpv) ===');
     _line('平台: ${Platform.operatingSystem} · 桥可用: ${_bridge.isAndroid}');
     if (!_bridge.isAndroid) {
       _line('本页只用于 Android 真机验证:Windows 直接播绝对路径,不经过 SAF。');
@@ -168,16 +171,27 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
         setState(() => _status = 'fd=${opened.fd}');
       });
 
-  /// [asFileUri] = true 时用 `file:///proc/self/fd/N`(项目里 buildLocalTrack 的形态),
-  /// false 时用裸路径 —— 两种都试,mpv 对它们的处理可能不同。
-  Future<void> _play({required bool asFileUri}) => _run(() async {
+  /// [mode] 决定把同一个 fd 怎么交给 mpv:
+  /// - `fd://<fd>`:mpv 的 fd 协议(生产路径,见 [OpenedLocalFd.playUrl]);
+  /// - `file:///proc/self/fd/<fd>`:项目早期用的形态(Android 10+ 上会被拒);
+  /// - 裸 `/proc/self/fd/<fd>`:同一条路的另一种写法,留着做对照。
+  Future<void> _play({required String mode}) => _run(() async {
         final opened = _fd;
         if (opened == null) {
           _line('先执行 ④ openFd。');
           return;
         }
-        final url = asFileUri ? Uri.file(opened.path).toString() : opened.path;
-        _line('\n=== ⑤ 播放 ${asFileUri ? 'file:// 形态' : '裸路径形态'} ===');
+        final url = switch (mode) {
+          'fd' => opened.playUrl,
+          'fileUri' => Uri.file(opened.path).toString(),
+          _ => opened.path,
+        };
+        final label = switch (mode) {
+          'fd' => 'fd:// 形态',
+          'fileUri' => 'file:///proc 形态',
+          _ => '裸 /proc 路径形态',
+        };
+        _line('\n=== ⑤ 播放 $label ===');
         _line('输入: $url');
 
         final player = _player ??= Player(
@@ -207,15 +221,19 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
             .timeout(const Duration(seconds: 1), onTimeout: () => false);
         final position = _lastPosition;
         if (position > Duration.zero) {
-          _line('✓ 路线 A 可用:position=${position.inMilliseconds}ms '
-              '(playing=$playing)');
-          _line('  结论:Android 用 openFd + /proc/self/fd/N 即可零拷贝播放。');
-          if (mounted) setState(() => _status = '路线 A 可用');
+          _line('✓ position=${position.inMilliseconds}ms (playing=$playing)');
+          _line(mode == 'fd'
+              ? '  结论:fd://<fd> 可用 —— Android 零拷贝播放走这条。'
+              : '  结论:这条路径形态在这台设备上也能播(但 Android 10+ 多数设备会报 '
+                  'Permission denied,生产用 fd://)。');
+          if (mounted) setState(() => _status = '路线 A 可用($label)');
         } else {
           _line('✗ position 没动(playing=$playing)。');
-          _line('  先看上面有没有 mpv error;若报 could not open,'
-              '则路线 A 不通 → 切路线 B(导入到应用私有目录)。');
-          if (mounted) setState(() => _status = '路线 A 存疑');
+          _line(mode == 'fd'
+              ? '  先看上面有没有 mpv error;若报 could not open,则为路线 B(导入到应用私有目录)。'
+              : '  预期就是这条不通:内核会按 fd 指向的真实路径再查一次权限,SAF 授权不覆盖'
+                  '那条路径 → Permission denied。生产走 fd://。');
+          if (mounted) setState(() => _status = '路线 A 存疑($label)');
         }
       });
 
@@ -238,8 +256,9 @@ class _LocalPlaybackSpikePageState extends State<LocalPlaybackSpikePage> {
         _step('② 列子项', _list),
         _step('③ stat', _stat),
         _step('④ openFd', _openFd),
-        _step('⑤ 播裸路径', () => _play(asFileUri: false)),
-        _step('⑤ 播 file://', () => _play(asFileUri: true)),
+        _step('⑤ 播 fd://', () => _play(mode: 'fd')),
+        _step('⑤ 播 file:///proc', () => _play(mode: 'fileUri')),
+        _step('⑤ 播裸 /proc', () => _play(mode: 'path')),
         _step('⑥ 释放 fd', _releaseFd, outlined: true),
       ];
 

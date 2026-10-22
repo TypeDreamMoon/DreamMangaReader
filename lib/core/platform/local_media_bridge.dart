@@ -61,9 +61,23 @@ class OpenedLocalFd {
   /// 进程内的文件描述符号,交给 [LocalMediaBridge.releaseFd] 释放。
   final int fd;
 
-  /// **原样**是 `/proc/self/fd/<fd>`,不做任何 Uri 包装或规范化 ——
-  /// 播放层自己按需要 `Uri.file(path)`(规格 §7.2 路线 A)。
+  /// **原样**是 `/proc/self/fd/<fd>`,不做任何 Uri 包装或规范化。
+  ///
+  /// 只用于「这个 fd 在不在、能不能读」这类本进程自检(spike 页拿它做
+  /// `dart:io` 直读),**不要**拿它当播放地址 —— 见 [playUrl]。
   final String path;
+
+  /// 交给 mpv 的播放地址:`fd://<fd>`。
+  ///
+  /// 为什么不是 `/proc/self/fd/<fd>`:那条路在 Android 10+ 的作用域存储下不通。
+  /// 内核打开这个魔法链接时**会按 fd 指向的真实路径再做一次权限检查**,而拿 SAF
+  /// 授权的 App 本来就没有那个路径的权限 —— mpv 报的是
+  /// `Cannot open file '/proc/self/fd/122': Permission denied`(真机实测,Android 15)。
+  ///
+  /// `fd://` 是 mpv 的 fd 协议:直接 dup 这个描述符再读/seek,不经过任何路径,
+  /// 作用域存储拦不到。media_kit 自己的 `content://` 支持走的就是同一条
+  /// (`Media.normalizeURI` → `fd://$fd`),所以这个构建里的 libmpv 一定认它。
+  String get playUrl => 'fd://$fd';
 
   @override
   String toString() => 'OpenedLocalFd($fd)';
@@ -202,8 +216,9 @@ class LocalMediaBridge {
   /// 打开 [uri] 的文件描述符。
   ///
   /// 描述符由原生桥持有,**不会**在返回后关闭;读完了必须 [releaseFd]。
-  /// 拿到的 [OpenedLocalFd.path] 是 `/proc/self/fd/<fd>`,可以直接喂给同进程的 mpv
-  /// (路线 A,规格 §7.2);真机是否被 mpv 接受由 spike 验证。
+  /// 播放地址用 [OpenedLocalFd.playUrl](`fd://<fd>`,规格 §7.2 路线 A):
+  /// SAF 授权只覆盖「经 ContentResolver 拿到的这个描述符」,不覆盖它背后的路径。
+  /// [/proc/self/fd] 那条路会二次检查路径权限,在 Android 10+ 上被拒。
   Future<OpenedLocalFd> openFd(String uri) async {
     _ensureSupported();
     final raw = await channel.invokeMethod<Object?>(

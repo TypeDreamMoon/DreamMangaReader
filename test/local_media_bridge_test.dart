@@ -197,7 +197,7 @@ void main() {
   });
 
   group('openFd / releaseFd', () {
-    test('拿到 fd 和原样的 /proc/self/fd/N', () async {
+    test('拿到 fd、自检用的 /proc 路径与可播地址', () async {
       handler = (_) => <Object?, Object?>{'fd': 42, 'path': '/proc/self/fd/42'};
 
       final opened = await android().openFd('content://tree/1/document/2');
@@ -206,8 +206,11 @@ void main() {
       expect(calls.single.method, 'openFd');
       expect(arguments['uri'], 'content://tree/1/document/2');
       expect(opened.fd, 42);
-      // 不做任何 Uri 包装/规范化:播放层自己 Uri.file(path)(规格 §7.2 路线 A)。
+      // /proc 路径只用于本进程自检(能不能读),**不是**播放地址。
       expect(opened.path, '/proc/self/fd/42');
+      // 播放地址是 mpv 的 fd 协议:不经过路径解析,作用域存储拦不到。
+      // (/proc/self/fd/N 在 Android 10+ 上会被拒 —— 真机报 Permission denied。)
+      expect(opened.playUrl, 'fd://42');
     });
 
     test('原生回的 fd 残缺就抛,不返回一个坏路径', () async {
