@@ -17,6 +17,7 @@ enum SyncMessage {
   uploaded, // 已上传,带 count 个类别
   downloaded, // 已下载,带 count 项
   serverEmpty, // 服务器上还没有数据
+  localUnreadable, // 本机这一类没读出来,这次不推(云端原样保留)
   testWebDavReady, // 测试连接:WebDAV 目录就绪
   testAccountReady, // 测试连接:账号已登录
 

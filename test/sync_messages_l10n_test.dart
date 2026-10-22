@@ -23,6 +23,7 @@ void main() {
     SyncNotice(SyncMessage.uploaded, count: 3),
     SyncNotice(SyncMessage.downloaded, count: 2),
     SyncNotice(SyncMessage.serverEmpty),
+    SyncNotice(SyncMessage.localUnreadable),
     SyncNotice(SyncMessage.testWebDavReady),
     SyncNotice(SyncMessage.testAccountReady),
     SyncNotice(SyncMessage.notConfiguredAccount),
