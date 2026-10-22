@@ -18,7 +18,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.17.0';
+  static const version = '1.18.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -37,6 +37,8 @@ class AppInfo {
     '番剧在线观看:HLS 播放器(libmpv)· 右上角三点里只剩字幕与设置,不再重复摆一遍',
     '番剧播放器底栏:选集 / 倍速 / 清晰度就在右下角,弹一张小卡片而不是拉开整块面板',
     '本地播放:导入本机视频目录或文件直接播放,不复制文件 · 季集识别 + 字幕配对 · 续播进度',
+    '本地库:同剧自动归并成一张卡 · 剧名做卡名 · 库与条目都能改名 · 播放页与番剧同一套手势',
+    '书架滚动:封面占位层只在加载时绘制 · 真机光栅 16.3 → 4.0ms,不再掉帧',
     '番剧选集:竖排列表,一行一集带集名,不再是点不中的数字方阵',
     '番剧连播:单集循环 / 列表循环 / 不循环 · 自动连播,选了就记住',
     '番剧播放器工具:截屏进相册(DCIM/ScreenShot)· 锁屏挡误触 · 收藏 / 下载本集 / 复制链接',
@@ -69,7 +71,7 @@ class AppInfo {
     'Windows 单实例:重复启动唤回已开的窗口,不再多出第二个托盘图标',
     '统一账号页:梦漫账号 + 哔哩哔哩 + 各源账号一处管理(共用登录的源合并成一行)',
     '梦漫账号:App 内登录 / 注册 / 邮箱验证码找回密码,全程不跳浏览器',
-    '云同步:WebDAV / 梦漫账号 · 可选类别双向合并',
+    '云同步:WebDAV / 梦漫账号 · 打开 App 就自动双向合并(默认开)· 可选类别',
     '语言跟随系统:简体 / 繁体 / English / 日本語,也可手动指定',
     '应用内更新:可跳过某个版本 · 提醒不再每次启动都弹',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓 · 刷新后脚本立即生效',
