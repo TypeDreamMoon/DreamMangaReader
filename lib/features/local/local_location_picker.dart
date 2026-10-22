@@ -162,28 +162,8 @@ const List<String> kLocalPickableExtensions = <String>[
 ];
 
 /// 反斜杠统一成 `/`,并去掉末尾的 `/`(Windows 路径与 SAF uri 都能过一遍)。
-String _normalizedLocalLocation(String location) {
-  final normalized = location.replaceAll(r'\', '/');
-  return normalized.endsWith('/')
-      ? normalized.substring(0, normalized.length - 1)
-      : normalized;
-}
-
-/// 从一个位置里取出展示名(Windows 反斜杠也认)。
-String localLocationName(String location) {
-  final trimmed = _normalizedLocalLocation(location);
-  final cut = trimmed.lastIndexOf('/');
-  final name = cut < 0 ? trimmed : trimmed.substring(cut + 1);
-  return name.isEmpty ? trimmed : name;
-}
-
-/// Windows 上取一个路径的父目录;没有父目录时返回它自己。
-String localLocationParent(String location) {
-  final trimmed = _normalizedLocalLocation(location);
-  final cut = trimmed.lastIndexOf('/');
-  if (cut <= 0) return trimmed;
-  return trimmed.substring(0, cut);
-}
+/// 从位置里取名字/父目录的工具在 `core/local/local_models.dart`(core 不该反向
+/// 依赖 feature,所以那边是唯一的实现)。
 
 /// 这个平台是否用真实路径(而不是 SAF uri)。
 bool localUsesRealPaths({LocalMediaBridge? bridge}) =>

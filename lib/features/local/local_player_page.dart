@@ -2,30 +2,21 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' hide VideoTrack; // 用本项目的 VideoTrack
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../app/anime_library_store.dart';
-import '../../app/local_media_store.dart';
-import '../../app/theme/app_colors.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/local/local_models.dart';
 import '../../core/platform/local_media_bridge.dart';
-import '../../core/platform/window_fullscreen.dart';
 import '../../core/source/models.dart';
-import '../anime/anime_player_controls.dart';
+import '../../core/source/source_registry.dart';
+import '../anime/anime_player_page.dart';
 import '../anime/playback/media_kit_player_adapter.dart';
 import '../anime/playback/playback_messages.dart';
 import '../anime/playback/playback_session_controller.dart';
-import '../anime/playback/playback_state.dart';
 import '../anime/playback/player_adapter.dart';
-import '../anime/playback/subtitle_option.dart';
 import 'local_player_adapter.dart';
 import 'local_track.dart';
-import 'local_track_provider.dart';
 
 /// 本地播放页的注入点(测试用)。
 ///
@@ -42,18 +33,22 @@ class LocalPlayerDependencies {
   final Widget Function(BoxFit fit) videoBuilder;
 }
 
-/// 本地文件播放页。与番剧播放页共用控制条与播放会话,但整条链路不碰网络。
+/// 本地文件播放页 = [AnimePlayerPage] + 本地装配。
 ///
-/// 三条与番剧页的关键差别(规格 §6.2):
-/// 1. 用 [LocalPlayerAdapter] 而不是 `MediaKitPlayerAdapter` —— 后者会无条件调
-///    `backend.configure()` 给 mpv 设网络参数。
-/// 2. `PlayerConfiguration` 不传 `protocolWhitelist`,`bufferSize` 降到 8 MiB
-///    (番剧是 64 MiB):本地文件不需要预读那么多。
-/// 3. 断点走 `open(startAt:)`(会话控制器内部已经这么做),不 open 后再 seek。
+/// **M1.2 起整页复用番剧播放页**(规格 §4.2 那个「另写一页」的决定被推翻):
+/// M1 自己写的 929 行播放页只复用了会话与底栏,手势/控件两边各写一套,于是分叉了
+/// —— 双击在番剧页是暂停、在本地页是快进;亮度/音量手势与右侧设置抽屉(选剧集/
+/// 字幕/倍速/画面比例)在本地页根本没有。番剧页本来就留了本地文件的注入缝
+/// (`AnimePlayerDependencies.localTrackForEpisode` + `file:` 轨道),所以这里只剩
+/// 「装配」和「生命周期」:
 ///
-/// Android 的条目位置是 `content://` URI,播放前必须经
-/// [LocalMediaBridge.openFd] 换成 `/proc/self/fd/N`(规格 §7.2 路线 A);
-/// 换来的 fd 要在换集/退出时才释放。
+/// - 交给番剧页的元数据:`meta.id = 'local'`(进度、收藏都按这个 sourceId 走)、
+///   一个文件 = 一集(`Chapter.id` 就是条目 id,续播记录照旧对得上);
+/// - 轨道解析与 fd 生命周期在 [LocalPlaybackHost] 里;
+/// - 退出路由时 dispose 播放器与 fd。
+///
+/// 真实设备上 NativeMediaKitBackend 要原生库,所以播放器与画面由 [LocalPlaybackHost]
+/// 自己起,不走番剧页那条 `_initializeNativePlayback`(它要源、HLS 网关与 authScope)。
 class LocalPlayerPage extends StatefulWidget {
   const LocalPlayerPage({
     super.key,
@@ -84,159 +79,176 @@ class LocalPlayerPage extends StatefulWidget {
 }
 
 class _LocalPlayerPageState extends State<LocalPlayerPage> {
-  static const _loopModeKey = 'anime.player.loopMode';
-  static const _autoPlayKey = 'anime.player.autoPlay';
-  static const _rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
-
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final GlobalKey _videoKey = GlobalKey();
-
-  Player? _player;
-  PlayerAdapter? _adapter;
-  LocalTrackProvider? _tracks;
-  PlaybackSessionController? _session;
-  Widget Function(BoxFit fit)? _videoBuilder;
-
-  StreamSubscription<PlaybackState>? _stateSubscription;
-  StreamSubscription<bool>? _playingSubscription;
-  StreamSubscription<bool>? _bufferingSubscription;
-  StreamSubscription<List<SubtitleOption>>? _subtitleSubscription;
-  StreamSubscription<bool>? _completedSubscription;
-
-  PlaybackMessages? _messages;
-  AnimeLibraryStore? _library;
-  LocalMediaStore? _media;
-  LocalMediaBridge? _bridge;
-
-  PlaybackState _playback = const PlaybackState.idle();
-  List<SubtitleOption> _embedded = const [];
-  SubtitleOption _subtitle = SubtitleOption.off;
-
-  /// Android 上由 [LocalMediaBridge.openFd] 换出来的 fd,退出/换集时释放。
-  final List<int> _openFds = [];
-
-  int _i = 0;
-  int _loadGeneration = 0;
-  Duration _lastPosition = Duration.zero;
-  Duration? _dragTarget;
-  Offset _doubleTapAt = Offset.zero;
-
-  bool _playing = false;
-  bool _buffering = false;
-  bool _controlsVisible = true;
-  bool _bootstrapped = false;
-  bool _disposed = false;
-  bool _autoAdvanced = false;
-  bool _loopSingle = false;
-  bool _autoPlay = true;
-  double _rate = 1.0;
-  Timer? _controlsTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _i = widget.initialIndex.clamp(0, widget.items.length - 1);
-    _lastPosition = widget.initialPosition;
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _library = AnimeLibraryScope.maybeRead(context);
-    _media = LocalMediaScope.read(context);
-    final l10n = context.l10n;
-    _messages = PlaybackMessages(
-      // 本地场景没有「解析不出线路」这回事,这句只可能是文件不可读。
-      noRoute: l10n.local_playbackFailed,
-      bufferTimeout: l10n.player_bufferTimeout,
-      recovering: l10n.player_recovering,
-      recoverFailed: l10n.player_recoverFailed,
-      // 本地播放走的是同一个 mpv 后端,网络参数照样要落上去,失败文案复用。
-      configureFailed: l10n.player_configureFailed,
-      // 本地文件不过 HLS 网关,这条永远不会真的冒出来,凑齐必填而已。
-      gatewayFallbackFailed: l10n.player_gatewayFallbackFailed,
-    );
-    _session?.messages = _messages!;
-    if (_bootstrapped) return;
-    _bootstrapped = true;
-    _enterImmersiveLandscape();
-    unawaited(_loadPreferences());
-    unawaited(_load());
-  }
+  late final LocalPlaybackHost _host = LocalPlaybackHost(
+    library: widget.library,
+    items: widget.items,
+    index: widget.initialIndex,
+    initialPosition: widget.initialPosition,
+    dependencies: widget.dependencies,
+    bridge: widget.bridge,
+  );
 
   @override
   void dispose() {
-    _disposed = true;
-    _controlsTimer?.cancel();
-    unawaited(_stateSubscription?.cancel());
-    unawaited(_playingSubscription?.cancel());
-    unawaited(_bufferingSubscription?.cancel());
-    unawaited(_subtitleSubscription?.cancel());
-    unawaited(_completedSubscription?.cancel());
-    unawaited(_flushProgress());
-    unawaited(_releaseFds());
-    unawaited(_session?.dispose());
-    // 注入了 player 就由注入方负责它的生命周期,页面不越权 dispose。
-    if (widget.dependencies == null) {
-      unawaited(_adapter?.dispose());
-      unawaited(_player?.dispose());
-    }
-    unawaited(WakelockPlus.disable().catchError((_) {}));
-    _exitImmersiveLandscape();
+    unawaited(_host.dispose());
     super.dispose();
   }
 
-  LocalMediaItem get _item => widget.items[_i];
+  @override
+  Widget build(BuildContext context) => _host.buildPage(context);
+}
 
-  /// 还有下一集吗:自动连播、「下一集」按钮与失败页跳集共用同一处边界判断。
-  bool get _hasNext => _i < widget.items.length - 1;
+/// 把本地库的一集接到番剧播放页上。
+///
+/// 本地特有的只有三件事:
+/// 1. **播放器实例**:`PlayerConfiguration` 与番剧页一致,但 `bufferSize` 降到
+///    8 MiB(番剧是 64 MiB)—— 本地文件不需要预读那么多,也不传
+///    `protocolWhitelist`(那是给 HTTP/HLS 的);
+/// 2. **轨道解析**:条目 → `file:` 轨道。Android 的 `content://` 必须先用
+///    [LocalMediaBridge.openFd] 换成 `/proc/self/fd/N`(规格 §7.2 路线 A),
+///    所以解析是异步的;
+/// 3. **fd 生命周期**:同一时刻只留当前这一集的 fd,换集/退出时释放 —— 提前释放
+///    会让正在读的文件变成「已关闭的 fd」。
+class LocalPlaybackHost {
+  LocalPlaybackHost({
+    required this.library,
+    required this.items,
+    required this.index,
+    required this.initialPosition,
+    this.dependencies,
+    this.bridge,
+    bool? windows,
+  }) : windows = windows ?? Platform.isWindows;
 
-  // —— 平台外观 ——
+  final LocalLibrary library;
+  final List<LocalMediaItem> items;
+  final int index;
+  final Duration initialPosition;
+  final LocalPlayerDependencies? dependencies;
+  final LocalMediaBridge? bridge;
+  final bool windows;
 
-  void _enterImmersiveLandscape() {
-    if (!Platform.isAndroid) return;
-    unawaited(SystemChrome.setPreferredOrientations(const [
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]));
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
-  }
+  Player? _player;
+  VideoController? _videoController;
+  NativeMediaKitBackend? _backend;
+  LocalPlayerAdapter? _adapter;
+  final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
 
-  void _exitImmersiveLandscape() {
-    if (!Platform.isAndroid) return;
-    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-  }
+  LocalMediaBridge? _resolvedBridge;
+  final List<int> _openFds = [];
+  String? _openedItemId;
+  LocalMediaItem? _openedItem;
 
-  Future<void> _loadPreferences() async {
-    try {
-      final preferences = await SharedPreferences.getInstance();
-      if (_disposed) return;
-      final mode = preferences.getString(_loopModeKey);
-      setState(() {
-        _loopSingle = mode == 'single';
-        _autoPlay = preferences.getBool(_autoPlayKey) ?? true;
-      });
-    } on Object {
-      // 读设置失败就用默认值,不该拦住播放。
-    }
-  }
+  /// 画面上的质量标签:本地就一条,写「本地」。
+  String _qualityLabel = '';
 
-  // —— 播放链路 ——
+  bool _disposed = false;
 
-  /// 把条目变成「播放层能打开的位置」。
+  /// 组装要 push 的那一页。
   ///
-  /// Android 的 SAF 授权只给出 `content://` URI,而 mpv 只认文件路径:经桥换成
-  /// `/proc/self/fd/N`(规格 §7.2 路线 A)。fd 在换集/退出时才释放 —— 提前释放会
-  /// 让正在读的文件变成「已关闭的 fd」。
-  Future<LocalMediaItem> _playableItem(LocalMediaItem item) async {
-    if (!item.location.startsWith('content://')) return item;
-    final bridge = _bridge ??= widget.bridge ?? LocalMediaBridge();
-    final opened = await bridge.openFd(item.location);
-    _openFds.add(opened.fd);
+  /// 必须在有 l10n 的 context 下调用:库名的兜底文案与质量标签都取自这儿。
+  Widget buildPage(BuildContext context) {
+    final l10n = context.l10n;
+    _qualityLabel = l10n.local_qualityLocal;
+
+    final Widget Function(BoxFit fit) videoBuilder;
+    final PlayerAdapter adapter;
+    final injected = dependencies;
+    if (injected != null) {
+      adapter = injected.player;
+      videoBuilder = injected.videoBuilder;
+    } else {
+      final player = _player ??= Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 8 * 1024 * 1024,
+          logLevel: MPVLogLevel.error,
+        ),
+      );
+      final controller = _videoController ??= VideoController(player);
+      final backend = _backend ??= NativeMediaKitBackend(
+        player,
+        messages: localPlaybackMessages(l10n),
+      );
+      adapter = _adapter ??= LocalPlayerAdapter(backend);
+      videoBuilder = (fit) => Video(
+        key: _videoKey,
+        controller: controller,
+        fit: fit,
+        // 值本身就是 null(不要 mpv 自带控件,我们用自己的控制条);显式标注掉
+        // 无类型注解的 null 造成的隐式下转。
+        controls: NoVideoControls as VideoControlsBuilder?,
+      );
+    }
+
+    return AnimePlayerPage(
+      // 本地播放的 sourceId 固定 'local':进度、历史、清空进度的既有链路都认它。
+      meta: SourceMeta(id: LocalSource.id, name: l10n.local_title, script: ''),
+      animeId: library.id,
+      animeTitle: library.name.trim().isEmpty
+          ? l10n.local_unknownTitle
+          : library.name,
+      animeCover: library.coverThumb,
+      episodes: [
+        for (final item in items) Chapter(id: item.id, name: item.displayTitle),
+      ],
+      index: index,
+      initialPosition: initialPosition,
+      localFilesOnly: true,
+      dependencies: AnimePlayerDependencies(
+        player: adapter,
+        tracks: const _LocalOnlyTracks(),
+        loadTracks: (_) async => const <VideoTrack>[],
+        localTrackForEpisode: trackFor,
+        videoBuilder: videoBuilder,
+      ),
+    );
+  }
+
+  /// 一集 → 播放内核认得的轨道。找不到条目(库在别处被改了)就返回 null,
+  /// 由番剧页走到「取不到流」的失败态。
+  Future<VideoTrack?> trackFor(String episodeId) async {
+    if (_disposed) return null;
+    final item = _itemFor(episodeId);
+    if (item == null) return null;
+    final playable = await _openForPlayback(item);
+    if (_disposed || playable == null) return null;
+    return buildLocalTrack(
+      playable,
+      qualityLabel: _qualityLabel,
+      windows: windows,
+    );
+  }
+
+  LocalMediaItem? _itemFor(String episodeId) {
+    for (final item in items) {
+      if (item.id == episodeId) return item;
+    }
+    return null;
+  }
+
+  /// 把条目的位置变成「现在就能播的路径」,并接管 fd。
+  ///
+  /// SAF 只给出 `content://`,mpv 只认文件路径 —— 经桥换成 `/proc/self/fd/N`。
+  /// 同一个条目重复解析(会话恢复时会再问一次)复用已经开好的 fd,不重复开。
+  Future<LocalMediaItem?> _openForPlayback(LocalMediaItem item) async {
+    if (!item.location.startsWith(_contentUriPrefix)) return item;
+    final cached = _openedItem;
+    if (cached != null && _openedItemId == item.id) return cached;
+
+    await _releaseFds();
+    final bridge = _resolvedBridge ??= this.bridge ?? LocalMediaBridge();
+    final LocalMediaItem opened;
+    try {
+      final fd = await bridge.openFd(item.location);
+      _openFds.add(fd.fd);
+      opened = item.copyWith(location: fd.path);
+    } on Object {
+      // 打开失败:让上层看到「这一集取不到流」,别拿旧 fd 顶上。
+      return null;
+    }
     final subtitles = <LocalSubtitle>[];
     for (final subtitle in item.subtitles) {
-      if (!subtitle.location.startsWith('content://')) {
+      if (!subtitle.location.startsWith(_contentUriPrefix)) {
         subtitles.add(subtitle);
         continue;
       }
@@ -252,729 +264,85 @@ class _LocalPlayerPageState extends State<LocalPlayerPage> {
         // 字幕打不开不该拦住正片,丢掉这一条即可。
       }
     }
-    return item.copyWith(location: opened.path, subtitles: subtitles);
+    _openedItemId = item.id;
+    _openedItem = opened.copyWith(subtitles: subtitles);
+    return _openedItem;
   }
 
-  /// 建会话(第一次)或把当前文件换给既有会话。
-  PlaybackSessionController _sessionFor(VideoTrack track) {
-    final existing = _session;
-    if (existing != null) {
-      _tracks!.track = track;
-      return existing;
-    }
-    final injected = widget.dependencies;
-    if (injected != null) {
-      _adapter = injected.player;
-      _videoBuilder = injected.videoBuilder;
-    } else {
-      final player = Player(
-        configuration: const PlayerConfiguration(
-          bufferSize: 8 * 1024 * 1024,
-          // 不传 protocolWhitelist:那是给 HTTP/HLS 用的,本地文件不需要。
-          logLevel: MPVLogLevel.error,
-        ),
-      );
-      final controller = VideoController(player);
-      _player = player;
-      _adapter = LocalPlayerAdapter(
-        NativeMediaKitBackend(player, messages: _messages!),
-        track: track,
-      );
-      _videoBuilder = (fit) => Video(
-        key: _videoKey,
-        controller: controller,
-        fit: fit,
-        // 值本身就是 null(不要 mpv 自带控件,我们用自己的控制条);显式标注掉
-        // 无类型注解的 null 造成的隐式下转。
-        controls: NoVideoControls as VideoControlsBuilder?,
-      );
-    }
-    final provider = LocalTrackProvider(track);
-    _tracks = provider;
-    final session = PlaybackSessionController(
-      player: _adapter!,
-      tracks: provider,
-      messages: _messages!,
-      onProgress: _recordProgress,
-      onPaused: () => unawaited(_flushProgress()),
-    );
-    _session = session;
-    _bind(session, _adapter!);
-    return session;
-  }
-
-  void _bind(PlaybackSessionController session, PlayerAdapter adapter) {
-    _stateSubscription = session.states.listen((state) {
-      if (!mounted) return;
-      setState(() => _playback = state);
-    });
-    _playingSubscription = adapter.playing.listen((playing) {
-      if (!mounted) return;
-      setState(() => _playing = playing);
-      if (playing) {
-        unawaited(WakelockPlus.enable().catchError((_) {}));
-        _scheduleHideControls();
-      } else {
-        _controlsTimer?.cancel();
-        if (!_controlsVisible) setState(() => _controlsVisible = true);
-      }
-    });
-    _bufferingSubscription = adapter.buffering.listen((buffering) {
-      if (!mounted) return;
-      setState(() => _buffering = buffering);
-    });
-    // 内嵌字幕要等 mpv 读完文件头才报上来,只能听着,不能开播时问一次。
-    _subtitleSubscription = adapter.subtitles.listen((options) {
-      if (!mounted) return;
-      setState(() => _embedded = options);
-    });
-    _completedSubscription = adapter.completed.listen((completed) {
-      if (!completed || !mounted || _disposed || _autoAdvanced) return;
-      _autoAdvanced = true;
-      if (_loopSingle) {
-        unawaited(_reload());
-      } else if (_autoPlay && _hasNext) {
-        unawaited(_goTo(_i + 1));
-      }
-    });
-  }
-
-  /// 播这一集:解析位置 → 建 track → 开会话。
-  Future<void> _load() async {
-    final generation = ++_loadGeneration;
-    // 文案在 await 之前取好:后面跨了异步再读 context 会被 lint 拦(而且此时
-    // 也可能已经不在树上)。
-    final l10n = context.l10n;
-    _autoAdvanced = false;
-    if (mounted) {
-      setState(() {
-        _playback = const PlaybackState(phase: PlaybackPhase.resolving);
-        // 换集=换文件:上一集的内嵌轨道号在新文件里指向别的东西。
-        _subtitle = SubtitleOption.off;
-        _embedded = const [];
-      });
-    }
-    try {
-      final item = _item;
-      final playable = await _playableItem(item);
-      if (_loadExpired(generation)) return;
-      final track = buildLocalTrack(
-        playable,
-        qualityLabel: l10n.local_qualityLocal,
-      );
-      final session = _sessionFor(track);
-      await session.start([track], track, initialPosition: _resumeFor(item));
-      if (_loadExpired(generation)) return;
-      if (_rate != 1.0) {
-        await _adapter?.setRate(_rate);
-      }
-    } on Object catch (error) {
-      if (_loadExpired(generation) || !mounted) return;
-      setState(() => _playback = PlaybackState(
-            phase: PlaybackPhase.failed,
-            message: l10n.local_openFailed('$error'),
-          ));
-    }
-  }
-
-  Future<void> _reload() async {
-    _lastPosition = Duration.zero;
-    await _load();
-  }
-
-  /// 这次加载是否已经作废:页面已销毁,或期间又发起了新一次加载。
-  bool _loadExpired(int generation) =>
-      _disposed || generation != _loadGeneration;
-
-  /// 这一集该从哪儿开始:库详情页带来的断点优先,其次读历史。
-  Duration _resumeFor(LocalMediaItem item) {
-    if (widget.initialIndex == _i && widget.initialPosition > Duration.zero) {
-      return widget.initialPosition;
-    }
-    final entry = _library?.historyFor(LocalSource.id, widget.library.id);
-    if (entry == null || entry.episodeId != item.id) return Duration.zero;
-    return Duration(seconds: entry.positionSeconds);
-  }
-
-  void _recordProgress(Duration position, Duration duration) {
-    _lastPosition = position;
-    final library = _library;
-    if (library == null) return;
-    final item = _item;
-    library.saveProgress(
-      sourceId: LocalSource.id,
-      animeId: widget.library.id,
-      title: widget.library.name,
-      episodeId: item.id,
-      episodeName: item.title,
-      episodeIndex: _i,
-      position: position,
-      duration: duration,
-    );
-  }
-
-  /// 暂停 / 切集 / 退出时把进度落到盘上(与番剧页同款 `flushPending` 模式)。
-  Future<void> _flushProgress() async {
-    await _library?.flushPending();
-    try {
-      await _media?.markPlayed(
-        _item.id,
-        position: _lastPosition,
-        duration: _playback.duration,
-      );
-    } on Object {
-      // 最近播放没记上不影响看。
-    }
-  }
-
+  /// 释放当前这批 fd(换集、退出播放页时调)。
   Future<void> _releaseFds() async {
-    if (_openFds.isEmpty) return;
-    final bridge = _bridge ?? widget.bridge;
+    final bridge = _resolvedBridge;
     final fds = List<int>.from(_openFds);
     _openFds.clear();
+    _openedItemId = null;
+    _openedItem = null;
     if (bridge == null) return;
     for (final fd in fds) {
       try {
         await bridge.releaseFd(fd);
       } on Object {
-        // 幂等:重复释放或已随进程关闭都不算错。
+        // 释放失败不该拦住换集/退出。
       }
     }
   }
 
-  Future<void> _goTo(int index) async {
-    if (index < 0 || index >= widget.items.length || index == _i) return;
-    await _flushProgress();
-    await _releaseFds();
-    if (_disposed) return;
-    setState(() {
-      _i = index;
-      _lastPosition = Duration.zero;
-      _controlsVisible = true;
-    });
-    await _load();
-  }
-
-  // —— 控制条行为 ——
-
-  void _togglePlay() {
-    final adapter = _adapter;
-    if (adapter == null) return;
-    final session = _session;
-    if (_playing) {
-      session?.setUserPaused(true);
-    } else {
-      session?.setUserPaused(false);
-      unawaited(adapter.play());
-    }
-    _scheduleHideControls();
-  }
-
-  void _scheduleHideControls() {
-    _controlsTimer?.cancel();
-    _controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted || !_playing) return;
-      setState(() => _controlsVisible = false);
-    });
-  }
-
-  void _toggleControls() {
-    setState(() => _controlsVisible = !_controlsVisible);
-    if (_controlsVisible) _scheduleHideControls();
-  }
-
-  void _handleDoubleTap() {
-    final width = context.size?.width ?? 0;
-    final left = width == 0 || _doubleTapAt.dx < width / 2;
-    final position = _playback.position;
-    final target = left
-        ? position - const Duration(seconds: 15)
-        : position + const Duration(seconds: 15);
-    final clamped = Duration(
-      milliseconds: target.inMilliseconds.clamp(
-        0,
-        _playback.duration.inMilliseconds > 0
-            ? _playback.duration.inMilliseconds
-            : position.inMilliseconds,
-      ),
-    );
-    unawaited(_session?.seekTo(clamped, resumeAfterSeek: _playing));
-  }
-
-  Future<void> _setRate(double rate) async {
-    setState(() => _rate = rate);
-    try {
-      await _adapter?.setRate(rate);
-    } on Object {
-      // 倍速没设上不该弹错。
-    }
-  }
-
-  Future<void> _setSubtitle(SubtitleOption option) async {
-    Navigator.of(context).maybePop();
-    setState(() => _subtitle = option);
-    try {
-      await _adapter?.setSubtitle(option);
-    } on Object {
-      // 挂不上字幕画面照播。
-    }
-  }
-
-  void _toggleFullscreen() {
-    WindowFullscreen.instance.toggle();
-    setState(() {});
-  }
-
-  // —— 面板 ——
-
-  List<SubtitleOption> get _subtitleOptions => [
-        for (final asset in _tracks?.track.subtitles ?? const <SubtitleAsset>[])
-          SubtitleOption.asset(asset),
-        ..._embedded,
-      ];
-
-  /// 面板底色:播放页恒为深色,不跟主题走。
-  static const Color _sheetBg = Color(0xFF161616);
-
-  /// 三个面板共用的外壳:统一底色与标题行,并在开面板前停掉控制条自动隐藏、
-  /// 收起后重新计时。
+  /// 退出播放页:关播放器 + 释放全部 fd。
   ///
-  /// [builder] 拿到的是弹层自己的 context —— 面板里要 pop 就用它,别用页面的。
-  Future<void> _showSheet({
-    required String title,
-    required Widget Function(BuildContext sheetContext) builder,
-  }) async {
-    _controlsTimer?.cancel();
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: _sheetBg,
-      builder: (sheetContext) =>
-          _sheet(title: title, child: builder(sheetContext)),
-    );
-    if (mounted) _scheduleHideControls();
-  }
-
-  Future<void> _showEpisodesSheet() {
-    final current = _i;
-    return _showSheet(
-      title: context.l10n.local_episodeList,
-      builder: (sheetContext) => ListView.builder(
-        shrinkWrap: true,
-        itemCount: widget.items.length,
-        itemBuilder: (_, index) {
-          final item = widget.items[index];
-          final selected = index == current;
-          return _sheetRow(
-            label: '${index + 1}. ${item.title}',
-            selected: selected,
-            icon: selected
-                ? Icons.play_circle_fill_rounded
-                : Icons.play_circle_outline,
-            onTap: () {
-              Navigator.of(sheetContext).maybePop();
-              unawaited(_goTo(index));
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _showSubtitleSheet() {
-    final options = _subtitleOptions;
-    return _showSheet(
-      title: context.l10n.local_subtitles,
-      builder: (_) => options.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 22),
-              child: Text(
-                context.l10n.player_noSubtitles,
-                style: const TextStyle(color: Colors.white54, fontSize: 13),
-              ),
-            )
-          : ListView.builder(
-              shrinkWrap: true,
-              itemCount: options.length + 1,
-              itemBuilder: (_, index) {
-                if (index == 0) {
-                  return _sheetRow(
-                    label: context.l10n.local_subtitleOff,
-                    selected: _subtitle.isOff,
-                    icon: Icons.subtitles_off_outlined,
-                    onTap: () => unawaited(_setSubtitle(SubtitleOption.off)),
-                  );
-                }
-                final option = options[index - 1];
-                return _sheetRow(
-                  label: option.label.isEmpty
-                      ? context.l10n.player_subtitleN(index)
-                      : option.label,
-                  selected: option == _subtitle,
-                  icon: Icons.subtitles_outlined,
-                  onTap: () => unawaited(_setSubtitle(option)),
-                );
-              },
-            ),
-    );
-  }
-
-  Future<void> _showRateSheet() {
-    return _showSheet(
-      title: context.l10n.local_speed,
-      builder: (sheetContext) => ListView.builder(
-        shrinkWrap: true,
-        itemCount: _rates.length,
-        itemBuilder: (_, index) {
-          final rate = _rates[index];
-          return _sheetRow(
-            label: rate == 1.0 ? '1.0x' : '${rate}x',
-            selected: _rate == rate,
-            icon: Icons.speed_rounded,
-            onTap: () {
-              Navigator.of(sheetContext).maybePop();
-              unawaited(_setRate(rate));
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _sheet({required String title, required Widget child}) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: Colors.white10),
-            Flexible(child: child),
-          ],
-        ),
-      );
-
-  Widget _sheetRow({
-    required String label,
-    required bool selected,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    final accent = ensureContrast(context.palette.accent, _sheetBg);
-    return ListTile(
-      dense: true,
-      onTap: onTap,
-      leading: Icon(icon, color: selected ? accent : Colors.white38, size: 20),
-      title: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: selected ? accent : Colors.white,
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  // —— 画面 ——
-
-  @override
-  Widget build(BuildContext context) {
-    final builder = _videoBuilder;
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (builder != null)
-            builder(BoxFit.contain)
-          else
-            const ColoredBox(color: Colors.black),
-          _gestureLayer(),
-          if (_playback.phase == PlaybackPhase.failed) _failureLayer(),
-          if (_buffering && _playback.phase != PlaybackPhase.failed)
-            const Center(
-              child: SizedBox(
-                width: 42,
-                height: 42,
-                child: CircularProgressIndicator(strokeWidth: 2.6),
-              ),
-            ),
-          if (_dragTarget != null) _seekPreview(),
-          if (_controlsVisible) _chrome(),
-        ],
-      ),
-    );
-  }
-
-  Widget _gestureLayer() => Positioned.fill(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleControls,
-          onDoubleTapDown: (details) => _doubleTapAt = details.localPosition,
-          onDoubleTap: _handleDoubleTap,
-          onHorizontalDragStart: (details) {
-            _controlsTimer?.cancel();
-            setState(() => _dragTarget = _playback.position);
-          },
-          onHorizontalDragUpdate: (details) {
-            final width = context.size?.width ?? 1;
-            final delta = details.primaryDelta ?? 0;
-            final span = _playback.duration.inMilliseconds;
-            if (span <= 0) return;
-            final current = _dragTarget ?? _playback.position;
-            final next = current.inMilliseconds + (delta / width) * span;
-            setState(() {
-              _dragTarget = Duration(
-                milliseconds: next.round().clamp(0, span),
-              );
-            });
-          },
-          onHorizontalDragEnd: (_) {
-            final target = _dragTarget;
-            setState(() => _dragTarget = null);
-            if (target == null) return;
-            unawaited(_session?.seekTo(target, resumeAfterSeek: _playing));
-          },
-        ),
-      );
-
-  Widget _chrome() {
-    final accent = context.palette.accent;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _topChrome(),
-        _bottomChrome(),
-        // 恢复/失败提示:压在画面上方偏上,不挡控制条。
-        if ((_playback.message ?? '').isNotEmpty &&
-            _playback.phase != PlaybackPhase.failed)
-          Positioned(
-            top: 72,
-            left: 24,
-            right: 24,
-            child: Text(
-              _playback.message!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: accent, fontSize: 12.5),
-            ),
-          ),
-      ],
-    );
-  }
-
-  /// 顶部栏:返回键 + 标题 + 集数,压在自上而下的渐变上。
-  Widget _topChrome() => Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xCC000000), Color(0x00000000)],
-            ),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                const SizedBox(width: 4),
-                IconButton(
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back_rounded,
-                      color: Colors.white),
-                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _item.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        '${widget.library.name} · ${_i + 1}/${widget.items.length}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white60,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-              ],
-            ),
-          ),
-        ),
-      );
-
-  /// 底部栏:控制条,压在自下而上的渐变上。
-  Widget _bottomChrome() => Positioned(
-        left: 0,
-        right: 0,
-        bottom: 0,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [Color(0xE6000000), Color(0x00000000)],
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 18),
-              child: AnimePlayerControls(
-                position: _dragTarget ?? _playback.position,
-                duration: _playback.duration,
-                buffered: _playback.buffered,
-                playing: _playing,
-                buffering: _buffering,
-                onPlayPause: _togglePlay,
-                onScrubStart: (wasPlaying) {
-                  _controlsTimer?.cancel();
-                  if (wasPlaying) unawaited(_adapter?.pause());
-                },
-                onSeek: (target, resumeAfterSeek) {
-                  _scheduleHideControls();
-                  unawaited(
-                    _session?.seekTo(target, resumeAfterSeek: resumeAfterSeek),
-                  );
-                },
-                onOpenPanel: () => unawaited(_showSubtitleSheet()),
-                onEpisodes: widget.items.length > 1
-                    ? () => unawaited(_showEpisodesSheet())
-                    : null,
-                onRate: () => unawaited(_showRateSheet()),
-                rateLabel: _rate == 1.0 ? '' : '${_rate}x',
-                // 本地文件没有清晰度/线路可言:传 null 按钮就不出现。
-                onQuality: null,
-                qualityLabel: context.l10n.local_qualityLocal,
-                onPrevEpisode: _i > 0 ? () => unawaited(_goTo(_i - 1)) : null,
-                onNextEpisode: _hasNext
-                    ? () => unawaited(_goTo(_i + 1))
-                    : null,
-                // 移动端播放页本来就占满屏,再给全屏键只会点了没反应。
-                onFullscreen:
-                    WindowFullscreen.supported ? _toggleFullscreen : null,
-                fullscreen: WindowFullscreen.instance.isFullscreen,
-              ),
-            ),
-          ),
-        ),
-      );
-
-  Widget _seekPreview() {
-    final target = _dragTarget!;
-    final duration = _playback.duration;
-    return Center(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.72),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Text(
-            duration > Duration.zero
-                ? '${_timeLabel(target)} / ${_timeLabel(duration)}'
-                : _timeLabel(target),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _failureLayer() {
-    final message = _playback.message ?? context.l10n.local_playbackFailed;
-    return Positioned.fill(
-      child: ColoredBox(
-        color: Colors.black.withValues(alpha: 0.78),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline_rounded,
-                    color: Colors.white70, size: 40),
-                const SizedBox(height: 12),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const SizedBox(height: 18),
-                Wrap(
-                  spacing: 10,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => unawaited(_reload()),
-                      child: Text(context.l10n.local_play),
-                    ),
-                    if (_hasNext)
-                      OutlinedButton(
-                        onPressed: () => unawaited(_goTo(_i + 1)),
-                        child: Text(context.l10n.local_episodes),
-                      ),
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      child: Text(MaterialLocalizations.of(context)
-                          .closeButtonTooltip),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  static String _timeLabel(Duration value) {
-    final total = value.inSeconds;
-    final hours = total ~/ 3600;
-    final minutes = (total % 3600) ~/ 60;
-    final seconds = total % 60;
-    final mm = minutes.toString().padLeft(2, '0');
-    final ss = seconds.toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$mm:$ss' : '$mm:$ss';
+  /// 注入了 player 时由注入方负责它的生命周期(与 widget 测试的既有规矩一致)。
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await _releaseFds();
+    final adapter = _adapter;
+    _adapter = null;
+    _backend = null;
+    if (dependencies == null) {
+      await adapter?.dispose();
+      await _player?.dispose();
+    }
+    _player = null;
+    _videoController = null;
   }
 }
+
+/// SAF 的 document uri 前缀(位置上唯一需要特殊对待的东西)。
+const String _contentUriPrefix = 'content://';
+
+/// 本地播放的轨道提供者:两条退路都走不到 —— 每一集都由
+/// [LocalPlaybackHost.trackFor] 现给轨道([AnimePlayerDependencies.localTrackForEpisode]
+/// 命中时番剧页不会去问 delegate)。
+///
+/// 真被问到(条目没有位置、或解析失败)就返回空,让会话**明确失败**:
+/// 拿别的文件顶上比失败更糟。
+class _LocalOnlyTracks implements PlaybackTrackProvider {
+  const _LocalOnlyTracks();
+
+  @override
+  Future<List<VideoTrack>> refresh() async => const <VideoTrack>[];
+
+  @override
+  VideoTrack? matchRefreshed(VideoTrack current, List<VideoTrack> refreshed) =>
+      null;
+
+  @override
+  VideoTrack? lowerQuality(VideoTrack current, List<VideoTrack> available) =>
+      null;
+
+  @override
+  VideoTrack? alternateLine(VideoTrack current, List<VideoTrack> available) =>
+      null;
+}
+
+/// 本地播放的文案包。
+///
+/// 与番剧页同一套字段:本地虽然不走 HLS 网关(`gatewayFallbackFailed` 只是凑齐
+/// 必填),但**同一个 mpv 后端**,「一集解析不出可播放地址」这类话说的是同一件事。
+PlaybackMessages localPlaybackMessages(AppLocalizations l10n) => PlaybackMessages(
+      // 本地场景没有「解析不出线路」这回事,这句只可能是文件不可读。
+      noRoute: l10n.local_playbackFailed,
+      bufferTimeout: l10n.player_bufferTimeout,
+      recovering: l10n.player_recovering,
+      recoverFailed: l10n.player_recoverFailed,
+      configureFailed: l10n.player_configureFailed,
+      gatewayFallbackFailed: l10n.player_gatewayFallbackFailed,
+    );

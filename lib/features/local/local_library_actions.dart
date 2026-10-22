@@ -78,10 +78,17 @@ class LocalLibraryActions {
     return library;
   }
 
-  /// 路线 B:挑若干个文件 → 合成一个库(不复制文件,只记路径/uri)。
+  /// 路线 B:挑若干个文件 → **按「同剧」分组**建库 / 并入已有库(不复制文件,
+  /// 只记路径/uri)。
+  ///
+  /// 分组规则见 [groupLocalItemsForLibraries]:带季集号的按归一化剧名归堆,命中的
+  /// 已有**文件型**库直接追加条目 —— 这就是「一部剧加两集变成两张卡」的正面解法。
+  /// 一次挑了两部剧就会建/并两个库。
   ///
   /// 挑进来的文件里不是媒体的(用户手滑选了 `.txt`)不算错误,只是不入选;
   /// 全都不是媒体才提示一句「不支持」。
+  ///
+  /// 返回值取**第一组**的结果(页面只用它判断成功与否,不关心是哪一组)。
   Future<LocalLibrary?> addFiles() async {
     final List<PickedLocation> picked;
     try {
@@ -96,11 +103,52 @@ class LocalLibraryActions {
       _notify(l10n.local_emptyUnsupported, AppNotifyKind.warn);
       return null;
     }
-    return _create(
-      name: _nameForPickedFiles(picked),
-      kind: LocalLibraryKind.file,
-      items: items,
-    );
+
+    LocalLibrary? first;
+    final done = <String>[];
+    for (final group in groupLocalItemsForLibraries(items)) {
+      final merged = await _mergeIntoExisting(group);
+      final LocalLibrary? library;
+      if (merged != null) {
+        library = merged;
+        done.add(l10n.local_mergedInto(merged.name));
+      } else {
+        final name = group.name.trim();
+        library = await _create(
+          name: name.isEmpty ? l10n.local_unknownTitle : name,
+          kind: LocalLibraryKind.file,
+          items: group.items,
+        );
+        if (library != null) done.add(l10n.local_createdLibrary(library.name));
+      }
+      first ??= library;
+    }
+    if (done.isNotEmpty) _notify(done.join('、'), AppNotifyKind.success);
+    return first;
+  }
+
+  /// 改一个本地库的名字(规格 §5.6)。只有空白时由 store 抛错,这里转成提示。
+  Future<bool> renameLibrary(LocalLibrary library, String name) async {
+    try {
+      await store.renameLibrary(library.id, name);
+    } on LocalMediaException catch (error) {
+      _notify(error.message, AppNotifyKind.error);
+      return false;
+    }
+    _notify(l10n.local_renamed, AppNotifyKind.success);
+    return true;
+  }
+
+  /// 改一个条目的显示名;[title] 为空表示恢复解析出来的原名。
+  Future<bool> renameItem(LocalMediaItem item, String title) async {
+    try {
+      await store.renameItem(item.id, title);
+    } on LocalMediaException catch (error) {
+      _notify(error.message, AppNotifyKind.error);
+      return false;
+    }
+    _notify(l10n.local_renamed, AppNotifyKind.success);
+    return true;
   }
 
   /// 重新扫描一个目录型本地库(规格 §8.4)。
@@ -141,6 +189,40 @@ class LocalLibraryActions {
     }
     _notify(_summaryMessage(result, summary), AppNotifyKind.success);
     return summary;
+  }
+
+  /// 找同组的已有**文件型**库,把这组条目追进去。
+  ///
+  /// 只认文件型库:目录型库的内容由「那个目录扫出来什么」定义(§8.4 的重新扫描),
+  /// 把目录外的文件塞进去会让这份语义变糊。目录外的散集因此会另开一张卡,由用户
+  /// 自己「重命名」或(P1)「移动条目」收拾。
+  ///
+  /// 并入失败(比如库刚好被删了)不吞掉用户的挑选:提示一句后返回 null,
+  /// 调用方会改成新建一个库。
+  Future<LocalLibrary?> _mergeIntoExisting(LocalLibraryGroup group) async {
+    final target = _findMergeTarget(group.key);
+    if (target == null) return null;
+    try {
+      await store.applyScanResult(target.id, group.items);
+    } on LocalMediaException catch (error) {
+      _notify(error.message, AppNotifyKind.error);
+      return null;
+    }
+    return store.library(target.id) ?? target;
+  }
+
+  /// 已有的文件型库里,哪一只装的是同一组东西(按 [groupLocalItemsForLibraries]
+  /// 算出来的键比较)。库里的条目现算,所以本次改动之前建的库照样能被认出来。
+  LocalLibrary? _findMergeTarget(String key) {
+    for (final library in store.libraries) {
+      if (library.kind != LocalLibraryKind.file) continue;
+      final items = store.items(library.id);
+      if (items.isEmpty) continue;
+      for (final group in groupLocalItemsForLibraries(items)) {
+        if (group.key == key) return library;
+      }
+    }
+    return null;
   }
 
   /// 移除一个本地库(只删索引,不动用户文件 —— 规格 §5.5/§10)。
@@ -240,26 +322,6 @@ class LocalLibraryActions {
       language: subtitleLanguageFor(subName),
     );
   }
-
-  /// 一批文件合成一个库时用什么名字。
-  ///
-  /// 同一个目录里挑的 → 用目录名(和「加文件夹」观感一致);
-  /// 分散在不同目录(或 Android 上只拿得到文件名) → 用第一个文件的名字。
-  String _nameForPickedFiles(List<PickedLocation> picked) {
-    if (!windows) return _fallbackNameFor(picked);
-    final parents = {
-      for (final entry in picked) localLocationParent(entry.location),
-    };
-    if (parents.length == 1) {
-      final name = localLocationName(parents.single);
-      if (name.isNotEmpty) return name;
-    }
-    return _fallbackNameFor(picked);
-  }
-
-  /// 拿不到目录名时的库名:第一个挑中文件的名字(空名字兜一个「未知标题」)。
-  String _fallbackNameFor(List<PickedLocation> picked) =>
-      picked.first.name.isEmpty ? l10n.local_unknownTitle : picked.first.name;
 
   int _sizeOf(String location) =>
       _readLocalFile(location, (file) => file.lengthSync()) ?? 0;

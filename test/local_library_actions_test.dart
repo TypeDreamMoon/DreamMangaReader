@@ -131,8 +131,8 @@ void main() {
 
     expect(library, isNotNull);
     expect(library!.kind, LocalLibraryKind.file);
-    // 同一目录 → 库名取目录名,而不是第一个文件名。
-    expect(library.name, 'Movies');
+    // 库名取**剧名**(解析器已经把 SxxExx 与分辨率抠掉了),不再取目录名/文件名。
+    expect(library.name, 'Movie');
     final items = store.items(library.id);
     expect(items.length, 2);
     expect(items.first.title, 'Movie');
@@ -217,6 +217,8 @@ void main() {
     ]);
     final actions = _actions(store, picker: picker, reports: reports);
     final library = (await actions.addFiles())!;
+    // 建库那一刻会报一句「已新建《…》」,这里只关心重扫:文件型库没有可枚举的根。
+    reports.clear();
 
     expect(await actions.rescan(library), isNull);
     expect(reports, isEmpty);
@@ -246,6 +248,201 @@ void main() {
     expect(store.libraries, isEmpty);
     expect(file.existsSync(), isTrue);
     expect(folder.existsSync(), isTrue);
+  });
+
+  test('addFiles 把后来的同剧集数并进同一张卡', () async {
+    final reports = <String>[];
+    final folder = Directory('${root.path}${Platform.pathSeparator}Loki')
+      ..createSync(recursive: true);
+    File episode(String name) =>
+        File('${folder.path}${Platform.pathSeparator}$name')
+          ..writeAsBytesSync(List<int>.filled(64, 5));
+    final e05 = episode('Loki.S02E05.2160p.mov');
+    final e06 = episode('Loki.S02E06.2160p.mov');
+
+    final first = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: e05.path,
+          name: 'Loki.S02E05.2160p.mov',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final library = (await first.addFiles())!;
+    expect(library.name, 'Loki');
+    expect(store.libraries.length, 1);
+    reports.clear();
+
+    // 第二次只挑一集:应该并进上面那张卡,而不是再开一张。
+    final second = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: e06.path,
+          name: 'Loki.S02E06.2160p.mov',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final merged = await second.addFiles();
+
+    expect(store.libraries.length, 1);
+    expect(merged!.id, library.id);
+    expect(store.items(library.id).length, 2);
+    expect(reports, [_l10n.local_mergedInto('Loki')]);
+  });
+
+  test('addFiles 一次挑两部剧就建两张卡', () async {
+    final reports = <String>[];
+    final folder = Directory('${root.path}${Platform.pathSeparator}Mixed')
+      ..createSync(recursive: true);
+    File video(String name) => File('${folder.path}${Platform.pathSeparator}$name')
+      ..writeAsBytesSync(List<int>.filled(64, 6));
+    final loki = video('Loki.S02E06.2160p.mov');
+    final boys = video('The.Boys.S01E01.1080p.mkv');
+    final picker = _FakePicker(files: [
+      PickedLocation(
+        location: loki.path,
+        name: 'Loki.S02E06.2160p.mov',
+        kind: LocalLibraryKind.file,
+      ),
+      PickedLocation(
+        location: boys.path,
+        name: 'The.Boys.S01E01.1080p.mkv',
+        kind: LocalLibraryKind.file,
+      ),
+    ]);
+    final actions = _actions(store, picker: picker, reports: reports);
+
+    await actions.addFiles();
+
+    expect(store.libraries.length, 2);
+    expect(
+      {for (final library in store.libraries) library.name},
+      {'Loki', 'The Boys'},
+    );
+    expect(store.allItems.length, 2);
+  });
+
+  test('addFiles 把散装文件按目录归堆:同目录再来一部也并进同一张卡', () async {
+    final reports = <String>[];
+    final folder = Directory('${root.path}${Platform.pathSeparator}Movies')
+      ..createSync(recursive: true);
+    File video(String name) => File('${folder.path}${Platform.pathSeparator}$name')
+      ..writeAsBytesSync(List<int>.filled(64, 7));
+    // 没有季集号 → 按目录归堆,库名取目录名。
+    final inception = video('Inception.mkv');
+    final first = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: inception.path,
+          name: 'Inception.mkv',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final library = (await first.addFiles())!;
+    expect(library.name, 'Movies');
+    reports.clear();
+
+    final interstellar = video('Interstellar.mkv');
+    final second = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: interstellar.path,
+          name: 'Interstellar.mkv',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final merged = await second.addFiles();
+
+    expect(store.libraries.length, 1);
+    expect(merged!.id, library.id);
+    expect(store.items(library.id).length, 2);
+    expect(reports, [_l10n.local_mergedInto('Movies')]);
+  });
+
+  test('addFiles 不把散装文件并进目录型库', () async {
+    final reports = <String>[];
+    final folder = Directory('${root.path}${Platform.pathSeparator}Anime')
+      ..createSync(recursive: true);
+    final picker = _FakePicker(
+      directory: PickedLocation(
+        location: folder.path,
+        name: 'Anime',
+        kind: LocalLibraryKind.folder,
+      ),
+    );
+    final actions = _actions(
+      store,
+      picker: picker,
+      walker: InMemoryDirectoryWalker([_entry(folder.path, 'Show.S01E01.mkv', 10)]),
+      reports: reports,
+    );
+    final folderLibrary = (await actions.addFolder())!;
+
+    // 目录型库的内容由「那个目录扫出来什么」定义,散装文件另开一张卡。
+    final loose = File('${root.path}${Platform.pathSeparator}Show.S01E02.mkv')
+      ..writeAsBytesSync(List<int>.filled(32, 8));
+    final looseActions = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: loose.path,
+          name: 'Show.S01E02.mkv',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final created = await looseActions.addFiles();
+
+    expect(store.libraries.length, 2);
+    expect(created!.id, isNot(folderLibrary.id));
+    expect(created.kind, LocalLibraryKind.file);
+    expect(store.items(folderLibrary.id).length, 1);
+    expect(store.items(created.id).length, 1);
+  });
+
+  test('renameLibrary / renameItem 落到 store 并报一句「已重命名」', () async {
+    final reports = <String>[];
+    final video = File('${root.path}${Platform.pathSeparator}one.mkv')
+      ..writeAsBytesSync(List<int>.filled(16, 1));
+    final actions = _actions(
+      store,
+      picker: _FakePicker(files: [
+        PickedLocation(
+          location: video.path,
+          name: 'one.mkv',
+          kind: LocalLibraryKind.file,
+        ),
+      ]),
+      reports: reports,
+    );
+    final library = (await actions.addFiles())!;
+    final target = store.items(library.id).single;
+    reports.clear();
+
+    expect(await actions.renameLibrary(library, ' 我的库 '), isTrue);
+    expect(store.library(library.id)!.name, '我的库');
+    expect(await actions.renameItem(target, '第一集'), isTrue);
+    expect(store.item(target.id)!.displayTitle, '第一集');
+    expect(reports, [_l10n.local_renamed, _l10n.local_renamed]);
+
+    // 空白库名:store 拒绝,这里转成提示而不是抛出去。
+    reports.clear();
+    expect(await actions.renameLibrary(store.library(library.id)!, '   '), isFalse);
+    expect(reports, hasLength(1));
+    expect(store.library(library.id)!.name, '我的库');
   });
 
   test('scan failures surface a scrubbed message, never the real path',

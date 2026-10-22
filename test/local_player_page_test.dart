@@ -7,6 +7,7 @@ import 'package:dream_manga_reader/app/theme/app_theme.dart';
 import 'package:dream_manga_reader/core/local/local_models.dart';
 import 'package:dream_manga_reader/core/platform/local_media_bridge.dart';
 import 'package:dream_manga_reader/core/source/models.dart';
+import 'package:dream_manga_reader/features/anime/anime_player_page.dart';
 import 'package:dream_manga_reader/features/anime/playback/player_adapter.dart';
 import 'package:dream_manga_reader/features/anime/playback/subtitle_option.dart';
 import 'package:dream_manga_reader/features/local/local_player_page.dart';
@@ -17,7 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('opens the first episode and resumes from history',
+  testWidgets('opens the first episode and resumes from the given position',
       (tester) async {
     final fixture = await _Fixture.create(tester, itemCount: 2);
     addTearDown(() {
@@ -26,28 +27,28 @@ void main() {
     });
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.runAsync(() async {
-      fixture.anime.saveProgress(
-        sourceId: LocalSource.id,
-        animeId: fixture.libraryId,
-        title: '测试剧集',
-        episodeId: 'item-1',
-        episodeName: 'E01',
-        episodeIndex: 0,
-        position: const Duration(minutes: 5),
-        duration: const Duration(minutes: 20),
-      );
-      await fixture.anime.flushPending();
-    });
 
-    await tester.pumpWidget(fixture.host());
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      fixture.host(initialPosition: const Duration(minutes: 5)),
+    );
+    // 番剧播放页的 chrome 一直在动(控件自动隐藏、加载转圈),pumpAndSettle 永远
+    // 等不到静止:交替 pump/runAsync 让它往前走几帧即可。
+    await _settleIo(tester);
 
     expect(fixture.adapter.openStarts, isNotEmpty);
     expect(fixture.adapter.openStarts.first, const Duration(minutes: 5));
     expect(fixture.adapter.opened.first.url, fixture.videoUri(0));
     expect(fixture.adapter.opened.first.hls, isFalse);
-    expect(find.text('E01'), findsOneWidget);
+
+    // 本地播放**整页复用**番剧播放页:M1 那份自己写手势/控件的播放页已经删掉了。
+    final page = tester.widget<AnimePlayerPage>(find.byType(AnimePlayerPage));
+    expect(page.localFilesOnly, isTrue);
+    expect(page.animeId, fixture.libraryId);
+    expect(page.index, 0);
+    expect(page.episodes.map((e) => e.id), fixture.items.map((e) => e.id));
+    // 「问源」的三个入口(收藏 / 下载这一集 / 复制链接)在本地模式下一个都不给。
+    expect(find.byIcon(Icons.download_rounded), findsNothing);
+    expect(find.byIcon(Icons.link_rounded), findsNothing);
   });
 
   testWidgets('completion advances to the next episode', (tester) async {
@@ -60,7 +61,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(fixture.host());
-    await tester.pumpAndSettle();
+    await _settleIo(tester);
     expect(fixture.adapter.opened.length, 1);
 
     fixture.adapter.completedController.add(true);
@@ -112,6 +113,46 @@ void main() {
     expect(calls, contains('releaseFd'));
   });
 
+  testWidgets('shares the anime player gestures: double tap toggles, drag is volume',
+      (tester) async {
+    final fixture = await _Fixture.create(tester, itemCount: 1);
+    addTearDown(() {
+      unawaited(fixture.adapter.dispose());
+      fixture.dispose();
+    });
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host());
+    await _settleIo(tester);
+
+    final centre = tester.getCenter(find.byType(AnimePlayerPage));
+    final seeksBefore = fixture.adapter.seeks.length;
+    final togglesBefore =
+        fixture.adapter.playCalls + fixture.adapter.pauseCalls;
+
+    // 双击 = 播放/暂停。M1 那份自写播放页把双击做成了快进/快退 15 秒,
+    // 用户实测报障的就是这一条。
+    await tester.tapAt(centre);
+    await tester.pump(const Duration(milliseconds: 40));
+    await tester.tapAt(centre);
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(fixture.adapter.playCalls + fixture.adapter.pauseCalls,
+        togglesBefore + 1);
+    expect(fixture.adapter.seeks.length, seeksBefore);
+
+    // 上下滑 = 音量(测试环境里亮度取不到,整屏都归音量);横拖才是定位。
+    await tester.dragFrom(centre, const Offset(0, -160));
+    await tester.pump();
+    expect(fixture.adapter.volumes, isNotEmpty);
+    expect(fixture.adapter.seeks.length, seeksBefore);
+
+    // 收尾:双击判定、控件自动隐藏、调整提示这些都挂着定时器,走完再结束测试,
+    // 否则 flutter_test 会报 pending timers。
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 2));
+  });
+
   testWidgets('reports progress back to the anime library store',
       (tester) async {
     final fixture = await _Fixture.create(tester, itemCount: 1);
@@ -123,7 +164,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(fixture.host());
-    await tester.pumpAndSettle();
+    await _settleIo(tester);
 
     fixture.adapter.durationController.add(const Duration(minutes: 10));
     fixture.adapter.playingController.add(true);
@@ -229,7 +270,12 @@ class _Fixture {
   String videoUri(int index) =>
       Uri.file(videos[index], windows: Platform.isWindows).toString();
 
-  Widget host({LocalMediaBridge? bridge, String? location}) => LocalMediaScope(
+  Widget host({
+    LocalMediaBridge? bridge,
+    String? location,
+    Duration initialPosition = Duration.zero,
+  }) =>
+      LocalMediaScope(
         store: store,
         child: AnimeLibraryScope(
           store: anime,
@@ -246,6 +292,7 @@ class _Fixture {
                       for (final item in items)
                         item.copyWith(location: location),
                     ],
+              initialPosition: initialPosition,
               dependencies: LocalPlayerDependencies(
                 player: adapter,
                 videoBuilder: (_) => const ColoredBox(color: Colors.black),

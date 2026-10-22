@@ -57,6 +57,48 @@ void main() {
     expect(find.text('E02'), findsOneWidget);
   });
 
+  testWidgets('renaming a library only changes the card title', (tester) async {
+    final fixture = await _Fixture.create(tester, itemCount: 1);
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host(const LocalLibraryPage()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+
+    // 空名字保存按钮不可用(库名是卡片上唯一的标识)。
+    await tester.enterText(find.byKey(const Key('local-rename-field')), '   ');
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.enterText(
+        find.byKey(const Key('local-rename-field')), 'Loki S02');
+    await tester.pump();
+    await tester.tap(find.text('保存'));
+    // store 走真落盘:先 pump 让异步链跑起来,再 runAsync 让 I/O 完成。
+    await tester.pump();
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(fixture.store.library(fixture.libraryId)!.name, 'Loki S02');
+    expect(find.text('Loki S02'), findsOneWidget);
+    expect(find.text('测试剧集'), findsNothing);
+    // 名字只是展示:条目一个不少。
+    expect(fixture.store.items(fixture.libraryId).length, 1);
+  });
+
   testWidgets('removing a library only drops the index', (tester) async {
     final fixture = await _Fixture.create(tester, itemCount: 1);
     addTearDown(fixture.dispose);

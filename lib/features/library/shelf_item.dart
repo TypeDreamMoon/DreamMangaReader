@@ -4,6 +4,7 @@ import '../../app/anime_library_store.dart';
 import '../../app/library_store.dart';
 import '../../app/novel_library_store.dart';
 import '../../core/library/update_checker.dart';
+import '../../core/local/local_models.dart';
 import '../../core/source/title_match.dart';
 
 /// 书架上的内容类型。书架不再是「漫画 + 两条附属横条」,三类同级,
@@ -143,7 +144,11 @@ abstract final class ShelfProjector {
     for (final item in build(manga: manga, novel: novel, anime: anime)) {
       final (String, String)? ref = switch (item.kind) {
         ShelfKind.manga => (item.mangaEntry!.sourceId, item.mangaEntry!.mangaId),
-        ShelfKind.anime => (item.animeEntry!.sourceId, item.animeEntry!.animeId),
+        // 本地库播放没有脚本源,追更无从谈起 —— 与本地导入的小说同样排除,
+        // 否则它们会永远停在「检查失败」那一栏里。
+        ShelfKind.anime => item.animeEntry!.sourceId == LocalSource.id
+            ? null
+            : (item.animeEntry!.sourceId, item.animeEntry!.animeId),
         // 本地导入的小说没有 sourceId,跳过。
         ShelfKind.novel => switch (item.novelEntry!) {
             final e when e.sourceId != null && e.novelId != null =>

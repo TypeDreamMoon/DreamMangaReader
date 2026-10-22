@@ -15,6 +15,7 @@ import '../../ui/ui.dart';
 import '../anime/anime_history_resume.dart';
 import '../common/cover_hero.dart';
 import '../detail/detail_page.dart';
+import '../local/local_resume.dart';
 import '../novel/novel_cover.dart';
 import '../novel/novel_library_view.dart';
 import 'manga_cover.dart';
@@ -217,7 +218,10 @@ class HistoryPage extends StatelessWidget {
         headers: meta == null ? const {} : imageHeadersOf(meta),
         radius: 8,
       ),
-      onTap: () => unawaited(openAnimeHistory(context, history)),
+      // 本地库播放留下的那条:按源找是找不到的(没有 id 为 `local` 的源)。
+      onTap: isLocalHistorySource(history.sourceId)
+          ? () => unawaited(openLocalHistory(context, history))
+          : () => unawaited(openAnimeHistory(context, history)),
       removeKey: const Key('history-remove-anime'),
       removeTooltip: context.l10n.hist_remove,
       onRemove: () => store.removeHistory(history.sourceId, history.animeId),

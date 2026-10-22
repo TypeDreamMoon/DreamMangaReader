@@ -66,7 +66,12 @@ void main() {
 
     expect(find.text('继续观看'), findsOneWidget);
     await tester.tap(find.text('02:00'));
-    await tester.pumpAndSettle();
+    // 落地的是番剧播放页(chrome 一直在动,pumpAndSettle 等不到静止)。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    await tester.pump();
 
     expect(find.byType(LocalPlayerPage), findsOneWidget);
     expect(fixture.adapter.openStarts, isNotEmpty);
@@ -75,6 +80,82 @@ void main() {
       fixture.adapter.opened.first.url,
       Uri.file(fixture.videos[1].path, windows: true).toString(),
     );
+  });
+
+  testWidgets('tapping an episode row resumes from that episode history',
+      (tester) async {
+    final fixture = await _Fixture.create(tester, itemCount: 2);
+    addTearDown(fixture.dispose);
+    addTearDown(fixture.adapter.dispose);
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      fixture.anime.saveProgress(
+        sourceId: LocalSource.id,
+        animeId: fixture.libraryId,
+        title: '测试剧集',
+        episodeId: 'item-2',
+        episodeName: 'E02',
+        episodeIndex: 1,
+        position: const Duration(minutes: 7),
+        duration: const Duration(minutes: 20),
+      );
+      await fixture.anime.flushPending();
+    });
+
+    await tester.pumpWidget(fixture.host());
+    await tester.pumpAndSettle();
+
+    // 「继续观看」卡片也写着 E02,`.last` 才是列表里那一行。
+    await tester.tap(find.text('E02').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    await tester.pump();
+
+    // 断点由列表页算好交给播放页(番剧播放页只在开播那一集收 initialPosition)。
+    expect(find.byType(LocalPlayerPage), findsOneWidget);
+    expect(fixture.adapter.openStarts, isNotEmpty);
+    expect(fixture.adapter.openStarts.first, const Duration(minutes: 7));
+    expect(
+      fixture.adapter.opened.first.url,
+      Uri.file(fixture.videos[1].path, windows: true).toString(),
+    );
+  });
+
+  testWidgets('renaming an item changes the row title but keeps the parsed name',
+      (tester) async {
+    final fixture = await _Fixture.create(tester, itemCount: 2);
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(fixture.host());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byKey(const Key('local-rename-field')), '第一集·序幕');
+    await tester.pump();
+    await tester.tap(find.text('保存'));
+    await tester.pump();
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final renamed = fixture.store.item('item-1')!;
+    expect(renamed.customTitle, '第一集·序幕');
+    expect(renamed.displayTitle, '第一集·序幕');
+    // 解析出来的原名留着,重扫刷新 title 时不会把用户的名字冲掉。
+    expect(renamed.title, 'E01');
+    expect(find.text('第一集·序幕'), findsOneWidget);
+    expect(find.text('E01'), findsNothing);
   });
 
   testWidgets('removing an item only drops the index entry', (tester) async {
