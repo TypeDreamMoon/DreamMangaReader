@@ -1,3 +1,5 @@
+import 'dart:ui' show PointMode;
+
 import 'package:flutter/material.dart';
 
 import '../../app/library_store.dart';
@@ -82,46 +84,63 @@ class MangaCover extends StatelessWidget {
     final cover = manga.cover;
     final glyph = manga.title.isEmpty ? '?' : manga.title.characters.first;
 
+    // 占位层:渐变 + 网点 + 首字。
+    //
+    // 它**只在图片没显示出来的时候**才该被画(加载中/加载失败/压根没有封面 URL)。
+    // 以前它是无脑垫在图片底下的:图加载完照样每帧画一遍,而网点一次要画上千个
+    // 点 —— 实测这占书架滚动光栅开销的大头(去掉后 raster 从 40~57ms 降到 19ms,
+    // 见 docs/superpowers/specs/2026-10-07-scroll-performance-research.md)。
+    // 现在把它当 SourceImage 的 placeholder/fallback 传进去,加载完就不在显示列表里。
+    final placeholder = Stack(
+      fit: StackFit.expand,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: grad,
+            ),
+          ),
+        ),
+        CustomPaint(painter: _HalftonePainter(grad.last)),
+        Positioned(
+          left: 8,
+          top: 6,
+          child: Text(
+            glyph,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              shadows: const [Shadow(color: Colors.black45, blurRadius: 4)],
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final hasCover = cover != null && cover.isNotEmpty;
+    // 私有源 Base64 封面走内存解码;网络封面保留磁盘缓存和请求头。
+    final layered = hasCover
+        ? SourceImage(
+            source: cover,
+            headers: headers,
+            fit: BoxFit.cover,
+            fadeInDuration: const Duration(milliseconds: 180),
+            placeholder: placeholder,
+            fallback: placeholder,
+            onError: (error) =>
+                _logCoverFail(manga.title, cover, headers, error),
+          )
+        : placeholder;
+
     Widget clip = ClipRRect(
       borderRadius: BorderRadius.circular(r),
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 占位:渐变 + 网点 + 首字
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: grad,
-              ),
-            ),
-          ),
-          CustomPaint(painter: _HalftonePainter(grad.last)),
-          Positioned(
-            left: 8,
-            top: 6,
-            child: Text(
-              glyph,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.9),
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                shadows: const [Shadow(color: Colors.black45, blurRadius: 4)],
-              ),
-            ),
-          ),
-          // 私有源 Base64 封面走内存解码;网络封面保留磁盘缓存和请求头。
-          if (cover != null && cover.isNotEmpty)
-            SourceImage(
-              source: cover,
-              headers: headers,
-              fit: BoxFit.cover,
-              fadeInDuration: const Duration(milliseconds: 180),
-              fallback: const SizedBox.shrink(),
-              onError: (error) =>
-                  _logCoverFail(manga.title, cover, headers, error),
-            ),
+          layered,
           if (showTitle)
             Positioned(
               left: 0,
@@ -388,13 +407,18 @@ class _HalftonePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color.withValues(alpha: 0.18);
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.18)
+      // 原来是「半径 1 的实心点」:等价于直径 2、圆头的点。
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
     const gap = 7.0;
-    for (double y = 0; y < size.height; y += gap) {
-      for (double x = 0; x < size.width; x += gap) {
-        canvas.drawCircle(Offset(x, y), 1.0, paint);
-      }
-    }
+    final points = <Offset>[
+      for (double y = 0; y < size.height; y += gap)
+        for (double x = 0; x < size.width; x += gap) Offset(x, y),
+    ];
+    // 一次 drawPoints 而不是上千次 drawCircle:光栅化那边由「N 个绘制调用」变成 1 个。
+    canvas.drawPoints(PointMode.points, points, paint);
   }
 
   @override
