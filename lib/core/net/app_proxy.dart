@@ -433,7 +433,31 @@ class AppProxy {
   }
 
   /// 读 Windows 系统代理(注册表 Internet Settings)。
+  ///
+  /// 两条通道:先 `reg.exe`,起不来再退 PowerShell。**不能只靠 reg.exe** ——
+  /// 安全软件/组策略会把 reg.exe 直接拦掉(进程起不来),以前这里 catch 一下
+  /// 就返回 null,于是 App 安静地当「没有代理」直连,被墙的源站全部超时,
+  /// 用户看到的就是「源读不出来」。宁可慢几百毫秒,也不能悄悄降级成直连。
   static Future<String?> _windowsSystemProxy() async {
+    final viaReg = await _windowsProxyViaReg();
+    if (viaReg != null) return viaReg;
+    return _windowsProxyViaPowerShell();
+  }
+
+  /// 从 `ProxyServer` 的原文里挑出可用的 `host:port`。
+  /// 可能是 `host:port`,也可能是 `http=h:p;https=h:p;...`。
+  static String? _pickFromProxyServer(String raw) {
+    var v = raw.trim();
+    if (v.isEmpty) return null;
+    if (v.contains('=')) {
+      final https = RegExp(r'https=([^;]+)').firstMatch(v);
+      final http = RegExp(r'http=([^;]+)').firstMatch(v);
+      v = (https ?? http)?.group(1)?.trim() ?? '';
+    }
+    return v.isEmpty ? null : v;
+  }
+
+  static Future<String?> _windowsProxyViaReg() async {
     try {
       const key =
           r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings';
@@ -447,17 +471,44 @@ class AppProxy {
       final m = RegExp(r'ProxyServer\s+REG_SZ\s+(\S+)')
           .firstMatch(sv.stdout.toString());
       if (m == null) return null;
-      var v = m.group(1)!.trim();
-      // 可能是 "host:port" 或 "http=host:port;https=host:port;..."
-      if (v.contains('=')) {
-        final https = RegExp(r'https=([^;]+)').firstMatch(v);
-        final http = RegExp(r'http=([^;]+)').firstMatch(v);
-        v = (https ?? http)?.group(1)?.trim() ?? '';
-      }
-      return v.isEmpty ? null : v;
+      return _pickFromProxyServer(m.group(1)!);
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<String?> _windowsProxyViaPowerShell() async {
+    try {
+      final r = await Process.run(
+        'powershell',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          r"$p = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'; "
+              r"if ($p.ProxyEnable -eq 1) { $p.ProxyServer }",
+        ],
+      ).timeout(const Duration(seconds: 8));
+      if (r.exitCode != 0) return null;
+      return _pickFromProxyServer(r.stdout.toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 当前判定为「直连」时，重新探一次系统代理。
+  ///
+  /// 解决一个很常见的时序：先开 App、后开代理。启动那次没探到代理，
+  /// 之后所有请求都直连，用户以为「源坏了」，其实只要再探一次就好。
+  ///
+  /// 返回 true 表示这次真的探到了新代理（调用方可以据此重试请求）。
+  /// 用户手动设过覆盖（含强制直连）时不干预。
+  static Future<bool> retryDetect() async {
+    if (_resolved != null) return false;
+    final ov = _override;
+    if (ov != null && ov.isNotEmpty) return false;
+    await refresh();
+    return _resolved != null;
   }
 }
 
