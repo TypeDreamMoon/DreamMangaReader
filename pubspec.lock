@@ -463,6 +463,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  hertz_sdk:
+    dependency: "direct main"
+    description:
+      path: "packages/hertz_sdk"
+      relative: true
+    source: path
+    version: "0.1.0"
   hls:
     dependency: "direct main"
     description:

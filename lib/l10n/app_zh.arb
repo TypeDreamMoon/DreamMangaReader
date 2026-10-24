@@ -329,6 +329,10 @@
   "srcpick_mixedSubtitle": "同时搜索 / 浏览所有启用的源",
   "srcpick_experimental": "实验性",
   "sync_account": "账号",
+  "sync_protocolLabel": "接口协议",
+  "sync_protocolLegacy": "旧版",
+  "sync_protocolSdk": "标准 SDK",
+  "sync_protocolHint": "「标准 SDK」需要服务端部署新版接口后才能用；切换后立即生效。",
   "sync_loginSuccess": "登录成功:{name}",
   "@sync_loginSuccess": {
     "placeholders": {

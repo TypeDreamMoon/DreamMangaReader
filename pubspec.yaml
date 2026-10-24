@@ -36,6 +36,14 @@ dependencies:
   # gen-l10n 生成的 AppLocalizations 依赖 intl(版本跟随 flutter SDK 约束)。
   intl: 0.20.2
 
+  # 标准数据 SDK（与 C++/TS 并列，方法名/错误语义/重试策略一致）。
+  #
+  # 这里是 **vendored 副本**：主副本在 NetSDKstudy/sdk/dart，改完 SDK 跑
+  #   node Scripts/sync_hertz_sdk.mjs
+  # 同步过来。用 path 而不是跨仓库相对路径，CI 才能 pub get 成功。
+  hertz_sdk:
+    path: packages/hertz_sdk
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8

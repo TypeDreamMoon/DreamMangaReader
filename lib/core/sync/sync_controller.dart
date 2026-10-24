@@ -12,6 +12,7 @@ import '../novel/reader/novel_reader_data_store.dart';
 import '../storage/secret_store.dart';
 import '../source/source_registry.dart' show registeredSources;
 import '../source/source_repository.dart';
+import 'hertz_appdata_backend.dart';
 import 'hertz_backend.dart';
 import 'sync_backend.dart';
 import 'sync_data.dart';
@@ -53,6 +54,13 @@ class SyncController extends ChangeNotifier {
   static const _kHIssuer = 'sync.hertz.issuer';
   static const _kHClientId = 'sync.hertz.clientId';
   static const _kHPreset = 'sync.hertz.preset';
+
+  /// Hertz 账号同步走哪套协议：
+  ///   `sync`（默认）→ `dreamreader-sync` 的 `/api/v1/sync`（整包 + ETag）
+  ///   `appdata`     → 标准 SDK 的 `/api/v1/data/{app}/{key}`（多 doc_key）
+  ///
+  /// 先留在配置里、暂不暴露到 UI：appdata 服务还没上线，等部署好再给用户选项。
+  static const _kHProtocol = 'sync.hertz.protocol';
   static const _kCategories = 'sync.categories';
   static const _kReaderNotesMigrated = 'sync.readerNotesMigrationV1';
 
@@ -64,6 +72,9 @@ class SyncController extends ChangeNotifier {
 
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
+
+  /// Hertz 账号同步的协议：'sync'(旧) | 'appdata'(标准 SDK)。
+  String hertzProtocol = 'sync';
 
   // WebDAV 配置
   String url = '';
@@ -161,6 +172,7 @@ class SyncController extends ChangeNotifier {
   Future<void> load() async {
     final p = await _p;
     backendKind = p.getString(_kBackend) ?? 'webdav';
+    hertzProtocol = p.getString(_kHProtocol) ?? 'sync';
     url = p.getString(_kUrl) ?? '';
     username = p.getString(_kUser) ?? '';
     // 密码走安全存储;旧版本的明文键读到就搬走并删掉(见 [_kLegacyPass])。
@@ -213,6 +225,16 @@ class SyncController extends ChangeNotifier {
     if (kind != 'webdav' && kind != 'hertz') return;
     backendKind = kind;
     await (await _p).setString(_kBackend, kind);
+    notifyListeners();
+  }
+
+  /// 切换 Hertz 同步协议：`sync`（旧 /api/v1/sync）或 `appdata`（标准 SDK）。
+  ///
+  /// 暂时只给调试用，不在设置页暴露 —— appdata 服务上线后再加 UI 选项。
+  Future<void> setHertzProtocol(String kind) async {
+    if (kind != 'sync' && kind != 'appdata') return;
+    hertzProtocol = kind;
+    await (await _p).setString(_kHProtocol, kind);
     notifyListeners();
   }
 
@@ -719,11 +741,16 @@ class SyncController extends ChangeNotifier {
     );
   }
 
-  SyncBackend _backend() =>
-      debugBackendFactory?.call() ??
-      (isHertz
-          ? HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
-          : WebDavBackend(baseUrl: url, username: username, password: password));
+  SyncBackend _backend() {
+    if (debugBackendFactory != null) return debugBackendFactory!();
+    if (!isHertz) {
+      return WebDavBackend(baseUrl: url, username: username, password: password);
+    }
+    // 两套协议并存：旧客户端的 `/api/v1/sync` 不能停，新的走标准 SDK。
+    return hertzProtocol == 'appdata'
+        ? HertzAppDataBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
+        : HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance);
+  }
 
   Future<SyncTestResult> testConnection() => _backend().test();
 
