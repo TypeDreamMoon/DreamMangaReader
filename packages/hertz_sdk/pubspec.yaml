@@ -1,0 +1,11 @@
+name: hertz_sdk
+description: Hertz 应用数据 SDK（Dart）。方法名、错误语义、重试策略与 C++/TS 版一致。
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+# 刻意零依赖：网络用 dart:io，哈希自己算。
+# 这样不跑 pub get 也能 `dart run test/run_tests.dart` 自测，
+# 和 C++ 版「26 项测试不需要启服务」是同一个路子。
