@@ -18,7 +18,7 @@ class AppInfo {
 
   static const name = 'Dream Manga Reader';
   static const cnName = '梦漫';
-  static const version = '1.18.1';
+  static const version = '1.19.0';
   static const tagline = '跨平台漫画 + 番剧 + 小说 · Android + Windows';
   static const author = 'TypeDreamMoon';
   static const repoUrl = 'https://github.com/TypeDreamMoon/DreamMangaReader';
@@ -71,7 +71,7 @@ class AppInfo {
     'Windows 单实例:重复启动唤回已开的窗口,不再多出第二个托盘图标',
     '统一账号页:梦漫账号 + 哔哩哔哩 + 各源账号一处管理(共用登录的源合并成一行)',
     '梦漫账号:App 内登录 / 注册 / 邮箱验证码找回密码,全程不跳浏览器',
-    '云同步:WebDAV / 梦漫账号 · 打开 App 就自动双向合并(默认开)· 可选类别',
+    '云同步:WebDAV / 梦漫账号 · 梦漫账号改走新的数据服务,云端数据已迁移 · 打开 App 就自动双向合并(默认开)· 可选类别',
     '语言跟随系统:简体 / 繁体 / English / 日本語,也可手动指定',
     '应用内更新:可跳过某个版本 · 提醒不再每次启动都弹',
     '源管理:zip 导入源 · GitHub 登录拉私有源仓 · 刷新后脚本立即生效',
