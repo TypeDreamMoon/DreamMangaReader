@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -191,6 +192,11 @@ class AppProxy {
   /// 重新解析并注入 [HttpOverrides.global]。
   static Future<void> refresh() async {
     _resolved = await _resolve();
+    _install();
+  }
+
+  /// 把 [_resolved] 注入 [HttpOverrides.global],并让 [generation] 换代。
+  static void _install() {
     _bypass = [
       ..._bypassList(_noProxy, includeEnvironment: _override == null),
       // 系统代理自带的排除名单(Android 的 ProxyInfo / http.nonProxyHosts)。
@@ -199,6 +205,14 @@ class AppProxy {
     HttpOverrides.global = _AppHttpOverrides(_resolved, _bypass);
     _generation++;
   }
+
+  /// 测试用:替换自动检测(环境变量 + 系统代理),免得测试结果取决于跑测试那台机器
+  /// 开没开代理。null = 用真的 [detectAuto]。
+  @visibleForTesting
+  static Future<(ProxyEndpoint?, ProxySource)> Function()? debugDetectAuto;
+
+  static Future<(ProxyEndpoint?, ProxySource)> _detect() =>
+      (debugDetectAuto ?? detectAuto)();
 
   static Future<ProxyEndpoint?> _resolve() async {
     final ov = _override;
@@ -212,7 +226,7 @@ class AppProxy {
       // 别把 `PROXY 一坨乱码` 塞进 findProxy(dart 会直接抛 HttpException)。
       return parse(ov).endpoint;
     }
-    final (proxy, src) = await detectAuto();
+    final (proxy, src) = await _detect();
     _sourceCode = src;
     return proxy;
   }
@@ -434,15 +448,31 @@ class AppProxy {
 
   /// 读 Windows 系统代理(注册表 Internet Settings)。
   ///
-  /// 两条通道:先 `reg.exe`,起不来再退 PowerShell。**不能只靠 reg.exe** ——
-  /// 安全软件/组策略会把 reg.exe 直接拦掉(进程起不来),以前这里 catch 一下
-  /// 就返回 null,于是 App 安静地当「没有代理」直连,被墙的源站全部超时,
-  /// 用户看到的就是「源读不出来」。宁可慢几百毫秒,也不能悄悄降级成直连。
+  /// 两条通道:先 `reg.exe`,**它没给出确定答案时**再退 PowerShell。**不能只靠
+  /// reg.exe** —— 安全软件/组策略会把 reg.exe 直接拦掉(进程起不来),以前这里
+  /// catch 一下就返回 null,于是 App 安静地当「没有代理」直连,被墙的源站全部
+  /// 超时,用户看到的就是「源读不出来」。
+  ///
+  /// 但也**不能**一律再问 PowerShell:reg.exe 好好跑完、明确说了 `ProxyEnable=0`
+  /// 就是「没开代理」。这是绝大多数用户的情况,而这一步在首帧之前等(`main.dart`
+  /// 的启动加载),让每个没开代理的用户都多付一次 PowerShell 冷启动(最长 8 秒)不值。
   static Future<String?> _windowsSystemProxy() async {
     final viaReg = await _windowsProxyViaReg();
-    if (viaReg != null) return viaReg;
+    if (viaReg.answered) return viaReg.proxy;
     return _windowsProxyViaPowerShell();
   }
+
+  /// 测试用:直接跑 Windows 那条探测(配合 [debugRunProcess],哪个平台都能测)。
+  @visibleForTesting
+  static Future<String?> debugWindowsSystemProxy() => _windowsSystemProxy();
+
+  /// 起外部进程(reg.exe / PowerShell)的入口。测试换成假的,不碰真注册表。
+  @visibleForTesting
+  static Future<ProcessResult> Function(String exe, List<String> args)
+      debugRunProcess = _runProcess;
+
+  static Future<ProcessResult> _runProcess(String exe, List<String> args) =>
+      Process.run(exe, args);
 
   /// 从 `ProxyServer` 的原文里挑出可用的 `host:port`。
   /// 可能是 `host:port`,也可能是 `http=h:p;https=h:p;...`。
@@ -457,29 +487,55 @@ class AppProxy {
     return v.isEmpty ? null : v;
   }
 
-  static Future<String?> _windowsProxyViaReg() async {
+  /// 用 reg.exe 读。返回值分清两件事:
+  ///   - `answered: true`  reg.exe 跑通了,`proxy` 就是答案(null = 确实没开代理)
+  ///   - `answered: false` 没拿到确定答案(起不来 / 被拦 / 超时 / 输出看不懂),
+  ///     只有这时才值得再问 PowerShell
+  ///
+  /// reg.exe 非 0 退出也算「没答案」:值不存在和被组策略拦下
+  /// (「Registry editing has been disabled by your administrator」)都是退出码 1,
+  /// 提示语还随系统语言变,分不清。好在 ProxyEnable 在正常的 Windows 上总是在的,
+  /// 这条路很少走到。
+  static Future<({bool answered, String? proxy})> _windowsProxyViaReg() async {
+    const key =
+        r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings';
+    const noAnswer = (answered: false, proxy: null);
+    final ProcessResult en;
     try {
-      const key =
-          r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings';
-      final en = await Process.run('reg', ['query', key, '/v', 'ProxyEnable']);
-      // ProxyEnable REG_DWORD 0x0/0x1
-      if (!RegExp(r'ProxyEnable\s+REG_DWORD\s+0x0*1\b')
-          .hasMatch(en.stdout.toString())) {
-        return null;
-      }
-      final sv = await Process.run('reg', ['query', key, '/v', 'ProxyServer']);
-      final m = RegExp(r'ProxyServer\s+REG_SZ\s+(\S+)')
-          .firstMatch(sv.stdout.toString());
-      if (m == null) return null;
-      return _pickFromProxyServer(m.group(1)!);
+      en = await debugRunProcess('reg', ['query', key, '/v', 'ProxyEnable'])
+          .timeout(_regTimeout);
     } catch (_) {
-      return null;
+      return noAnswer;
     }
+    // ProxyEnable    REG_DWORD    0x0 / 0x1
+    final enabled = RegExp(r'ProxyEnable\s+REG_DWORD\s+0x([0-9a-fA-F]+)')
+        .firstMatch(en.stdout.toString());
+    if (en.exitCode != 0 || enabled == null) return noAnswer;
+    if (int.parse(enabled.group(1)!, radix: 16) == 0) {
+      return (answered: true, proxy: null); // 明确没开代理:不必再问 PowerShell
+    }
+
+    final ProcessResult sv;
+    try {
+      sv = await debugRunProcess('reg', ['query', key, '/v', 'ProxyServer'])
+          .timeout(_regTimeout);
+    } catch (_) {
+      return noAnswer;
+    }
+    final m = RegExp(r'ProxyServer\s+REG_SZ\s+(\S+)')
+        .firstMatch(sv.stdout.toString());
+    // 上一条刚跑通,reg.exe 没被拦:ProxyServer 读不到 = 没有这个值(只开了 PAC
+    // 之类),PowerShell 读出来也一样是空。
+    if (m == null) return (answered: true, proxy: null);
+    return (answered: true, proxy: _pickFromProxyServer(m.group(1)!));
   }
+
+  /// reg.exe 正常几十毫秒就回;卡住(被安全软件挂起)时别把启动一起拖住。
+  static const _regTimeout = Duration(seconds: 3);
 
   static Future<String?> _windowsProxyViaPowerShell() async {
     try {
-      final r = await Process.run(
+      final r = await debugRunProcess(
         'powershell',
         [
           '-NoProfile',
@@ -496,6 +552,23 @@ class AppProxy {
     }
   }
 
+  /// [retryDetect] 两次真正探测之间的最短间隔。
+  static const retryDetectCooldown = Duration(seconds: 15);
+
+  static Future<bool>? _retryInFlight;
+  static DateTime? _lastRetryAt;
+
+  /// 测试用:[retryDetect] 冷却计时的时钟。
+  @visibleForTesting
+  static DateTime Function() debugClock = DateTime.now;
+
+  /// 测试用:清掉 [retryDetect] 的冷却 / 在途状态(静态状态跨用例共享)。
+  @visibleForTesting
+  static void debugResetRetryDetect() {
+    _retryInFlight = null;
+    _lastRetryAt = null;
+  }
+
   /// 当前判定为「直连」时，重新探一次系统代理。
   ///
   /// 解决一个很常见的时序：先开 App、后开代理。启动那次没探到代理，
@@ -503,12 +576,50 @@ class AppProxy {
   ///
   /// 返回 true 表示这次真的探到了新代理（调用方可以据此重试请求）。
   /// 用户手动设过覆盖（含强制直连）时不干预。
-  static Future<bool> retryDetect() async {
-    if (_resolved != null) return false;
+  ///
+  /// **single-flight + 冷却**：一个被墙的源，一屏封面能同时失败几十个请求。
+  /// 每个都去探一次，就是几十个 reg.exe / powershell.exe，外加 [generation]
+  /// 连涨几十次、长命 client 跟着重建几十次。所以：
+  ///   - 正在探：大家等同一次的结果（探到了就都重试一次）
+  ///   - 刚探过（[retryDetectCooldown] 内）：直接 false，不再起进程
+  ///   - 没探到：什么都不动，[generation] 不涨
+  static Future<bool> retryDetect() {
+    if (_resolved != null) return Future.value(false);
     final ov = _override;
-    if (ov != null && ov.isNotEmpty) return false;
-    await refresh();
-    return _resolved != null;
+    if (ov != null && ov.isNotEmpty) return Future.value(false);
+
+    final pending = _retryInFlight;
+    if (pending != null) return pending;
+
+    final now = debugClock();
+    final last = _lastRetryAt;
+    if (last != null && now.difference(last) < retryDetectCooldown) {
+      return Future.value(false);
+    }
+    _lastRetryAt = now;
+
+    final fut = _retryDetectOnce().whenComplete(() => _retryInFlight = null);
+    _retryInFlight = fut;
+    return fut;
+  }
+
+  static Future<bool> _retryDetectOnce() async {
+    final startGen = _generation;
+    final ProxyEndpoint? proxy;
+    final ProxySource source;
+    try {
+      (proxy, source) = await _detect();
+    } catch (_) {
+      return false; // 探测本身出错 = 没探到;别让这个错顶替调用方原本的网络错误
+    }
+    // 探测期间用户在设置页改过(setOverride → refresh 已经换代):以那次为准,
+    // 别拿这次的结果把用户刚设的覆盖冲掉。
+    if (_generation != startGen) return _resolved != null;
+    if (proxy == null) return false;
+    _resolved = proxy;
+    _sourceCode = source;
+    _install();
+    return true;
   }
 }
 
