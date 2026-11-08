@@ -67,8 +67,15 @@ class HertzClient {
   /// 写一份数据。data 是原始字节，服务端不解析。
   ///
   /// 返回的 version 留着做下次写入的 ifMatch。
+  ///
+  /// 条件写：[SaveOptions.ifMatch]（乐观锁 / `*` 只更新）或
+  /// [SaveOptions.createOnly]（只创建），两者不能同时给。
   Future<DocMeta> save(String key, List<int> data, [SaveOptions? options]) async {
     final o = options ?? const SaveOptions();
+    if (o.createOnly && o.ifMatch.isNotEmpty) {
+      // 服务端对「两个条件头一起来」回 400；在本地就拦下，免得白打一次网络
+      throw ArgumentError('SaveOptions: createOnly 和 ifMatch 不能同时给');
+    }
     final body = Uint8List.fromList(data);
 
     final headers = <String, String>{
@@ -76,17 +83,22 @@ class HertzClient {
       'X-Perm-Read': '${o.permRead}',
       'X-Perm-Write': '${o.permWrite}',
       if (o.ifMatch.isNotEmpty) 'If-Match': o.ifMatch,
+      if (o.createOnly) 'If-None-Match': '*',
     };
 
     HertzResponse res;
     try {
       res = await _request('PUT', _docPath(key), body: body, headers: headers);
     } on HertzException catch (e) {
-      // 「写成功了，但响应在网络上丢了」——重试会带着同一个旧 If-Match 再打一次，
-      // 服务端此刻版本已变，回 409。调用方看到的会是「冲突」，其实自己刚写成了。
+      // 「写成功了，但响应在网络上丢了」——重试会带着同一个旧条件再打一次，
+      // 服务端此刻版本已变（或记录已被自己建出来），回 409。调用方看到的会是
+      // 「冲突」，其实自己刚写成了。
       //
       // 服务端的 version 就是内容哈希，所以读一次、比一下就能分辨。
-      if (e.isConflict && o.ifMatch.isNotEmpty && o.ifMatch != '*') {
+      // `ifMatch: "*"` 不会因为别人写过而 409（它只在记录不存在时报 412），不用补偿。
+      final conditional =
+          o.createOnly || (o.ifMatch.isNotEmpty && o.ifMatch != '*');
+      if (e.isConflict && conditional) {
         try {
           final current = await load(key);
           if (current.version == sha256Hex(body)) {
@@ -108,11 +120,14 @@ class HertzClient {
     }
 
     final data_obj = _envelopeData(res);
+    // 信封里没有就退回 X-Version 头（服务端两处都给）；两处都没有就是空串，
+    // 调用方应当把它当成异常——空版本做下次的 ifMatch 等于不带条件。
+    final version = (data_obj['version'] as String?) ?? res.header('x-version');
     return DocMeta(
       key: key,
       bytes: body.length,
       contentType: o.contentType,
-      version: (data_obj['version'] as String?) ?? '',
+      version: version,
       permRead: o.permRead,
       permWrite: o.permWrite,
       updatedAt: (data_obj['updated_at'] as String?) ?? '',
@@ -408,18 +423,23 @@ class HertzClient {
     return text;
   }
 
+  /// 业务错误码：先看信封的 `code`，没有再看 `X-Error-Code` 头。
+  ///
+  /// HEAD 的错误响应只有头、没有 body（[loadMeta] 走的就是 HEAD），
+  /// 只看 body 的话 HEAD 永远拿到 0，分不清「数据服务说没有」和「地址配错了」。
   static int _envelopeCode(HertzResponse res) {
     final text = res.bodyText;
-    if (text.isEmpty) return 0;
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is Map && decoded['code'] is int) {
-        return decoded['code'] as int;
+    if (text.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map && decoded['code'] is int) {
+          return decoded['code'] as int;
+        }
+      } catch (_) {
+        // 不是 JSON：退回响应头
       }
-    } catch (_) {
-      // 忽略
     }
-    return 0;
+    return int.tryParse(res.header('x-error-code').trim()) ?? 0;
   }
 
   static int _headerInt(HertzResponse res, String name, int def) {

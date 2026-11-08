@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -56,6 +57,15 @@ abstract class HertzTransport {
 }
 
 /// 默认实现：dart:io 的 HttpClient。Windows / Android / iOS / macOS / Linux 都可用。
+///
+/// 超时（[HertzRequest.timeoutMs]）分三段各自计：
+///   - 建连 / 拿到请求对象
+///   - 发完请求体并等到响应头
+///   - 读响应体：**两块数据之间**最多等这么久（空闲超时，和 Dio 的 receiveTimeout 同义）
+///
+/// 任何一段超时都会**掐掉这条连接**再抛 [TimeoutException]——只抛不掐的话，
+/// 一个卡在半路的响应体会一直占着连接，下次请求还可能复用到它。
+/// 读响应体按空闲而不按总时长计，是为了大存档在慢网下不被误杀：只要还在来数据就等。
 class IoTransport implements HertzTransport {
   IoTransport({HttpClient? client}) : _client = client ?? HttpClient();
 
@@ -68,19 +78,41 @@ class IoTransport implements HertzTransport {
 
     _client.connectionTimeout = timeout;
 
-    final hreq = await _client.openUrl(req.method, uri).timeout(timeout);
+    final opening = _client.openUrl(req.method, uri);
+    final HttpClientRequest hreq;
+    try {
+      hreq = await opening.timeout(timeout);
+    } on TimeoutException {
+      // openUrl 晚到了也要收尾，别留一条没人管的连接
+      unawaited(opening.then((r) => r.abort(), onError: (Object _) {}));
+      rethrow;
+    }
+
     for (final kv in req.headers.entries) {
       hreq.headers.set(kv.key, kv.value);
     }
     final body = req.body;
+    if (_sendsBody(req.method) || (body != null && body.isNotEmpty)) {
+      // **必须声明定长**：不设 contentLength 时 dart:io 走 chunked 编码，
+      // 而 appdata 要求 Content-Length（好在读包之前就按上限拒绝），chunked 直接回 400。
+      hreq.contentLength = body?.length ?? 0;
+    }
     if (body != null && body.isNotEmpty) {
       hreq.add(body);
     }
 
-    final hresp = await hreq.close().timeout(timeout);
+    final HttpClientResponse hresp;
+    try {
+      hresp = await hreq.close().timeout(timeout);
+    } on TimeoutException catch (e) {
+      hreq.abort(e);
+      rethrow;
+    }
 
+    // Stream.timeout：两块数据之间超过 timeout 就往流里塞一个 TimeoutException；
+    // await for 因此抛出时会取消订阅，dart:io 随之销毁这条连接（不会放回连接池）。
     final builder = BytesBuilder(copy: false);
-    await for (final chunk in hresp) {
+    await for (final chunk in hresp.timeout(timeout)) {
       builder.add(chunk);
     }
 
@@ -94,5 +126,10 @@ class IoTransport implements HertzTransport {
       headers: headers,
       body: builder.takeBytes(),
     );
+  }
+
+  static bool _sendsBody(String method) {
+    final m = method.toUpperCase();
+    return m == 'PUT' || m == 'POST' || m == 'PATCH';
   }
 }

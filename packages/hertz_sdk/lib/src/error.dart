@@ -9,8 +9,11 @@ enum HertzErrorKind {
   /// 401
   unauthorized,
 
-  /// 409
+  /// 409：记录存在，但版本不是你给的那个（或 createOnly 时记录已存在）
   conflict,
+
+  /// 412：你给了 If-Match，但记录不存在——没有「当前版本」可比
+  preconditionFailed,
 
   /// 413
   tooLarge,
@@ -33,6 +36,7 @@ HertzErrorKind kindFromStatus(int status) {
   if (status == 401) return HertzErrorKind.unauthorized;
   if (status == 404) return HertzErrorKind.notFound;
   if (status == 409) return HertzErrorKind.conflict;
+  if (status == 412) return HertzErrorKind.preconditionFailed;
   if (status == 413) return HertzErrorKind.tooLarge;
   if (status == 429) return HertzErrorKind.rateLimited;
   if (status >= 500) return HertzErrorKind.server;
@@ -61,13 +65,15 @@ class HertzException implements Exception {
   final String message;
   final String path;
 
-  /// 服务端信封里的业务错误码（`{"code":409,"msg":"..."}`）。
-  /// 0 表示服务端没给（网络错误、或老版本服务端）。
+  /// 服务端信封里的业务错误码（`{"code":7001,"msg":"..."}`，见 [HertzErrorCode]）。
+  /// HEAD 响应没有 body，取自 `X-Error-Code` 头。
+  /// 0 表示服务端没给（网络错误、反代 / 别的服务回的非信封响应、或老版本服务端）。
   final int code;
 
   bool get isNotFound => kind == HertzErrorKind.notFound;
   bool get isUnauthorized => kind == HertzErrorKind.unauthorized;
   bool get isConflict => kind == HertzErrorKind.conflict;
+  bool get isPreconditionFailed => kind == HertzErrorKind.preconditionFailed;
   bool get isTooLarge => kind == HertzErrorKind.tooLarge;
   bool get isNetwork => kind == HertzErrorKind.network;
 
@@ -85,4 +91,29 @@ class HertzException implements Exception {
   @override
   String toString() =>
       'HertzException(${kind.name}, HTTP $status, code $code): $message';
+}
+
+/// 服务端契约里的业务错误码（`hertz-appdata/packages/contracts/errors/error_codes.yaml`）。
+///
+/// 和 HTTP 状态码不是一回事：同样是 404，`notFound` 是**数据服务自己**说「没有这条」，
+/// 而 `code == 0` 的 404 多半是地址配错了（反代 / 别的服务回的 `404 page not found`）。
+/// 把后者当成「云端没数据」，接下来一次推送就可能把真数据盖掉。
+abstract final class HertzErrorCode {
+  static const ok = 0;
+  static const internal = 1;
+  static const invalidRequest = 1001;
+  static const unauthorized = 1002;
+  static const forbidden = 1003;
+  static const notFound = 1004;
+  static const rateLimited = 1005;
+  static const invalidToken = 3001;
+  static const versionConflict = 7001;
+  static const preconditionFailed = 7002;
+  static const payloadTooLarge = 7003;
+  static const appNotAllowed = 7004;
+  static const writeDenied = 7005;
+  static const quotaExceeded = 7006;
+  static const invalidPermission = 7007;
+  static const invalidKey = 7008;
+  static const serviceUnavailable = 7009;
 }

@@ -8,6 +8,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import '../lib/hertz_sdk.dart';
@@ -352,8 +353,216 @@ Future<void> testConflictIdempotent() async {
     } on HertzException catch (e) {
       threw = e.isConflict;
     }
+    // If-Match:* 是「只更新」：服务端不会因为别人写过而回 409，真回了也不是「自己刚写成」
     check(threw, 'If-Match:* 的 409 不补偿');
     check(t.calls.length == 1, '也没有多打一次 GET');
+  }
+}
+
+Future<void> testCreateOnly() async {
+  print('\n[只创建 createOnly]');
+  final payload = utf8.encode('first');
+  final hash = sha256Hex(payload);
+  {
+    final t = FakeTransport([(_) => okJson('{"version":"$hash"}')]);
+    final c = makeClient(t);
+    await c.save('save:all', payload, const SaveOptions(createOnly: true));
+    final h = t.calls.single.headers;
+    check(h['If-None-Match'] == '*', 'createOnly → If-None-Match: *');
+    check(!h.containsKey('If-Match'),
+        'createOnly 不带 If-Match（"*" 在服务端是「只更新」）');
+  }
+  {
+    final t = FakeTransport([(_) => okJson('{}')]);
+    final c = makeClient(t);
+    var threw = false;
+    try {
+      await c.save(
+          'k', payload, const SaveOptions(createOnly: true, ifMatch: 'v1'));
+    } on ArgumentError {
+      threw = true;
+    }
+    check(threw && t.calls.isEmpty, 'createOnly + ifMatch → 本地就拒绝，不打网络');
+  }
+  {
+    final t = FakeTransport([
+      (_) => resp(409, body: '{"code":7001,"msg":"已存在"}'),
+      (_) => resp(200, body: 'first', headers: {'x-version': hash}),
+    ]);
+    final c = makeClient(t);
+    final m = await c.save('k', payload, const SaveOptions(createOnly: true));
+    check(m.version == hash && t.calls.length == 2,
+        'createOnly 的 409 若服务端就是这份内容 → 按成功返回（响应丢了后的重试）');
+  }
+  {
+    final t = FakeTransport([
+      (_) => resp(409, body: '{"code":7001,"msg":"已存在"}'),
+      (_) => resp(200, body: 'other', headers: {'x-version': 'someone-else'}),
+    ]);
+    final c = makeClient(t);
+    var conflict = false;
+    try {
+      await c.save('k', payload, const SaveOptions(createOnly: true));
+    } on HertzException catch (e) {
+      conflict = e.isConflict && e.code == HertzErrorCode.versionConflict;
+    }
+    check(conflict, 'createOnly 撞上别人建好的记录 → 真冲突');
+  }
+}
+
+Future<void> testPreconditionFailed() async {
+  print('\n[412 记录不存在]');
+  var calls = 0;
+  final t = FakeTransport([
+    (_) {
+      calls++;
+      return resp(412,
+          body: '{"code":7002,"msg":"precondition failed, no matching record exists"}');
+    },
+  ]);
+  final c = makeClient(t);
+  try {
+    await c.save('k', utf8.encode('v'), const SaveOptions(ifMatch: 'v-gone'));
+    check(false, '412 应该抛异常');
+  } on HertzException catch (e) {
+    check(e.isPreconditionFailed && e.status == 412, '412 → isPreconditionFailed');
+    check(e.code == HertzErrorCode.preconditionFailed, '业务码 7002');
+    check(!e.isConflict, '412 不是 409（没有当前版本可比）');
+  }
+  check(calls == 1, '412 不重试');
+}
+
+Future<void> testErrorCodeSources() async {
+  print('\n[业务码来源]');
+  {
+    // HEAD 的错误响应只有头（X-Error-Code），没有 body
+    final t = FakeTransport([
+      (_) => HertzResponse(
+            status: 404,
+            headers: {'x-error-code': '1004'},
+            body: Uint8List(0),
+          ),
+    ]);
+    final c = makeClient(t);
+    try {
+      await c.loadMeta('k');
+      check(false, 'HEAD 404 应该抛异常');
+    } on HertzException catch (e) {
+      check(e.isNotFound && e.code == HertzErrorCode.notFound,
+          'HEAD 404 的业务码取自 X-Error-Code');
+    }
+  }
+  {
+    final t = FakeTransport([(_) => resp(404, body: '404 page not found')]);
+    final c = makeClient(t);
+    try {
+      await c.load('k');
+      check(false, '404 应该抛异常');
+    } on HertzException catch (e) {
+      check(e.isNotFound && e.code == 0,
+          '别的服务回的 404（非信封、无 X-Error-Code）→ code 0，调用方能分辨');
+    }
+  }
+  {
+    final t = FakeTransport([
+      (_) => resp(200,
+          body: '{"code":0,"msg":"ok","data":{}}',
+          headers: {'x-version': 'from-header'}),
+    ]);
+    final c = makeClient(t);
+    final m = await c.save('k', utf8.encode('v'));
+    check(m.version == 'from-header', '信封里没有 version → 退回 X-Version 头');
+  }
+}
+
+/// 起一个只活在本测试里的回环 HTTP 服务（不需要外部服务）。
+Future<HttpServer> _loopback(void Function(HttpRequest req) handle) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen(handle);
+  return server;
+}
+
+Future<void> testIoTransport() async {
+  print('\n[IoTransport 真网络（回环）]');
+  {
+    final seen = <String, String>{};
+    var received = 0;
+    final server = await _loopback((req) async {
+      seen['content-length'] = req.headers.value('content-length') ?? '';
+      seen['transfer-encoding'] = req.headers.value('transfer-encoding') ?? '';
+      received =
+          (await req.fold<List<int>>(<int>[], (a, b) => a..addAll(b))).length;
+      req.response
+        ..statusCode = 200
+        ..write('{"code":0,"msg":"ok","data":{}}');
+      await req.response.close();
+    });
+    try {
+      final payload = Uint8List.fromList(List<int>.filled(100000, 0x61));
+      final res = await IoTransport().send(HertzRequest(
+        method: 'PUT',
+        url: 'http://127.0.0.1:${server.port}/api/v1/data/a/k',
+        timeoutMs: 5000,
+        body: payload,
+      ));
+      check(res.status == 200, 'PUT 往返成功');
+      check(seen['content-length'] == '100000',
+          'PUT 带了 Content-Length（${seen['content-length']}）');
+      check(seen['transfer-encoding']!.isEmpty,
+          '没有走 chunked（appdata 会对 chunked 回 400）');
+      check(received == 100000, '服务端收全了请求体');
+
+      await IoTransport().send(HertzRequest(
+        method: 'PUT',
+        url: 'http://127.0.0.1:${server.port}/api/v1/data/a/k',
+        timeoutMs: 5000,
+      ));
+      check(seen['content-length'] == '0', '空 PUT 也声明 Content-Length: 0');
+    } finally {
+      await server.close(force: true);
+    }
+  }
+  {
+    // 头发完、body 发一半就不动了：没有 body 超时的话 send() 会永远挂着。
+    // 用裸 socket 当服务端：这样才看得见「客户端有没有把连接掐掉」。
+    final closed = Completer<void>();
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((sock) {
+      var sent = false;
+      sock.listen((_) {
+        if (sent) return;
+        sent = true;
+        sock.add(utf8.encode('HTTP/1.1 200 OK\r\n'
+            'Content-Length: 1000\r\n'
+            '\r\n'
+            'only-ten-b'));
+      }, onDone: () {
+        if (!closed.isCompleted) closed.complete();
+        sock.destroy();
+      }, onError: (Object _) {
+        if (!closed.isCompleted) closed.complete();
+      });
+    });
+    final sw = Stopwatch()..start();
+    var timedOut = false;
+    try {
+      await IoTransport().send(HertzRequest(
+        method: 'GET',
+        url: 'http://127.0.0.1:${server.port}/stall',
+        timeoutMs: 300,
+      ));
+    } on TimeoutException {
+      timedOut = true;
+    } finally {
+      sw.stop();
+    }
+    check(timedOut, '响应体卡住 → TimeoutException（${sw.elapsedMilliseconds}ms）');
+    check(sw.elapsedMilliseconds < 3000, '没有一直挂着');
+    final aborted = await closed.future
+        .then((_) => true)
+        .timeout(const Duration(seconds: 3), onTimeout: () => false);
+    check(aborted, '超时后连接被掐掉了（服务端看到断开）');
+    await server.close();
   }
 }
 
@@ -455,8 +664,14 @@ Future<void> main() async {
   await testErrorCode();
   await testLoadMeta();
   await testLoadIfChanged();
+  await testCreateOnly();
+  await testPreconditionFailed();
+  await testErrorCodeSources();
+  await testIoTransport();
 
   print('\n----------------------------------------');
   print('共 $_checks 项，失败 $_fails 项');
   print(_fails == 0 ? 'RESULT: 全部通过' : 'RESULT: 有失败');
+  // 脚本 / CI 靠退出码判断，光打印「有失败」会被当成通过
+  if (_fails > 0) exitCode = 1;
 }

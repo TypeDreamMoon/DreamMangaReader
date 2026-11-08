@@ -4,7 +4,8 @@
 library;
 
 export 'src/client.dart' show HertzClient, HertzClientOptions;
-export 'src/error.dart' show HertzErrorKind, HertzException, kindFromStatus;
+export 'src/error.dart'
+    show HertzErrorCode, HertzErrorKind, HertzException, kindFromStatus;
 export 'src/sha256.dart' show sha256Hex;
 export 'src/transport.dart'
     show HertzRequest, HertzResponse, HertzTransport, IoTransport;

@@ -79,17 +79,27 @@ class SaveOptions {
     this.permRead = PermRead.owner,
     this.permWrite = PermWrite.owner,
     this.ifMatch = '',
+    this.createOnly = false,
     this.contentType = 'application/octet-stream',
   });
 
   final int permRead;
   final int permWrite;
 
-  /// 乐观锁。三种语义：
+  /// 乐观锁（`If-Match`）。三种语义，和服务端契约一致：
   ///   ""    不检查，直接覆盖
-  ///   "*"   只在不存在时创建，已存在则报 Conflict
-  ///   其他  必须与当前版本完全一致
+  ///   "*"   **只更新**：记录必须已存在，不存在报 412（[HertzException.isPreconditionFailed]）
+  ///   其他  必须与当前版本完全一致：版本不同报 409，记录不存在报 412
+  ///
+  /// 要「只在不存在时创建」用 [createOnly]，**不是** `"*"`。
   final String ifMatch;
+
+  /// 只创建（`If-None-Match: *`）：记录已存在报 409（内容与要写的完全相同时
+  /// 服务端按幂等成功处理）。
+  ///
+  /// 「第一次写入」应当用它，而不是不带条件：不带条件等于「最后写入者赢」，
+  /// 两台设备同时首推时后到的会把先到的整份盖掉。不能和 [ifMatch] 同时给。
+  final bool createOnly;
   final String contentType;
 }
 
