@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:dream_manga_reader/core/net/app_proxy.dart';
+import 'package:dream_manga_reader/core/net/dio_http_service.dart';
+import 'package:dream_manga_reader/core/source/source.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -27,6 +31,26 @@ const _regEnabled0 = '\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\'
     'CurrentVersion\\Internet Settings\r\n    ProxyEnable    REG_DWORD    0x0\r\n';
 const _regEnabled1 = '\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\'
     'CurrentVersion\\Internet Settings\r\n    ProxyEnable    REG_DWORD    0x1\r\n';
+
+/// dio 适配器桩:要么连不上(SocketException),要么回 200。
+class _Adapter implements HttpClientAdapter {
+  _Adapter({required this.fail});
+
+  final bool fail;
+  int fetches = 0;
+  bool closed = false;
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options,
+      Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+    fetches++;
+    if (fail) throw const SocketException('Connection refused');
+    return ResponseBody.fromString('ok', 200);
+  }
+
+  @override
+  void close({bool force = false}) => closed = true;
+}
 
 final _proxy = AppProxy.parse('127.0.0.1:7890').endpoint!;
 
@@ -160,6 +184,64 @@ void main() {
       await AppProxy.setOverride('DIRECT');
       expect(await AppProxy.retryDetect(), isFalse);
       expect(detects, 0);
+    });
+  });
+
+  group('DioHttpService 跟住代理换代', () {
+    test('连接失败 → 重探到代理 → 重试走的是新建的适配器', () async {
+      final stale = _Adapter(fail: true);
+      final fresh = <_Adapter>[];
+      final dio = Dio()..httpClientAdapter = stale;
+      final service = DioHttpService(dio, () {
+        final a = _Adapter(fail: false);
+        fresh.add(a);
+        return a;
+      });
+      AppProxy.debugDetectAuto = () async => (_proxy, ProxySource.systemProxy);
+
+      final resp = await service.fetch(const HostRequest('https://blocked.example/'));
+
+      expect(resp.status, 200);
+      expect(stale.fetches, 1);
+      expect(fresh, hasLength(1), reason: '代理换代后必须换掉旧 HttpClient,否则重试照样直连');
+      expect(fresh.single.fetches, 1);
+      expect(stale.closed, isTrue);
+    });
+
+    test('没探到代理:不重试、不换适配器,原错误照常抛出', () async {
+      final stale = _Adapter(fail: true);
+      var created = 0;
+      final dio = Dio()..httpClientAdapter = stale;
+      final service = DioHttpService(dio, () {
+        created++;
+        return _Adapter(fail: false);
+      });
+
+      await expectLater(
+        service.fetch(const HostRequest('https://blocked.example/')),
+        throwsA(isA<DioException>()),
+      );
+      expect(stale.fetches, 1);
+      expect(created, 0);
+    });
+
+    test('设置页改了代理:下一次请求换新适配器', () async {
+      final first = _Adapter(fail: false);
+      final made = <_Adapter>[];
+      final dio = Dio()..httpClientAdapter = first;
+      final service = DioHttpService(dio, () {
+        final a = _Adapter(fail: false);
+        made.add(a);
+        return a;
+      });
+
+      await service.fetch(const HostRequest('https://a.example/'));
+      expect(made, isEmpty);
+
+      await AppProxy.setOverride('127.0.0.1:7890');
+      await service.fetch(const HostRequest('https://a.example/'));
+      expect(made, hasLength(1));
+      expect(first.closed, isTrue);
     });
   });
 }
