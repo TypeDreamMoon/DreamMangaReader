@@ -206,7 +206,7 @@
   "sync_protocolLabel": "API protocol",
   "sync_protocolLegacy": "Legacy",
   "sync_protocolSdk": "Standard SDK",
-  "sync_protocolHint": "\"Standard SDK\" requires the newer API to be deployed on the server. The switch takes effect immediately.",
+  "sync_protocolHint": "\"Standard SDK\" is the default. If syncing misbehaves you can switch back to \"Legacy\" for now. The switch takes effect immediately.",
   "sync_loginSuccess": "Signed in: {name}",
   "sync_loginFailed": "Sign-in failed: {e}",
   "sync_loggedOut": "Signed out",

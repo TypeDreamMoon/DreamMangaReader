@@ -206,7 +206,7 @@
   "sync_protocolLabel": "API プロトコル",
   "sync_protocolLegacy": "旧版",
   "sync_protocolSdk": "標準 SDK",
-  "sync_protocolHint": "「標準 SDK」はサーバー側に新しい API を配備してから使えます。切り替えは即時反映されます。",
+  "sync_protocolHint": "既定は「標準 SDK」です。同期に問題があるときは一時的に「旧版」へ戻せます。切り替えは即時反映されます。",
   "sync_loginSuccess": "ログイン成功:{name}",
   "sync_loginFailed": "ログイン失敗:{e}",
   "sync_loggedOut": "ログアウトしました",

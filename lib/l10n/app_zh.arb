@@ -332,7 +332,7 @@
   "sync_protocolLabel": "接口协议",
   "sync_protocolLegacy": "旧版",
   "sync_protocolSdk": "标准 SDK",
-  "sync_protocolHint": "「标准 SDK」需要服务端部署新版接口后才能用；切换后立即生效。",
+  "sync_protocolHint": "默认用「标准 SDK」；同步出问题时可临时切回「旧版」。切换后立即生效。",
   "sync_loginSuccess": "登录成功:{name}",
   "@sync_loginSuccess": {
     "placeholders": {

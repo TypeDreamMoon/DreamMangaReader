@@ -21,7 +21,9 @@ import 'webdav_backend.dart';
 
 /// 云同步控制器。两个可切换后端:
 ///   - `webdav`:WebDAV 文件(地址/账密)。
-///   - `hertz` :自建账号服务 `dreamreader-sync`(IAM 登录 + ETag 乐观并发)。
+///   - `hertz` :自建账号服务(IAM 登录 + 乐观并发)。两套协议见 [hertzProtocol]:
+///     默认 `appdata`(标准数据 SDK,[hzPresetAppDataUrl]),
+///     可退回 `sync`(旧 `dreamreader-sync`,[hzPresetSyncUrl])。
 ///
 /// 一次「同步」= 拉远端 → 与本地无损合并 → 应用到本地 → 推回远端。双向、不丢收藏/进度。
 /// 配置(后端选择/WebDAV 账密/账号服务地址/自动开关/上次时间)存 SharedPreferences;
@@ -56,10 +58,11 @@ class SyncController extends ChangeNotifier {
   static const _kHPreset = 'sync.hertz.preset';
 
   /// Hertz 账号同步走哪套协议：
-  ///   `sync`（默认）→ `dreamreader-sync` 的 `/api/v1/sync`（整包 + ETag）
-  ///   `appdata`     → 标准 SDK 的 `/api/v1/data/{app}/{key}`（多 doc_key）
+  ///   `appdata`（默认）→ 标准 SDK 的 `/api/v1/data/{app}/{key}`（[hzPresetAppDataUrl]）
+  ///   `sync`           → 旧 `dreamreader-sync` 的 `/api/v1/sync`（[hzPresetSyncUrl]，整包 + ETag）
   ///
-  /// 先留在配置里、暂不暴露到 UI：appdata 服务还没上线，等部署好再给用户选项。
+  /// 设置页「接口协议」下拉框可以切回旧版，留着给 appdata 出问题时兜底。
+  /// 老用户的云端数据由服务端整包导入 appdata（同一个 `save:all`），客户端不做迁移。
   static const _kHProtocol = 'sync.hertz.protocol';
   static const _kCategories = 'sync.categories';
   static const _kReaderNotesMigrated = 'sync.readerNotesMigrationV1';
@@ -73,8 +76,10 @@ class SyncController extends ChangeNotifier {
   /// 后端类型:'webdav' | 'hertz'。
   String backendKind = 'webdav';
 
-  /// Hertz 账号同步的协议：'sync'(旧) | 'appdata'(标准 SDK)。
-  String hertzProtocol = 'sync';
+  /// Hertz 账号同步的协议：'appdata'(标准 SDK,默认) | 'sync'(旧)。
+  String hertzProtocol = defaultHertzProtocol;
+
+  static const defaultHertzProtocol = 'appdata';
 
   // WebDAV 配置
   String url = '';
@@ -87,13 +92,24 @@ class SyncController extends ChangeNotifier {
   ///
   /// 做成 getter 而不是「每次记得赋值」的字段:这样「地址永远是官方常量」是
   /// 结构上成立的,不依赖某处调用有没有漏掉。
+  ///
+  /// 两套同步协议各自一个域名:旧 `dreamreader-sync`([hzPresetSyncUrl],
+  /// `/api/v1/sync`)还要给旧客户端用,不能停;appdata([hzPresetAppDataUrl],
+  /// `/api/v1/data/...`)是单独部署的服务。两边**不能混用**:appdata 的请求打到
+  /// 旧服务上只会得到一个不是 appdata 回的 404。
   static const hzPresetSyncUrl = 'https://api.mr.64hz.cn';
+  static const hzPresetAppDataUrl = 'https://data.64hz.cn';
   static const hzPresetIssuer = 'https://account.64hz.cn';
   static const hzPresetClientId = 'dream_manga_reader';
 
   String get hertzSyncUrl => hzPresetSyncUrl;
+  String get hertzAppDataUrl => hzPresetAppDataUrl;
   String get hertzIssuer => hzPresetIssuer;
   String get hertzClientId => hzPresetClientId;
+
+  /// 当前协议实际要连的地址([hertzProtocol] 决定)。
+  String get hertzBaseUrl =>
+      hertzProtocol == 'appdata' ? hertzAppDataUrl : hertzSyncUrl;
 
   /// 「启动/回到前台时自动双向合并」。
   ///
@@ -123,7 +139,7 @@ class SyncController extends ChangeNotifier {
 
   /// 当前后端是否已配置到可同步的程度。
   bool get configured => isHertz
-      ? (hertzSyncUrl.trim().isNotEmpty && IamAuth.instance.isLoggedIn)
+      ? (hertzBaseUrl.trim().isNotEmpty && IamAuth.instance.isLoggedIn)
       : url.trim().isNotEmpty;
 
   SharedPreferences? _prefs;
@@ -172,7 +188,11 @@ class SyncController extends ChangeNotifier {
   Future<void> load() async {
     final p = await _p;
     backendKind = p.getString(_kBackend) ?? 'webdav';
-    hertzProtocol = p.getString(_kHProtocol) ?? 'sync';
+    // 没存过 = 默认 appdata;存了个不认识的值(手改 prefs / 将来删掉的协议)也回默认。
+    final storedProtocol = p.getString(_kHProtocol);
+    hertzProtocol = storedProtocol == 'sync' || storedProtocol == 'appdata'
+        ? storedProtocol!
+        : defaultHertzProtocol;
     url = p.getString(_kUrl) ?? '';
     username = p.getString(_kUser) ?? '';
     // 密码走安全存储;旧版本的明文键读到就搬走并删掉(见 [_kLegacyPass])。
@@ -228,9 +248,9 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 切换 Hertz 同步协议：`sync`（旧 /api/v1/sync）或 `appdata`（标准 SDK）。
+  /// 切换 Hertz 同步协议：`appdata`（标准 SDK，默认）或 `sync`（旧 /api/v1/sync）。
   ///
-  /// 暂时只给调试用，不在设置页暴露 —— appdata 服务上线后再加 UI 选项。
+  /// 设置页「接口协议」下拉框调它；切换立即落盘，下一次同步 / 测试连接就用新协议。
   Future<void> setHertzProtocol(String kind) async {
     if (kind != 'sync' && kind != 'appdata') return;
     hertzProtocol = kind;
@@ -746,11 +766,15 @@ class SyncController extends ChangeNotifier {
     if (!isHertz) {
       return WebDavBackend(baseUrl: url, username: username, password: password);
     }
-    // 两套协议并存：旧客户端的 `/api/v1/sync` 不能停，新的走标准 SDK。
+    // 两套协议并存、各用各的域名：旧客户端的 `/api/v1/sync` 不能停，新的走标准 SDK。
     return hertzProtocol == 'appdata'
-        ? HertzAppDataBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance)
+        ? HertzAppDataBackend(baseUrl: hertzAppDataUrl, auth: IamAuth.instance)
         : HertzAccountBackend(baseUrl: hertzSyncUrl, auth: IamAuth.instance);
   }
+
+  /// 测试用:按当前配置构造一次后端(不走 [debugBackendFactory] 以外的任何网络)。
+  @visibleForTesting
+  SyncBackend debugBuildBackend() => _backend();
 
   Future<SyncTestResult> testConnection() => _backend().test();
 
@@ -1040,7 +1064,8 @@ class SyncController extends ChangeNotifier {
   static String _catLabel(Set<SyncCategory> c) => '${c.length} 项';
 
   // 日志用:后端名 + 快照内容摘要(收藏/历史条数、是否含源仓库配置)。
-  String get _backendLabel => isHertz ? '账号(Hertz)' : 'WebDAV';
+  String get _backendLabel =>
+      isHertz ? '账号(Hertz · $hertzProtocol · $hertzBaseUrl)' : 'WebDAV';
 
   static String _dataSummary(Map<String, dynamic> d) {
     int cnt(dynamic x) => x is List ? x.length : (x is Map ? x.length : 0);

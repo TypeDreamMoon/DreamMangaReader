@@ -101,11 +101,14 @@ class _SyncPageState extends State<SyncPage> {
     if (!mounted) return;
     var msg = syncNoticeText(context.l10n, result.notice);
     if (_kind == 'hertz') {
-      // 让用户看清这次测的是哪套协议——两套接口地址一样，光看"连接成功"分不出来
+      // 让用户看清这次测的是哪套协议、连的是哪个域名——两套协议各有各的服务，
+      // 光看「连接成功」分不出来；排查时报出域名，一眼就知道是不是连错了地方。
+      // 地址取控制器里**实际**用来建后端的那个，不在页面里另算一份。
       final label = _protocol == 'appdata'
           ? context.l10n.sync_protocolSdk
           : context.l10n.sync_protocolLegacy;
-      msg = '$msg · $label';
+      final host = Uri.tryParse(_sync.hertzBaseUrl)?.host ?? _sync.hertzBaseUrl;
+      msg = '$msg · $label · $host';
     }
     setState(() {
       _busy = false;
