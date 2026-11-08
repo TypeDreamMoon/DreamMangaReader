@@ -1,4 +1,6 @@
 import 'package:dream_manga_reader/core/storage/secret_store.dart';
+import 'package:dream_manga_reader/core/sync/hertz_appdata_backend.dart';
+import 'package:dream_manga_reader/core/sync/hertz_backend.dart';
 import 'package:dream_manga_reader/core/sync/sync_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -143,6 +145,63 @@ void main() {
       await sync.load();
       expect(secrets.values[_securePassKey], 's3cret');
       expect(prefs.getString(_legacyPassKey), isNull);
+    });
+  });
+
+  // 账号同步默认走 appdata(单独的 data.64hz.cn);旧 dreamreader-sync 留着兜底。
+  group('hertz protocol', () {
+    setUp(() => sync.debugBackendFactory = null);
+
+    test('没存过协议 → 默认 appdata,后端连 data.64hz.cn', () async {
+      await boot(const <String, Object>{'sync.backend': 'hertz'});
+      await sync.load();
+
+      expect(sync.hertzProtocol, 'appdata');
+      expect(SyncController.hzPresetAppDataUrl, 'https://data.64hz.cn');
+      expect(sync.hertzBaseUrl, 'https://data.64hz.cn');
+      final backend = sync.debugBuildBackend();
+      expect(backend, isA<HertzAppDataBackend>());
+      expect((backend as HertzAppDataBackend).baseUrl, 'https://data.64hz.cn');
+    });
+
+    test('字段初值也是 appdata(load 之前)', () {
+      expect(SyncController.defaultHertzProtocol, 'appdata');
+    });
+
+    test('存过 sync → 旧协议,仍连 api.mr.64hz.cn', () async {
+      await boot(const <String, Object>{
+        'sync.backend': 'hertz',
+        'sync.hertz.protocol': 'sync',
+      });
+      await sync.load();
+
+      expect(sync.hertzProtocol, 'sync');
+      expect(sync.hertzBaseUrl, 'https://api.mr.64hz.cn');
+      final backend = sync.debugBuildBackend();
+      expect(backend, isA<HertzAccountBackend>());
+      expect((backend as HertzAccountBackend).baseUrl, 'https://api.mr.64hz.cn');
+    });
+
+    test('存了不认识的值 → 回默认 appdata', () async {
+      await boot(const <String, Object>{
+        'sync.backend': 'hertz',
+        'sync.hertz.protocol': 'grpc',
+      });
+      await sync.load();
+      expect(sync.hertzProtocol, 'appdata');
+    });
+
+    test('切换协议立即落盘,地址跟着变', () async {
+      final prefs = await boot(const <String, Object>{'sync.backend': 'hertz'});
+      await sync.load();
+
+      await sync.setHertzProtocol('sync');
+      expect(prefs.getString('sync.hertz.protocol'), 'sync');
+      expect(sync.hertzBaseUrl, 'https://api.mr.64hz.cn');
+
+      await sync.setHertzProtocol('appdata');
+      expect(sync.hertzBaseUrl, 'https://data.64hz.cn');
+      expect(sync.debugBuildBackend(), isA<HertzAppDataBackend>());
     });
   });
 }

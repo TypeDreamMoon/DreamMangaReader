@@ -5,6 +5,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../log/app_log.dart';
+
 /// hertz-iam 契约错误码。
 ///
 /// 与服务端 `packages/contracts/errors/error_codes.yaml` 一一对应 —— 那份 yaml
@@ -149,19 +151,38 @@ class IamAuth {
   static const codeResendCooldown = Duration(seconds: 60);
 
   /// 读回持久化的 token 与配置。
+  ///
+  /// **逐条兜住**：安全存储在某些机器上会因为 DPAPI 上下文变化、文件被安全
+  /// 软件改过等原因让整条 `read` 抛异常。以前这里是串行 await，第一个 key 抛
+  /// 就等于整份登录态消失——磁盘上 token 还在，用户却看到「所有账号都被登出」。
+  /// 现在一条读不出来只影响那一条，其余照常恢复。
   Future<void> load({required String issuer, required String clientId}) async {
     configure(issuer: issuer, clientId: clientId);
-    _accessToken = await _storage.read(key: _kAccess);
-    _refreshToken = await _storage.read(key: _kRefresh);
-    _expiresAtMs =
-        int.tryParse(await _storage.read(key: _kExpiresAt) ?? '') ?? 0;
-    _username = await _storage.read(key: _kUsername);
-    _uid = await _storage.read(key: _kUid);
-    _sid = await _storage.read(key: _kSid);
-    _deviceId = await _storage.read(key: _kDeviceId);
+
+    Future<String?> read(String key) async {
+      try {
+        return await _storage.read(key: key);
+      } catch (e) {
+        AppLog.i.warn(LogCat.network, '安全存储读取失败 · $key · $e');
+        return null;
+      }
+    }
+
+    _accessToken = await read(_kAccess);
+    _refreshToken = await read(_kRefresh);
+    _expiresAtMs = int.tryParse(await read(_kExpiresAt) ?? '') ?? 0;
+    _username = await read(_kUsername);
+    _uid = await read(_kUid);
+    _sid = await read(_kSid);
+    _deviceId = await read(_kDeviceId);
+
     if (_deviceId == null || _deviceId!.isEmpty) {
       _deviceId = 'dmr-${_randomId()}';
-      await _storage.write(key: _kDeviceId, value: _deviceId);
+      try {
+        await _storage.write(key: _kDeviceId, value: _deviceId);
+      } catch (_) {
+        // 写不进去不该让启动失败；代价只是下次启动换一个设备标识
+      }
     }
   }
 

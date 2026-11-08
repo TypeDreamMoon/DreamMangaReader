@@ -47,6 +47,9 @@ class _SyncPageState extends State<SyncPage> {
   late final _userCtrl = TextEditingController(text: _sync.username);
   late final _passCtrl = TextEditingController(text: _sync.password);
   late String _kind = _sync.backendKind;
+
+  /// Hertz 账号同步的接口协议：`sync` 旧版 / `appdata` 标准 SDK。
+  late String _protocol = _sync.hertzProtocol;
   late bool _auto = _sync.auto;
   bool _busy = false;
   String _result = '';
@@ -96,7 +99,17 @@ class _SyncPageState extends State<SyncPage> {
     await _persist();
     final result = await _sync.testConnection();
     if (!mounted) return;
-    final msg = syncNoticeText(context.l10n, result.notice);
+    var msg = syncNoticeText(context.l10n, result.notice);
+    if (_kind == 'hertz') {
+      // 让用户看清这次测的是哪套协议、连的是哪个域名——两套协议各有各的服务，
+      // 光看「连接成功」分不出来；排查时报出域名，一眼就知道是不是连错了地方。
+      // 地址取控制器里**实际**用来建后端的那个，不在页面里另算一份。
+      final label = _protocol == 'appdata'
+          ? context.l10n.sync_protocolSdk
+          : context.l10n.sync_protocolLegacy;
+      final host = Uri.tryParse(_sync.hertzBaseUrl)?.host ?? _sync.hertzBaseUrl;
+      msg = '$msg · $label · $host';
+    }
     setState(() {
       _busy = false;
       _result = msg;
@@ -348,6 +361,46 @@ class _SyncPageState extends State<SyncPage> {
             )
           else
             _loginButton(p, l.sync_login, Icons.login_rounded),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  l.sync_protocolLabel,
+                  style: TextStyle(
+                      color: p.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              DropdownButton<String>(
+                value: _protocol,
+                isDense: true,
+                underline: const SizedBox.shrink(),
+                style: TextStyle(color: p.textPrimary, fontSize: 13),
+                items: [
+                  DropdownMenuItem(
+                      value: 'sync', child: Text(l.sync_protocolLegacy)),
+                  DropdownMenuItem(
+                      value: 'appdata', child: Text(l.sync_protocolSdk)),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        setState(() => _protocol = v);
+                        _sync.setHertzProtocol(v);
+                      },
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            l.sync_protocolHint,
+            style: TextStyle(color: p.textMuted, fontSize: 11, height: 1.4),
+          ),
         ],
       ),
     );

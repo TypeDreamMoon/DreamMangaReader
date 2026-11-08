@@ -238,7 +238,15 @@ class SourceRepository {
       }
     } catch (e) {
       // 拉取失败:尽量退回缓存,保证离线仍可用。
-      final cached = await _loadFromCache();
+      // 注意这里**再兜一层**:缓存目录本身也可能因为权限/路径问题抛，
+      // 而它一旦抛出去就会顺着 load() 一路逃到启动链，最后表现成「源全空」。
+      List<SourceMeta>? cached;
+      try {
+        cached = await _loadFromCache();
+      } catch (cacheErr) {
+        AppLog.i.warn(LogCat.source, '缓存回退也失败 · $cacheErr');
+        cached = null;
+      }
       if (cached != null) {
         repo = cached;
         origin = SourceRepoOrigin.cacheAfterFailure;
@@ -413,9 +421,16 @@ class SourceRepository {
       if (!await idx.exists()) return [];
       final metas = <SourceMeta>[];
       for (final e in _entries(await idx.readAsString())) {
-        final f = File('${dir.path}/${e['script']}');
-        if (!await f.exists()) continue;
-        metas.add(SourceMeta.fromJson(e, script: await f.readAsString()));
+        // 一条坏掉不该让整套本地源消失：以前整个循环共用一个 try，
+        // 任何一条（缺 id、脚本读不出来、字段类型不对）都会让返回变成 []，
+        // 用户看到的就是「源全部读不出来」。
+        try {
+          final f = File('${dir.path}/${e['script']}');
+          if (!await f.exists()) continue;
+          metas.add(SourceMeta.fromJson(e, script: await f.readAsString()));
+        } catch (err) {
+          AppLog.i.warn(LogCat.source, '跳过读不出来的本地源 · ${e['id']} · $err');
+        }
       }
       return metas;
     } catch (_) {

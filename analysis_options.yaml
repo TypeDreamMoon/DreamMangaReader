@@ -4,6 +4,12 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    # vendored 的 Dart SDK（主副本在 NetSDKstudy/sdk/dart，用
+    # Scripts/sync_hertz_sdk.mjs 同步）。它有自己的 pubspec 与规则，
+    # 不该按本项目的 strict-casts / flutter_lints 去要求。
+    - packages/**
+
   language:
     # 禁止隐式向下转型(dynamic → T)。这个项目大量消费源脚本返回的 JSON,
     # 隐式转型出错时不在解析处报,而是在很远的使用处炸成一句
